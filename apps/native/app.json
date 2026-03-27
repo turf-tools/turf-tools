@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "turf-native",
+    "slug": "turf-native",
+    "version": "1.0.0",
+    "scheme": "turf",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.turf.native"
+    },
+    "android": {
+      "package": "com.turf.nativeapp"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": [
+      "expo-router",
+      ["@rnmapbox/maps", {}],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Show current location on map."
+        }
+      ]
+    ]
+  }
+}
