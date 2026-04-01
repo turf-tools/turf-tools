@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./rpc": "./src/rpc/index.ts"
+  },
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
