@@ -18,9 +18,18 @@ importers:
 
   apps/native:
     dependencies:
+      '@orpc/client':
+        specifier: ^1.13.13
+        version: 1.13.13
+      '@orpc/server':
+        specifier: ^1.13.13
+        version: 1.13.13
       '@rnmapbox/maps':
         specifier: ^10.3.0
         version: 10.3.0(expo@55.0.9)(react-dom@19.2.0)(react-native@0.83.2)(react@19.2.0)
+      '@tanstack/react-query':
+        specifier: ^5.96.1
+        version: 5.96.1(react@19.2.0)
       expo:
         specifier: ~55.0.9
         version: 55.0.9(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(@expo/metro-runtime@55.0.7)(expo-router@55.0.8)(react-dom@19.2.0)(react-native@0.83.2)(react@19.2.0)(typescript@5.9.3)
@@ -72,6 +81,9 @@ importers:
       react-native-worklets:
         specifier: 0.7.2
         version: 0.7.2(@babel/core@7.29.0)(react-native@0.83.2)(react@19.2.0)
+      web:
+        specifier: workspace:^
+        version: link:../web
     devDependencies:
       '@babel/core':
         specifier: ^7.25.0
@@ -4124,6 +4136,15 @@ packages:
 
   /@tanstack/query-core@5.96.1:
     resolution: {integrity: sha512-u1yBgtavSy+N8wgtW3PiER6UpxcplMje65yXnnVgiHTqiMwLlxiw4WvQDrXyn+UD6lnn8kHaxmerJUzQcV/MMg==}
+    dev: false
+
+  /@tanstack/react-query@5.96.1(react@19.2.0):
+    resolution: {integrity: sha512-2X7KYK5KKWUKGeWCVcqxXAkYefJtrKB7tSKWgeG++b0H6BRHxQaLSSi8AxcgjmUnnosHuh9WsFZqvE16P1WCzA==}
+    peerDependencies:
+      react: ^18 || ^19
+    dependencies:
+      '@tanstack/query-core': 5.96.1
+      react: 19.2.0
     dev: false
 
   /@tanstack/react-query@5.96.1(react@19.2.4):
