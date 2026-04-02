@@ -12,8 +12,6 @@ dependencies = [
   "uvicorn[standard]>=0.42.0",
 ]
 
-[project.scripts]
-dev = "uvicorn main:app --reload --port 8000"
 
 [dependency-groups]
 dev = ["ruff>=0.12.2", "ty>=0.0.1a13"]

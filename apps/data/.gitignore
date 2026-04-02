@@ -12,3 +12,7 @@ wheels/
 # Environment files
 .env
 .env.*
+
+# Local DuckLake dev data
+*.ducklake
+local_data/
