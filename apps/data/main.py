@@ -1,6 +1,8 @@
-def main():
-    print("Hello from data!")
+from fastapi import FastAPI
+
+app = FastAPI(title="Turf Data Service")
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/healthcheck")
+async def healthcheck():
+    return {"status": "ok"}
