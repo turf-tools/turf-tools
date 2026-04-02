@@ -6,11 +6,15 @@
   "type": "module",
   "scripts": {
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
-    "dev": "vp run web#dev",
+    "dev": "concurrently -n web,native,data -c blue,green,yellow \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\"",
+    "dev:web": "vp run web#dev",
+    "dev:native": "pnpm --filter native dev",
+    "dev:data": "cd apps/data && uv run uvicorn main:app --reload --port 8000",
     "db": "pnpm --filter @turf/db run db",
     "prepare": "vp config"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "vite-plus": "latest"
   },
   "engines": {
