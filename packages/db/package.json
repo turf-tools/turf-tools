@@ -1,5 +1,5 @@
 {
-  "name": "db",
+  "name": "@turf/db",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,6 +11,7 @@
     "db": "drizzle-kit"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.4.2",
     "drizzle-orm": "beta",
     "postgres": "^3.4.8"
   },

@@ -19,6 +19,9 @@ function Home() {
         <p className="text-lg">
           RPC status: <span className="font-mono">{isLoading ? "loading..." : data?.status}</span>
         </p>
+        <p className="text-lg">
+          DB status: <span className="font-mono">{isLoading ? "loading..." : data?.db}</span>
+        </p>
       </div>
     </div>
   );

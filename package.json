@@ -7,7 +7,7 @@
   "scripts": {
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
     "dev": "vp run web#dev",
-    "db": "pnpm --filter db run db",
+    "db": "pnpm --filter @turf/db run db",
     "prepare": "vp config"
   },
   "devDependencies": {

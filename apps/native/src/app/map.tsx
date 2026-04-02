@@ -9,9 +9,9 @@ export default function MapScreen() {
 
   useEffect(() => {
     if (Platform.OS === "web") return;
-    import("@rnmapbox/maps").then((mod) => {
+    void import("@rnmapbox/maps").then((mod) => {
       if (MAPBOX_ACCESS_TOKEN) {
-        mod.default.setAccessToken(MAPBOX_ACCESS_TOKEN);
+        void mod.default.setAccessToken(MAPBOX_ACCESS_TOKEN);
       }
       setMapbox(mod.default);
     });
