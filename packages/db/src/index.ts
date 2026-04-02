@@ -1,12 +1,25 @@
-import { drizzle } from "drizzle-orm/postgres-js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { PGlite } from "@electric-sql/pglite";
 
 import * as schema from "./schema";
 
-const client = postgres(process.env.DATABASE_URL as string);
+const casing = "snake_case" as const;
+const pkgDir = path.dirname(fileURLToPath(import.meta.url));
+const localDbPath = path.join(pkgDir, "..", "local_db");
 
-export const db = drizzle({
-  client,
-  schema,
-  casing: "snake_case",
-});
+export const db: PgAsyncDatabase<PgQueryResultHKT> = process.env.DATABASE_URL
+  ? drizzlePostgres({
+      client: postgres(process.env.DATABASE_URL),
+      schema,
+      casing,
+    })
+  : drizzlePglite({
+      client: new PGlite(localDbPath),
+      schema,
+      casing,
+    });

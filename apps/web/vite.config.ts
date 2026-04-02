@@ -11,6 +11,9 @@ export default defineConfig({
   server: {
     port: 3000,
   },
+  ssr: {
+    noExternal: ["@turf/db", "@electric-sql/pglite"],
+  },
   plugins: [
     tanstackStart(),
     // https://tanstack.com/start/latest/docs/framework/react/guide/hosting
