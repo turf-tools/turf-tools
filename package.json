@@ -7,6 +7,7 @@
   "scripts": {
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
     "dev": "concurrently -n web,native,data -c blue,green,yellow \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\"",
+    "dev:ios": "concurrently -n web,native,data -c blue,green,yellow \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\"",
     "dev:web": "vp run web#dev",
     "dev:native": "pnpm --filter native dev",
     "dev:data": "cd apps/data && uv run uvicorn main:app --reload --port 8000",
