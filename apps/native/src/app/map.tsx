@@ -1,49 +1,31 @@
-import { useEffect, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 
-// Set your Mapbox access token here or via environment variable
-const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
-
 export default function MapScreen() {
-  const [Mapbox, setMapbox] = useState<typeof import("@rnmapbox/maps").default | null>(null);
-
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    void import("@rnmapbox/maps").then((mod) => {
-      if (MAPBOX_ACCESS_TOKEN) {
-        void mod.default.setAccessToken(MAPBOX_ACCESS_TOKEN);
-      }
-      setMapbox(mod.default);
-    });
-  }, []);
-
-  if (!MAPBOX_ACCESS_TOKEN) {
+  if (Platform.OS === "web") {
     return (
       <View className="flex-1 items-center justify-center bg-slate-50 p-6">
-        <Text className="mb-2 text-lg font-semibold text-red-600">Mapbox token not set</Text>
-        <Text className="text-center text-sm text-slate-500">
-          Set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN in your .env file
+        <Text className="text-lg text-slate-500">Map not available on web</Text>
+        <Text className="mt-2 text-center text-sm text-slate-400">
+          Use the iOS simulator to preview maps
         </Text>
       </View>
     );
   }
 
-  if (!Mapbox) {
-    return (
-      <View className="flex-1 items-center justify-center bg-slate-50 p-6">
-        <Text className="text-lg text-slate-500">
-          {Platform.OS === "web" ? "Map not available on web" : "Loading map..."}
-        </Text>
-      </View>
-    );
-  }
+  return <NativeMap />;
+}
+
+function NativeMap() {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const MapLibreGL = require("@maplibre/maplibre-react-native").default;
+
+  const styleURL = "https://demotiles.maplibre.org/style.json";
 
   return (
     <View style={styles.container}>
-      <Mapbox.MapView style={styles.map} styleURL={Mapbox.StyleURL.Street}>
-        <Mapbox.Camera zoomLevel={12} centerCoordinate={[-73.97, 40.77]} />
-        <Mapbox.LocationPuck puckBearing="heading" puckBearingEnabled />
-      </Mapbox.MapView>
+      <MapLibreGL.MapView style={styles.map} styleURL={styleURL}>
+        <MapLibreGL.Camera zoomLevel={12} centerCoordinate={[-73.97, 40.77]} />
+      </MapLibreGL.MapView>
     </View>
   );
 }

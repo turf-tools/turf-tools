@@ -12,9 +12,9 @@
     "prebuild:clean": "expo prebuild --clean"
   },
   "dependencies": {
+    "@maplibre/maplibre-react-native": "^10.4.2",
     "@orpc/client": "^1.13.13",
     "@orpc/server": "^1.13.13",
-    "@rnmapbox/maps": "^10.3.0",
     "@tanstack/react-query": "^5.96.1",
     "expo": "~55.0.9",
     "expo-constants": "~55.0.9",
