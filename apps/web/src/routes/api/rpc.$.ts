@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { RPCHandler } from "@orpc/server/fetch";
+import { db } from "@turf/db";
 import { router } from "../../rpc";
 
 const handler = new RPCHandler(router);
@@ -20,7 +21,7 @@ export const Route = createFileRoute("/api/rpc/$")({
 
         const { response } = await handler.handle(request, {
           prefix: "/api/rpc",
-          context: {},
+          context: { db, request },
         });
 
         const res = response ?? new Response("Not Found", { status: 404 });
