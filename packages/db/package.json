@@ -1,0 +1,23 @@
+{
+  "name": "@turf/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "db": "drizzle-kit"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.4.2",
+    "drizzle-orm": "beta",
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "drizzle-kit": "beta",
+    "typescript": "~5.9.3"
+  }
+}
