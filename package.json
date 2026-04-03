@@ -1,0 +1,31 @@
+{
+  "name": "turf",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
+    "dev": "concurrently -n web,native,data -c blue,green,yellow \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\"",
+    "dev:ios": "concurrently -n web,native,data -c blue,green,yellow \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\"",
+    "dev:web": "vp run web#dev",
+    "dev:native": "pnpm --filter native dev",
+    "dev:data": "cd apps/data && uv run uvicorn main:app --reload --port 8000",
+    "db": "pnpm --filter @turf/db run db",
+    "prepare": "vp config"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "vite-plus": "latest"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@8.11.0",
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+    }
+  }
+}

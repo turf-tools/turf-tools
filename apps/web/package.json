@@ -1,0 +1,41 @@
+{
+  "name": "web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./rpc": "./src/rpc/index.ts"
+  },
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview",
+    "start": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@orpc/client": "^1.13.13",
+    "@orpc/openapi": "^1.13.13",
+    "@orpc/server": "^1.13.13",
+    "@orpc/zod": "^1.13.13",
+    "@tanstack/react-query": "^5.96.1",
+    "@tanstack/react-router": "^1",
+    "@tanstack/react-start": "^1",
+    "@turf/db": "workspace:*",
+    "drizzle-orm": "beta",
+    "react": "^19",
+    "react-dom": "^19",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "nitro": "^3.0.260311-beta",
+    "tailwindcss": "^4",
+    "typescript": "~5.9.3",
+    "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+    "vite-plus": "latest"
+  }
+}
