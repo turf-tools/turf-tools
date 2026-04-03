@@ -5,10 +5,10 @@ from pydantic_settings import BaseSettings
 class S3StorageConfig(BaseSettings):
     """Configuration for an S3-compatible object storage bucket."""
 
-    endpoint_url: str
-    access_key_id: str
-    secret_access_key: str
-    bucket: str
+    endpoint_url: str = ""
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    bucket: str = ""
     region: str = "auto"
 
 
@@ -33,8 +33,9 @@ class TurfsStorageConfig(S3StorageConfig):
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    ducklake_metadata_postgres_url: str = Field(
-        description="PostgreSQL connection URL for the DuckLake metadata catalog",
+    ducklake_metadata_postgres_url: str | None = Field(
+        default=None,
+        description="PostgreSQL connection URL for the DuckLake metadata catalog. If not set, uses local DuckDB file.",
     )
 
     ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)
@@ -44,4 +45,4 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """Create and return application settings from environment variables."""
-    return Settings()  # ty: ignore[missing-argument]  # populated from env vars at runtime
+    return Settings()
