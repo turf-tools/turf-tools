@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 
 from db import get_connection
+from settings import get_settings
 
 app = FastAPI(title="Turf Data Service")
+settings = get_settings()
 
 
 @app.get("/healthcheck")
@@ -12,7 +14,7 @@ async def healthcheck():
 
 @app.get("/ducklake/status")
 async def ducklake_status():
-    conn = get_connection()
+    conn = get_connection(settings)
     tables = conn.execute("SHOW TABLES").fetchall()
     conn.close()
     return {
