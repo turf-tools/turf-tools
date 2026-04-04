@@ -47,7 +47,7 @@ importers:
         version: 55.1.6(expo@55.0.11)
       expo-router:
         specifier: ~55.0.10
-        version: 55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.4)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
+        version: 55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-status-bar:
         specifier: ~55.0.5
         version: 55.0.5(react-native@0.83.4)(react@19.2.0)
@@ -135,7 +135,7 @@ importers:
         version: link:../../packages/db
       drizzle-orm:
         specifier: beta
-        version: 1.0.0-beta.20(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6)
+        version: 1.0.0-beta.20(@electric-sql/pglite@0.4.2)(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6)
       react:
         specifier: ^19
         version: 19.2.4
@@ -146,6 +146,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@tailwindcss/vite':
         specifier: ^4
         version: 4.2.2(@voidzero-dev/vite-plus-core@0.1.14)
@@ -163,7 +166,7 @@ importers:
         version: 4.7.0(@voidzero-dev/vite-plus-core@0.1.14)
       nitro:
         specifier: ^3.0.260311-beta
-        version: 3.0.260311-beta(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20)
+        version: 3.0.260311-beta(@electric-sql/pglite@0.4.2)(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20)
       tailwindcss:
         specifier: ^4
         version: 4.2.2
@@ -1400,7 +1403,6 @@ packages:
 
   /@electric-sql/pglite@0.4.2:
     resolution: {integrity: sha512-1GUUl/MZpy5QWgWisD3Epho3GkJrZ1MzVgQpo2pifQWUs96F9rXKZxeVLPhkwFYck34CH/kQ8lis6wX9ifn3kg==}
-    dev: false
 
   /@emnapi/core@1.9.1:
     resolution: {integrity: sha512-mukuNALVsoix/w1BJwFzwXBN/dHeejQtuVzcDsfOEsdpCumXb/E9j8w11h5S54tT1xhifGfbbSm/ICrObRb3KA==}
@@ -1944,7 +1946,7 @@ packages:
       debug: 4.4.3
       dnssd-advertise: 1.1.4
       expo: 55.0.11(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
-      expo-router: 55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.4)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
+      expo-router: 55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-server: 55.0.7
       fetch-nodeshim: 0.4.10
       getenv: 2.0.0
@@ -2302,7 +2304,7 @@ packages:
       expo: 55.0.11(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-constants: 55.0.11(expo@55.0.11)(react-native@0.83.4)(typescript@5.9.3)
       expo-font: 55.0.6(expo@55.0.11)(react-native@0.83.4)(react@19.2.0)
-      expo-router: 55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.4)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
+      expo-router: 55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-server: 55.0.7
       react: 19.2.0
       react-dom: 19.2.0(react@19.2.0)
@@ -5912,7 +5914,7 @@ packages:
   /csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
-  /db0@0.3.4(drizzle-orm@1.0.0-beta.20):
+  /db0@0.3.4(@electric-sql/pglite@0.4.2)(drizzle-orm@1.0.0-beta.20):
     resolution: {integrity: sha512-RiXXi4WaNzPTHEOu8UPQKMooIbqOEyqA1t7Z6MsdxSCeb8iUC9ko3LcmsLmeUt2SM5bctfArZKkRQggKZz7JNw==}
     peerDependencies:
       '@electric-sql/pglite': '*'
@@ -5935,7 +5937,8 @@ packages:
       sqlite3:
         optional: true
     dependencies:
-      drizzle-orm: 1.0.0-beta.20(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6)
+      '@electric-sql/pglite': 0.4.2
+      drizzle-orm: 1.0.0-beta.20(@electric-sql/pglite@0.4.2)(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6)
     dev: true
 
   /debounce@2.2.0:
@@ -6204,7 +6207,7 @@ packages:
       postgres: 3.4.8
     dev: false
 
-  /drizzle-orm@1.0.0-beta.20(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6):
+  /drizzle-orm@1.0.0-beta.20(@electric-sql/pglite@0.4.2)(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6):
     resolution: {integrity: sha512-7qiuw+Z6yGr+ywt3PS5dP6UCfdymIuFT/ni6GnPGzLhkBIolNBTo4ByMBWTxJ7dW/Ya6d73GtkeuKfcVcriVHA==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
@@ -6319,6 +6322,7 @@ packages:
       zod:
         optional: true
     dependencies:
+      '@electric-sql/pglite': 0.4.2
       '@types/mssql': 9.1.11(@azure/core-client@1.10.1)
       mssql: 11.0.1(@azure/core-client@1.10.1)
       zod: 4.3.6
@@ -6546,18 +6550,6 @@ packages:
       expo: 55.0.11(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
-  /expo-font@55.0.4(expo@55.0.11)(react-native@0.83.4)(react@19.2.0):
-    resolution: {integrity: sha512-ZKeGTFffPygvY5dM/9ATM2p7QDkhsaHopH7wFAWgP2lKzqUMS9B/RxCvw5CaObr9Ro7x9YptyeRKX2HmgmMfrg==}
-    peerDependencies:
-      expo: '*'
-      react: '*'
-      react-native: '*'
-    dependencies:
-      expo: 55.0.11(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
-      fontfaceobserver: 2.3.0
-      react: 19.2.0
-      react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
-
   /expo-font@55.0.6(expo@55.0.11)(react-native@0.83.4)(react@19.2.0):
     resolution: {integrity: sha512-x9czUA3UQWjIwa0ZUEs/eWJNqB4mAue/m4ltESlNPLZhHL0nWWqIfsyHmklTLFH7mVfcHSJvew6k+pR2FE1zVw==}
     peerDependencies:
@@ -6653,7 +6645,7 @@ packages:
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
-  /expo-router@55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.4)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0):
+  /expo-router@55.0.10(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.11)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0):
     resolution: {integrity: sha512-8aWTcWtuYN4vriMSWINMXC1rPVBGkHD4r4wWSAWX8e5RuSnXfy8RUcsC5L5Ewq4i7lo04VM2RJZAH6UYFFRKrQ==}
     peerDependencies:
       '@expo/log-box': 55.0.10
@@ -6705,7 +6697,7 @@ packages:
       expo-image: 55.0.8(expo@55.0.11)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-linking: 55.0.11(expo@55.0.11)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-server: 55.0.7
-      expo-symbols: 55.0.7(expo-font@55.0.4)(expo@55.0.11)(react-native@0.83.4)(react@19.2.0)
+      expo-symbols: 55.0.7(expo-font@55.0.6)(expo@55.0.11)(react-native@0.83.4)(react@19.2.0)
       fast-deep-equal: 3.1.3
       invariant: 2.2.4
       nanoid: 3.3.11
@@ -6748,7 +6740,7 @@ packages:
       react-native-is-edge-to-edge: 1.3.1(react-native@0.83.4)(react@19.2.0)
     dev: false
 
-  /expo-symbols@55.0.7(expo-font@55.0.4)(expo@55.0.11)(react-native@0.83.4)(react@19.2.0):
+  /expo-symbols@55.0.7(expo-font@55.0.6)(expo@55.0.11)(react-native@0.83.4)(react@19.2.0):
     resolution: {integrity: sha512-y4ALLbncSGQzhFLw1PaIBbO39xzaw3ie249HmK6zK/WLJYfw4Z/9UU4iPKO3KCE4FyCKIzd+yRsvzvlri23YrQ==}
     peerDependencies:
       expo: '*'
@@ -6758,7 +6750,7 @@ packages:
     dependencies:
       '@expo-google-fonts/material-symbols': 0.4.27
       expo: 55.0.11(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
-      expo-font: 55.0.4(expo@55.0.11)(react-native@0.83.4)(react@19.2.0)
+      expo-font: 55.0.6(expo@55.0.11)(react-native@0.83.4)(react@19.2.0)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
       sf-symbols-typescript: 2.2.0
@@ -8102,7 +8094,7 @@ packages:
     resolution: {integrity: sha512-MjG9u/IlvSq5txxY0oug1sjrGZ2l37IuhExI1iPuwV4S3RcyRNGoy6xLwznH3ATK6PUAM4fbQVb4Rzy1L1nlzw==}
     dev: true
 
-  /nitro@3.0.260311-beta(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20):
+  /nitro@3.0.260311-beta(@electric-sql/pglite@0.4.2)(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20):
     resolution: {integrity: sha512-0o0fJ9LUh4WKUqJNX012jyieUOtMCnadkNDWr0mHzdraoHpJP/1CGNefjRyZyMXSpoJfwoWdNEZu2iGf35TUvQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
@@ -8132,7 +8124,7 @@ packages:
     dependencies:
       consola: 3.4.2
       crossws: 0.4.4(srvx@0.11.13)
-      db0: 0.3.4(drizzle-orm@1.0.0-beta.20)
+      db0: 0.3.4(@electric-sql/pglite@0.4.2)(drizzle-orm@1.0.0-beta.20)
       env-runner: 0.1.6
       h3: 2.0.1-rc.20(crossws@0.4.4)
       hookable: 6.1.0
@@ -9841,7 +9833,7 @@ packages:
       uploadthing:
         optional: true
     dependencies:
-      db0: 0.3.4(drizzle-orm@1.0.0-beta.20)
+      db0: 0.3.4(@electric-sql/pglite@0.4.2)(drizzle-orm@1.0.0-beta.20)
       ofetch: 2.0.0-alpha.3
     dev: true
 

@@ -12,7 +12,9 @@ const casing = "snake_case" as const;
 const pkgDir = path.dirname(fileURLToPath(import.meta.url));
 const localDbPath = path.join(pkgDir, "..", "local_db");
 
-export const db: PgAsyncDatabase<PgQueryResultHKT> = process.env.DATABASE_URL
+export type Db = PgAsyncDatabase<PgQueryResultHKT>;
+
+export const db: Db = process.env.DATABASE_URL
   ? drizzlePostgres({
       client: postgres(process.env.DATABASE_URL),
       schema,

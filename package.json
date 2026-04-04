@@ -11,6 +11,8 @@
     "dev:web": "vp run web#dev",
     "dev:native": "pnpm --filter native dev",
     "dev:data": "cd apps/data && uv run uvicorn main:app --reload --port 8000",
+    "check": "pnpm exec vp check --fix",
+    "test": "pnpm --filter web exec vp test",
     "db": "pnpm --filter @turf/db run db",
     "prepare": "vp config"
   },
