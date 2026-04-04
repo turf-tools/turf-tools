@@ -3,9 +3,14 @@ import { Platform, StyleSheet, Text, View } from "react-native";
 export default function MapScreen() {
   if (Platform.OS === "web") {
     return (
-      <View className="flex-1 items-center justify-center bg-slate-50 p-6">
-        <Text className="text-lg text-slate-500">Map not available on web</Text>
-        <Text className="mt-2 text-center text-sm text-slate-400">
+      <View className="flex-1 items-center justify-center bg-background p-6">
+        <Text className="text-lg text-muted-foreground" style={{ fontFamily: "Geist_400Regular" }}>
+          Map not available on web
+        </Text>
+        <Text
+          className="mt-2 text-center text-sm text-muted-foreground"
+          style={{ fontFamily: "Geist_400Regular" }}
+        >
           Use the iOS simulator to preview maps
         </Text>
       </View>
