@@ -8,20 +8,25 @@ import { PGlite } from "@electric-sql/pglite";
 
 import * as schema from "./schema";
 
+export type Db = PgAsyncDatabase<PgQueryResultHKT, typeof schema>;
+
 const casing = "snake_case" as const;
 const pkgDir = path.dirname(fileURLToPath(import.meta.url));
 const localDbPath = path.join(pkgDir, "..", "local_db");
 
-export type Db = PgAsyncDatabase<PgQueryResultHKT>;
-
-export const db: Db = process.env.DATABASE_URL
-  ? drizzlePostgres({
+function createDb() {
+  if (process.env.DATABASE_URL) {
+    return drizzlePostgres({
       client: postgres(process.env.DATABASE_URL),
       schema,
       casing,
-    })
-  : drizzlePglite({
-      client: new PGlite(localDbPath),
-      schema,
-      casing,
     });
+  }
+  return drizzlePglite({
+    client: new PGlite(localDbPath),
+    schema,
+    casing,
+  });
+}
+
+export const db = createDb() as Db;

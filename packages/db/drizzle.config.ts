@@ -1,15 +1,25 @@
-import type { Config } from "drizzle-kit";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "drizzle-kit";
 
-export default {
-  out: "./migrations",
-  schema: "./src/schema/index.ts",
-  breakpoints: true,
-  verbose: true,
-  strict: true,
-  casing: "snake_case",
+const pkgDir = path.dirname(fileURLToPath(import.meta.url));
 
-  dialect: "postgresql",
-  dbCredentials: {
-    url: process.env.DATABASE_URL as string,
-  },
-} satisfies Config;
+export default process.env.DATABASE_URL
+  ? defineConfig({
+      out: "./migrations",
+      schema: "./src/schema/index.ts",
+      casing: "snake_case",
+      dialect: "postgresql",
+      dbCredentials: {
+        url: process.env.DATABASE_URL,
+      },
+    })
+  : defineConfig({
+      schema: "./src/schema/index.ts",
+      casing: "snake_case",
+      dialect: "postgresql",
+      driver: "pglite",
+      dbCredentials: {
+        url: path.join(pkgDir, "local_db"),
+      },
+    });

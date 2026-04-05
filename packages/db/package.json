@@ -8,7 +8,8 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
-    "db": "drizzle-kit"
+    "db": "drizzle-kit",
+    "seed": "tsx src/seed.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.2",
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@types/node": "^22",
     "drizzle-kit": "beta",
+    "tsx": "^4.21.0",
     "typescript": "~5.9.3"
   }
 }
