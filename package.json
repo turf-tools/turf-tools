@@ -11,7 +11,7 @@
     "dev:web": "pnpm db:setup && vp run web#dev",
     "dev:native": "pnpm --filter native dev",
     "dev:data": "cd apps/data && uv run uvicorn main:app --reload --port 8000",
-    "check": "pnpm exec vp check --fix && cd apps/data && uv run ruff check . && uv run ruff format --check .",
+    "check": "pnpm exec vp check --fix && cd apps/data && uv run ruff check --fix . && uv run ruff format .",
     "test": "pnpm --filter web exec vp test && cd apps/data && uv run pytest",
     "data:clear": "rm -f apps/data/ducklake.ducklake && rm -rf apps/data/local_data",
     "db:setup": "pnpm db:push && pnpm db:seed",
