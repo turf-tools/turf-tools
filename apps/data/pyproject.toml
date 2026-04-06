@@ -14,7 +14,7 @@ dependencies = [
 
 
 [dependency-groups]
-dev = ["ruff>=0.12.2", "ty>=0.0.1a13"]
+dev = ["pytest>=9.0.2", "ruff>=0.12.2", "ty>=0.0.1a13"]
 
 [tool.ruff]
 target-version = "py313"
@@ -32,6 +32,9 @@ select = [
   "SIM", # flake8-simplify
   "TCH", # flake8-type-checking
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [tool.ty.environment]
 python-version = "3.13"
