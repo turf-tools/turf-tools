@@ -1,0 +1,53 @@
+version: 0.7
+index_id: people
+doc_mapping:
+  field_mappings:
+    - name: voter_id
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: voter_file_id
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: voter_file_version
+      type: u64
+      stored: true
+    - name: first_name
+      type: text
+      stored: true
+    - name: last_name
+      type: text
+      stored: true
+    - name: house_number
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: street_name
+      type: text
+      stored: true
+    - name: unit
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: city
+      type: text
+      stored: true
+    - name: state
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: zip
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: party
+      type: text
+      tokenizer: raw
+      stored: true
+search_settings:
+  default_search_fields:
+    - first_name
+    - last_name
+    - street_name
+    - city
