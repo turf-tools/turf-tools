@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from db import create_tables, get_connection
+from geocode import export_geojson, geocode_buildings
 from import_voter_file import import_voter_file
 from settings import get_settings
 
@@ -80,3 +81,40 @@ async def list_versions(voter_file_id: str):
         "voter_file_id": voter_file_id,
         "versions": [{"version": v[0], "voter_count": v[1]} for v in versions],
     }
+
+
+@app.post("/buildings/geocode")
+async def geocode_endpoint():
+    conn = get_connection(settings)
+    try:
+        result = geocode_buildings(conn)
+        return result
+    finally:
+        conn.close()
+
+
+@app.get("/buildings/geojson")
+async def buildings_geojson():
+    conn = get_connection(settings)
+    try:
+        return export_geojson(conn, "buildings")
+    finally:
+        conn.close()
+
+
+@app.get("/doors/geojson")
+async def doors_geojson():
+    conn = get_connection(settings)
+    try:
+        return export_geojson(conn, "doors")
+    finally:
+        conn.close()
+
+
+@app.get("/people/geojson")
+async def people_geojson():
+    conn = get_connection(settings)
+    try:
+        return export_geojson(conn, "voter_file")
+    finally:
+        conn.close()
