@@ -16,3 +16,7 @@ wheels/
 # Local DuckLake dev data
 *.ducklake
 local_data/
+
+# Large fixture files (keep only ED-level subsets in git)
+fixtures/*-ad-[0-9]*.parquet
+!fixtures/*-ed-*.parquet
