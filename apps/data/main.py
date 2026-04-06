@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from db import create_tables, get_connection
 from geocode import export_geojson, geocode_buildings
 from import_voter_file import import_voter_file
+from index_quickwit import clear_index, run_index, run_search
 from settings import get_settings
 
 logger = logging.getLogger("uvicorn")
@@ -24,6 +25,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Turf Data Service", lifespan=lifespan)
+
+
+class ImportRequest(BaseModel):
+    file_path: str
+    voter_file_id: str = "nys_boe"
 
 
 @app.get("/healthcheck")
@@ -46,13 +52,8 @@ async def ducklake_status():
     }
 
 
-class ImportRequest(BaseModel):
-    file_path: str
-    voter_file_id: str = "nys_boe"
-
-
 @app.post("/voter-file/import")
-async def import_voter_file_endpoint(request: ImportRequest):
+async def voter_file_import(request: ImportRequest):
     conn = get_connection(settings)
     try:
         result = import_voter_file(conn, request.file_path, request.voter_file_id)
@@ -64,7 +65,7 @@ async def import_voter_file_endpoint(request: ImportRequest):
 
 
 @app.get("/voter-file/{voter_file_id}/versions")
-async def list_versions(voter_file_id: str):
+async def voter_file_versions(voter_file_id: str):
     conn = get_connection(settings)
     versions = conn.execute(
         """
@@ -84,7 +85,7 @@ async def list_versions(voter_file_id: str):
 
 
 @app.post("/buildings/geocode")
-async def geocode_endpoint():
+async def buildings_geocode():
     conn = get_connection(settings)
     try:
         result = geocode_buildings(conn)
@@ -118,3 +119,29 @@ async def people_geojson():
         return export_geojson(conn, "voter_file")
     finally:
         conn.close()
+
+
+@app.post("/people/index")
+async def people_index():
+    conn = get_connection(settings)
+    try:
+        result = run_index(conn)
+        return result
+    finally:
+        conn.close()
+
+
+@app.post("/people/reindex")
+async def people_reindex():
+    clear_index()
+    conn = get_connection(settings)
+    try:
+        result = run_index(conn)
+        return result
+    finally:
+        conn.close()
+
+
+@app.get("/people/search")
+async def people_search(q: str, limit: int = 20):
+    return run_search(q, limit=limit)
