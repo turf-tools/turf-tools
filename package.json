@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "setup": "pnpm install && cd apps/data && uv sync",
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
     "dev": "concurrently -n web,native,data,search -c blue,green,yellow,magenta \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
     "dev:ios": "concurrently -n web,native,data,search -c blue,green,yellow,magenta \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
