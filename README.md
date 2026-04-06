@@ -7,9 +7,9 @@ Open source field organizing and canvassing platform. Very much a work in progre
 You'll need to have these installed to run the development environment.
 
 - [Node.js](https://nodejs.org/) >= 22.12
-- [pnpm](https://pnpm.io/) — enabled via `corepack enable`
-- [uv](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- [Quickwit](https://quickwit.io/) — `curl -L https://install.quickwit.io | sh` (move binary to `/usr/local/bin/`)
+- [pnpm](https://pnpm.io/) enabled via `corepack enable`
+- [uv](https://docs.astral.sh/uv/) `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- [Quickwit](https://quickwit.io/) `curl -L https://install.quickwit.io | sh` (move binary to `/usr/local/bin/`)
 - [Xcode](https://developer.apple.com/xcode/) (optional, for iOS simulator)
 
 ## Setup
@@ -20,6 +20,26 @@ Once the above are installed, run this to install both Node and Python dependenc
 pnpm setup
 ```
 
+## Architecture
+
+The overall structure is as follows:
+
+```
+apps/
+  web/       TanStack Start — admin UI, oRPC API, system orchestrator
+  native/    Expo/React Native — mobile canvassing app
+  data/      FastAPI + DuckDB — voter file processing, geocoding, search indexing
+
+packages/
+  db/        Drizzle schema + PGlite/Postgres client
+  utils/     Shared utilities (not yet used)
+```
+
+We leverage a two database design to get the best of both where needed:
+
+- **Postgres** (via Drizzle/PGlite) — operational data: users, campaigns, universes, turfs, canvass results
+- **DuckLake** (via DuckDB) — analytical columnar data: voter files, buildings, doors, universe members
+
 ## Development
 
 Start all services (web, native, data, search) by calling:
@@ -28,7 +48,7 @@ Start all services (web, native, data, search) by calling:
 pnpm dev
 ```
 
-This starts
+This starts:
 
 - `web` — TanStack Start admin UI and oPRC API (port 3000)
 - `native` — Expo web preview of the mobile app (port 8081)
@@ -37,9 +57,7 @@ This starts
 
 The first time you run `dev`, the web server automatically pushes the Postgres schema to PGlite and seeds a default organization and user. This will also happen anytime you run `pnpm clear` and then run `pnpm dev` again.
 
-### Individual services
-
-You can also start individual services with the following commands
+You can also start individual services with the following commands:
 
 ```bash
 pnpm dev:web
@@ -73,16 +91,18 @@ curl "http://localhost:8000/people/search?q=last_name:SMITH"
 
 ## Testing
 
-Run the unit tests with
+### Unit tests
+
+Run the unit tests with:
 
 ```bash
 pnpm test
 ```
 
-And run the type checks and linters with
+And run the type checks and linters with:
 
 ```bash
-pnpmcheck
+pnpm check
 ```
 
 ### Integration test
@@ -107,23 +127,3 @@ pnpm db:clear    # wipe PGlite data
 pnpm data:clear  # wipe DuckLake + Quickwit data
 pnpm clear       # wipe everything (PGlite + DuckLake + Quickwit)
 ```
-
-## Architecture
-
-The overall design is as follows:
-
-```
-apps/
-  web/       TanStack Start — admin UI, oRPC API, system orchestrator
-  native/    Expo/React Native — mobile canvassing app
-  data/      FastAPI + DuckDB — voter file processing, geocoding, search indexing
-
-packages/
-  db/        Drizzle schema + PGlite/Postgres client
-  utils/     Shared utilities (not yet used)
-```
-
-Two-database design:
-
-- **Postgres** (via Drizzle/PGlite) — operational data: users, campaigns, universes, turfs, canvass results
-- **DuckLake** (via DuckDB) — analytical columnar data: voter files, buildings, doors, universe members
