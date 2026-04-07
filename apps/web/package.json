@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
+    "@field-tools/db": "workspace:*",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/geist-mono": "^5.2.7",
     "@orpc/client": "^1.13.13",
@@ -23,7 +24,6 @@
     "@tanstack/react-query": "^5.96.1",
     "@tanstack/react-router": "^1",
     "@tanstack/react-start": "^1",
-    "@turf/db": "workspace:*",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "beta",

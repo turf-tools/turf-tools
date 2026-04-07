@@ -1,11 +1,11 @@
 {
-  "name": "turf",
+  "name": "field-tools",
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "setup": "pnpm install && cd apps/data && uv sync",
+    "bootstrap": "pnpm install && cd apps/data && uv sync",
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
     "dev": "concurrently -n web,native,data,search -c blue,green,yellow,magenta \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
     "dev:ios": "concurrently -n web,native,data,search -c blue,green,yellow,magenta \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
@@ -20,9 +20,9 @@
     "data:clear": "rm -f apps/data/ducklake.ducklake && rm -rf apps/data/local_data && rm -rf apps/data/qwdata && mkdir -p apps/data/qwdata",
     "db:setup": "pnpm db:push && pnpm db:seed",
     "db:clear": "rm -rf packages/db/local_db",
-    "db:seed": "pnpm --filter @turf/db run seed",
+    "db:seed": "pnpm --filter @field-tools/db run seed",
     "db:push": "pnpm db push",
-    "db": "pnpm --filter @turf/db run db",
+    "db": "pnpm --filter @field-tools/db run db",
     "prepare": "vp config"
   },
   "devDependencies": {

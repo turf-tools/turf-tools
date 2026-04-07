@@ -1,7 +1,7 @@
 import { createRouterClient } from "@orpc/server";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import type { Db } from "@turf/db";
+import type { Db } from "@field-tools/db";
 import { test } from "vite-plus/test";
 import { router } from "../src/rpc";
 

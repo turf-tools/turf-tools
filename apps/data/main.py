@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Turf Data Service", lifespan=lifespan)
+app = FastAPI(title="Data Service", lifespan=lifespan)
 
 
 class ImportRequest(BaseModel):
