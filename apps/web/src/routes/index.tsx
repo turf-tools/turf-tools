@@ -24,7 +24,7 @@ function Home() {
   return (
     <div className="flex min-h-screen items-center justify-center">
       <div className="text-center">
-        <h1 className="mb-8 text-4xl font-bold italic">Turf</h1>
+        <h1 className="mb-8 text-4xl font-bold italic">Field Tools</h1>
         <p className="text-md text-muted-foreground">
           RPC status: <span className="font-mono">{isLoading ? "loading..." : data?.status}</span>
         </p>

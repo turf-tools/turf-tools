@@ -41,7 +41,7 @@ export default function RootLayout() {
           headerBackTitle: "",
         }}
       >
-        <Stack.Screen name="index" options={{ title: "Turf" }} />
+        <Stack.Screen name="index" options={{ title: "Field Tools" }} />
         <Stack.Screen name="map" options={{ title: "Map" }} />
       </Stack>
     </QueryClientProvider>

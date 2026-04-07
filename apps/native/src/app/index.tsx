@@ -20,7 +20,7 @@ export default function HomeScreen() {
         className="mb-2 text-3xl text-foreground dark:text-foreground-dark"
         style={{ fontFamily: "Geist_700Bold", transform: [{ skewX: "-12deg" }] }}
       >
-        Turf
+        Field Tools
       </Text>
       <Text
         className="mb-8 text-center text-lg text-muted-foreground dark:text-muted-foreground-dark"
