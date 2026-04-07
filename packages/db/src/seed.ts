@@ -26,7 +26,7 @@ async function seed() {
     await db.insert(users).values({
       userId: USER_ID,
       organizationId: ORG_ID,
-      email: "admin@turf.tools",
+      email: "admin@field.tools",
       firstName: "Admin",
       lastName: "User",
       role: "admin",

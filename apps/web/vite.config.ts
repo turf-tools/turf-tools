@@ -14,7 +14,7 @@ export default defineConfig({
     port: 3000,
   },
   ssr: {
-    noExternal: ["@turf/db", "@electric-sql/pglite"],
+    noExternal: ["@field-tools/db", "@electric-sql/pglite"],
   },
   plugins: isTest
     ? []

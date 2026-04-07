@@ -1,4 +1,4 @@
-# Turf
+# Field Tools
 
 Open source field organizing and canvassing platform. Very much a work in progress.
 
@@ -17,7 +17,7 @@ You'll need to have these installed to run the development environment.
 Once the above are installed, run this to install both Node and Python dependencies.
 
 ```bash
-pnpm setup
+pnpm bootstrap
 ```
 
 ## Architecture

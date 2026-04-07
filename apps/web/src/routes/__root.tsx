@@ -18,7 +18,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "Turf",
+        title: "Field Tools",
       },
     ],
     links: [{ rel: "stylesheet", href: appCss }],

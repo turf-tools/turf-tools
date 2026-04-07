@@ -1,17 +1,17 @@
 {
   "expo": {
-    "name": "turf-native",
-    "slug": "turf-native",
+    "name": "field-tools-native",
+    "slug": "field-tools-native",
     "version": "1.0.0",
-    "scheme": "turf",
+    "scheme": "field-tools",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.turf.native"
+      "bundleIdentifier": "tools.field.native"
     },
     "android": {
-      "package": "com.turf.nativeapp"
+      "package": "tools.field.nativeapp"
     },
     "web": {
       "bundler": "metro"

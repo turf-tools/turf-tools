@@ -1,5 +1,5 @@
 import { os } from "@orpc/server";
-import type { Db } from "@turf/db";
+import type { Db } from "@field-tools/db";
 
 export type ORPCContext = {
   db: Db;
