@@ -55,7 +55,7 @@ This starts:
 - `data` — FastAPI data service (including DuckDB/DuckLake) (port 8000)
 - `search` — Quickwit search engine (port 7280)
 
-The first time you run `dev`, the web server automatically pushes the Postgres schema to PGlite and seeds a default organization and user. This will also happen anytime you run `pnpm clear` and then run `pnpm dev` again.
+The first time you run `dev`, the web server automatically pushes the Postgres schema to PGlite. To populate both sides with mock data for development (seeded database plus voter file + geocoding + Quickwit index + sample turf data), run `pnpm mock` once everything is up.
 
 You can also start individual services with the following commands:
 
@@ -107,7 +107,7 @@ pnpm check
 
 ### Integration test
 
-The integration test runs the full pipeline (import, geocode, index, search) against running services. Run these three commands to wipe all local data, start all services, and then run a pipeline test.
+The integration test runs the data pipeline (import, geocode, index, search) against running services. Run these three commands to wipe all local data, start all services, and then run a pipeline test.
 
 ```bash
 pnpm clear
@@ -120,10 +120,12 @@ pnpm test:integration
 These subcommands help manage data lifecycle during testing:
 
 ```bash
-pnpm db:setup    # push schema + seed (runs automatically with dev:web)
+pnpm db:setup    # push schema (runs automatically with dev:web)
 pnpm db:push     # push drizzle schema to PGlite
-pnpm db:seed     # seed default org + user
+pnpm db:mock     # populate Postgres with sample data
+pnpm data:mock   # populate DuckLake + Quickwit with sample data and turf
+pnpm mock        # both of the above
 pnpm db:clear    # wipe PGlite data
-pnpm data:clear  # wipe DuckLake + Quickwit data
-pnpm clear       # wipe everything (PGlite + DuckLake + Quickwit)
+pnpm data:clear  # wipe DuckLake + Quickwit + local turf blobs
+pnpm clear       # wipe everything (PGlite + DuckLake + Quickwit + turf blobs)
 ```

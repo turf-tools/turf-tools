@@ -9,7 +9,7 @@
   },
   "scripts": {
     "db": "drizzle-kit",
-    "seed": "tsx src/seed.ts"
+    "mock": "tsx src/mock.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.2",
