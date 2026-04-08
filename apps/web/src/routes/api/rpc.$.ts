@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RPCHandler } from "@orpc/server/fetch";
 import { db } from "@field-tools/db";
 import { router } from "../../rpc";
+import { loadUser } from "../../rpc/context";
 
 const handler = new RPCHandler(router);
 
@@ -19,9 +20,10 @@ export const Route = createFileRoute("/api/rpc/$")({
           return new Response(null, { status: 204, headers: corsHeaders });
         }
 
+        const user = await loadUser(db, request);
         const { response } = await handler.handle(request, {
           prefix: "/api/rpc",
-          context: { db, request },
+          context: { db, request, user },
         });
 
         const res = response ?? new Response("Not Found", { status: 404 });

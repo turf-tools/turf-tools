@@ -17,6 +17,9 @@ wheels/
 *.ducklake
 local_data/
 
+# Local turf data blobs (written by data:mock-turf)
+local_turfs/
+
 # Large fixture files (keep only ED-level subsets in git)
 fixtures/*-ad-[0-9]*.parquet
 !fixtures/*-ed-*.parquet
