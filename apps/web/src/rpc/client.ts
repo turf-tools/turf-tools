@@ -6,16 +6,21 @@ import { createIsomorphicFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import { db } from "@field-tools/db";
 import { router, type Router } from ".";
+import { loadUser } from "./context";
 
 const getClient = createIsomorphicFn()
   .server(() =>
     createRouterClient(router, {
-      context: async () => ({
-        db,
-        request: new Request("http://localhost", {
+      context: async () => {
+        const request = new Request("http://localhost", {
           headers: getRequestHeaders(),
-        }),
-      }),
+        });
+        return {
+          db,
+          request,
+          user: await loadUser(db, request),
+        };
+      },
     }),
   )
   .client(() => {
