@@ -9,6 +9,7 @@ from geocode import export_geojson, geocode_buildings
 from import_voter_file import import_voter_file
 from index_quickwit import clear_index, run_index, run_search
 from settings import get_settings
+from turf.storage import read_turf_data
 
 logger = logging.getLogger("uvicorn")
 
@@ -145,3 +146,12 @@ async def people_reindex():
 @app.get("/people/search")
 async def people_search(q: str, limit: int = 20):
     return run_search(q, limit=limit)
+
+
+@app.get("/turfs/{turf_id}/data")
+async def turfs_get_data(turf_id: str):
+    """Serve a turf data blob from storage."""
+    try:
+        return read_turf_data(settings, turf_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
