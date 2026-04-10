@@ -83,10 +83,10 @@ curl -X POST http://localhost:8000/voter-file/import \
 curl -X POST http://localhost:8000/buildings/geocode
 
 # Index into Quickwit for search
-curl -X POST http://localhost:8000/people/index
+curl -X POST http://localhost:8000/persons/index
 
 # Search
-curl "http://localhost:8000/people/search?q=last_name:SMITH"
+curl "http://localhost:8000/persons/search?q=last_name:SMITH"
 ```
 
 ## Testing

@@ -56,14 +56,14 @@ def main():
     print(f"   {len(geojson['features'])} buildings with coordinates")
 
     print("\n4. Indexing into Quickwit...")
-    resp = requests.post(f"{DATA_URL}/people/index", timeout=30)
+    resp = requests.post(f"{DATA_URL}/persons/index", timeout=30)
     resp.raise_for_status()
     result = resp.json()
     assert result["indexed"] == 537, f"Expected 537 indexed, got {result['indexed']}"
     print(f"   Indexed {result['indexed']} records")
 
     print("\n5. Searching...")
-    resp = requests.get(f"{DATA_URL}/people/search", params={"q": "last_name:FOK"}, timeout=10)
+    resp = requests.get(f"{DATA_URL}/persons/search", params={"q": "last_name:FOK"}, timeout=10)
     resp.raise_for_status()
     result = resp.json()
     assert result["total"] == 1, f"Expected 1 result for FOK, got {result['total']}"
@@ -71,7 +71,7 @@ def main():
     hit = result["hits"][0]
     print(f"   Found {result['total']} result for 'last_name:FOK': {hit['first_name']} {hit['last_name']}")
 
-    resp = requests.get(f"{DATA_URL}/people/search", params={"q": "smith"}, timeout=10)
+    resp = requests.get(f"{DATA_URL}/persons/search", params={"q": "smith"}, timeout=10)
     resp.raise_for_status()
     result = resp.json()
     assert result["total"] == 1, f"Expected 1 result for 'smith', got {result['total']}"
