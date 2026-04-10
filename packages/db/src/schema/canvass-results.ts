@@ -1,10 +1,11 @@
-import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { surveyQuestions, surveyResponseOptions } from "./surveys";
 import { turfs } from "./turfs";
 import { users } from "./users";
 
-export const canvassResultsPeople = pgTable("canvass_results_people", {
-  canvassResultPeopleId: uuid().defaultRandom().primaryKey(),
+export const canvassResultsPersons = pgTable("canvass_results_persons", {
+  canvassResultPersonId: uuid().defaultRandom().primaryKey(),
+  clientMutationId: text().unique(),
   userId: uuid()
     .notNull()
     .references(() => users.userId),
@@ -21,11 +22,13 @@ export const canvassResultsPeople = pgTable("canvass_results_people", {
   surveyQuestionId: uuid().references(() => surveyQuestions.surveyQuestionId),
   surveyResponseOptionId: uuid().references(() => surveyResponseOptions.surveyResponseOptionId),
   notes: text(),
+  empty: boolean().default(false),
   canvassedAt: timestamp({ withTimezone: true }).notNull(),
 });
 
 export const canvassResultsDoors = pgTable("canvass_results_doors", {
   canvassResultDoorId: uuid().defaultRandom().primaryKey(),
+  clientMutationId: text().unique(),
   doorId: uuid(),
   turfId: uuid()
     .notNull()
@@ -39,6 +42,7 @@ export const canvassResultsDoors = pgTable("canvass_results_doors", {
 
 export const canvassResultsBuildings = pgTable("canvass_results_buildings", {
   canvassResultBuildingId: uuid().defaultRandom().primaryKey(),
+  clientMutationId: text().unique(),
   buildingId: uuid(),
   turfId: uuid()
     .notNull()

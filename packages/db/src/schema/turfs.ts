@@ -16,10 +16,11 @@ export const turfs = pgTable("turfs", {
     .notNull()
     .references(() => scripts.scriptId),
   name: text().notNull(),
+  listCode: text().unique(),
   geometry: jsonb(),
   dataUrl: text(),
-  doors: integer(),
-  people: integer(),
+  doorCount: integer(),
+  personCount: integer(),
   assignedTo: uuid().references(() => users.userId),
   createdBy: uuid()
     .notNull()
@@ -48,12 +49,14 @@ export type TurfDataPerson = {
   firstName: string | null;
   lastName: string | null;
   party: string | null;
+  age: number | null;
+  gender: string | null;
 };
 
 export type TurfDataDoor = {
   doorId: string;
   unit: string | null;
-  people: TurfDataPerson[];
+  persons: TurfDataPerson[];
 };
 
 export type TurfDataBuilding = {

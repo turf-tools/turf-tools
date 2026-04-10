@@ -18,6 +18,8 @@ Usage:
     pnpm data:mock
 """
 
+from datetime import date
+
 import duckdb
 
 from db import create_tables, get_connection
@@ -28,7 +30,7 @@ from settings import get_settings
 from turf.storage import blob_url, write_turf_data
 
 # Must match packages/db/src/mock.ts
-SEEDED_TURF_ID = "00000000-0000-0000-0000-000000000006"
+SEEDED_TURF_ID = "00000000-0000-4000-8000-000000000006"
 SEEDED_TURF_NAME = "Default Turf"
 DEFAULT_VOTER_FILE_ID = "nys_boe"
 DEFAULT_VOTER_FILE_VERSION = 1
@@ -83,21 +85,23 @@ def build_turf_data(
 
     people_rows = conn.execute(
         """
-        SELECT voter_id, door_id, first_name, last_name, party
+        SELECT voter_id, door_id, first_name, last_name, party, date_of_birth, gender
         FROM voter_file
         WHERE voter_file_id = ? AND voter_file_version = ?
         """,
         [voter_file_id, voter_file_version],
     ).fetchall()
 
-    people_by_door: dict[str, list[dict]] = {}
-    for voter_id, door_id, first_name, last_name, party in people_rows:
-        people_by_door.setdefault(str(door_id), []).append(
+    persons_by_door: dict[str, list[dict]] = {}
+    for voter_id, door_id, first_name, last_name, party, date_of_birth, gender in people_rows:
+        persons_by_door.setdefault(str(door_id), []).append(
             {
                 "personId": str(voter_id),
                 "firstName": first_name,
                 "lastName": last_name,
                 "party": party,
+                "age": _compute_age(date_of_birth),
+                "gender": gender,
             }
         )
 
@@ -108,10 +112,27 @@ def build_turf_data(
             {
                 "doorId": door_id_s,
                 "unit": unit,
-                "people": people_by_door.get(door_id_s, []),
+                "persons": persons_by_door.get(door_id_s, []),
             }
         )
 
+    # TODO(duplicate-coordinates): two buildings can end up at the exact same
+    # lat/lng, either because Census's geocoder collapsed them (it interpolates
+    # off TIGER street segment endpoints, which isn't sub-building precise) or
+    # because the voter file has two address forms for the same physical
+    # building. The native app handles this badly — stacked pins look like one,
+    # and tap routes to whichever feature MapLibre returns first.
+    #
+    # Two layers of fix when we get back to this:
+    #   1. DATA: a post-geocode reconciliation pass that detects buildings
+    #      sharing a coordinate and either merges them (if they're really one
+    #      building with two address forms) or applies a small spatial offset
+    #      (if they're really two buildings the geocoder couldn't distinguish).
+    #      TIGER-based geocoding (Track B) should make this much rarer.
+    #   2. UI: even with a data fix, defensive disambiguation in the native
+    #      app — when a tap hits multiple features at the same screen point,
+    #      show an iOS action sheet listing the options instead of silently
+    #      picking one. Lives in apps/native/src/components/map/TurfMap.tsx.
     buildings: list[dict] = []
     lats: list[float] = []
     lngs: list[float] = []
@@ -144,6 +165,13 @@ def build_turf_data(
         "geometry": _bbox_polygon(lats, lngs),
         "buildings": buildings,
     }
+
+
+def _compute_age(dob: date | None) -> int | None:
+    if dob is None:
+        return None
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
 
 def _bbox_polygon(lats: list[float], lngs: list[float]) -> dict:
@@ -191,12 +219,10 @@ def main() -> None:
         conn.close()
 
     write_turf_data(settings, SEEDED_TURF_ID, data)
-    counts = {
-        "buildings": len(data["buildings"]),
-        "doors": sum(len(b["doors"]) for b in data["buildings"]),
-        "people": sum(len(d["people"]) for b in data["buildings"] for d in b["doors"]),
-    }
-    print(f"   {counts['buildings']} buildings, {counts['doors']} doors, {counts['people']} people in turf blob")
+    n_buildings = len(data["buildings"])
+    n_doors = sum(len(b["doors"]) for b in data["buildings"])
+    n_persons = sum(len(d["persons"]) for b in data["buildings"] for d in b["doors"])
+    print(f"   {n_buildings} buildings, {n_doors} doors, {n_persons} persons in turf blob")
     print(f"   turf_id: {SEEDED_TURF_ID}")
     print(f"   url:     {blob_url(SEEDED_TURF_ID)}")
     print("\n✓ Mock data ready")

@@ -8,7 +8,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "tools.field.native"
+      "bundleIdentifier": "tools.field.native.dev"
     },
     "android": {
       "package": "tools.field.nativeapp"

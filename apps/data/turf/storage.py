@@ -1,7 +1,7 @@
 """Read/write turf data blobs.
 
 A turf data blob is a JSON file containing everything the native app needs to
-walk a turf (geometry, buildings, doors, people). See packages/db/src/turf-data.ts
+walk a turf (geometry, buildings, doors, persons). See packages/db/src/schema/turfs.ts
 for the schema.
 
 In dev, blobs are written to the local filesystem (``local_turfs/`` by default).

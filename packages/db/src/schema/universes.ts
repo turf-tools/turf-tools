@@ -15,6 +15,6 @@ export const universes = pgTable("universes", {
   createdBy: uuid()
     .notNull()
     .references(() => users.userId),
-  doors: integer(),
-  people: integer(),
+  doorCount: integer(),
+  personCount: integer(),
 });
