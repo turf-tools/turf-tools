@@ -33,6 +33,7 @@
     "expo-router": "~55.0.11",
     "expo-status-bar": "~55.0.5",
     "jotai": "^2.19.1",
+    "jotai-family": "^1.0.1",
     "lucide-react-native": "^1.7.0",
     "nativewind": "4.2.3",
     "react": "19.2.0",

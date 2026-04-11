@@ -15,10 +15,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { themeAtom } from "@/lib/atoms/theme";
 import { persister, queryClient } from "@/lib/query-client";
 
-// Harmless noise from react-native-screens / Animated when a screen unmounts
-// mid-transition. Known upstream issue with no real fix; silenced here so the
-// dev console stays clean.
-LogBox.ignoreLogs(["Sending `onAnimatedValueUpdate` with no listeners registered"]);
+// Harmless noise silenced to avoid warning popups.
+LogBox.ignoreLogs([
+  "Sending `onAnimatedValueUpdate` with no listeners registered",
+  "MapLibre warning",
+]);
 
 void SplashScreen.preventAutoHideAsync();
 

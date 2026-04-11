@@ -14,7 +14,7 @@ type Props = {
 // check badge — light blue background, dark blue icon, no border.
 export function Pill({ children, variant = "default", icon }: Props) {
   const bgClass =
-    variant === "primary" ? "bg-blue-light dark:bg-blue-light-dark" : "bg-muted dark:bg-muted-dark";
+    variant === "primary" ? "bg-blue-light dark:bg-blue-light-dark" : "bg-badge dark:bg-badge-dark";
   const textClass =
     variant === "primary"
       ? "font-sans text-lg text-blue-dark dark:text-blue-dark-dark"

@@ -21,6 +21,8 @@ module.exports = {
         "primary-foreground": "#fcfcfc",
         "primary-dark": "#ededed",
         "primary-foreground-dark": "#1b1b1b",
+        badge: "#DEDEDE",
+        "badge-dark": "#333333",
         muted: "#f5f5f5",
         "muted-foreground": "#888888",
         "muted-dark": "#333333",

@@ -2,8 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Check, Scroll, Speech } from "lucide-react-native";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
+import Reanimated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@field-tools/db/schema";
 import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
@@ -14,6 +18,7 @@ import {
   isLocallyRecorded,
   localResultsAtom,
   type LocalResultsMap,
+  useSetLocalResult,
 } from "@/lib/local-results";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
@@ -76,7 +81,6 @@ export default function BuildingScreen() {
 
   const handleNextPress = () => {
     if (!building) return;
-    // Find the next unmarked person in THIS building.
     const personsInBuilding = building.doors.flatMap((d) => d.persons);
     const nextInBuilding = personsInBuilding.find(
       (p) => !isLocallyRecorded(allResults, p.personId),
@@ -85,7 +89,6 @@ export default function BuildingScreen() {
       router.push(`/turfs/${turfId}/persons/${nextInBuilding.personId}`);
       return;
     }
-    // Building complete — offer to return to list or go to next building.
     const nextBuilding = indexes?.buildingsInOrder?.find((b) => {
       if (b.buildingId === buildingId) return false;
       return b.doors.some((d) => d.persons.some((p) => !isLocallyRecorded(allResults, p.personId)));
@@ -111,7 +114,7 @@ export default function BuildingScreen() {
   };
 
   const handleStubPress = (action: string) => {
-    Alert.alert("Coming soon", `${action} is not implemented yet.`);
+    Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   };
 
   useScreenNav({
@@ -167,7 +170,7 @@ function DoorSection({
       >
         {unitLabel}
       </Text>
-      <View>
+      <View style={{ marginBottom: -7 }}>
         {door.persons.map((person, idx) => (
           <Fragment key={person.personId}>
             {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
@@ -176,6 +179,34 @@ function DoorSection({
         ))}
       </View>
     </View>
+  );
+}
+
+const ACTION_WIDTH = 80;
+
+function LeftAction({
+  translation,
+  onTap,
+}: {
+  translation: SharedValue<number>;
+  onTap: () => void;
+}) {
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translation.value - ACTION_WIDTH }],
+  }));
+
+  return (
+    <Reanimated.View style={animatedStyle}>
+      <Pressable
+        onPress={onTap}
+        className="h-full items-center justify-center bg-blue-light dark:bg-blue-light-dark"
+        style={{ width: ACTION_WIDTH }}
+      >
+        <Text className="font-sans text-xl text-blue-dark dark:text-blue-dark-dark text-center">
+          Not{"\n"}home
+        </Text>
+      </Pressable>
+    </Reanimated.View>
   );
 }
 
@@ -193,6 +224,8 @@ function PersonRow({
   const survey = hasLocalSurvey(allResults, person.personId);
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
+  const setResult = useSetLocalResult(turfId);
+  const swipeableRef = useRef<SwipeableMethods>(null);
 
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
@@ -201,34 +234,60 @@ function PersonRow({
     router.push(`/turfs/${turfId}/persons/${person.personId}`);
   };
 
+  const markNotHome = useCallback(() => {
+    swipeableRef.current?.close();
+    setTimeout(() => {
+      setResult(person.personId, {
+        unavailableOutcome: "not_home",
+        surveyResponseOptionId: undefined,
+        surveyQuestionId: undefined,
+        empty: undefined,
+      });
+    }, 0);
+  }, [person.personId, setResult]);
+
+  const renderLeftActions = useCallback(
+    (_progress: SharedValue<number>, translation: SharedValue<number>) => (
+      <LeftAction translation={translation} onTap={markNotHome} />
+    ),
+    [markNotHome],
+  );
+
   return (
-    <Pressable
-      onPress={onPress}
-      className="flex-row items-center px-5 py-3.5 gap-3"
-      android_ripple={{ color: "#eee" }}
+    <ReanimatedSwipeable
+      ref={swipeableRef}
+      renderLeftActions={renderLeftActions}
+      overshootLeft={false}
+      hitSlop={{ left: -40 }}
     >
-      <View className="flex-1">
-        <Text
-          className="font-sans text-xl text-foreground dark:text-foreground-dark mb-1"
-          numberOfLines={1}
-        >
-          {toTitleCase(fullName)}
-        </Text>
-        <View className="flex-row items-center gap-1.5 mt-1 mb-1">
-          <Pill>{formatAgeGender(person)}</Pill>
-          <Pill>{formatParty(person)}</Pill>
-          <View className="flex-1" />
-          {note && <Pill icon={<Scroll size={18} color={iconColor} />} />}
-          {survey && <Pill icon={<Speech size={18} color={iconColor} />} />}
-          {recorded && (
-            <Pill
-              variant="primary"
-              icon={<Check size={18} color={isDark ? "#7ECDE0" : "#3D7385"} strokeWidth={2.5} />}
-            />
-          )}
+      <Pressable
+        onPress={onPress}
+        className="flex-row items-center px-5 py-3.5 bg-background dark:bg-[#141414]"
+        android_ripple={{ color: "#eee" }}
+      >
+        <View className="flex-1">
+          <Text
+            className="font-sans text-xl text-foreground dark:text-foreground-dark mb-1"
+            numberOfLines={1}
+          >
+            {toTitleCase(fullName)}
+          </Text>
+          <View className="flex-row items-center gap-1.5 mt-1">
+            <Pill>{formatAgeGender(person)}</Pill>
+            <Pill>{formatParty(person)}</Pill>
+            <View className="flex-1" />
+            {note && <Pill icon={<Scroll size={18} color={iconColor} />} />}
+            {survey && <Pill icon={<Speech size={18} color={iconColor} />} />}
+            {recorded && (
+              <Pill
+                variant="primary"
+                icon={<Check size={18} color={isDark ? "#7ECDE0" : "#3D7385"} strokeWidth={2.5} />}
+              />
+            )}
+          </View>
         </View>
-      </View>
-    </Pressable>
+      </Pressable>
+    </ReanimatedSwipeable>
   );
 }
 
