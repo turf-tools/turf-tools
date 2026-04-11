@@ -137,7 +137,7 @@ export default function PersonScreen() {
     ]);
   };
   const handleStubPress = (action: string) => {
-    Alert.alert("Coming soon", `${action} is not implemented yet.`);
+    Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   };
 
   const buildingAddress = building

@@ -62,7 +62,7 @@ export function TopNav({ title, showBack, variant = "default", isDark }: Props) 
         </View>
 
         {/* Right: spacer (menu button is rendered globally in root layout) */}
-        <View className="w-11" />
+        <View className="w-12" />
       </View>
     </View>
   );

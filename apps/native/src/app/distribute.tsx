@@ -12,7 +12,7 @@ export default function DistributeScreen() {
       <TopNav title="Distribute" showBack={true} isDark={isDark} />
       <View className="flex-1 items-center justify-center p-6">
         <Text
-          className="text-center text-base text-muted-foreground dark:text-muted-foreground-dark"
+          className="text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
           Coming soon

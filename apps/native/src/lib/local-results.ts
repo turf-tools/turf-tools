@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { atom, useAtomValue, useSetAtom } from "jotai";
-import { atomFamily } from "jotai/utils";
+import { atomFamily } from "jotai-family";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { client } from "@/rpc/client";
 
