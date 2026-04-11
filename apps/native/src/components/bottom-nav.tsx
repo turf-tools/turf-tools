@@ -7,6 +7,7 @@ type ButtonAction = "search" | "list" | "next" | "mic";
 type Props = {
   buttons: Array<ButtonAction | null>;
   onPress: (action: ButtonAction) => void;
+  isDark?: boolean;
 };
 
 const ICON_SIZE = 20;
@@ -21,7 +22,7 @@ const SHADOW = {
 // Floating bottom toolbar — white buttons with shadows, no separator line.
 // Labeled buttons (List, Next) are rounded pills with icon + text.
 // Icon-only buttons (Search, Plus, Mic) are white circles.
-export function BottomNav({ buttons, onPress }: Props) {
+export function BottomNav({ buttons, onPress, isDark = false }: Props) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -33,24 +34,35 @@ export function BottomNav({ buttons, onPress }: Props) {
         if (action === null) {
           return <View key={`empty-${idx}`} style={{ width: 44 }} />;
         }
-        return <NavButton key={action} action={action} onPress={() => onPress(action)} />;
+        return (
+          <NavButton key={action} action={action} isDark={isDark} onPress={() => onPress(action)} />
+        );
       })}
     </View>
   );
 }
 
-function NavButton({ action, onPress }: { action: ButtonAction; onPress: () => void }) {
+function NavButton({
+  action,
+  isDark,
+  onPress,
+}: {
+  action: ButtonAction;
+  isDark: boolean;
+  onPress: () => void;
+}) {
   const label = getLabel(action);
+  const iconColor = isDark ? "#ededed" : "#1b1b1b";
 
   if (label) {
     return (
       <Pressable
         onPress={onPress}
-        className="flex-1 flex-row items-center justify-center gap-2 px-5 h-11 rounded-full bg-white dark:bg-muted-dark active:opacity-60"
+        className="flex-1 flex-row items-center justify-center gap-2 px-5 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={SHADOW}
         hitSlop={4}
       >
-        {getIcon(action)}
+        {getIcon(action, iconColor)}
         <Text className="font-sans text-xl text-foreground dark:text-foreground-dark">{label}</Text>
       </Pressable>
     );
@@ -59,17 +71,16 @@ function NavButton({ action, onPress }: { action: ButtonAction; onPress: () => v
   return (
     <Pressable
       onPress={onPress}
-      className="items-center justify-center w-11 h-11 rounded-full bg-white dark:bg-muted-dark active:opacity-60"
+      className="items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
       style={SHADOW}
       hitSlop={4}
     >
-      {getIcon(action)}
+      {getIcon(action, iconColor)}
     </Pressable>
   );
 }
 
-function getIcon(action: ButtonAction) {
-  const color = "#1b1b1b";
+function getIcon(action: ButtonAction, color: string) {
   switch (action) {
     case "search":
       return <Search size={ICON_SIZE} color={color} strokeWidth={2} />;

@@ -17,7 +17,7 @@ export function Button({ title, variant = "primary", icon, onPress }: ButtonProp
       className={`rounded-lg px-6 py-3 ${
         isPrimary
           ? "bg-primary dark:bg-primary-dark"
-          : "border border-border bg-white dark:border-border-dark dark:bg-background-dark"
+          : "border border-border bg-surface dark:border-border-dark dark:bg-surface-dark"
       }`}
       style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
     >

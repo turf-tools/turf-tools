@@ -10,13 +10,14 @@ import Supercluster from "supercluster";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@field-tools/db/schema";
-import { isMaptilerKeyConfigured, MAPTILER_STYLE_URL } from "@/lib/maptiler";
+import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { LabelLayers } from "./labels";
 
 type Props = {
   turf: TurfData;
   recordedBuildingIds: Set<string>;
   onBuildingPress?: (buildingId: string) => void;
+  isDark?: boolean;
   // Pixels to reserve at the bottom of the map when auto-fitting bounds.
   // The List screen uses this to keep the buildings above the bottom sheet.
   bottomInset?: number;
@@ -59,7 +60,13 @@ type ClusterProps = {
 // aggregation doesn't propagate values onto cluster features in this version,
 // and getClusterExpansionZoom is unreliable for tightly-packed clusters.
 // Doing it in JS gives us full control and reliable behavior.
-export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInset = 0 }: Props) {
+export function TurfMap({
+  turf,
+  recordedBuildingIds,
+  onBuildingPress,
+  isDark = false,
+  bottomInset = 0,
+}: Props) {
   const buildingFeatures = useMemo(
     () => buildBuildingFeatures(turf.buildings, recordedBuildingIds),
     [turf.buildings, recordedBuildingIds],
@@ -217,7 +224,7 @@ export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInse
   return (
     <MapView
       style={styles.map}
-      mapStyle={MAPTILER_STYLE_URL}
+      mapStyle={getMaptilerStyleUrl(isDark)}
       attributionEnabled
       logoEnabled={false}
       onDidFinishLoadingMap={handleMapLoaded}
@@ -226,7 +233,7 @@ export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInse
     >
       <Camera ref={cameraRef} />
 
-      <LabelLayers />
+      <LabelLayers isDark={isDark} />
 
       <ShapeSource id={BUILDINGS_SOURCE_ID} shape={visibleFeatures} onPress={handlePress}>
         {/* Shadow layers — render BEFORE the main pin/cluster layers so they
@@ -283,10 +290,10 @@ export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInse
             circleColor: [
               "case",
               ["==", ["get", "recordedCount"], ["get", "point_count"]],
-              "hsl(199, 89%, 80%)", // light blue when fully canvassed
-              "hsl(0, 0%, 88%)", // muted gray otherwise
+              isDark ? "#1A3A45" : "hsl(199, 89%, 80%)",
+              isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
             ],
-            circleStrokeColor: "hsl(0, 0%, 20%)",
+            circleStrokeColor: isDark ? "hsl(0, 0%, 40%)" : "hsl(0, 0%, 20%)",
             circleStrokeWidth: 2,
           }}
         />
@@ -296,7 +303,7 @@ export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInse
           style={{
             textField: ["get", "doorCount"],
             textSize: ["interpolate", ["linear"], ["zoom"], 12, 12, 18, 16],
-            textColor: "hsl(0, 0%, 10%)",
+            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
             textAllowOverlap: true,
             textIgnorePlacement: true,
           }}
@@ -311,10 +318,10 @@ export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInse
             circleColor: [
               "case",
               ["==", ["get", "recorded"], true],
-              "hsl(199, 89%, 80%)",
-              "hsl(0, 0%, 100%)",
+              isDark ? "#1A3A45" : "hsl(199, 89%, 80%)",
+              isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
             ],
-            circleStrokeColor: "hsl(0, 0%, 20%)",
+            circleStrokeColor: isDark ? "hsl(0, 0%, 40%)" : "hsl(0, 0%, 20%)",
             circleStrokeWidth: 1.5,
           }}
         />
@@ -324,7 +331,7 @@ export function TurfMap({ turf, recordedBuildingIds, onBuildingPress, bottomInse
           style={{
             textField: ["get", "doorCount"],
             textSize: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 14],
-            textColor: "hsl(0, 0%, 10%)",
+            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
             textAllowOverlap: true,
             textIgnorePlacement: true,
           }}

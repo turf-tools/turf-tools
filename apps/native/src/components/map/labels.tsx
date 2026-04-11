@@ -17,7 +17,7 @@ import { MAPTILER_OPENMAPTILES_TILEJSON_URL } from "@/lib/maptiler";
 
 const LABELS_SOURCE_ID = "labels-omt";
 
-export function LabelLayers() {
+export function LabelLayers({ isDark = false }: { isDark?: boolean }) {
   return (
     <>
       <VectorSource id={LABELS_SOURCE_ID} url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
@@ -31,8 +31,8 @@ export function LabelLayers() {
             symbolPlacement: "line",
             textField: ["coalesce", ["get", "name:en"], ["get", "name"]],
             textSize: ["interpolate", ["linear"], ["zoom"], 14, 9, 18, 13],
-            textColor: "hsl(0, 0%, 10%)",
-            textHaloColor: "hsla(0, 0%, 100%, 0.97)",
+            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+            textHaloColor: isDark ? "hsla(0, 0%, 0%, 0.8)" : "hsla(0, 0%, 100%, 0.97)",
             textHaloWidth: 1,
           }}
         />
