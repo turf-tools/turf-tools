@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Ban, Check, Pencil, Scroll, Speech } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
@@ -15,10 +15,11 @@ import {
 } from "react-native";
 import type { TurfDataPerson } from "@field-tools/db/schema";
 import { Pill } from "@/components/pill";
-import { useBottomNav } from "@/lib/bottom-nav-context";
+import { useScreenNav } from "@/lib/nav-context";
 import { WideButton } from "@/components/wide-button";
 import { isLocallyRecorded, localResultsAtom, useSetLocalResult } from "@/lib/local-results";
 import { openSheetAtom } from "@/lib/atoms/sheet";
+import { themeAtom } from "@/lib/atoms/theme";
 import { toTitleCase } from "@/lib/format";
 import { buildTurfIndexes, useTurfData } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
@@ -69,6 +70,10 @@ export default function PersonScreen() {
   const setResult = useSetLocalResult(turfId);
   const setOpenSheet = useSetAtom(openSheetAtom);
   const firstQuestion = scriptQuery.data?.questions?.[0];
+  const theme = useAtomValue(themeAtom);
+  const isDark = theme === "dark";
+  const iconColor = isDark ? "#ededed" : "#1b1b1b";
+  const mutedIconColor = isDark ? "#666" : "#888";
 
   // Optimistic local state for instant visual feedback. The jotai atom
   // (setResult) persists to storage and notifies other screens, but its
@@ -135,10 +140,18 @@ export default function PersonScreen() {
     Alert.alert("Coming soon", `${action} is not implemented yet.`);
   };
 
-  useBottomNav(["search", "list", "next", "mic"], (action) => {
-    if (action === "list") handleListPress();
-    else if (action === "next") handleNextPress();
-    else handleStubPress(action);
+  const buildingAddress = building
+    ? toTitleCase([building.address.houseNumber, building.address.street].filter(Boolean).join(" "))
+    : "";
+
+  useScreenNav({
+    title: buildingAddress || "Person",
+    bottomButtons: ["search", "list", "next", "mic"],
+    onBottomPress: (action) => {
+      if (action === "list") handleListPress();
+      else if (action === "next") handleNextPress();
+      else handleStubPress(action);
+    },
   });
 
   // Loading / error states
@@ -153,7 +166,6 @@ export default function PersonScreen() {
   if (!person || !door || !building) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Stack.Screen options={{ title: "Person" }} />
         <Text className="font-sans-bold text-red-dark mb-1">Person not found</Text>
         <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark">
           personId: {personId}
@@ -175,13 +187,9 @@ export default function PersonScreen() {
     !!optimistic?.surveyResponseOptionId && !optimistic?.unavailableOutcome && !optimistic?.empty;
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
-  const buildingAddress = toTitleCase(
-    [building.address.houseNumber, building.address.street].filter(Boolean).join(" "),
-  );
 
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
-      <Stack.Screen options={{ title: buildingAddress || "Person" }} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         className="flex-1"
@@ -196,12 +204,14 @@ export default function PersonScreen() {
               <Pill>{formatAgeGender(person)}</Pill>
               <Pill>{formatParty(person)}</Pill>
               <View className="flex-1" />
-              {noteExists && <Pill icon={<Scroll size={18} color="#1b1b1b" />} />}
-              {surveyExists && <Pill icon={<Speech size={18} color="#1b1b1b" />} />}
+              {noteExists && <Pill icon={<Scroll size={18} color={iconColor} />} />}
+              {surveyExists && <Pill icon={<Speech size={18} color={iconColor} />} />}
               {recorded && (
                 <Pill
                   variant="primary"
-                  icon={<Check size={18} color="#3D7385" strokeWidth={2.5} />}
+                  icon={
+                    <Check size={18} color={isDark ? "#7ECDE0" : "#3D7385"} strokeWidth={2.5} />
+                  }
                 />
               )}
             </View>
@@ -211,7 +221,7 @@ export default function PersonScreen() {
           <View className="px-5 py-3 gap-2">
             <WideButton
               label="Contact not available"
-              icon={<Ban size={18} color={mode === "unavailable" ? "#1b1b1b" : "#888"} />}
+              icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
               selected={mode === "unavailable"}
               onPress={() => {
                 if (mode === "unavailable") {
@@ -226,7 +236,7 @@ export default function PersonScreen() {
             />
             <WideButton
               label="Add a note"
-              icon={<Pencil size={18} color={mode === "note" ? "#1b1b1b" : "#888"} />}
+              icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
               selected={mode === "note"}
               onPress={() => setMode(mode === "note" ? "script" : "note")}
             />
@@ -295,7 +305,7 @@ export default function PersonScreen() {
                   <View className="flex-1">
                     <WideButton
                       label="Submit"
-                      variant="action"
+                      variant="submit"
                       onPress={() => {
                         if (!optimistic?.unavailableOutcome) {
                           Alert.alert("Required", "Please select a reason before submitting.");
@@ -355,11 +365,11 @@ function ScriptContent({
   if (!question) return null;
 
   return (
-    <View className="gap-4">
-      <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark leading-6">
+    <View className="gap-4 mb-6">
+      <Text className="font-sans-bold text-lg text-foreground dark:text-muted-foreground-dark leading-6">
         {script.name}
       </Text>
-      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark">
+      <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
         {question.text}
       </Text>
       <View className="gap-2">
@@ -378,7 +388,7 @@ function ScriptContent({
           <View className="flex-1">
             <WideButton
               label="Submit"
-              variant="action"
+              variant="submit"
               onPress={() => {
                 if (!selectedOptionId) {
                   Alert.alert("Required", "Please select a response before submitting.");
@@ -404,6 +414,7 @@ function NoteContent({
   onSubmitNote: (text: string) => void;
   onCancel: () => void;
 }) {
+  const isDark = useAtomValue(themeAtom) === "dark";
   const [focused, setFocused] = useState(false);
   const [pendingText, setPendingText] = useState("");
 
@@ -422,9 +433,9 @@ function NoteContent({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         placeholder="Type a note..."
-        placeholderTextColor="#999"
+        placeholderTextColor={isDark ? "#666" : "#999"}
         multiline
-        className={`font-sans text-lg text-foreground dark:text-foreground-dark bg-white dark:bg-background-dark border rounded-lg p-4 min-h-[120px] ${
+        className={`font-sans text-lg text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border rounded-lg p-4 min-h-[120px] ${
           focused
             ? "border-foreground dark:border-foreground-dark"
             : "border-border dark:border-border-dark"
@@ -442,7 +453,7 @@ function NoteContent({
           <WideButton label="Cancel" variant="action" onPress={onCancel} />
         </View>
         <View className="flex-1">
-          <WideButton label="Submit" variant="action" onPress={handleSubmit} />
+          <WideButton label="Submit" variant="submit" onPress={handleSubmit} />
         </View>
       </View>
       {notes.length > 0 && (

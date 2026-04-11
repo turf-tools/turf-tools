@@ -1,16 +1,17 @@
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { useQuery } from "@tanstack/react-query";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, useWindowDimensions, View } from "react-native";
 import type { TurfDataBuilding } from "@field-tools/db/schema";
-import { DoorClosed, UserRound } from "lucide-react-native";
+import { Check, DoorClosed, UserRound } from "lucide-react-native";
 import { TurfMap } from "@/components/map/turf-map";
 import { toTitleCase } from "@/lib/format";
 import { Pill } from "@/components/pill";
-import { useBottomNav } from "@/lib/bottom-nav-context";
+import { useScreenNav } from "@/lib/nav-context";
 import { isLocallyRecorded, localResultsAtom, useSeedFromServer } from "@/lib/local-results";
+import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { client } from "@/rpc/client";
@@ -31,6 +32,12 @@ export default function TurfListScreen() {
     enabled: !!turfId,
   });
   const turfDataQuery = useTurfData(turfMetaQuery.data?.dataUrl ?? null);
+
+  // Track the active turf so Settings can enable Sync.
+  const setCurrentTurfId = useSetAtom(currentTurfIdAtom);
+  useEffect(() => {
+    setCurrentTurfId(turfId);
+  }, [turfId, setCurrentTurfId]);
 
   // Seed local results from server on first load.
   useSeedFromServer(turfId);
@@ -73,8 +80,11 @@ export default function TurfListScreen() {
     }
   }, [shouldOpenSheet, setOpenSheet]);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetOpenRef = useRef(false);
   const onSheetChange = useCallback((index: number) => {
-    setSheetOpen(index >= 1);
+    const open = index >= 1;
+    sheetOpenRef.current = open;
+    setSheetOpen(open);
   }, []);
 
   const bottomInset = useMemo(() => {
@@ -98,14 +108,21 @@ export default function TurfListScreen() {
     Alert.alert("Coming soon", `${action} is not implemented yet.`);
   }, []);
 
-  useBottomNav(["search", "list", "next", "mic"], (action) => {
-    if (action === "list") {
-      sheetRef.current?.snapToIndex(sheetOpen ? 0 : 1);
-    } else if (action === "next") {
-      handleNextPress();
-    } else {
-      handleStubPress(action);
-    }
+  const listTitle = turfMetaQuery.data?.listCode ? `List ${turfMetaQuery.data.listCode}` : "Turf";
+
+  useScreenNav({
+    title: listTitle,
+    showBack: false,
+    bottomButtons: ["search", "list", "next", "mic"],
+    onBottomPress: (action) => {
+      if (action === "list") {
+        sheetRef.current?.snapToIndex(sheetOpenRef.current ? 0 : 1);
+      } else if (action === "next") {
+        handleNextPress();
+      } else {
+        handleStubPress(action);
+      }
+    },
   });
 
   // The handle needs inline styles because @gorhom/bottom-sheet's
@@ -118,7 +135,7 @@ export default function TurfListScreen() {
           paddingTop: 14,
           paddingBottom: 22,
           alignItems: "center",
-          backgroundColor: isDark ? "#262626" : "#ffffff",
+          backgroundColor: isDark ? "#141414" : "#fcfcfc",
           borderTopLeftRadius: 16,
           borderTopRightRadius: 16,
         }}
@@ -209,22 +226,14 @@ export default function TurfListScreen() {
     );
   }
 
-  const listTitle = turfMetaQuery.data?.listCode ? `List ${turfMetaQuery.data.listCode}` : "Turf";
-
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
-      <Stack.Screen
-        options={{
-          title: listTitle,
-          headerBackVisible: false,
-          gestureEnabled: false,
-        }}
-      />
       <View className="flex-1">
         <TurfMap
           turf={turfDataQuery.data}
           recordedBuildingIds={recordedBuildingIds}
           onBuildingPress={openBuilding}
+          isDark={isDark}
           bottomInset={bottomInset}
         />
       </View>
@@ -236,7 +245,7 @@ export default function TurfListScreen() {
         enableDynamicSizing={false}
         enablePanDownToClose={false}
         onChange={onSheetChange}
-        backgroundStyle={{ backgroundColor: isDark ? "#262626" : "#ffffff" }}
+        backgroundStyle={{ backgroundColor: isDark ? "#141414" : "#fcfcfc" }}
         handleComponent={renderHandle}
       >
         <BottomSheetFlatList
@@ -246,7 +255,7 @@ export default function TurfListScreen() {
           renderItem={({ item }) => (
             <BuildingRow
               building={item}
-              recorded={recordedBuildingIds.has(item.buildingId)}
+              allResults={allResults}
               onPress={() => openBuilding(item.buildingId)}
             />
           )}
@@ -260,14 +269,19 @@ export default function TurfListScreen() {
 
 function BuildingRow({
   building,
-  recorded,
+  allResults,
   onPress,
 }: {
   building: TurfDataBuilding;
-  recorded: boolean;
+  allResults: import("@/lib/local-results").LocalResultsMap;
   onPress: () => void;
 }) {
-  const personCount = building.doors.reduce((sum, d) => sum + d.persons.length, 0);
+  const isDark = useAtomValue(themeAtom) === "dark";
+  const iconColor = isDark ? "#ededed" : "#1b1b1b";
+  const persons = building.doors.flatMap((d) => d.persons);
+  const personCount = persons.length;
+  const recordedCount = persons.filter((p) => isLocallyRecorded(allResults, p.personId)).length;
+  const allRecorded = recordedCount > 0 && recordedCount === personCount;
   const address = formatBuildingAddress(building);
 
   return (
@@ -281,17 +295,29 @@ function BuildingRow({
           {toTitleCase(address)}
         </Text>
         <View className="flex-row items-center gap-1.5 mt-1 mb-1">
-          <Pill icon={<DoorClosed size={16} color="#1b1b1b" strokeWidth={2.5} />}>
+          <Pill icon={<DoorClosed size={16} color={iconColor} strokeWidth={2.5} />}>
             {building.doors.length}
           </Pill>
-          <Pill icon={<UserRound size={16} color="#1b1b1b" strokeWidth={2.5} />}>
+          <Pill icon={<UserRound size={16} color={iconColor} strokeWidth={2.5} />}>
             {personCount}
           </Pill>
+          <View className="flex-1" />
+          {recordedCount > 0 && (
+            <Pill
+              variant={allRecorded ? "primary" : "default"}
+              icon={
+                <Check
+                  size={16}
+                  color={allRecorded ? (isDark ? "#7ECDE0" : "#3D7385") : iconColor}
+                  strokeWidth={2.5}
+                />
+              }
+            >
+              {recordedCount}
+            </Pill>
+          )}
         </View>
       </View>
-      {recorded && (
-        <View className="w-[18px] h-[18px] rounded-full bg-blue-light border border-foreground dark:border-foreground-dark" />
-      )}
     </Pressable>
   );
 }

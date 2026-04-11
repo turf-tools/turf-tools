@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { atom, useAtomValue, useSetAtom } from "jotai";
 import { atomFamily } from "jotai/utils";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { client } from "@/rpc/client";
 
 // A single person's canvass result. One per person per turf. Writes are
@@ -193,28 +193,50 @@ export function useSeedFromServer(turfId: string) {
   }, [turfId, setResults]);
 }
 
-// Background sync: push all dirty entries to the server. Call this from
-// a timer or manual "sync now" button.
-const isSyncingAtom = atom(false);
-
-export function useSync(
+// Clear all local results for a turf (dev tool).
+export async function clearLocalResults(
   turfId: string,
-  buildingIdByPersonId: Map<string, string>,
-  doorIdByPersonId: Map<string, string>,
+  setResults?: (value: LocalResultsMap) => void,
 ) {
-  const results = useAtomValue(localResultsAtom(turfId));
-  const setResults = useSetAtom(localResultsAtom(turfId));
-  const isSyncing = useAtomValue(isSyncingAtom);
-  const setIsSyncing = useSetAtom(isSyncingAtom);
+  const key = `local-results:${turfId}`;
+  await AsyncStorage.removeItem(key);
+  // Flush in-memory state so all subscribers update immediately
+  if (setResults) setResults({});
+}
+
+// Sync: push all dirty entries to the server. Called manually from Settings.
+// Fetches turf data to resolve building/door IDs internally.
+
+export function useSync(turfId: string | null) {
+  const results = useAtomValue(localResultsAtom(turfId ?? ""));
+  const setResults = useSetAtom(localResultsAtom(turfId ?? ""));
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const sync = useCallback(async () => {
-    if (isSyncing) return;
+    if (!turfId || isSyncing) return;
     setIsSyncing(true);
     try {
       const dirtyEntries = Object.entries(results).filter(([, r]) => r.dirty);
       if (dirtyEntries.length === 0) return;
 
-      // Submit each dirty entry individually (reusing existing RPC)
+      // Fetch turf metadata + data blob to resolve building/door IDs.
+      const turfMeta = await client.turfs.getById({ turfId });
+      if (!turfMeta?.dataUrl) throw new Error("No turf data URL");
+      const resp = await fetch(turfMeta.dataUrl);
+      const turfData = await resp.json();
+
+      // Build lookup maps
+      const buildingIdByPersonId = new Map<string, string>();
+      const doorIdByPersonId = new Map<string, string>();
+      for (const building of turfData.buildings) {
+        for (const door of building.doors) {
+          for (const person of door.persons) {
+            buildingIdByPersonId.set(person.personId, building.buildingId);
+            doorIdByPersonId.set(person.personId, door.doorId);
+          }
+        }
+      }
+
       const settled = await Promise.allSettled(
         dirtyEntries.flatMap(([personId, r]) => {
           const buildingId = buildingIdByPersonId.get(personId) ?? "";
@@ -263,8 +285,6 @@ export function useSync(
             );
           }
 
-          // Notes: submit any that haven't been synced
-          // (For now, send all notes — the clientMutationId dedup prevents duplicates)
           for (const note of r.notes) {
             mutations.push(
               client.canvass.submitPersonResult({
@@ -296,26 +316,7 @@ export function useSync(
     } finally {
       setIsSyncing(false);
     }
-  }, [
-    results,
-    turfId,
-    buildingIdByPersonId,
-    doorIdByPersonId,
-    isSyncing,
-    setIsSyncing,
-    setResults,
-  ]);
-
-  // Auto-sync every 10 minutes
-  useEffect(() => {
-    const interval = setInterval(
-      () => {
-        void sync();
-      },
-      10 * 60 * 1000,
-    );
-    return () => clearInterval(interval);
-  }, [sync]);
+  }, [results, turfId, isSyncing, setResults]);
 
   return { sync, isSyncing };
 }

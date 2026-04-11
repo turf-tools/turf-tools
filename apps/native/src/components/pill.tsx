@@ -13,10 +13,11 @@ type Props = {
 // with icons, status indicators, etc.). Primary variant is the "recorded"
 // check badge — light blue background, dark blue icon, no border.
 export function Pill({ children, variant = "default", icon }: Props) {
-  const bgClass = variant === "primary" ? "bg-blue-light" : "bg-[#DEDEDE] dark:bg-muted-dark";
+  const bgClass =
+    variant === "primary" ? "bg-blue-light dark:bg-blue-light-dark" : "bg-muted dark:bg-muted-dark";
   const textClass =
     variant === "primary"
-      ? "font-sans-bold text-lg text-blue-dark"
+      ? "font-sans text-lg text-blue-dark dark:text-blue-dark-dark"
       : "font-sans text-lg text-foreground dark:text-foreground-dark";
 
   return (

@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { router, Stack, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Check, Scroll, Speech } from "lucide-react-native";
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@field-tools/db/schema";
 import { Pill } from "@/components/pill";
-import { useBottomNav } from "@/lib/bottom-nav-context";
+import { useScreenNav } from "@/lib/nav-context";
 import { toTitleCase } from "@/lib/format";
 import {
   hasLocalNote,
@@ -16,6 +16,7 @@ import {
   type LocalResultsMap,
 } from "@/lib/local-results";
 import { openSheetAtom } from "@/lib/atoms/sheet";
+import { themeAtom } from "@/lib/atoms/theme";
 import { client } from "@/rpc/client";
 import { buildTurfIndexes, useTurfData } from "@/lib/turf-data";
 
@@ -40,6 +41,13 @@ export default function BuildingScreen() {
   const building = indexes?.buildingsById.get(buildingId);
   const setOpenSheet = useSetAtom(openSheetAtom);
 
+  // Defer rendering large buildings so the screen shows a spinner first.
+  const personCount = building?.doors.reduce((sum, d) => sum + d.persons.length, 0) ?? 0;
+  const [ready, setReady] = useState(personCount < 50);
+  if (!ready) {
+    setTimeout(() => setReady(true), 0);
+  }
+
   if (turfMetaQuery.isLoading || turfDataQuery.isLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
@@ -51,7 +59,6 @@ export default function BuildingScreen() {
   if (!building) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Stack.Screen options={{ title: "Building" }} />
         <Text className="font-sans-bold text-base text-red-dark mb-1">Building not found</Text>
         <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark">
           buildingId: {buildingId}
@@ -107,15 +114,26 @@ export default function BuildingScreen() {
     Alert.alert("Coming soon", `${action} is not implemented yet.`);
   };
 
-  useBottomNav(["search", "list", "next", "mic"], (action) => {
-    if (action === "list") handleListPress();
-    else if (action === "next") handleNextPress();
-    else handleStubPress(action);
+  useScreenNav({
+    title,
+    bottomButtons: ["search", "list", "next", "mic"],
+    onBottomPress: (action) => {
+      if (action === "list") handleListPress();
+      else if (action === "next") handleNextPress();
+      else handleStubPress(action);
+    },
   });
+
+  if (!ready) {
+    return (
+      <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
+        <ActivityIndicator />
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
-      <Stack.Screen options={{ title }} />
       <ScrollView>
         {building.doors.map((door, idx) => (
           <Fragment key={door.doorId}>
@@ -145,7 +163,7 @@ function DoorSection({
   return (
     <View>
       <Text
-        className={`font-sans-bold text-xl text-foreground dark:text-foreground-dark px-5 py-3.5 bg-muted dark:bg-muted-dark border-b border-border dark:border-border-dark ${isFirst ? "" : "border-t"}`}
+        className={`font-sans-bold text-xl text-foreground dark:text-foreground-dark px-5 py-3.5 bg-muted dark:bg-black border-b border-border dark:border-border-dark ${isFirst ? "" : "border-t"}`}
       >
         {unitLabel}
       </Text>
@@ -173,6 +191,8 @@ function PersonRow({
   const recorded = isLocallyRecorded(allResults, person.personId);
   const note = hasLocalNote(allResults, person.personId);
   const survey = hasLocalSurvey(allResults, person.personId);
+  const isDark = useAtomValue(themeAtom) === "dark";
+  const iconColor = isDark ? "#ededed" : "#1b1b1b";
 
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
@@ -198,10 +218,13 @@ function PersonRow({
           <Pill>{formatAgeGender(person)}</Pill>
           <Pill>{formatParty(person)}</Pill>
           <View className="flex-1" />
-          {note && <Pill icon={<Scroll size={18} color="#1b1b1b" />} />}
-          {survey && <Pill icon={<Speech size={18} color="#1b1b1b" />} />}
+          {note && <Pill icon={<Scroll size={18} color={iconColor} />} />}
+          {survey && <Pill icon={<Speech size={18} color={iconColor} />} />}
           {recorded && (
-            <Pill variant="primary" icon={<Check size={18} color="#3D7385" strokeWidth={2.5} />} />
+            <Pill
+              variant="primary"
+              icon={<Check size={18} color={isDark ? "#7ECDE0" : "#3D7385"} strokeWidth={2.5} />}
+            />
           )}
         </View>
       </View>
