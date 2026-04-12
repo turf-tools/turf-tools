@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Ban, Check, Pencil, Scroll, Speech } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,10 +21,10 @@ import { isLocallyRecorded, localResultsAtom, useSetLocalResult } from "@/lib/lo
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { toTitleCase } from "@/lib/format";
-import { buildTurfIndexes, useTurfData } from "@/lib/turf-data";
+import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
 
-type Mode = "script" | "unavailable" | "note";
+type Mode = "script" | "unavailable" | "note" | "view-notes";
 
 const UNAVAILABLE_OPTIONS: Array<{
   value: string;
@@ -42,24 +42,14 @@ export default function PersonScreen() {
     personId: string;
   }>();
 
-  const turfMetaQuery = useQuery({
-    queryKey: ["turf", turfId] as const,
-    queryFn: () => client.turfs.getById({ turfId }),
-    enabled: !!turfId,
-  });
-  const turfDataQuery = useTurfData(turfMetaQuery.data?.dataUrl ?? null);
+  const { meta, indexes, isLoading } = useTurf(turfId);
 
-  const scriptId = turfMetaQuery.data?.scriptId;
+  const scriptId = meta?.scriptId;
   const scriptQuery = useQuery({
     queryKey: ["script", scriptId] as const,
     queryFn: () => client.script.get({ scriptId: scriptId! }),
     enabled: !!scriptId,
   });
-
-  const indexes = useMemo(
-    () => (turfDataQuery.data ? buildTurfIndexes(turfDataQuery.data) : null),
-    [turfDataQuery.data],
-  );
   const person = indexes?.personsById.get(personId);
   const door = indexes?.doorByPersonId.get(personId);
   const building = indexes?.buildingByPersonId.get(personId);
@@ -81,7 +71,7 @@ export default function PersonScreen() {
   // the very next frame.
   const [optimistic, setOptimistic] = useState(localResult);
   useEffect(() => {
-    if (localResult) setOptimistic(localResult);
+    setOptimistic(localResult);
   }, [localResult]);
 
   const [mode, setMode] = useState<Mode>("script");
@@ -155,7 +145,7 @@ export default function PersonScreen() {
   });
 
   // Loading / error states
-  if (turfMetaQuery.isLoading || turfDataQuery.isLoading) {
+  if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
         <ActivityIndicator />
@@ -234,12 +224,38 @@ export default function PersonScreen() {
                 }
               }}
             />
-            <WideButton
-              label="Add a note"
-              icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
-              selected={mode === "note"}
-              onPress={() => setMode(mode === "note" ? "script" : "note")}
-            />
+            {noteExists ? (
+              <View className="flex-row gap-2">
+                <View className="flex-1">
+                  <WideButton
+                    label="Add a note"
+                    icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
+                    selected={mode === "note"}
+                    onPress={() => setMode(mode === "note" ? "script" : "note")}
+                  />
+                </View>
+                <View className="flex-1">
+                  <WideButton
+                    label="View notes"
+                    icon={
+                      <Scroll
+                        size={18}
+                        color={mode === "view-notes" ? iconColor : mutedIconColor}
+                      />
+                    }
+                    selected={mode === "view-notes"}
+                    onPress={() => setMode(mode === "view-notes" ? "script" : "view-notes")}
+                  />
+                </View>
+              </View>
+            ) : (
+              <WideButton
+                label="Add a note"
+                icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
+                selected={mode === "note"}
+                onPress={() => setMode(mode === "note" ? "script" : "note")}
+              />
+            )}
           </View>
 
           {/* Mode-specific content */}
@@ -328,10 +344,12 @@ export default function PersonScreen() {
                   ];
                   setOptimistic((prev) => ({ ...prev, notes: newNotes }));
                   setTimeout(() => setResult(personId, { notes: newNotes }), 0);
+                  setMode("script");
                 }}
                 onCancel={() => setMode("script")}
               />
             )}
+            {mode === "view-notes" && <NotesList notes={optimistic?.notes ?? []} className="" />}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -456,23 +474,37 @@ function NoteContent({
           <WideButton label="Submit" variant="submit" onPress={handleSubmit} />
         </View>
       </View>
-      {notes.length > 0 && (
-        <View>
-          {notes.map((note, idx) => (
-            <View key={idx}>
-              {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
-              <View className="flex-row py-3 gap-4">
-                <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-20">
-                  {formatNoteDate(note.canvassedAt)}
-                </Text>
-                <Text className="font-sans text-lg text-foreground dark:text-foreground-dark flex-1">
-                  {note.text}
-                </Text>
-              </View>
-            </View>
-          ))}
+      <NotesList notes={notes} />
+    </View>
+  );
+}
+
+function NotesList({
+  notes,
+  className = "mt-6",
+}: {
+  notes: Array<{ text: string; canvassedAt: string }>;
+  className?: string;
+}) {
+  if (notes.length === 0) return null;
+  return (
+    <View className={className}>
+      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark mb-3">
+        Notes
+      </Text>
+      {notes.map((note, idx) => (
+        <View key={idx}>
+          {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
+          <View className="flex-row py-3 gap-4">
+            <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-20">
+              {formatNoteDate(note.canvassedAt)}
+            </Text>
+            <Text className="font-sans text-lg text-foreground dark:text-foreground-dark flex-1">
+              {note.text}
+            </Text>
+          </View>
         </View>
-      )}
+      ))}
     </View>
   );
 }

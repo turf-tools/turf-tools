@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { atom, useAtomValue, useSetAtom } from "jotai";
 import { atomFamily } from "jotai-family";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert } from "react-native";
 import { client } from "@/rpc/client";
 
 // A single person's canvass result. One per person per turf. Writes are
@@ -22,10 +23,7 @@ export type LocalResultsMap = Record<string, LocalPersonResult>;
 // One atom per turf. In-memory for instant reads/writes. AsyncStorage
 // persistence is debounced — writes flush at most every 500ms so rapid
 // taps don't serialize the entire map to disk on each one.
-const FLUSH_DELAY_MS = 500;
-const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-function createDebouncedAtom(turfId: string) {
+function createResultsAtom(turfId: string) {
   const key = `local-results:${turfId}`;
   const baseAtom = atom<LocalResultsMap>({});
 
@@ -63,16 +61,7 @@ function createDebouncedAtom(turfId: string) {
         newValue = action as LocalResultsMap;
       }
       set(baseAtom, newValue);
-      // Debounced flush to AsyncStorage
-      const existing = flushTimers.get(key);
-      if (existing) clearTimeout(existing);
-      flushTimers.set(
-        key,
-        setTimeout(() => {
-          AsyncStorage.setItem(key, JSON.stringify(newValue)).catch(() => {});
-          flushTimers.delete(key);
-        }, FLUSH_DELAY_MS),
-      );
+      AsyncStorage.setItem(key, JSON.stringify(newValue)).catch(() => {});
     },
   );
 
@@ -92,7 +81,7 @@ function createDebouncedAtom(turfId: string) {
   return derivedAtom;
 }
 
-export const localResultsAtom = atomFamily((turfId: string) => createDebouncedAtom(turfId));
+export const localResultsAtom = atomFamily((turfId: string) => createResultsAtom(turfId));
 
 // Read a single person's result from the local store.
 export function useLocalResult(turfId: string, personId: string): LocalPersonResult | undefined {
@@ -158,24 +147,33 @@ export function useSeedFromServer(turfId: string) {
         const serverByPerson = new Map<string, LocalPersonResult>();
         for (const r of serverData.persons) {
           if (!r.voterId) continue;
-          const existing = serverByPerson.get(r.voterId);
           const at =
             typeof r.canvassedAt === "string" ? r.canvassedAt : r.canvassedAt.toISOString();
-          if (!existing || at > existing.lastModified) {
-            serverByPerson.set(r.voterId, {
-              surveyResponseOptionId: r.surveyResponseOptionId ?? undefined,
-              surveyQuestionId: r.surveyQuestionId ?? undefined,
-              unavailableOutcome: r.outcome ?? undefined,
-              notes: existing?.notes ?? [],
-              empty: r.empty ?? false,
+          serverByPerson.set(r.voterId, {
+            surveyResponseOptionId: r.surveyResponseOptionId ?? undefined,
+            surveyQuestionId: r.surveyQuestionId ?? undefined,
+            unavailableOutcome: r.outcome ?? undefined,
+            notes: [],
+            empty: r.empty ?? false,
+            lastModified: at,
+            dirty: false,
+          });
+        }
+        // Attach notes from the separate notes table
+        for (const n of serverData.notes) {
+          if (!n.personId) continue;
+          const entry = serverByPerson.get(n.personId);
+          const at =
+            typeof n.canvassedAt === "string" ? n.canvassedAt : n.canvassedAt.toISOString();
+          if (entry) {
+            entry.notes.push({ text: n.text, canvassedAt: at });
+          } else {
+            // Note exists but no person result — create a minimal entry
+            serverByPerson.set(n.personId, {
+              notes: [{ text: n.text, canvassedAt: at }],
               lastModified: at,
               dirty: false,
             });
-          }
-          // Accumulate notes
-          if (r.notes) {
-            const entry = serverByPerson.get(r.voterId)!;
-            entry.notes = [...entry.notes, { text: r.notes, canvassedAt: at }];
           }
         }
         // Merge: local dirty entries win, server fills the rest
@@ -186,9 +184,11 @@ export function useSeedFromServer(turfId: string) {
         }
         setResults(merged);
       })
-      .catch((err: unknown) => {
-        // eslint-disable-next-line no-console
-        console.error("[local-results] seed from server failed:", err);
+      .catch(() => {
+        Alert.alert(
+          "Could not load previous results from server",
+          "Check your internet connection and try re-entering the turf.",
+        );
       });
   }, [turfId, setResults]);
 }
@@ -207,61 +207,48 @@ export async function clearLocalResults(
 // Sync: push all dirty entries to the server. Called manually from Settings.
 // Fetches turf data to resolve building/door IDs internally.
 
-export function useSync(turfId: string | null) {
+export function useSync(
+  turfId: string | null,
+  indexes: {
+    buildingByPersonId: Map<string, { buildingId: string }>;
+    doorByPersonId: Map<string, { doorId: string }>;
+  } | null,
+) {
   const results = useAtomValue(localResultsAtom(turfId ?? ""));
   const setResults = useSetAtom(localResultsAtom(turfId ?? ""));
   const [isSyncing, setIsSyncing] = useState(false);
 
-  const sync = useCallback(async () => {
-    if (!turfId || isSyncing) return;
+  const sync = useCallback(async (): Promise<number> => {
+    if (!turfId || !indexes || isSyncing) return 0;
     setIsSyncing(true);
     try {
       const dirtyEntries = Object.entries(results).filter(([, r]) => r.dirty);
-      if (dirtyEntries.length === 0) return;
-
-      // Fetch turf metadata + data blob to resolve building/door IDs.
-      const turfMeta = await client.turfs.getById({ turfId });
-      if (!turfMeta?.dataUrl) throw new Error("No turf data URL");
-      const resp = await fetch(turfMeta.dataUrl);
-      const turfData = await resp.json();
-
-      // Build lookup maps
-      const buildingIdByPersonId = new Map<string, string>();
-      const doorIdByPersonId = new Map<string, string>();
-      for (const building of turfData.buildings) {
-        for (const door of building.doors) {
-          for (const person of door.persons) {
-            buildingIdByPersonId.set(person.personId, building.buildingId);
-            doorIdByPersonId.set(person.personId, door.doorId);
-          }
-        }
-      }
+      if (dirtyEntries.length === 0) return 0;
 
       const settled = await Promise.allSettled(
         dirtyEntries.flatMap(([personId, r]) => {
-          const buildingId = buildingIdByPersonId.get(personId) ?? "";
-          const doorId = doorIdByPersonId.get(personId) ?? "";
+          const buildingId = indexes.buildingByPersonId.get(personId)?.buildingId ?? "";
+          const doorId = indexes.doorByPersonId.get(personId)?.doorId ?? "";
+          const base = {
+            turfId,
+            buildingId,
+            doorId,
+            personId,
+            inputType: "mobile" as const,
+          };
           const mutations: Promise<unknown>[] = [];
 
           if (r.empty) {
             mutations.push(
               client.canvass.submitPersonResult({
-                clientMutationId: `${personId}-empty-${r.lastModified}`,
-                turfId,
-                buildingId,
-                doorId,
-                personId,
+                ...base,
                 payload: { kind: "empty" },
               }),
             );
           } else if (r.surveyResponseOptionId && r.surveyQuestionId) {
             mutations.push(
               client.canvass.submitPersonResult({
-                clientMutationId: `${personId}-survey-${r.lastModified}`,
-                turfId,
-                buildingId,
-                doorId,
-                personId,
+                ...base,
                 payload: {
                   kind: "survey",
                   surveyQuestionId: r.surveyQuestionId,
@@ -272,11 +259,7 @@ export function useSync(turfId: string | null) {
           } else if (r.unavailableOutcome) {
             mutations.push(
               client.canvass.submitPersonResult({
-                clientMutationId: `${personId}-outcome-${r.lastModified}`,
-                turfId,
-                buildingId,
-                doorId,
-                personId,
+                ...base,
                 payload: {
                   kind: "outcome",
                   outcome: r.unavailableOutcome as "not_home" | "deceased" | "hostile" | "moved",
@@ -287,13 +270,11 @@ export function useSync(turfId: string | null) {
 
           for (const note of r.notes) {
             mutations.push(
-              client.canvass.submitPersonResult({
-                clientMutationId: `${personId}-note-${note.canvassedAt}`,
+              client.canvass.submitNote({
                 turfId,
-                buildingId,
-                doorId,
                 personId,
-                payload: { kind: "note", text: note.text },
+                text: note.text,
+                canvassedAt: note.canvassedAt,
               }),
             );
           }
@@ -303,7 +284,16 @@ export function useSync(turfId: string | null) {
       );
 
       // Mark successfully synced entries as clean
-      const allSucceeded = settled.every((s) => s.status === "fulfilled");
+      const failed = settled.filter((s) => s.status === "rejected");
+      if (failed.length > 0) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[sync] Failed mutations:",
+          failed.map((f) => (f as PromiseRejectedResult).reason),
+        );
+        throw new Error(`${failed.length} mutation(s) failed`);
+      }
+      const allSucceeded = failed.length === 0;
       if (allSucceeded && dirtyEntries.length > 0) {
         const updated: LocalResultsMap = { ...results };
         for (const [personId] of dirtyEntries) {
@@ -313,10 +303,11 @@ export function useSync(turfId: string | null) {
         }
         setResults(updated);
       }
+      return dirtyEntries.length;
     } finally {
       setIsSyncing(false);
     }
-  }, [results, turfId, isSyncing, setResults]);
+  }, [results, turfId, indexes, isSyncing, setResults]);
 
   return { sync, isSyncing };
 }

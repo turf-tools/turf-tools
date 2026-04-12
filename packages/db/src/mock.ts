@@ -119,6 +119,7 @@ async function mock() {
   if (existingUniverse.length === 0) {
     await db.insert(universes).values({
       universeId: UNIVERSE_ID,
+      campaignId: CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Default Universe",
       voterFileId: DEFAULT_VOTER_FILE_ID,

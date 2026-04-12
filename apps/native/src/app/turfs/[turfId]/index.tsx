@@ -1,5 +1,4 @@
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
-import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -14,8 +13,7 @@ import { isLocallyRecorded, localResultsAtom, useSeedFromServer } from "@/lib/lo
 import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { client } from "@/rpc/client";
-import { buildTurfIndexes, useTurfData } from "@/lib/turf-data";
+import { useTurf } from "@/lib/turf-data";
 
 // Turf List screen — the canvasser's home base for a turf. Renders a map at
 // the top and a draggable building list in a bottom sheet. Tapping a pin or
@@ -26,12 +24,7 @@ export default function TurfListScreen() {
   const theme = useAtomValue(themeAtom);
   const isDark = theme === "dark";
 
-  const turfMetaQuery = useQuery({
-    queryKey: ["turf", turfId] as const,
-    queryFn: () => client.turfs.getById({ turfId }),
-    enabled: !!turfId,
-  });
-  const turfDataQuery = useTurfData(turfMetaQuery.data?.dataUrl ?? null);
+  const { meta, data: turfData, indexes, isLoading, error } = useTurf(turfId);
 
   // Track the active turf so Settings can enable Sync.
   const setCurrentTurfId = useSetAtom(currentTurfIdAtom);
@@ -43,16 +36,11 @@ export default function TurfListScreen() {
   useSeedFromServer(turfId);
   const allResults = useAtomValue(localResultsAtom(turfId));
 
-  const indexes = useMemo(
-    () => (turfDataQuery.data ? buildTurfIndexes(turfDataQuery.data) : null),
-    [turfDataQuery.data],
-  );
-
   const recordedBuildingIds = useMemo(() => {
     const set = new Set<string>();
-    if (!turfDataQuery.data) return set;
+    if (!turfData) return set;
 
-    for (const building of turfDataQuery.data.buildings) {
+    for (const building of turfData.buildings) {
       const allPersonsRecorded =
         building.doors.length > 0 &&
         building.doors.every((door) => {
@@ -64,7 +52,7 @@ export default function TurfListScreen() {
       }
     }
     return set;
-  }, [allResults, turfDataQuery.data]);
+  }, [allResults, turfData]);
 
   const sheetRef = useRef<BottomSheet>(null);
   // Two positions: peeking (handle visible above nav) and fully extended.
@@ -108,7 +96,7 @@ export default function TurfListScreen() {
     Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   }, []);
 
-  const listTitle = turfMetaQuery.data?.listCode ? `List ${turfMetaQuery.data.listCode}` : "Turf";
+  const listTitle = meta?.listCode ? `List ${meta.listCode}` : "Turf";
 
   useScreenNav({
     title: listTitle,
@@ -138,6 +126,10 @@ export default function TurfListScreen() {
           backgroundColor: isDark ? "#141414" : "#fcfcfc",
           borderTopLeftRadius: 16,
           borderTopRightRadius: 16,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
         }}
       >
         <View
@@ -160,7 +152,7 @@ export default function TurfListScreen() {
     [turfId],
   );
 
-  if (turfMetaQuery.isLoading || (turfMetaQuery.data && turfDataQuery.isLoading)) {
+  if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
         <ActivityIndicator />
@@ -168,57 +160,17 @@ export default function TurfListScreen() {
     );
   }
 
-  if (turfMetaQuery.error) {
+  if (error) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-red-dark pb-2 text-center">turfs.getById error</Text>
+        <Text className="font-sans-bold text-red-dark pb-2 text-center">Failed to load turf</Text>
         <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark text-center">
-          {String(turfMetaQuery.error)}
+          {String(error)}
         </Text>
       </View>
     );
   }
-  if (!turfMetaQuery.data) {
-    return (
-      <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-red-dark pb-2 text-center">No turf found</Text>
-        <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark pb-2 text-center">
-          turfId: {turfId}
-        </Text>
-        <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark text-center">
-          Either the seeded turf doesn't exist, or it isn't assigned to the current user. Try pnpm
-          clear && pnpm dev.
-        </Text>
-      </View>
-    );
-  }
-  if (!turfMetaQuery.data.dataUrl) {
-    return (
-      <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-red-dark pb-2 text-center">Turf has no dataUrl</Text>
-        <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark text-center">
-          Run pnpm data:mock to populate the blob.
-        </Text>
-      </View>
-    );
-  }
-  if (turfDataQuery.error) {
-    return (
-      <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-red-dark pb-2 text-center">
-          Failed to fetch turf data blob
-        </Text>
-        <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark pb-2 text-center">
-          {String(turfDataQuery.error)}
-        </Text>
-        <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark text-center">
-          The data service may not be running, or the blob may not have been written yet. Try pnpm
-          data:mock.
-        </Text>
-      </View>
-    );
-  }
-  if (!turfDataQuery.data) {
+  if (!turfData) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
         <Text className="font-sans-bold text-red-dark text-center">Empty turf data</Text>
@@ -230,7 +182,7 @@ export default function TurfListScreen() {
     <View className="flex-1 bg-background dark:bg-background-dark">
       <View className="flex-1">
         <TurfMap
-          turf={turfDataQuery.data}
+          turf={turfData}
           recordedBuildingIds={recordedBuildingIds}
           onBuildingPress={openBuilding}
           isDark={isDark}
@@ -249,7 +201,7 @@ export default function TurfListScreen() {
         handleComponent={renderHandle}
       >
         <BottomSheetFlatList
-          data={turfDataQuery.data.buildings}
+          data={turfData.buildings}
           keyExtractor={(b) => b.buildingId}
           contentContainerStyle={{ paddingBottom: 20 }}
           renderItem={({ item }) => (

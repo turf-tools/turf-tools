@@ -5,6 +5,8 @@ import type {
   TurfDataPerson,
 } from "@field-tools/db/schema";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { client } from "@/rpc/client";
 
 // The data service base URL. In dev this points at localhost or a LAN IP;
 // in production it'll be the deployed data service. The dataUrl stored on
@@ -43,6 +45,7 @@ export function useTurfData(dataUrl: string | null | undefined) {
       return (await resp.json()) as TurfData;
     },
     enabled: !!resolvedUrl,
+    staleTime: Infinity,
   });
 }
 
@@ -92,5 +95,28 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
     buildingByPersonId,
     buildingsInOrder: turf.buildings,
     personsInOrder,
+  };
+}
+
+// Combined hook: fetches turf metadata + data blob + builds indexes.
+// Returns everything screens need in one call.
+export function useTurf(turfId: string) {
+  const metaQuery = useQuery({
+    queryKey: ["turf", turfId] as const,
+    queryFn: () => client.turfs.getById({ turfId }),
+    enabled: !!turfId,
+    staleTime: Infinity,
+  });
+  const dataQuery = useTurfData(metaQuery.data?.dataUrl ?? null);
+  const indexes = useMemo(
+    () => (dataQuery.data ? buildTurfIndexes(dataQuery.data) : null),
+    [dataQuery.data],
+  );
+  return {
+    meta: metaQuery.data,
+    data: dataQuery.data,
+    indexes,
+    isLoading: metaQuery.isLoading || (metaQuery.data && dataQuery.isLoading),
+    error: metaQuery.error || dataQuery.error,
   };
 }

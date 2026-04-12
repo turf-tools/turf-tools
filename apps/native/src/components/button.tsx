@@ -21,7 +21,7 @@ export function Button({ title, variant = "primary", icon, onPress }: ButtonProp
       }`}
       style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
     >
-      <View className="flex-row items-center justify-center gap-2">
+      <View className="flex-row items-center justify-center gap-3">
         {icon}
         <Text
           className={`text-center text-lg ${

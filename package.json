@@ -24,6 +24,7 @@
     "db:clear": "rm -rf packages/db/local_db",
     "db:mock": "pnpm --filter @field-tools/db run mock",
     "db:push": "pnpm db push",
+    "db:studio": "cd packages/db && npx drizzle-kit studio",
     "db": "pnpm --filter @field-tools/db run db",
     "prepare": "vp config"
   },

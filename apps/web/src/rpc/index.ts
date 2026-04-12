@@ -21,6 +21,7 @@ export const router = {
     submitDoorResult: canvassProcedures.submitDoorResult,
     submitBuildingResult: canvassProcedures.submitBuildingResult,
     submitPersonResult: canvassProcedures.submitPersonResult,
+    submitNote: canvassProcedures.submitNote,
     listForTurf: canvassProcedures.listForTurf,
   },
 };

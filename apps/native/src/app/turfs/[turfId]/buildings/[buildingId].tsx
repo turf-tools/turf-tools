@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Check, Scroll, Speech } from "lucide-react-native";
-import { Fragment, useCallback, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
@@ -22,8 +21,7 @@ import {
 } from "@/lib/local-results";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { client } from "@/rpc/client";
-import { buildTurfIndexes, useTurfData } from "@/lib/turf-data";
+import { useTurf } from "@/lib/turf-data";
 
 export default function BuildingScreen() {
   const { turfId, buildingId } = useLocalSearchParams<{
@@ -31,18 +29,8 @@ export default function BuildingScreen() {
     buildingId: string;
   }>();
 
-  const turfMetaQuery = useQuery({
-    queryKey: ["turf", turfId] as const,
-    queryFn: () => client.turfs.getById({ turfId }),
-    enabled: !!turfId,
-  });
-  const turfDataQuery = useTurfData(turfMetaQuery.data?.dataUrl ?? null);
+  const { indexes, isLoading } = useTurf(turfId);
   const allResults = useAtomValue(localResultsAtom(turfId));
-
-  const indexes = useMemo(
-    () => (turfDataQuery.data ? buildTurfIndexes(turfDataQuery.data) : null),
-    [turfDataQuery.data],
-  );
   const building = indexes?.buildingsById.get(buildingId);
   const setOpenSheet = useSetAtom(openSheetAtom);
 
@@ -53,7 +41,7 @@ export default function BuildingScreen() {
     setTimeout(() => setReady(true), 0);
   }
 
-  if (turfMetaQuery.isLoading || turfDataQuery.isLoading) {
+  if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
         <ActivityIndicator />
@@ -137,13 +125,16 @@ export default function BuildingScreen() {
 
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
-      <ScrollView>
+      <ScrollView contentContainerStyle={{ marginTop: -1 }}>
+        <View className="h-px bg-border dark:bg-border-dark" />
         {building.doors.map((door, idx) => (
           <Fragment key={door.doorId}>
             {idx > 0 && <View className="h-2" />}
             <DoorSection door={door} turfId={turfId} allResults={allResults} isFirst={idx === 0} />
           </Fragment>
         ))}
+        <View className="h-2" />
+        <View className="h-px bg-border dark:bg-border-dark" style={{ marginBottom: -3 }} />
       </ScrollView>
     </View>
   );
