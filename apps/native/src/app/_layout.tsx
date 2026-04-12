@@ -72,8 +72,11 @@ function ThemedStack() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="settings" options={{ title: "Settings", presentation: "modal" }} />
-        <Stack.Screen name="turfs/[turfId]" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ headerShown: false, presentation: "modal" }} />
+        <Stack.Screen
+          name="turfs/[turfId]"
+          options={{ headerShown: false, gestureEnabled: false }}
+        />
         <Stack.Screen name="distribute" options={{ headerShown: false }} />
       </Stack>
     </>
