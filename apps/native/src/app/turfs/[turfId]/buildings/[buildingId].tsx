@@ -157,7 +157,7 @@ function DoorSection({
   return (
     <View>
       <Text
-        className={`font-sans-bold text-xl text-foreground dark:text-foreground-dark px-5 py-3.5 bg-muted dark:bg-black border-b border-border dark:border-border-dark ${isFirst ? "" : "border-t"}`}
+        className={`font-sans-bold text-xl text-foreground dark:text-foreground-dark px-5 py-3.5 bg-background dark:bg-background-dark border-b border-border dark:border-border-dark ${isFirst ? "" : "border-t"}`}
       >
         {unitLabel}
       </Text>
@@ -253,7 +253,7 @@ function PersonRow({
     >
       <Pressable
         onPress={onPress}
-        className="flex-row items-center px-5 py-3.5 bg-background dark:bg-[#141414]"
+        className="flex-row items-center px-5 py-3.5 bg-muted dark:bg-muted-dark active:bg-faded dark:active:bg-faded-dark"
         android_ripple={{ color: "#eee" }}
       >
         <View className="flex-1">

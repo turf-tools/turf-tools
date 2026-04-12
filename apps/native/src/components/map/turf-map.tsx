@@ -134,6 +134,7 @@ export function TurfMap({
       mapStyle={getMaptilerStyleUrl(isDark)}
       attributionEnabled
       logoEnabled={false}
+      rotateEnabled={false}
       onDidFinishLoadingMap={handleMapLoaded}
       onRegionIsChanging={handleRegionEvent}
       onRegionDidChange={handleRegionEvent}

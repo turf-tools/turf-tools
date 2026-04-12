@@ -239,7 +239,7 @@ function BuildingRow({
   return (
     <Pressable
       onPress={onPress}
-      className="flex-row items-center px-5 pt-4 pb-5"
+      className="flex-row items-center px-5 pt-4 pb-5 active:bg-faded dark:active:bg-faded-dark"
       android_ripple={{ color: "#eee" }}
     >
       <View className="flex-1">
