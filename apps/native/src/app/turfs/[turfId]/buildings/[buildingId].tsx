@@ -1,13 +1,10 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Check, Scroll, Speech } from "lucide-react-native";
-import { Fragment, useCallback, useRef, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
-import ReanimatedSwipeable, {
-  type SwipeableMethods,
-} from "react-native-gesture-handler/ReanimatedSwipeable";
-import Reanimated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@field-tools/db/schema";
+import { SwipeAction } from "@/components/swipe-action";
 import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
 import { toTitleCase } from "@/lib/format";
@@ -155,13 +152,13 @@ function DoorSection({
   const stripped = rawUnit.replace(/^(APT|UNIT|#)\s*/i, "").trim();
   const unitLabel = stripped ? `Apt ${stripped}` : "Unit";
   return (
-    <View>
+    <View style={{ marginBottom: -7 }}>
       <Text
         className={`font-sans-bold text-xl text-foreground dark:text-foreground-dark px-5 py-3.5 bg-background dark:bg-background-dark border-b border-border dark:border-border-dark ${isFirst ? "" : "border-t"}`}
       >
         {unitLabel}
       </Text>
-      <View style={{ marginBottom: -7 }}>
+      <View>
         {door.persons.map((person, idx) => (
           <Fragment key={person.personId}>
             {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
@@ -170,34 +167,6 @@ function DoorSection({
         ))}
       </View>
     </View>
-  );
-}
-
-const ACTION_WIDTH = 80;
-
-function LeftAction({
-  translation,
-  onTap,
-}: {
-  translation: SharedValue<number>;
-  onTap: () => void;
-}) {
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translation.value - ACTION_WIDTH }],
-  }));
-
-  return (
-    <Reanimated.View style={animatedStyle}>
-      <Pressable
-        onPress={onTap}
-        className="h-full items-center justify-center bg-blue-light dark:bg-blue-light-dark"
-        style={{ width: ACTION_WIDTH }}
-      >
-        <Text className="font-sans text-xl text-blue-dark dark:text-blue-dark-dark text-center">
-          Not{"\n"}home
-        </Text>
-      </Pressable>
-    </Reanimated.View>
   );
 }
 
@@ -216,7 +185,6 @@ function PersonRow({
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
   const setResult = useSetLocalResult(turfId);
-  const swipeableRef = useRef<SwipeableMethods>(null);
 
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
@@ -226,35 +194,29 @@ function PersonRow({
   };
 
   const markNotHome = useCallback(() => {
-    swipeableRef.current?.close();
-    setTimeout(() => {
-      setResult(person.personId, {
-        unavailableOutcome: "not_home",
-        surveyResponseOptionId: undefined,
-        surveyQuestionId: undefined,
-        empty: undefined,
-      });
-    }, 0);
+    setResult(person.personId, {
+      unavailableOutcome: "not_home",
+      surveyResponseOptionId: undefined,
+      surveyQuestionId: undefined,
+      empty: undefined,
+    });
   }, [person.personId, setResult]);
 
-  const renderLeftActions = useCallback(
-    (_progress: SharedValue<number>, translation: SharedValue<number>) => (
-      <LeftAction translation={translation} onTap={markNotHome} />
-    ),
-    [markNotHome],
-  );
-
   return (
-    <ReanimatedSwipeable
-      ref={swipeableRef}
-      renderLeftActions={renderLeftActions}
-      overshootLeft={false}
-      hitSlop={{ left: -40 }}
+    <SwipeAction
+      onTap={markNotHome}
+      onFullSwipe={markNotHome}
+      actionContent={
+        <Text className="font-sans text-xl text-blue-dark dark:text-blue-dark-dark text-center">
+          Not{"\n"}home
+        </Text>
+      }
+      actionClassName="bg-blue-light dark:bg-blue-light-dark"
+      actionWidth={80}
     >
       <Pressable
         onPress={onPress}
         className="flex-row items-center px-5 py-3.5 bg-muted dark:bg-muted-dark active:bg-faded dark:active:bg-faded-dark"
-        android_ripple={{ color: "#eee" }}
       >
         <View className="flex-1">
           <Text
@@ -278,7 +240,7 @@ function PersonRow({
           </View>
         </View>
       </Pressable>
-    </ReanimatedSwipeable>
+    </SwipeAction>
   );
 }
 
