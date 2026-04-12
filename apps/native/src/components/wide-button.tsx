@@ -34,10 +34,12 @@ export function WideButton({
       onPress={onPress}
       className={`flex-row items-center justify-between px-4 py-3.5 rounded-lg border ${
         variant === "submit"
-          ? "bg-foreground dark:bg-foreground-dark border-foreground dark:border-foreground-dark"
-          : selected
-            ? "bg-surface dark:bg-surface-dark border-foreground dark:border-foreground-dark"
-            : "bg-surface dark:bg-surface-dark border-border dark:border-border-dark"
+          ? "bg-foreground dark:bg-foreground-dark border-foreground dark:border-foreground-dark active:opacity-85"
+          : variant === "action"
+            ? "bg-surface dark:bg-surface-dark border-border dark:border-border-dark active:bg-faded dark:active:bg-faded-dark"
+            : selected
+              ? "bg-surface dark:bg-surface-dark border-foreground dark:border-foreground-dark"
+              : "bg-surface dark:bg-surface-dark border-border dark:border-border-dark"
       } ${className}`}
       style={{
         shadowColor: "#000",

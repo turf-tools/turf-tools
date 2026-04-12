@@ -30,7 +30,7 @@ export default function SettingsScreen() {
     try {
       const count = await sync();
       if (count === 0) {
-        Alert.alert("Nothing to sync", "No dirty results found.");
+        Alert.alert("Not needed", "No current canvass results need syncing.");
       } else {
         Alert.alert("Done", `Synced ${count} result${count === 1 ? "" : "s"} to server.`);
       }
@@ -108,13 +108,19 @@ export default function SettingsScreen() {
             title={theme === "dark" ? "Light mode" : "Dark mode"}
             onPress={() => setTheme(theme === "dark" ? "light" : "dark")}
             variant="outline"
-            icon={theme == "light" ? <MoonStar size={20} /> : <Sun size={20} />}
+            icon={
+              theme == "light" ? (
+                <MoonStar size={20} color={"#1b1b1b"} />
+              ) : (
+                <Sun size={20} color={"#ededed"} />
+              )
+            }
           />
           <Button
             title="Download new turf"
             variant="outline"
             onPress={handleDownloadNewTurf}
-            icon={<Download size={20} />}
+            icon={<Download size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
             title="Distribute turf"
@@ -123,7 +129,7 @@ export default function SettingsScreen() {
               router.back();
               router.push("/distribute");
             }}
-            icon={<ListCheck size={20} />}
+            icon={<ListCheck size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           {!currentTurfId && (
             <Text className="font-sans text-xl mt-[-8] text-muted-foreground dark:text-muted-foreground-dark text-center">
@@ -134,13 +140,13 @@ export default function SettingsScreen() {
             title={isSyncing ? "Syncing..." : "Sync data"}
             variant="outline"
             onPress={currentTurfId ? handleSync : undefined}
-            icon={<RefreshCw size={20} />}
+            icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
             title={clearing ? "Clearing..." : "Clear local data"}
             variant="outline"
             onPress={currentTurfId ? handleClearData : undefined}
-            icon={<BrushCleaning size={20} />}
+            icon={<BrushCleaning size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
         </View>
       </View>

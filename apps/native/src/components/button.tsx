@@ -16,10 +16,9 @@ export function Button({ title, variant = "primary", icon, onPress }: ButtonProp
       onPress={onPress}
       className={`rounded-lg px-6 py-3 ${
         isPrimary
-          ? "bg-primary dark:bg-primary-dark"
-          : "border border-border bg-surface dark:border-border-dark dark:bg-surface-dark"
+          ? "bg-primary dark:bg-primary-dark active:bg-foreground dark:active:bg-foreground-dark"
+          : "border border-border bg-surface dark:border-border-dark dark:bg-surface-dark active:bg-faded dark:active:bg-faded-dark"
       }`}
-      style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
     >
       <View className="flex-row items-center justify-center gap-3">
         {icon}
