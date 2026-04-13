@@ -9,14 +9,16 @@ import { universes } from "./schema/universes";
 import { users } from "./schema/users";
 
 // Deterministic ids so this script is idempotent and other services (e.g. the
-// data service's mock script) can reference them without a lookup.
-const ORG_ID = "00000000-0000-0000-0000-000000000001";
-const USER_ID = "00000000-0000-0000-0000-000000000001";
-const CAMPAIGN_ID = "00000000-0000-0000-0000-000000000002";
-const SURVEY_QUESTION_ID = "00000000-0000-0000-0000-000000000003";
-const SCRIPT_ID = "00000000-0000-0000-0000-000000000004";
-const UNIVERSE_ID = "00000000-0000-0000-0000-000000000005";
-const TURF_ID = "00000000-0000-0000-0000-000000000006";
+// data service's mock script) can reference them without a lookup. Shaped as
+// valid UUID v4 (version nibble = 4, variant nibble = 8) so Zod's strict
+// `.uuid()` validator accepts them.
+const ORG_ID = "00000000-0000-4000-8000-000000000001";
+const USER_ID = "00000000-0000-4000-8000-000000000001";
+const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000002";
+const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
+const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
+const UNIVERSE_ID = "00000000-0000-4000-8000-000000000005";
+const TURF_ID = "00000000-0000-4000-8000-000000000006";
 
 const DATA_SERVICE_URL = process.env.DATA_SERVICE_PUBLIC_URL ?? "http://localhost:8000";
 
@@ -24,11 +26,11 @@ const DEFAULT_VOTER_FILE_ID = "nys_boe";
 const DEFAULT_VOTER_FILE_VERSION = 1;
 
 const SURVEY_RESPONSE_OPTIONS: Array<{ id: string; text: string }> = [
-  { id: "00000000-0000-0000-0000-000000000030", text: "Yes" },
-  { id: "00000000-0000-0000-0000-000000000031", text: "Leaning yes" },
-  { id: "00000000-0000-0000-0000-000000000032", text: "Undecided" },
-  { id: "00000000-0000-0000-0000-000000000033", text: "Leaning no" },
-  { id: "00000000-0000-0000-0000-000000000034", text: "No" },
+  { id: "00000000-0000-4000-8000-000000000030", text: "Yes" },
+  { id: "00000000-0000-4000-8000-000000000031", text: "Leaning yes" },
+  { id: "00000000-0000-4000-8000-000000000032", text: "Undecided" },
+  { id: "00000000-0000-4000-8000-000000000033", text: "Leaning no" },
+  { id: "00000000-0000-4000-8000-000000000034", text: "No" },
 ];
 
 async function mock() {
@@ -117,6 +119,7 @@ async function mock() {
   if (existingUniverse.length === 0) {
     await db.insert(universes).values({
       universeId: UNIVERSE_ID,
+      campaignId: CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Default Universe",
       voterFileId: DEFAULT_VOTER_FILE_ID,
@@ -134,6 +137,7 @@ async function mock() {
       universeId: UNIVERSE_ID,
       scriptId: SCRIPT_ID,
       name: "Default Turf",
+      listCode: "121121",
       dataUrl: `${DATA_SERVICE_URL}/turfs/${TURF_ID}/data`,
       assignedTo: USER_ID,
       createdBy: USER_ID,

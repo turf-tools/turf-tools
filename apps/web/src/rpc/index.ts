@@ -10,14 +10,19 @@ export const router = {
     return { status: "ok", db: "connected" };
   }),
   turfs: {
-    getMine: turfsProcedures.getMine,
-    get: turfsProcedures.get,
+    getByUser: turfsProcedures.getByUser,
+    getById: turfsProcedures.getById,
+    getByCode: turfsProcedures.getByCode,
   },
   script: {
     get: scriptProcedures.get,
   },
   canvass: {
     submitDoorResult: canvassProcedures.submitDoorResult,
+    submitBuildingResult: canvassProcedures.submitBuildingResult,
+    submitPersonResult: canvassProcedures.submitPersonResult,
+    submitNote: canvassProcedures.submitNote,
+    listForTurf: canvassProcedures.listForTurf,
   },
 };
 

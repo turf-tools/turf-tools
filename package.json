@@ -12,7 +12,7 @@
     "dev:search": "cd apps/data && quickwit run 2>&1 | grep --line-buffered -E '(REST server is ready|ERROR|FATAL)'",
     "dev:web": "pnpm db:setup && vp run web#dev",
     "dev:native": "pnpm --filter native dev",
-    "dev:data": "cd apps/data && uv run uvicorn main:app --reload --port 8000",
+    "dev:data": "cd apps/data && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000",
     "check": "pnpm exec vp check --fix && cd apps/data && uv run ruff check --fix . && uv run ruff format .",
     "test": "pnpm --filter web exec vp test && cd apps/data && uv run pytest",
     "test:integration": "cd apps/data && uv run python tests/test_integration.py",
@@ -24,6 +24,7 @@
     "db:clear": "rm -rf packages/db/local_db",
     "db:mock": "pnpm --filter @field-tools/db run mock",
     "db:push": "pnpm db push",
+    "db:studio": "cd packages/db && npx drizzle-kit studio",
     "db": "pnpm --filter @field-tools/db run db",
     "prepare": "vp config"
   },

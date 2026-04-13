@@ -6,10 +6,24 @@ import duckdb
 
 
 def _addr_hash(*cols: str) -> str:
-    """SQL expression for deterministic address hashing via md5 → UUID."""
+    """SQL expression for deterministic address hashing via md5 → valid UUID v4.
+
+    Takes the 32-char MD5 hex and overwrites the version nibble (position 13)
+    with '4' and the variant nibble (position 17) with '8' so the result passes
+    strict UUID v4 validation (e.g. Zod's `.uuid()`).
+    """
     normalized = ["UPPER(TRIM(COALESCE(CAST(" + c + " AS VARCHAR), '')))" for c in cols]
     concatenated = " || '|' || ".join(normalized)
-    return "CAST(md5(" + concatenated + ") AS UUID)"
+    h = f"md5({concatenated})"
+    return (
+        f"CAST("
+        f"substr({h}, 1, 8) || '-' || "
+        f"substr({h}, 9, 4) || '-' || "
+        f"'4' || substr({h}, 14, 3) || '-' || "
+        f"'8' || substr({h}, 18, 3) || '-' || "
+        f"substr({h}, 21, 12) "
+        f"AS UUID)"
+    )
 
 
 def _parse_date(col: str) -> str:
