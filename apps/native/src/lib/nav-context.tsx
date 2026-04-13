@@ -55,7 +55,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
             isDark={isDark}
           />
         )}
-        <View className="flex-1">{children}</View>
+        <View className="flex-1 bg-background dark:bg-background-dark">{children}</View>
         {bottomConfig && (
           <BottomNav
             buttons={bottomConfig.buttons}
