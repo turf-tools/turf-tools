@@ -5,7 +5,7 @@ import { users } from "@field-tools/db/schema";
 // Hardcoded admin user id seeded by packages/db/src/mock.ts. Without real auth
 // every RPC call resolves to this user via loadUser(). Swap this for a
 // real session lookup (cookie, header, etc.) when auth is added.
-export const SEEDED_ADMIN_USER_ID = "00000000-0000-0000-0000-000000000001";
+export const SEEDED_ADMIN_USER_ID = "00000000-0000-4000-8000-000000000001";
 
 export type User = typeof users.$inferSelect;
 

@@ -113,8 +113,8 @@ async def doors_geojson():
         conn.close()
 
 
-@app.get("/people/geojson")
-async def people_geojson():
+@app.get("/persons/geojson")
+async def persons_geojson():
     conn = get_connection(settings)
     try:
         return export_geojson(conn, "voter_file")
@@ -122,8 +122,8 @@ async def people_geojson():
         conn.close()
 
 
-@app.post("/people/index")
-async def people_index():
+@app.post("/persons/index")
+async def persons_index():
     conn = get_connection(settings)
     try:
         result = run_index(conn)
@@ -132,8 +132,8 @@ async def people_index():
         conn.close()
 
 
-@app.post("/people/reindex")
-async def people_reindex():
+@app.post("/persons/reindex")
+async def persons_reindex():
     clear_index()
     conn = get_connection(settings)
     try:
@@ -143,8 +143,8 @@ async def people_reindex():
         conn.close()
 
 
-@app.get("/people/search")
-async def people_search(q: str, limit: int = 20):
+@app.get("/persons/search")
+async def persons_search(q: str, limit: int = 20):
     return run_search(q, limit=limit)
 
 

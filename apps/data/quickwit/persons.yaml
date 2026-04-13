@@ -1,5 +1,5 @@
 version: 0.7
-index_id: people
+index_id: persons
 doc_mapping:
   field_mappings:
     - name: voter_id

@@ -8,12 +8,12 @@ import requests
 logger = logging.getLogger("uvicorn")
 
 QUICKWIT_URL = "http://localhost:7280"
-INDEX_CONFIG_PATH = Path(__file__).parent / "quickwit" / "people.yaml"
+INDEX_CONFIG_PATH = Path(__file__).parent / "quickwit" / "persons.yaml"
 
 
 def ensure_index(quickwit_url: str = QUICKWIT_URL) -> None:
-    """Create the people index if it doesn't exist."""
-    resp = requests.get(f"{quickwit_url}/api/v1/indexes/people", timeout=5)
+    """Create the persons index if it doesn't exist."""
+    resp = requests.get(f"{quickwit_url}/api/v1/indexes/persons", timeout=5)
     if resp.status_code == 200:
         return  # already exists
 
@@ -27,7 +27,7 @@ def ensure_index(quickwit_url: str = QUICKWIT_URL) -> None:
         timeout=10,
     )
     resp.raise_for_status()
-    logger.info("Created Quickwit 'people' index.")
+    logger.info("Created Quickwit 'persons' index.")
 
 
 def run_index(
@@ -92,7 +92,7 @@ def run_index(
         chunk = rows[i : i + chunk_size]
         ndjson = "\n".join(json.dumps(dict(zip(columns, row, strict=True)), default=str) for row in chunk)
         resp = requests.post(
-            f"{quickwit_url}/api/v1/people/ingest?commit=force",
+            f"{quickwit_url}/api/v1/persons/ingest?commit=force",
             headers={"Content-Type": "application/json"},
             data=ndjson,
             timeout=60,
@@ -105,16 +105,16 @@ def run_index(
 
 
 def clear_index(quickwit_url: str = QUICKWIT_URL) -> None:
-    """Delete and recreate the people index."""
-    requests.delete(f"{quickwit_url}/api/v1/indexes/people", timeout=10)
+    """Delete and recreate the persons index."""
+    requests.delete(f"{quickwit_url}/api/v1/indexes/persons", timeout=10)
     ensure_index(quickwit_url)
-    logger.info("Cleared and recreated Quickwit 'people' index.")
+    logger.info("Cleared and recreated Quickwit 'persons' index.")
 
 
 def run_search(query: str, limit: int = 20, quickwit_url: str = QUICKWIT_URL) -> dict:
     """Search voters via Quickwit."""
     resp = requests.post(
-        f"{quickwit_url}/api/v1/people/search",
+        f"{quickwit_url}/api/v1/persons/search",
         headers={"Content-Type": "application/json"},
         json={"query": query, "max_hits": limit},
         timeout=10,

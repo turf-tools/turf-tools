@@ -16,15 +16,14 @@ export function Button({ title, variant = "primary", icon, onPress }: ButtonProp
       onPress={onPress}
       className={`rounded-lg px-6 py-3 ${
         isPrimary
-          ? "bg-primary dark:bg-primary-dark"
-          : "border border-border bg-white dark:border-border-dark dark:bg-background-dark"
+          ? "bg-primary dark:bg-primary-dark active:bg-foreground dark:active:bg-foreground-dark"
+          : "border border-border bg-surface dark:border-border-dark dark:bg-surface-dark active:bg-faded dark:active:bg-faded-dark"
       }`}
-      style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
     >
-      <View className="flex-row items-center justify-center gap-2">
+      <View className="flex-row items-center justify-center gap-3">
         {icon}
         <Text
-          className={`text-center text-sm ${
+          className={`text-center text-lg ${
             isPrimary
               ? "text-primary-foreground dark:text-primary-foreground-dark"
               : "text-foreground dark:text-foreground-dark"

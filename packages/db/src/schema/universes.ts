@@ -1,9 +1,13 @@
 import { integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { campaigns } from "./campaigns";
 import { organizations } from "./organizations";
 import { users } from "./users";
 
 export const universes = pgTable("universes", {
   universeId: uuid().defaultRandom().primaryKey(),
+  campaignId: uuid()
+    .notNull()
+    .references(() => campaigns.campaignId),
   organizationId: uuid()
     .notNull()
     .references(() => organizations.organizationId),
@@ -15,6 +19,6 @@ export const universes = pgTable("universes", {
   createdBy: uuid()
     .notNull()
     .references(() => users.userId),
-  doors: integer(),
-  people: integer(),
+  doorCount: integer(),
+  personCount: integer(),
 });
