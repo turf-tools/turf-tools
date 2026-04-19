@@ -1,3 +1,4 @@
+import "react-native-random-uuid";
 import "@/global.css";
 
 import { Geist_400Regular, Geist_700Bold } from "@expo-google-fonts/geist";
@@ -99,7 +100,16 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <PersistQueryClientProvider
         client={queryClient}
-        persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24 * 7 }}
+        persistOptions={{
+          persister,
+          maxAge: 1000 * 60 * 60 * 24 * 7,
+          dehydrateOptions: {
+            shouldDehydrateQuery: (query) => {
+              if (query.queryKey[0] === "canvass-events") return false;
+              return query.state.status === "success";
+            },
+          },
+        }}
       >
         <JotaiProvider>
           <ThemedStack />

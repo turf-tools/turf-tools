@@ -9,7 +9,12 @@ import { TurfMap } from "@/components/map/turf-map";
 import { toTitleCase } from "@/lib/format";
 import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
-import { isLocallyRecorded, localResultsAtom, useSeedFromServer } from "@/lib/local-results";
+import {
+  type PersonSummary,
+  derivePersonSummaries,
+  isRecorded,
+  useCanvassEvents,
+} from "@/lib/canvass-events";
 import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
@@ -32,9 +37,8 @@ export default function TurfListScreen() {
     setCurrentTurfId(turfId);
   }, [turfId, setCurrentTurfId]);
 
-  // Seed local results from server on first load.
-  useSeedFromServer(turfId);
-  const allResults = useAtomValue(localResultsAtom(turfId));
+  const events = useCanvassEvents(turfId);
+  const allResults = useMemo(() => derivePersonSummaries(events), [events]);
 
   const recordedBuildingIds = useMemo(() => {
     const set = new Set<string>();
@@ -45,7 +49,7 @@ export default function TurfListScreen() {
         building.doors.length > 0 &&
         building.doors.every((door) => {
           if (door.persons.length === 0) return false;
-          return door.persons.every((person) => isLocallyRecorded(allResults, person.personId));
+          return door.persons.every((person) => isRecorded(allResults, person.personId));
         });
       if (allPersonsRecorded) {
         set.add(building.buildingId);
@@ -83,7 +87,7 @@ export default function TurfListScreen() {
   const handleNextPress = useCallback(() => {
     if (!indexes) return;
     const nextPerson = indexes.personsInOrder.find((p) => {
-      return !isLocallyRecorded(allResults, p.personId);
+      return !isRecorded(allResults, p.personId);
     });
     if (!nextPerson) {
       Alert.alert("All recorded", "Every person in this turf has a result.");
@@ -225,14 +229,14 @@ function BuildingRow({
   onPress,
 }: {
   building: TurfDataBuilding;
-  allResults: import("@/lib/local-results").LocalResultsMap;
+  allResults: Map<string, PersonSummary>;
   onPress: () => void;
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
   const persons = building.doors.flatMap((d) => d.persons);
   const personCount = persons.length;
-  const recordedCount = persons.filter((p) => isLocallyRecorded(allResults, p.personId)).length;
+  const recordedCount = persons.filter((p) => isRecorded(allResults, p.personId)).length;
   const allRecorded = recordedCount > 0 && recordedCount === personCount;
   const address = formatBuildingAddress(building);
 

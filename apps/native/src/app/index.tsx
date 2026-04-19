@@ -2,6 +2,7 @@ import { Link, router, useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, Text, TextInput, View } from "react-native";
 import { Button } from "@/components/button";
+import { openTurf } from "@/lib/canvass-events";
 import { client } from "@/rpc/client";
 
 const SEEDED_TURF_ID = "00000000-0000-4000-8000-000000000006";
@@ -9,6 +10,7 @@ const SEEDED_TURF_ID = "00000000-0000-4000-8000-000000000006";
 export default function LandingScreen() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingTest, setLoadingTest] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
   // Clear the input when returning to this screen (e.g. Settings → Download new turf).
@@ -16,6 +18,7 @@ export default function LandingScreen() {
     useCallback(() => {
       setCode("");
       setLoading(false);
+      setLoadingTest(false);
     }, []),
   );
 
@@ -28,12 +31,18 @@ export default function LandingScreen() {
     setLoading(true);
     try {
       const turf = await client.turfs.getByCode({ code: trimmed });
-      if (turf) {
-        router.push(`/turfs/${turf.turfId}`);
-      } else {
+      if (!turf) {
         Alert.alert("Not found", `No turf found for code "${trimmed}".`);
         setLoading(false);
+        return;
       }
+      await openTurf(turf.turfId).catch(() => {
+        Alert.alert(
+          "Could not retrieve previous results",
+          "Data may be out of date, sync when you have a connection.",
+        );
+      });
+      router.push(`/turfs/${turf.turfId}`);
     } catch (err) {
       Alert.alert("Error", String(err));
       setLoading(false);
@@ -69,9 +78,18 @@ export default function LandingScreen() {
           <Button title={loading ? "Loading..." : "Open"} onPress={handleOpenCode} />
           <View className="h-12" />
           <Button
-            title="Open test turf"
+            title={loadingTest ? "Loading..." : "Open test turf"}
             variant="outline"
-            onPress={() => router.push(`/turfs/${SEEDED_TURF_ID}`)}
+            onPress={async () => {
+              setLoadingTest(true);
+              await openTurf(SEEDED_TURF_ID).catch(() => {
+                Alert.alert(
+                  "Could not retrieve previous results",
+                  "Data may be out of date, sync when you have a connection.",
+                );
+              });
+              router.push(`/turfs/${SEEDED_TURF_ID}`);
+            }}
           />
           <Link href="/distribute" asChild>
             <Button title="Distribute turf" variant="outline" />
