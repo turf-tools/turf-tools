@@ -1,72 +1,55 @@
+import { ActionSheetIOS, Alert, Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import {
-  X,
-  MoonStar,
-  Sun,
-  Download,
-  ListCheck,
-  RefreshCw,
-  BrushCleaning,
-} from "lucide-react-native";
+import { useAtom, useAtomValue } from "jotai";
+import { X, MoonStar, Sun, Download, ListCheck, RefreshCw, Timer } from "lucide-react-native";
 import { useState } from "react";
-import { Alert, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
+import { SYNC_OPTIONS, syncIntervalAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
-import { clearLocalResults, localResultsAtom, useSync } from "@/lib/local-results";
-import { useTurf } from "@/lib/turf-data";
+import { pullCanvassEvents } from "@/lib/canvass-events";
 
 export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
   const currentTurfId = useAtomValue(currentTurfIdAtom);
-  const { indexes } = useTurf(currentTurfId ?? "");
-  const { sync, isSyncing } = useSync(currentTurfId, indexes);
-  const setResults = useSetAtom(localResultsAtom(currentTurfId ?? ""));
-  const [clearing, setClearing] = useState(false);
+  const [syncInterval, setSyncInterval] = useAtom(syncIntervalAtom);
+  const [syncing, setSyncing] = useState(false);
 
   const handleSync = async () => {
+    if (!currentTurfId) return;
+    setSyncing(true);
     try {
-      const count = await sync();
-      if (count === 0) {
-        Alert.alert("Not needed", "No current canvass results need syncing.");
-      } else {
-        Alert.alert("Done", `Synced ${count} result${count === 1 ? "" : "s"} to server.`);
-      }
+      await pullCanvassEvents(currentTurfId);
+      Alert.alert("Done", "Synced with server.");
     } catch {
       Alert.alert(
         "Sync failed",
         "Your results are saved locally and will not be lost. Try again when you have a network connection.",
       );
+    } finally {
+      setSyncing(false);
     }
   };
 
-  const handleClearData = () => {
-    if (!currentTurfId) return;
-    Alert.alert(
-      "Clear local data",
-      "This will remove all locally stored canvass results. Unsynced data will be lost.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear",
-          style: "destructive",
-          onPress: async () => {
-            setClearing(true);
-            try {
-              await clearLocalResults(currentTurfId, setResults);
-              Alert.alert("Done", "Local results cleared.");
-            } catch (err) {
-              Alert.alert("Error", String(err));
-            } finally {
-              setClearing(false);
-            }
-          },
-        },
-      ],
+  const handleSyncFrequency = () => {
+    const options = [...SYNC_OPTIONS.map((o) => o.label), "Cancel"];
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options,
+        cancelButtonIndex: options.length - 1,
+        title: "Sync frequency",
+        destructiveButtonIndex: SYNC_OPTIONS.findIndex((o) => o.value === 0),
+      },
+      (index) => {
+        if (index < SYNC_OPTIONS.length) {
+          void setSyncInterval(SYNC_OPTIONS[index]!.value);
+        }
+      },
     );
   };
+
+  const syncLabel = SYNC_OPTIONS.find((o) => o.value === syncInterval)?.label ?? "Unknown";
 
   const handleDownloadNewTurf = () => {
     router.dismissAll();
@@ -131,22 +114,17 @@ export default function SettingsScreen() {
             }}
             icon={<ListCheck size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
-          {!currentTurfId && (
-            <Text className="font-sans text-xl mt-[-8] text-muted-foreground dark:text-muted-foreground-dark text-center">
-              Turf must be loaded
-            </Text>
-          )}
           <Button
-            title={isSyncing ? "Syncing..." : "Sync data"}
+            title={`Sync frequency: ${syncLabel}`}
+            variant="outline"
+            onPress={handleSyncFrequency}
+            icon={<Timer size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+          />
+          <Button
+            title={syncing ? "Syncing..." : "Sync now"}
             variant="outline"
             onPress={currentTurfId ? handleSync : undefined}
             icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
-          />
-          <Button
-            title={clearing ? "Clearing..." : "Clear local data"}
-            variant="outline"
-            onPress={currentTurfId ? handleClearData : undefined}
-            icon={<BrushCleaning size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
         </View>
       </View>

@@ -5,4 +5,4 @@ export * from "./surveys";
 export * from "./scripts";
 export * from "./universes";
 export * from "./turfs";
-export * from "./canvass-results";
+export * from "./canvass-events";

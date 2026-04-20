@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Ban, Check, Pencil, Scroll, Speech } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,7 +17,12 @@ import type { TurfDataPerson } from "@field-tools/db/schema";
 import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
 import { WideButton } from "@/components/wide-button";
-import { isLocallyRecorded, localResultsAtom, useSetLocalResult } from "@/lib/local-results";
+import {
+  derivePersonSummaries,
+  isRecorded,
+  useRecordEvent,
+  useCanvassEvents,
+} from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { toTitleCase } from "@/lib/format";
@@ -54,10 +59,9 @@ export default function PersonScreen() {
   const door = indexes?.doorByPersonId.get(personId);
   const building = indexes?.buildingByPersonId.get(personId);
 
-  // Local results store — the single source of truth for persistence.
-  const allResults = useAtomValue(localResultsAtom(turfId));
-  const localResult = allResults[personId];
-  const setResult = useSetLocalResult(turfId);
+  const events = useCanvassEvents(turfId);
+  const summaries = useMemo(() => derivePersonSummaries(events), [events]);
+  const recordEvent = useRecordEvent(turfId);
   const setOpenSheet = useSetAtom(openSheetAtom);
   const firstQuestion = scriptQuery.data?.questions?.[0];
   const theme = useAtomValue(themeAtom);
@@ -65,21 +69,42 @@ export default function PersonScreen() {
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
   const mutedIconColor = isDark ? "#666" : "#888";
 
-  // Optimistic local state for instant visual feedback. The jotai atom
-  // (setResult) persists to storage and notifies other screens, but its
-  // re-render cycle is slower. This useState renders the check mark on
-  // the very next frame.
-  const [optimistic, setOptimistic] = useState(localResult);
+  // Derive current state from the person summary.
+  const summary = summaries.get(personId);
+  const latestResult = summary?.latestResult;
+  const formattedNotes = (summary?.notes ?? []).map((e) => ({
+    text: (e.payload as { text: string }).text,
+    canvassedAt: (e.payload as { canvassedAt: string }).canvassedAt ?? e.createdAt,
+  }));
+
+  // Local display state for instant visual feedback. Initialized from the
+  // live query summary, updated immediately on tap. The collection write
+  // is deferred with setTimeout so the state update renders first.
+  const [displayResult, setDisplayResult] = useState<{
+    type: string;
+    payload: Record<string, unknown>;
+  } | null>(latestResult ? { type: latestResult.type, payload: latestResult.payload } : null);
   useEffect(() => {
-    setOptimistic(localResult);
-  }, [localResult]);
+    if (latestResult) {
+      setDisplayResult({ type: latestResult.type, payload: latestResult.payload });
+    }
+  }, [latestResult]);
+
+  const selectedOptionId =
+    displayResult?.type === "survey"
+      ? (displayResult.payload as { surveyResponseOptionId: string }).surveyResponseOptionId
+      : undefined;
+  const unavailableOutcome =
+    displayResult?.type === "outcome"
+      ? (displayResult.payload as { outcome: string }).outcome
+      : undefined;
 
   const [mode, setMode] = useState<Mode>("script");
 
   // Sync mode to match existing result.
   useEffect(() => {
-    if (optimistic?.unavailableOutcome) setMode("unavailable");
-  }, [optimistic?.unavailableOutcome]);
+    if (unavailableOutcome) setMode("unavailable");
+  }, [unavailableOutcome]);
 
   // Navigation
   const handleListPress = () => {
@@ -93,19 +118,17 @@ export default function PersonScreen() {
     const currentIdx = personsInBuilding.findIndex((p) => p.personId === personId);
     const after = personsInBuilding.slice(currentIdx + 1);
     const before = personsInBuilding.slice(0, currentIdx);
-    const nextInBuilding = [...after, ...before].find(
-      (p) => !isLocallyRecorded(allResults, p.personId),
-    );
+    const nextInBuilding = [...after, ...before].find((p) => !isRecorded(summaries, p.personId));
     if (nextInBuilding) {
       router.replace(`/turfs/${turfId}/persons/${nextInBuilding.personId}`);
       return;
     }
     // If the current person isn't marked yet, there's nobody else — stay put.
-    if (!isLocallyRecorded(allResults, personId)) return;
+    if (!isRecorded(summaries, personId)) return;
     // Building complete — offer to return to list or go to next building.
     const nextBuilding = indexes.buildingsInOrder.find((b) => {
       if (b.buildingId === building.buildingId) return false;
-      return b.doors.some((d) => d.persons.some((p) => !isLocallyRecorded(allResults, p.personId)));
+      return b.doors.some((d) => d.persons.some((p) => !isRecorded(summaries, p.personId)));
     });
     Alert.alert("Building complete", "Every person in this building has been recorded.", [
       {
@@ -164,17 +187,10 @@ export default function PersonScreen() {
     );
   }
 
-  // Derive indicators from optimistic state (instant) for the Person screen.
-  // Building/List screens read from the atom (slightly delayed but correct).
   const recorded =
-    !!(
-      optimistic?.surveyResponseOptionId ||
-      optimistic?.unavailableOutcome ||
-      (optimistic?.notes?.length ?? 0) > 0
-    ) && !optimistic?.empty;
-  const noteExists = (optimistic?.notes?.length ?? 0) > 0;
-  const surveyExists =
-    !!optimistic?.surveyResponseOptionId && !optimistic?.unavailableOutcome && !optimistic?.empty;
+    !!displayResult && displayResult.type !== "empty" && displayResult.type !== "note";
+  const noteExists = formattedNotes.length > 0;
+  const surveyExists = displayResult?.type === "survey";
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
 
@@ -215,9 +231,11 @@ export default function PersonScreen() {
               selected={mode === "unavailable"}
               onPress={() => {
                 if (mode === "unavailable") {
-                  const update = { unavailableOutcome: undefined, empty: undefined };
-                  setOptimistic((prev) => ({ ...prev, ...update }));
-                  setTimeout(() => setResult(personId, update), 0);
+                  setDisplayResult({ type: "empty", payload: { kind: "empty" } });
+                  setTimeout(
+                    () => recordEvent({ personId, type: "empty", payload: { kind: "empty" } }),
+                    0,
+                  );
                   setMode("script");
                 } else {
                   setMode("unavailable");
@@ -263,26 +281,22 @@ export default function PersonScreen() {
             {mode === "script" && (
               <ScriptContent
                 scriptQuery={scriptQuery}
-                selectedOptionId={optimistic?.surveyResponseOptionId}
+                selectedOptionId={selectedOptionId}
                 onSelectOption={(optionId) => {
-                  const update = {
+                  const payload = {
+                    kind: "survey" as const,
+                    surveyQuestionId: firstQuestion!.surveyQuestionId,
                     surveyResponseOptionId: optionId,
-                    surveyQuestionId: firstQuestion?.surveyQuestionId,
-                    unavailableOutcome: undefined,
-                    empty: undefined,
                   };
-                  setOptimistic((prev) => ({ ...prev, ...update }));
-                  setTimeout(() => setResult(personId, update), 0);
+                  setDisplayResult({ type: "survey", payload });
+                  setTimeout(() => recordEvent({ personId, type: "survey", payload }), 0);
                 }}
                 onClear={() => {
-                  const update = {
-                    surveyResponseOptionId: undefined,
-                    surveyQuestionId: undefined,
-                    unavailableOutcome: undefined,
-                    empty: true,
-                  };
-                  setOptimistic((prev) => ({ ...prev, ...update }));
-                  setTimeout(() => setResult(personId, update), 0);
+                  setDisplayResult({ type: "empty", payload: { kind: "empty" } });
+                  setTimeout(
+                    () => recordEvent({ personId, type: "empty", payload: { kind: "empty" } }),
+                    0,
+                  );
                 }}
               />
             )}
@@ -292,16 +306,11 @@ export default function PersonScreen() {
                   <WideButton
                     key={opt.value}
                     label={opt.label}
-                    selected={optimistic?.unavailableOutcome === opt.value}
+                    selected={unavailableOutcome === opt.value}
                     onPress={() => {
-                      const update = {
-                        unavailableOutcome: opt.value,
-                        surveyResponseOptionId: undefined,
-                        surveyQuestionId: undefined,
-                        empty: undefined,
-                      };
-                      setOptimistic((prev) => ({ ...prev, ...update }));
-                      setTimeout(() => setResult(personId, update), 0);
+                      const payload = { kind: "outcome" as const, outcome: opt.value };
+                      setDisplayResult({ type: "outcome", payload });
+                      setTimeout(() => recordEvent({ personId, type: "outcome", payload }), 0);
                     }}
                   />
                 ))}
@@ -311,9 +320,12 @@ export default function PersonScreen() {
                       label="Cancel"
                       variant="action"
                       onPress={() => {
-                        const update = { unavailableOutcome: undefined, empty: undefined };
-                        setOptimistic((prev) => ({ ...prev, ...update }));
-                        setTimeout(() => setResult(personId, update), 0);
+                        setDisplayResult({ type: "empty", payload: { kind: "empty" } });
+                        setTimeout(
+                          () =>
+                            recordEvent({ personId, type: "empty", payload: { kind: "empty" } }),
+                          0,
+                        );
                         setMode("script");
                       }}
                     />
@@ -323,7 +335,7 @@ export default function PersonScreen() {
                       label="Submit"
                       variant="submit"
                       onPress={() => {
-                        if (!optimistic?.unavailableOutcome) {
+                        if (!unavailableOutcome) {
                           Alert.alert("Required", "Please select a reason before submitting.");
                           return;
                         }
@@ -336,20 +348,19 @@ export default function PersonScreen() {
             )}
             {mode === "note" && (
               <NoteContent
-                notes={optimistic?.notes ?? []}
+                notes={formattedNotes}
                 onSubmitNote={(text) => {
-                  const newNotes = [
-                    ...(optimistic?.notes ?? []),
-                    { text, canvassedAt: new Date().toISOString() },
-                  ];
-                  setOptimistic((prev) => ({ ...prev, notes: newNotes }));
-                  setTimeout(() => setResult(personId, { notes: newNotes }), 0);
+                  recordEvent({
+                    personId,
+                    type: "note",
+                    payload: { kind: "note", text, canvassedAt: new Date().toISOString() },
+                  });
                   setMode("script");
                 }}
                 onCancel={() => setMode("script")}
               />
             )}
-            {mode === "view-notes" && <NotesList notes={optimistic?.notes ?? []} className="" />}
+            {mode === "view-notes" && <NotesList notes={formattedNotes} className="" />}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -372,8 +383,8 @@ function ScriptContent({
   if (scriptQuery.isLoading) return <ActivityIndicator />;
   if (!scriptQuery.data) {
     return (
-      <Text className="font-sans text-muted-foreground dark:text-muted-foreground-dark">
-        No script loaded
+      <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark">
+        Error loading script
       </Text>
     );
   }

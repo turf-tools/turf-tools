@@ -18,11 +18,11 @@ export const router = {
     get: scriptProcedures.get,
   },
   canvass: {
-    submitDoorResult: canvassProcedures.submitDoorResult,
-    submitBuildingResult: canvassProcedures.submitBuildingResult,
-    submitPersonResult: canvassProcedures.submitPersonResult,
-    submitNote: canvassProcedures.submitNote,
-    listForTurf: canvassProcedures.listForTurf,
+    appendDoorResult: canvassProcedures.appendDoorResult,
+    appendBuildingResult: canvassProcedures.appendBuildingResult,
+    appendPersonResult: canvassProcedures.appendPersonResult,
+    appendNote: canvassProcedures.appendNote,
+    pull: canvassProcedures.pull,
   },
 };
 
