@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Check, Scroll, Speech } from "lucide-react-native";
-import { Fragment, useCallback, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@field-tools/db/schema";
 import { SwipeAction } from "@/components/swipe-action";
@@ -9,13 +9,14 @@ import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
 import { toTitleCase } from "@/lib/format";
 import {
-  hasLocalNote,
-  hasLocalSurvey,
-  isLocallyRecorded,
-  localResultsAtom,
-  type LocalResultsMap,
-  useSetLocalResult,
-} from "@/lib/local-results";
+  type PersonSummary,
+  derivePersonSummaries,
+  hasNotes,
+  hasSurvey,
+  isRecorded,
+  useRecordEvent,
+  useCanvassEvents,
+} from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { useTurf } from "@/lib/turf-data";
@@ -27,7 +28,8 @@ export default function BuildingScreen() {
   }>();
 
   const { indexes, isLoading } = useTurf(turfId);
-  const allResults = useAtomValue(localResultsAtom(turfId));
+  const events = useCanvassEvents(turfId);
+  const allResults = useMemo(() => derivePersonSummaries(events), [events]);
   const building = indexes?.buildingsById.get(buildingId);
   const setOpenSheet = useSetAtom(openSheetAtom);
 
@@ -67,16 +69,14 @@ export default function BuildingScreen() {
   const handleNextPress = () => {
     if (!building) return;
     const personsInBuilding = building.doors.flatMap((d) => d.persons);
-    const nextInBuilding = personsInBuilding.find(
-      (p) => !isLocallyRecorded(allResults, p.personId),
-    );
+    const nextInBuilding = personsInBuilding.find((p) => !isRecorded(allResults, p.personId));
     if (nextInBuilding) {
       router.push(`/turfs/${turfId}/persons/${nextInBuilding.personId}`);
       return;
     }
     const nextBuilding = indexes?.buildingsInOrder?.find((b) => {
       if (b.buildingId === buildingId) return false;
-      return b.doors.some((d) => d.persons.some((p) => !isLocallyRecorded(allResults, p.personId)));
+      return b.doors.some((d) => d.persons.some((p) => !isRecorded(allResults, p.personId)));
     });
     Alert.alert("Building complete", "Every person in this building has been recorded.", [
       {
@@ -145,7 +145,7 @@ function DoorSection({
 }: {
   door: TurfDataDoor;
   turfId: string;
-  allResults: LocalResultsMap;
+  allResults: Map<string, PersonSummary>;
   isFirst?: boolean;
 }) {
   const rawUnit = (door.unit ?? "").trim();
@@ -177,14 +177,14 @@ function PersonRow({
 }: {
   person: TurfDataPerson;
   turfId: string;
-  allResults: LocalResultsMap;
+  allResults: Map<string, PersonSummary>;
 }) {
-  const recorded = isLocallyRecorded(allResults, person.personId);
-  const note = hasLocalNote(allResults, person.personId);
-  const survey = hasLocalSurvey(allResults, person.personId);
+  const recorded = isRecorded(allResults, person.personId);
+  const note = hasNotes(allResults, person.personId);
+  const survey = hasSurvey(allResults, person.personId);
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
-  const setResult = useSetLocalResult(turfId);
+  const recordEvent = useRecordEvent(turfId);
 
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
@@ -194,13 +194,12 @@ function PersonRow({
   };
 
   const markNotHome = useCallback(() => {
-    setResult(person.personId, {
-      unavailableOutcome: "not_home",
-      surveyResponseOptionId: undefined,
-      surveyQuestionId: undefined,
-      empty: undefined,
+    recordEvent({
+      personId: person.personId,
+      type: "outcome",
+      payload: { kind: "outcome", outcome: "not_home" },
     });
-  }, [person.personId, setResult]);
+  }, [person.personId, recordEvent]);
 
   return (
     <SwipeAction

@@ -1,73 +1,83 @@
-import { eq } from "@field-tools/db";
-import {
-  canvassNotes,
-  canvassResultsBuildings,
-  canvassResultsDoors,
-  canvassResultsPersons,
-} from "@field-tools/db/schema";
+import { and, asc, eq, gt } from "@field-tools/db";
+import { canvassEvents } from "@field-tools/db/schema";
 import { z } from "zod";
 import { mut, pub } from "./context";
 
-// All ids passed in (doorId, buildingId, voterId / personId, surveyQuestionId,
+// All ids passed in (doorId, buildingId, personId, surveyQuestionId,
 // surveyResponseOptionId) are the global UUIDs assigned by the DuckLake import
 // pipeline. They flow through the turf data blob to the native app and back
 // here unchanged.
 //
-// submitPersonResult upserts on (turfId, voterId, userId) — the same canvasser
-// syncing the same person overwrites the previous result. Different canvassers
-// each keep their own row.
-//
-// Notes are append-only in a separate table, deduped on (turfId, userId, canvassedAt).
+// Every result is an immutable append to canvass_events. "Current state" for
+// an entity = latest event by sequence. The eventId (client-generated UUID)
+// is used for dedup on retry.
 
+const personOutcome = z.enum(["not_home", "deceased", "hostile", "moved"]);
 const doorOutcome = z.enum(["address_not_found"]);
 const buildingOutcome = z.enum(["inaccessible"]);
-const personOutcome = z.enum(["not_home", "deceased", "hostile", "moved"]);
 
-export const submitDoorResult = mut
+export const appendDoorResult = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
       doorId: z.string().uuid(),
       outcome: doorOutcome,
+      inputType: z.string().optional(),
+      eventId: z.string().optional(),
     }),
   )
   .handler(async ({ context, input }) => {
-    await context.db.insert(canvassResultsDoors).values({
-      doorId: input.doorId,
-      turfId: input.turfId,
-      outcome: input.outcome,
-      userId: context.user.userId,
-    });
+    await context.db
+      .insert(canvassEvents)
+      .values({
+        eventId: input.eventId,
+        turfId: input.turfId,
+        userId: context.user.userId,
+        doorId: input.doorId,
+        type: "outcome",
+        payload: { kind: "outcome", outcome: input.outcome },
+        inputType: input.inputType,
+      })
+      .onConflictDoNothing({ target: canvassEvents.eventId });
     return { ok: true };
   });
 
-export const submitBuildingResult = mut
+export const appendBuildingResult = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
       buildingId: z.string().uuid(),
       outcome: buildingOutcome,
+      inputType: z.string().optional(),
+      eventId: z.string().optional(),
     }),
   )
   .handler(async ({ context, input }) => {
-    await context.db.insert(canvassResultsBuildings).values({
-      buildingId: input.buildingId,
-      turfId: input.turfId,
-      outcome: input.outcome,
-      userId: context.user.userId,
-    });
+    await context.db
+      .insert(canvassEvents)
+      .values({
+        eventId: input.eventId,
+        turfId: input.turfId,
+        userId: context.user.userId,
+        buildingId: input.buildingId,
+        type: "outcome",
+        payload: { kind: "outcome", outcome: input.outcome },
+        inputType: input.inputType,
+      })
+      .onConflictDoNothing({ target: canvassEvents.eventId });
     return { ok: true };
   });
 
-// Submit a per-person canvass result. Upserts on (turfId, voterId, userId).
-export const submitPersonResult = mut
+// Append a per-person canvass result to the event log.
+export const appendPersonResult = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
-      buildingId: z.string().uuid(),
-      doorId: z.string().uuid(),
+      buildingId: z.string().uuid().optional(),
+      doorId: z.string().uuid().optional(),
       personId: z.string(),
       inputType: z.string().optional(),
+      eventId: z.string().optional(),
       payload: z.discriminatedUnion("kind", [
         z.object({
           kind: z.literal("survey"),
@@ -85,51 +95,23 @@ export const submitPersonResult = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    // Explicitly null all result fields so the upsert clears previous values.
-    const row = {
-      userId: context.user.userId,
-      voterId: input.personId,
-      buildingId: input.buildingId,
-      doorId: input.doorId,
-      turfId: input.turfId,
-      inputType: input.inputType ?? "mobile",
-      canvassedAt: new Date(),
-      outcome: null as string | null,
-      surveyQuestionId: null as string | null,
-      surveyResponseOptionId: null as string | null,
-      empty: false,
-    };
-
-    switch (input.payload.kind) {
-      case "survey":
-        row.surveyQuestionId = input.payload.surveyQuestionId;
-        row.surveyResponseOptionId = input.payload.surveyResponseOptionId;
-        break;
-      case "outcome":
-        row.outcome = input.payload.outcome;
-        break;
-      case "empty":
-        row.empty = true;
-        break;
-    }
-
-    const { turfId: _t, userId: _u, voterId: _v, ...updateFields } = row;
     await context.db
-      .insert(canvassResultsPersons)
-      .values(row)
-      .onConflictDoUpdate({
-        target: [
-          canvassResultsPersons.turfId,
-          canvassResultsPersons.voterId,
-          canvassResultsPersons.userId,
-        ],
-        set: updateFields,
-      });
+      .insert(canvassEvents)
+      .values({
+        eventId: input.eventId,
+        turfId: input.turfId,
+        userId: context.user.userId,
+        personId: input.personId,
+        type: input.payload.kind,
+        payload: input.payload,
+        inputType: input.inputType,
+      })
+      .onConflictDoNothing({ target: canvassEvents.eventId });
     return { ok: true };
   });
 
-// Submit a note. Append-only — deduped on (turfId, userId, canvassedAt).
-export const submitNote = mut
+// Append a note to the event log. Deduped on eventId.
+export const appendNote = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
@@ -138,53 +120,47 @@ export const submitNote = mut
       buildingId: z.string().uuid().optional(),
       text: z.string().min(1),
       canvassedAt: z.string(),
+      inputType: z.string().optional(),
+      eventId: z.string().optional(),
     }),
   )
   .handler(async ({ context, input }) => {
     await context.db
-      .insert(canvassNotes)
+      .insert(canvassEvents)
       .values({
+        eventId: input.eventId,
         turfId: input.turfId,
         userId: context.user.userId,
         personId: input.personId,
         doorId: input.doorId,
         buildingId: input.buildingId,
-        text: input.text,
-        canvassedAt: new Date(input.canvassedAt),
+        type: "note",
+        payload: { kind: "note", text: input.text, canvassedAt: input.canvassedAt },
+        inputType: input.inputType,
       })
-      .onConflictDoNothing({
-        target: [canvassNotes.turfId, canvassNotes.userId, canvassNotes.canvassedAt],
-      });
+      .onConflictDoNothing({ target: canvassEvents.eventId });
     return { ok: true };
   });
 
-// Hydrate a device's local cache with all canvass results for a turf.
-export const listForTurf = pub
-  .input(z.object({ turfId: z.string().uuid() }))
+// Pull events since a cursor. The client stores the returned cursor and
+// passes it on the next call to get only new events.
+export const pull = pub
+  .input(
+    z.object({
+      turfId: z.string().uuid(),
+      cursor: z.number().int().min(0).default(0),
+      limit: z.number().int().min(1).max(1000).default(500),
+    }),
+  )
   .handler(async ({ context, input }) => {
-    const doors = await context.db
+    const rows = await context.db
       .select()
-      .from(canvassResultsDoors)
-      .where(eq(canvassResultsDoors.turfId, input.turfId))
-      .orderBy(canvassResultsDoors.canvassedAt);
+      .from(canvassEvents)
+      .where(and(eq(canvassEvents.turfId, input.turfId), gt(canvassEvents.sequence, input.cursor)))
+      .orderBy(asc(canvassEvents.sequence))
+      .limit(input.limit);
 
-    const buildings = await context.db
-      .select()
-      .from(canvassResultsBuildings)
-      .where(eq(canvassResultsBuildings.turfId, input.turfId))
-      .orderBy(canvassResultsBuildings.canvassedAt);
+    const newCursor = rows.length > 0 ? rows[rows.length - 1]!.sequence : input.cursor;
 
-    const persons = await context.db
-      .select()
-      .from(canvassResultsPersons)
-      .where(eq(canvassResultsPersons.turfId, input.turfId))
-      .orderBy(canvassResultsPersons.canvassedAt);
-
-    const notes = await context.db
-      .select()
-      .from(canvassNotes)
-      .where(eq(canvassNotes.turfId, input.turfId))
-      .orderBy(canvassNotes.canvassedAt);
-
-    return { doors, buildings, persons, notes };
+    return { events: rows, cursor: newCursor };
   });

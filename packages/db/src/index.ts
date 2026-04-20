@@ -10,7 +10,7 @@ import * as schema from "./schema";
 
 // Re-export drizzle query helpers so consumers share the same drizzle-orm instance
 // as this package's schema (avoids type mismatches across pnpm peer-dep variants).
-export { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+export { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
 export type Db = PgAsyncDatabase<PgQueryResultHKT, typeof schema>;
 
