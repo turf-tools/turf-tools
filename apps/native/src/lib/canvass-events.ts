@@ -111,7 +111,7 @@ function createCollection_(turfId: string) {
       getKey: (event) => event.eventId!,
       refetchInterval: (): number | false => {
         const val = getDefaultStore().get(syncIntervalAtom);
-        if (typeof val !== "number") return 300_000;
+        if (typeof val !== "number") return 30_000;
         return val || false;
       },
     }),
@@ -216,18 +216,21 @@ function getTurfContext(turfId: string): TurfContext {
 
 // Call on turf entry. Resets the pull cursor and fetches everything
 // from the server, picking up any events from other canvassers.
-// Creates the collection if it doesn't exist, so the first pull
-// happens here (before navigation) rather than when screens mount.
+// `invalidateQueries` marks the query stale so `preload` triggers one
+// fresh fetch via the collection's observer, and `preload` resolves only
+// when the collection reaches `ready` — so the turf screen renders with
+// data on its first paint instead of flashing empty.
 export async function openTurf(turfId: string) {
   pullCache.delete(turfId);
-  getTurfContext(turfId);
-  await queryClient.refetchQueries(
-    { queryKey: ["canvass-events", turfId] },
-    { throwOnError: true },
-  );
+  const { collection } = getTurfContext(turfId);
+  await queryClient.invalidateQueries({ queryKey: ["canvass-events", turfId] });
+  await (collection as unknown as { preload: () => Promise<void> }).preload();
 }
 
-// Pull latest from server (used by "Sync now" button).
+// Pull latest from server (used by "Sync now" button). Assumes the user is
+// in a turf, so the collection already has active observers — refetchQueries
+// triggers queryFn through those observers and resolves when the fetch
+// (and thus the collection update) completes.
 export async function pullCanvassEvents(turfId: string) {
   await queryClient.refetchQueries(
     { queryKey: ["canvass-events", turfId] },
@@ -240,9 +243,12 @@ export async function pullCanvassEvents(turfId: string) {
 // ---------------------------------------------------------------------------
 
 // All events for a turf. One live query and screens derive what they need.
+// Passing the collection directly (instead of a query builder) avoids the
+// liveQueryCollection wrapper's loading→ready handshake, so populated data
+// is available on the first render.
 export function useCanvassEvents(turfId: string) {
   const { collection } = getTurfContext(turfId);
-  const { data } = useLiveQuery((q) => q.from({ events: collection }));
+  const { data } = useLiveQuery(collection);
   return (data as unknown as CanvassEvent[]) ?? [];
 }
 

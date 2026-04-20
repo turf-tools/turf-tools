@@ -10,10 +10,12 @@ import { Provider as JotaiProvider, useAtomValue } from "jotai";
 import { Menu } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { useEffect } from "react";
-import { LogBox, Pressable } from "react-native";
+import { AppState, LogBox, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { themeAtom } from "@/lib/atoms/theme";
+import { pullCanvassEvents } from "@/lib/canvass-events";
 import { persister, queryClient } from "@/lib/query-client";
 
 // Harmless noise silenced to avoid warning popups.
@@ -48,10 +50,24 @@ function GlobalMenuButton() {
   );
 }
 
+function useForegroundSync() {
+  const currentTurfId = useAtomValue(currentTurfIdAtom);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active" && currentTurfId) {
+        pullCanvassEvents(currentTurfId).catch(() => {});
+      }
+    });
+    return () => sub.remove();
+  }, [currentTurfId]);
+}
+
 function ThemedStack() {
   const theme = useAtomValue(themeAtom);
   const colorSchemeUtils = useColorScheme();
   const isDark = theme === "dark";
+
+  useForegroundSync();
 
   useEffect(() => {
     colorSchemeUtils.setColorScheme(theme);
