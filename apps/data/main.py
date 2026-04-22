@@ -4,11 +4,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from db import create_tables, get_connection
+from src.db import create_tables, get_connection
 from geocode import export_geojson, geocode_buildings
 from import_voter_file import import_voter_file
 from index_quickwit import clear_index, run_index, run_search
-from settings import get_settings
+from src.settings import get_settings
 from turf.storage import read_turf_data
 
 logger = logging.getLogger("uvicorn")

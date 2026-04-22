@@ -22,11 +22,11 @@ from datetime import date
 
 import duckdb
 
-from db import create_tables, get_connection
+from src.db import create_tables, get_connection
 from geocode import geocode_buildings
 from import_voter_file import import_voter_file
 from index_quickwit import run_index
-from settings import get_settings
+from src.settings import get_settings
 from turf.storage import blob_url, write_turf_data
 
 # Must match packages/db/src/mock.ts

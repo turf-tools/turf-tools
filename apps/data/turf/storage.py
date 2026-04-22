@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 
-from settings import Settings
+from src.settings import Settings
 
 LOCAL_TURFS_DIR = Path("local_turfs")
 
