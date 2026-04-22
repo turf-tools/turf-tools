@@ -1,6 +1,6 @@
 import os
 
-from db import create_tables
+from src.db import create_tables
 from import_voter_file import import_voter_file
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "..", "fixtures", "nys-voters-2026-03-08-ad-65-ed-39.parquet")

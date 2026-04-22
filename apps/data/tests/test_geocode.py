@@ -1,6 +1,6 @@
 import os
 
-from db import create_tables
+from src.db import create_tables
 from geocode import AddressInput, GeocodingProvider, GeocodingResult, export_geojson, geocode_buildings
 from import_voter_file import import_voter_file
 
