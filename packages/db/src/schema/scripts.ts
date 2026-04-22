@@ -1,13 +1,13 @@
 import { integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { campaigns } from "./campaigns";
 import { surveyQuestions } from "./surveys";
+import { tracks } from "./tracks";
 import { users } from "./users";
 
 export const scripts = pgTable("scripts", {
   scriptId: uuid().defaultRandom().primaryKey(),
-  campaignId: uuid()
+  trackId: uuid()
     .notNull()
-    .references(() => campaigns.campaignId),
+    .references(() => tracks.trackId),
   name: text().notNull(),
   createdBy: uuid()
     .notNull()

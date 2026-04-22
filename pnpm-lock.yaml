@@ -214,6 +214,9 @@ importers:
       drizzle-orm:
         specifier: beta
         version: 1.0.0-beta.20(@electric-sql/pglite@0.4.2)(@types/mssql@9.1.11)(mssql@11.0.1)(zod@4.3.6)
+      jotai:
+        specifier: ^2.19.1
+        version: 2.19.1(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.2.4)
       lucide-react:
         specifier: ^1.7.0
         version: 1.7.0(react@19.2.4)
@@ -8431,6 +8434,29 @@ packages:
 
   /jose@6.2.2:
     resolution: {integrity: sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ==}
+    dev: false
+
+  /jotai@2.19.1(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.2.4):
+    resolution: {integrity: sha512-sqm9lVZiqBHZH8aSRk32DSiZDHY3yUIlulXYn9GQj7/LvoUdYXSMti7ZPJGo+6zjzKFt5a25k/I6iBCi43PJcw==}
+    engines: {node: '>=12.20.0'}
+    peerDependencies:
+      '@babel/core': '>=7.0.0'
+      '@babel/template': '>=7.0.0'
+      '@types/react': '>=17.0.0'
+      react: '>=17.0.0'
+    peerDependenciesMeta:
+      '@babel/core':
+        optional: true
+      '@babel/template':
+        optional: true
+      '@types/react':
+        optional: true
+      react:
+        optional: true
+    dependencies:
+      '@babel/core': 7.29.0
+      '@types/react': 19.1.17
+      react: 19.2.4
     dev: false
 
   /jotai@2.19.1(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0):
