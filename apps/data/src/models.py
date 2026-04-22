@@ -33,6 +33,31 @@ class TableRef:
         return f"{self.catalog}.{self.schema}.{self.table}"
 
 
+@dataclass(frozen=True)
+class QuickwitIngestResult:
+    """Summary of one Quickwit local-ingest build run."""
+
+    index_id: str
+    source_table_fqn: str
+    source_table_version: int
+    indexed_doc_count: int
+    batch_count: int
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class QuickwitBuildManifestStub:
+    """Placeholder payload for the future manifest writer."""
+
+    index_id: str
+    source_table_fqn: str
+    source_table_version: int
+    indexed_doc_count: int
+    batch_count: int
+    elapsed_seconds: float
+    manifest_written: bool = False
+
+
 class Person(BaseModel):
     """A person to be canvassed. This is the canonical output schema
     that every voter file transformation query must produce."""

@@ -1,5 +1,9 @@
 # Data Package
 
+## Use `uv`
+
+Use `uv` for everything, even running basic temporary scripts.
+
 ## DuckDB API Style
 
 Prefer the DuckDB **relational API** and **expression API** over raw SQL strings. Use methods like `conn.read_parquet()`, `rel.filter()`, `rel.project()`, `rel.aggregate()`, `rel.join()`, etc. to construct queries as composable relation objects rather than interpolating SQL.
