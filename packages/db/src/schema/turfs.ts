@@ -1,17 +1,17 @@
 import { jsonb, pgTable, integer, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { campaigns } from "./campaigns";
+import { lists } from "./lists";
 import { scripts } from "./scripts";
-import { universes } from "./universes";
+import { tracks } from "./tracks";
 import { users } from "./users";
 
 export const turfs = pgTable("turfs", {
   turfId: uuid().defaultRandom().primaryKey(),
-  campaignId: uuid()
+  trackId: uuid()
     .notNull()
-    .references(() => campaigns.campaignId),
-  universeId: uuid()
+    .references(() => tracks.trackId),
+  listId: uuid()
     .notNull()
-    .references(() => universes.universeId),
+    .references(() => lists.listId),
   scriptId: uuid()
     .notNull()
     .references(() => scripts.scriptId),

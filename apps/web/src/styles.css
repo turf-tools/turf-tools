@@ -7,6 +7,12 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --breakpoint-sm: initial;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1440px;
+  --breakpoint-2xl: initial;
+
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, monospace;
 
@@ -72,7 +78,7 @@
   --primary-foreground: oklch(0.99 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.566 0 0);
-  --muted: oklch(0.97 0 0);
+  --muted: oklch(0.96 0 0);
   --muted-foreground: oklch(0.566 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
@@ -94,6 +100,8 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --tracking-tight: -0.01em;
+  --tracking-wide: 0.01em;
 }
 
 .dark {

@@ -2,7 +2,9 @@
 import type { ReactNode } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Provider as JotaiProvider } from "jotai";
 
+import { Shell } from "~/components/shell";
 import appCss from "~/styles.css?url";
 
 const queryClient = new QueryClient();
@@ -29,9 +31,13 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
-      <RootDocument>
-        <Outlet />
-      </RootDocument>
+      <JotaiProvider>
+        <RootDocument>
+          <Shell>
+            <Outlet />
+          </Shell>
+        </RootDocument>
+      </JotaiProvider>
     </QueryClientProvider>
   );
 }
