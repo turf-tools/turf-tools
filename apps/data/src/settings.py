@@ -79,6 +79,15 @@ class Settings(BaseSettings):
         description="Local directory to cache downloaded TIGER shapefiles.",
     )
 
+    quickwit_batch_size: int = Field(
+        default=1_000_000,
+        description=(
+            "Number of voter records to stream per Quickwit local-ingest batch. "
+            "1,000,000 is the conservative default; larger batch sizes may be faster "
+            "if the builder machine has enough memory."
+        ),
+    )
+
 
 def get_settings() -> Settings:
     """Create and return application settings from environment variables."""
