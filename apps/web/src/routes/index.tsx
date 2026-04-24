@@ -1,18 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// `/` is a pure redirect to `/overview` so the sidebar's Overview tab is the
+// single source of truth for the landing page (and its active indicator
+// doesn't need a special-case exact match).
 export const Route = createFileRoute("/")({
-  component: Home,
+  beforeLoad: () => {
+    throw redirect({ to: "/overview" });
+  },
 });
-
-// Landing page. Eventually a cross-campaign dashboard (progress,
-// canvass results, upcoming turf assignments). For now it's a "coming
-// soon" stub — leaving it intentionally empty so we don't ship a
-// half-baked dashboard that's worse than no dashboard.
-function Home() {
-  return (
-    <>
-      <h1 className="mb-4 text-xl font-extrabold tracking-wide">Dashboard</h1>
-      <p className="text-muted-foreground">Coming soon.</p>
-    </>
-  );
-}

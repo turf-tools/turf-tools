@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import {
   CircleUser,
+  LayoutDashboard,
   Layers,
   type LucideIcon,
   Map,
@@ -19,8 +20,9 @@ type NavItem = {
 };
 
 const PRIMARY: NavItem[] = [
+  { to: "/overview", label: "Overview", icon: LayoutDashboard },
   { to: "/tracks", label: "Tracks", icon: Split },
-  { to: "/lists", label: "Lists", icon: Layers },
+  { to: "/segments", label: "Segments", icon: Layers },
   { to: "/turfs", label: "Turfs", icon: Map },
 ];
 

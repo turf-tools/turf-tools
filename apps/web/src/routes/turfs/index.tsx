@@ -6,7 +6,7 @@ import { Button } from "~/components/button";
 import { Filter } from "~/components/filter";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { listFilterAtom } from "~/lib/atoms/filters";
+import { filterAtom } from "~/lib/atoms/filters";
 import { formatDate } from "~/lib/format";
 import { client } from "~/rpc/client";
 
@@ -14,12 +14,12 @@ export const Route = createFileRoute("/turfs/")({
   component: TurfsIndex,
 });
 
-// Turfs across the org, narrowed by the list-view filter (track for now,
+// Turfs across the org, narrowed by the page-level filter (track for now,
 // more dimensions later). A map|list toggle is planned (turfs are
 // inherently geographic) but requires decisions on the map layer —
 // deferred for now.
 function TurfsIndex() {
-  const filter = useAtomValue(listFilterAtom);
+  const filter = useAtomValue(filterAtom);
   const navigate = useNavigate();
   const { data } = useQuery({
     queryKey: ["turfs", filter.trackId],
@@ -40,6 +40,8 @@ function TurfsIndex() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
+              <TableHead>Track</TableHead>
+              <TableHead>Segment</TableHead>
               <TableHead>Doors</TableHead>
               <TableHead>People</TableHead>
               <TableHead>Assigned</TableHead>
@@ -54,7 +56,13 @@ function TurfsIndex() {
                   <Pill>{t.name}</Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">{t.listCode ?? "—"}</Pill>
+                  <Pill variant="number">{t.turfCode ?? "—"}</Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill>{t.trackName}</Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill>{t.segmentName}</Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">

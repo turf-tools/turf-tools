@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { pub } from "./context";
 import * as canvassProcedures from "./canvass";
-import * as listsProcedures from "./lists";
 import * as organizationsProcedures from "./organizations";
 import * as scriptProcedures from "./script";
+import * as segmentsProcedures from "./segments";
 import * as tracksProcedures from "./tracks";
 import * as turfsProcedures from "./turfs";
 
@@ -19,9 +19,9 @@ export const router = {
     list: tracksProcedures.list,
     getById: tracksProcedures.getById,
   },
-  lists: {
-    list: listsProcedures.list,
-    getById: listsProcedures.getById,
+  segments: {
+    list: segmentsProcedures.list,
+    getById: segmentsProcedures.getById,
   },
   turfs: {
     getByUser: turfsProcedures.getByUser,

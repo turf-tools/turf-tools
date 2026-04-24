@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { ChevronDown, Split } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { listFilterAtom } from "~/lib/atoms/filters";
+import { filterAtom } from "~/lib/atoms/filters";
 import { client } from "~/rpc/client";
 import { Button } from "./button";
 import {
@@ -13,15 +13,15 @@ import {
   DropdownMenuTrigger,
 } from "./dropdown-menu";
 
-// Filter controls for list-style pages (/lists, /turfs). Currently one
-// track filter; more dimensions (tags, status, etc.) plug in alongside by
-// adding controls here and expanding listFilterAtom. Text size is pinned
+// Filter controls for the top-level admin index pages (/segments, /turfs).
+// Currently one track filter; more dimensions (tags, status, etc.) plug in
+// alongside by adding controls here and expanding filterAtom. Text size is pinned
 // to `text-sm` so it matches the breadcrumb, sidebar, and table — we
 // want deliberate size variation, not one-off slightly-smaller chrome.
 const ALL_TRACKS = "__all__";
 
 export function Filter() {
-  const [filter, setFilter] = useAtom(listFilterAtom);
+  const [filter, setFilter] = useAtom(filterAtom);
   const [open, setOpen] = useState(false);
   const pendingValueRef = useRef<string | undefined>(undefined);
   // Mount gate: server renders with the default atom value (trackId=null),

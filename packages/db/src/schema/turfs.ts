@@ -1,6 +1,6 @@
 import { jsonb, pgTable, integer, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { lists } from "./lists";
 import { scripts } from "./scripts";
+import { segments } from "./segments";
 import { tracks } from "./tracks";
 import { users } from "./users";
 
@@ -9,14 +9,14 @@ export const turfs = pgTable("turfs", {
   trackId: uuid()
     .notNull()
     .references(() => tracks.trackId),
-  listId: uuid()
+  segmentId: uuid()
     .notNull()
-    .references(() => lists.listId),
+    .references(() => segments.segmentId),
   scriptId: uuid()
     .notNull()
     .references(() => scripts.scriptId),
   name: text().notNull(),
-  listCode: text().unique(),
+  turfCode: text().unique(),
   geometry: jsonb(),
   dataUrl: text(),
   doorCount: integer(),

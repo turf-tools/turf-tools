@@ -6,27 +6,27 @@ import { Button } from "~/components/button";
 import { Filter } from "~/components/filter";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { listFilterAtom } from "~/lib/atoms/filters";
+import { filterAtom } from "~/lib/atoms/filters";
 import { formatDate } from "~/lib/format";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/lists/")({
-  component: ListsIndex,
+export const Route = createFileRoute("/segments/")({
+  component: SegmentsIndex,
 });
 
-function ListsIndex() {
-  const filter = useAtomValue(listFilterAtom);
+function SegmentsIndex() {
+  const filter = useAtomValue(filterAtom);
   const navigate = useNavigate();
   const { data } = useQuery({
-    queryKey: ["lists", filter.trackId],
-    queryFn: () => client.lists.list(filter.trackId ? { trackId: filter.trackId } : undefined),
+    queryKey: ["segments", filter.trackId],
+    queryFn: () => client.segments.list(filter.trackId ? { trackId: filter.trackId } : undefined),
     placeholderData: keepPreviousData,
   });
 
   return (
     <>
       <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide">Lists</h1>
+        <h1 className="text-xl font-extrabold tracking-wide">Segments</h1>
         <Filter />
       </div>
       {data ? (
@@ -34,6 +34,7 @@ function ListsIndex() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Track</TableHead>
               <TableHead>Doors</TableHead>
               <TableHead>People</TableHead>
               <TableHead>Voter file</TableHead>
@@ -43,29 +44,32 @@ function ListsIndex() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.map((l) => (
-              <TableRow key={l.listId}>
+            {data.map((s) => (
+              <TableRow key={s.segmentId}>
                 <TableCell>
-                  <Pill>{l.name}</Pill>
+                  <Pill>{s.name}</Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill>{s.trackName}</Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">
-                    {l.doorCount != null ? l.doorCount.toLocaleString() : "—"}
+                    {s.doorCount != null ? s.doorCount.toLocaleString() : "—"}
                   </Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">
-                    {l.personCount != null ? l.personCount.toLocaleString() : "—"}
+                    {s.personCount != null ? s.personCount.toLocaleString() : "—"}
                   </Pill>
                 </TableCell>
                 <TableCell>
                   <Pill>
-                    {l.voterFileId ?? "—"}
-                    {l.voterFileVersion ? ` v${l.voterFileVersion}` : ""}
+                    {s.voterFileId ?? "—"}
+                    {s.voterFileVersion ? ` v${s.voterFileVersion}` : ""}
                   </Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">{formatDate(l.createdAt)}</Pill>
+                  <Pill variant="number">{formatDate(s.createdAt)}</Pill>
                 </TableCell>
                 <TableCell>
                   <Button
@@ -73,7 +77,10 @@ function ListsIndex() {
                     size="sm"
                     className="w-full"
                     onClick={() =>
-                      navigate({ to: "/lists/$listId/cut", params: { listId: l.listId } })
+                      navigate({
+                        to: "/segments/$segmentId/cut",
+                        params: { segmentId: s.segmentId },
+                      })
                     }
                   >
                     <Scissors />
@@ -85,8 +92,10 @@ function ListsIndex() {
                     variant="outline"
                     size="sm"
                     className="w-full"
-                    aria-label="Open list"
-                    onClick={() => navigate({ to: "/lists/$listId", params: { listId: l.listId } })}
+                    aria-label="Open segment"
+                    onClick={() =>
+                      navigate({ to: "/segments/$segmentId", params: { segmentId: s.segmentId } })
+                    }
                   >
                     <ArrowUpRight />
                   </Button>
