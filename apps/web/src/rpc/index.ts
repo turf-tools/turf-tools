@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { pub } from "./context";
+import * as campaignsProcedures from "./campaigns";
 import * as canvassProcedures from "./canvass";
 import * as organizationsProcedures from "./organizations";
 import * as scriptProcedures from "./script";
 import * as segmentsProcedures from "./segments";
-import * as tracksProcedures from "./tracks";
 import * as turfsProcedures from "./turfs";
+import * as zonesProcedures from "./zones";
 
 export const router = {
   healthcheck: pub.input(z.object({}).optional()).handler(async ({ context }) => {
@@ -15,13 +16,17 @@ export const router = {
   organizations: {
     getCurrent: organizationsProcedures.getCurrent,
   },
-  tracks: {
-    list: tracksProcedures.list,
-    getById: tracksProcedures.getById,
+  campaigns: {
+    list: campaignsProcedures.list,
+    getById: campaignsProcedures.getById,
   },
   segments: {
     list: segmentsProcedures.list,
     getById: segmentsProcedures.getById,
+  },
+  zones: {
+    list: zonesProcedures.list,
+    getById: zonesProcedures.getById,
   },
   turfs: {
     getByUser: turfsProcedures.getByUser,

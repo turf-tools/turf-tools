@@ -18,8 +18,9 @@ function SegmentsIndex() {
   const filter = useAtomValue(filterAtom);
   const navigate = useNavigate();
   const { data } = useQuery({
-    queryKey: ["segments", filter.trackId],
-    queryFn: () => client.segments.list(filter.trackId ? { trackId: filter.trackId } : undefined),
+    queryKey: ["segments", filter.campaignId],
+    queryFn: () =>
+      client.segments.list(filter.campaignId ? { campaignId: filter.campaignId } : undefined),
     placeholderData: keepPreviousData,
   });
 
@@ -34,7 +35,7 @@ function SegmentsIndex() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Track</TableHead>
+              <TableHead>Campaign</TableHead>
               <TableHead>Doors</TableHead>
               <TableHead>People</TableHead>
               <TableHead>Voter file</TableHead>
@@ -50,7 +51,7 @@ function SegmentsIndex() {
                   <Pill>{s.name}</Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill>{s.trackName}</Pill>
+                  <Pill>{s.campaignName}</Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">

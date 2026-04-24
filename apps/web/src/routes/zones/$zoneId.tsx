@@ -4,16 +4,16 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "~/components/button";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/tracks/$trackId")({
-  component: TrackDetail,
+export const Route = createFileRoute("/zones/$zoneId")({
+  component: ZoneDetail,
 });
 
-function TrackDetail() {
-  const { trackId } = Route.useParams();
+function ZoneDetail() {
+  const { zoneId } = Route.useParams();
   const navigate = useNavigate();
-  const { data: track } = useQuery({
-    queryKey: ["track", trackId],
-    queryFn: () => client.tracks.getById({ trackId }),
+  const { data: zone } = useQuery({
+    queryKey: ["zone", zoneId],
+    queryFn: () => client.zones.getById({ zoneId }),
   });
 
   return (
@@ -23,15 +23,15 @@ function TrackDetail() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => navigate({ to: "/tracks" })}
-            aria-label="Back to tracks"
+            onClick={() => navigate({ to: "/zones" })}
+            aria-label="Back to zones"
           >
             <ArrowLeft />
           </Button>
-          {track ? <h1 className="text-xl font-extrabold tracking-wide">{track.name}</h1> : null}
+          {zone ? <h1 className="text-xl font-extrabold tracking-wide">{zone.name}</h1> : null}
         </div>
       </div>
-      <p className="text-muted-foreground">Metadata editor for track {trackId} will live here.</p>
+      <p className="text-muted-foreground">Zone editor (map + metadata) will live here.</p>
     </>
   );
 }

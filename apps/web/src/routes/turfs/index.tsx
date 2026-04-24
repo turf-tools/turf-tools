@@ -14,17 +14,17 @@ export const Route = createFileRoute("/turfs/")({
   component: TurfsIndex,
 });
 
-// Turfs across the org, narrowed by the page-level filter (track for now,
-// more dimensions later). A map|list toggle is planned (turfs are
+// Turfs across the org, narrowed by the page-level filter (campaign for
+// now, more dimensions later). A map|list toggle is planned (turfs are
 // inherently geographic) but requires decisions on the map layer —
 // deferred for now.
 function TurfsIndex() {
   const filter = useAtomValue(filterAtom);
   const navigate = useNavigate();
   const { data } = useQuery({
-    queryKey: ["turfs", filter.trackId],
+    queryKey: ["turfs", filter.campaignId],
     queryFn: () =>
-      client.turfs.listForOrg(filter.trackId ? { trackId: filter.trackId } : undefined),
+      client.turfs.listForOrg(filter.campaignId ? { campaignId: filter.campaignId } : undefined),
     placeholderData: keepPreviousData,
   });
 
@@ -40,7 +40,7 @@ function TurfsIndex() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Code</TableHead>
-              <TableHead>Track</TableHead>
+              <TableHead>Campaign</TableHead>
               <TableHead>Segment</TableHead>
               <TableHead>Doors</TableHead>
               <TableHead>People</TableHead>
@@ -59,7 +59,7 @@ function TurfsIndex() {
                   <Pill variant="number">{t.turfCode ?? "—"}</Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill>{t.trackName}</Pill>
+                  <Pill>{t.campaignName}</Pill>
                 </TableCell>
                 <TableCell>
                   <Pill>{t.segmentName}</Pill>

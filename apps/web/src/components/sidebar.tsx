@@ -5,11 +5,12 @@ import {
   Layers,
   type LucideIcon,
   Map,
+  Megaphone,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
-  Split,
   Users,
+  Waypoints,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
 
@@ -21,8 +22,9 @@ type NavItem = {
 
 const PRIMARY: NavItem[] = [
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
-  { to: "/tracks", label: "Tracks", icon: Split },
+  { to: "/campaigns", label: "Campaigns", icon: Megaphone },
   { to: "/segments", label: "Segments", icon: Layers },
+  { to: "/zones", label: "Zones", icon: Waypoints },
   { to: "/turfs", label: "Turfs", icon: Map },
 ];
 

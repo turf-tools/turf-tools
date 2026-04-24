@@ -1,7 +1,17 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ActionSheetIOS, Alert, Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useAtom, useAtomValue } from "jotai";
-import { X, MoonStar, Sun, Download, ListCheck, RefreshCw, Timer } from "lucide-react-native";
+import {
+  BrushCleaning,
+  X,
+  MoonStar,
+  Sun,
+  Download,
+  ListCheck,
+  RefreshCw,
+  Timer,
+} from "lucide-react-native";
 import { useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
@@ -9,6 +19,7 @@ import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { SYNC_OPTIONS, syncIntervalAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
 import { pullCanvassEvents } from "@/lib/canvass-events";
+import { queryClient } from "@/lib/query-client";
 
 export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
@@ -53,6 +64,29 @@ export default function SettingsScreen() {
 
   const handleDownloadNewTurf = () => {
     router.dismissAll();
+  };
+
+  // Temporary dev helper — wipes AsyncStorage (persisted react-query cache +
+  // jotai atoms) and the in-memory query cache, then returns to the landing
+  // screen. Useful when a schema change leaves stale shapes on disk.
+  const handleResetAppState = () => {
+    Alert.alert(
+      "Reset app state?",
+      "Clears all cached data and local storage. You'll need to open a turf again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: async () => {
+            await AsyncStorage.clear();
+            queryClient.clear();
+            router.dismissAll();
+            router.replace("/");
+          },
+        },
+      ],
+    );
   };
 
   const insets = useSafeAreaInsets();
@@ -125,6 +159,12 @@ export default function SettingsScreen() {
             variant="outline"
             onPress={currentTurfId ? handleSync : undefined}
             icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+          />
+          <Button
+            title="Reset app state"
+            variant="outline"
+            onPress={handleResetAppState}
+            icon={<BrushCleaning size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
         </View>
       </View>

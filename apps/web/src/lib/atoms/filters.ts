@@ -5,14 +5,14 @@ import { atomWithStorage, createJSONStorage } from "jotai/utils";
 // added without breaking the atom's signature or the localStorage key.
 // Persisted to localStorage so filters stick across reloads.
 export type FilterState = {
-  trackId: string | null;
+  campaignId: string | null;
   // Future extensions to consider:
   // tagIds: string[];
   // status: "draft" | "active" | "archived" | null;
 };
 
 const DEFAULT_FILTER: FilterState = {
-  trackId: null,
+  campaignId: null,
 };
 
 const storage = createJSONStorage<FilterState>(() =>
@@ -31,7 +31,7 @@ export const filterAtom = atomWithStorage<FilterState>(
   storage,
   // Read localStorage synchronously at atom initialization so the client's
   // very first render has the persisted value — avoids the SSR-hydrate
-  // flash where the default ("All tracks") appears briefly before the
+  // flash where the default ("All campaigns") appears briefly before the
   // stored filter takes effect.
   { getOnInit: true },
 );

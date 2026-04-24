@@ -1,12 +1,13 @@
 import { eq } from "drizzle-orm";
 import { db } from "./index";
+import { campaigns } from "./schema/campaigns";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptQuestions } from "./schema/scripts";
 import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
-import { tracks } from "./schema/tracks";
 import { turfs } from "./schema/turfs";
 import { users } from "./schema/users";
+import { zones } from "./schema/zones";
 
 // Deterministic ids so this script is idempotent and other services (e.g. the
 // data service's mock script) can reference them without a lookup. Shaped as
@@ -14,21 +15,25 @@ import { users } from "./schema/users";
 // `.uuid()` validator accepts them.
 const ORG_ID = "00000000-0000-4000-8000-000000000001";
 const USER_ID = "00000000-0000-4000-8000-000000000001";
-const TRACK_ID = "00000000-0000-4000-8000-000000000002";
+const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000002";
 const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
 const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
 const SEGMENT_ID = "00000000-0000-4000-8000-000000000005";
 const TURF_ID = "00000000-0000-4000-8000-000000000006";
 
-// Extra tracks + segments for exercising the admin UI. These are not
+// Extra campaigns + segments for exercising the admin UI. These are not
 // referenced by the native app (which pins to the four ids above); they
-// exist only to give the tracks and segments tables more than one row and
-// to cover the case where a segment belongs to a track other than the default.
-const SPRING_PRIMARY_TRACK_ID = "00000000-0000-4000-8000-000000000007";
-const FALL_GENERAL_TRACK_ID = "00000000-0000-4000-8000-000000000008";
+// exist only to give the campaigns and segments tables more than one row
+// and to cover the case where a segment belongs to a campaign other than
+// the default.
+const PETITIONING_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000007";
+const PERSUASION_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000008";
 const SWING_SEGMENT_ID = "00000000-0000-4000-8000-000000000009";
 const BASE_SEGMENT_ID = "00000000-0000-4000-8000-00000000000a";
 const TURNOUT_SEGMENT_ID = "00000000-0000-4000-8000-00000000000b";
+const MANHATTAN_ZONE_ID = "00000000-0000-4000-8000-00000000000c";
+const BROOKLYN_ZONE_ID = "00000000-0000-4000-8000-00000000000d";
+const QUEENS_ZONE_ID = "00000000-0000-4000-8000-00000000000e";
 
 const DATA_SERVICE_URL = process.env.DATA_SERVICE_PUBLIC_URL ?? "http://localhost:8000";
 
@@ -69,43 +74,46 @@ async function mock() {
     console.log("Created user");
   }
 
-  const existingTrack = await db.select().from(tracks).where(eq(tracks.trackId, TRACK_ID));
-  if (existingTrack.length === 0) {
-    await db.insert(tracks).values({
-      trackId: TRACK_ID,
+  const existingCampaign = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.campaignId, CAMPAIGN_ID));
+  if (existingCampaign.length === 0) {
+    await db.insert(campaigns).values({
+      campaignId: CAMPAIGN_ID,
       organizationId: ORG_ID,
-      name: "Default Track",
+      name: "Default Campaign",
       createdBy: USER_ID,
     });
-    console.log("Created track");
+    console.log("Created campaign");
   }
 
-  const existingSpring = await db
+  const existingPetitioning = await db
     .select()
-    .from(tracks)
-    .where(eq(tracks.trackId, SPRING_PRIMARY_TRACK_ID));
-  if (existingSpring.length === 0) {
-    await db.insert(tracks).values({
-      trackId: SPRING_PRIMARY_TRACK_ID,
+    .from(campaigns)
+    .where(eq(campaigns.campaignId, PETITIONING_CAMPAIGN_ID));
+  if (existingPetitioning.length === 0) {
+    await db.insert(campaigns).values({
+      campaignId: PETITIONING_CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Petitioning",
       createdBy: USER_ID,
     });
-    console.log("Created track");
+    console.log("Created campaign");
   }
 
-  const existingFall = await db
+  const existingPersuasion = await db
     .select()
-    .from(tracks)
-    .where(eq(tracks.trackId, FALL_GENERAL_TRACK_ID));
-  if (existingFall.length === 0) {
-    await db.insert(tracks).values({
-      trackId: FALL_GENERAL_TRACK_ID,
+    .from(campaigns)
+    .where(eq(campaigns.campaignId, PERSUASION_CAMPAIGN_ID));
+  if (existingPersuasion.length === 0) {
+    await db.insert(campaigns).values({
+      campaignId: PERSUASION_CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Persuasion",
       createdBy: USER_ID,
     });
-    console.log("Created track");
+    console.log("Created campaign");
   }
 
   const existingQuestion = await db
@@ -135,7 +143,7 @@ async function mock() {
   if (existingScript.length === 0) {
     await db.insert(scripts).values({
       scriptId: SCRIPT_ID,
-      trackId: TRACK_ID,
+      campaignId: CAMPAIGN_ID,
       name: "Default Script",
       createdBy: USER_ID,
     });
@@ -154,7 +162,7 @@ async function mock() {
   if (existingSegment.length === 0) {
     await db.insert(segments).values({
       segmentId: SEGMENT_ID,
-      trackId: TRACK_ID,
+      campaignId: CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Default Segment",
       voterFileId: DEFAULT_VOTER_FILE_ID,
@@ -171,7 +179,7 @@ async function mock() {
   if (existingSwing.length === 0) {
     await db.insert(segments).values({
       segmentId: SWING_SEGMENT_ID,
-      trackId: TRACK_ID,
+      campaignId: CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Base",
       voterFileId: DEFAULT_VOTER_FILE_ID,
@@ -190,7 +198,7 @@ async function mock() {
   if (existingBase.length === 0) {
     await db.insert(segments).values({
       segmentId: BASE_SEGMENT_ID,
-      trackId: SPRING_PRIMARY_TRACK_ID,
+      campaignId: PETITIONING_CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Swing",
       voterFileId: DEFAULT_VOTER_FILE_ID,
@@ -209,7 +217,7 @@ async function mock() {
   if (existingTurnout.length === 0) {
     await db.insert(segments).values({
       segmentId: TURNOUT_SEGMENT_ID,
-      trackId: FALL_GENERAL_TRACK_ID,
+      campaignId: PERSUASION_CAMPAIGN_ID,
       organizationId: ORG_ID,
       name: "Growth",
       voterFileId: DEFAULT_VOTER_FILE_ID,
@@ -221,11 +229,29 @@ async function mock() {
     console.log("Created segment");
   }
 
+  const zoneSeeds: Array<{ id: string; name: string }> = [
+    { id: MANHATTAN_ZONE_ID, name: "Manhattan" },
+    { id: BROOKLYN_ZONE_ID, name: "Brooklyn" },
+    { id: QUEENS_ZONE_ID, name: "Queens" },
+  ];
+  for (const z of zoneSeeds) {
+    const existing = await db.select().from(zones).where(eq(zones.zoneId, z.id));
+    if (existing.length === 0) {
+      await db.insert(zones).values({
+        zoneId: z.id,
+        organizationId: ORG_ID,
+        name: z.name,
+        createdBy: USER_ID,
+      });
+      console.log(`Created zone ${z.name}`);
+    }
+  }
+
   const existingTurf = await db.select().from(turfs).where(eq(turfs.turfId, TURF_ID));
   if (existingTurf.length === 0) {
     await db.insert(turfs).values({
       turfId: TURF_ID,
-      trackId: TRACK_ID,
+      campaignId: CAMPAIGN_ID,
       segmentId: SEGMENT_ID,
       scriptId: SCRIPT_ID,
       name: "Default Turf",
