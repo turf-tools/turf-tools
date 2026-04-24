@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { client } from "~/rpc/client";
 
 // Static left-side identifier: Field Tools / Org name. Track is no longer
-// a session-level scope — it's a filter on list views (see ListFilterBar)
-// — so it doesn't belong in the breadcrumb.
+// a session-level scope — it's a page-level filter (see Filter) — so it
+// doesn't belong in the breadcrumb.
 type BreadcrumbProps = {
   children?: ReactNode;
 };

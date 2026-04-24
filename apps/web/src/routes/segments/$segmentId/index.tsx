@@ -4,20 +4,20 @@ import { ArrowLeft, Scissors } from "lucide-react";
 import { Button } from "~/components/button";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/lists/$listId/")({
-  component: ListDetail,
+export const Route = createFileRoute("/segments/$segmentId/")({
+  component: SegmentDetail,
 });
 
-// Full-width edit view for a single list: query builder on the left
+// Full-width edit view for a single segment: query builder on the left
 // (placeholder for now), map of matching voters on the right (also a
 // placeholder). Header has Back, Save (no-op stub), and "Cut turf" which
-// routes to the turf-cutter inside this list.
-function ListDetail() {
-  const { listId } = Route.useParams();
+// routes to the turf-cutter inside this segment.
+function SegmentDetail() {
+  const { segmentId } = Route.useParams();
   const navigate = useNavigate();
-  const { data: list } = useQuery({
-    queryKey: ["list", listId],
-    queryFn: () => client.lists.getById({ listId }),
+  const { data: segment } = useQuery({
+    queryKey: ["segment", segmentId],
+    queryFn: () => client.segments.getById({ segmentId }),
   });
 
   return (
@@ -27,17 +27,19 @@ function ListDetail() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => navigate({ to: "/lists" })}
-            aria-label="Back to lists"
+            onClick={() => navigate({ to: "/segments" })}
+            aria-label="Back to segments"
           >
             <ArrowLeft />
           </Button>
-          {list ? <h1 className="text-xl font-extrabold tracking-wide">{list.name}</h1> : null}
+          {segment ? (
+            <h1 className="text-xl font-extrabold tracking-wide">{segment.name}</h1>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
-            onClick={() => navigate({ to: "/lists/$listId/cut", params: { listId } })}
+            onClick={() => navigate({ to: "/segments/$segmentId/cut", params: { segmentId } })}
           >
             <Scissors />
             Cut turf

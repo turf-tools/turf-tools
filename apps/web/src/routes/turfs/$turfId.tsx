@@ -35,8 +35,8 @@ function TurfDetail() {
           {turf ? (
             <div className="flex items-baseline gap-3">
               <h1 className="text-xl font-extrabold tracking-wide">{turf.name}</h1>
-              {turf.listCode ? (
-                <span className="text-sm text-muted-foreground italic">code {turf.listCode}</span>
+              {turf.turfCode ? (
+                <span className="text-sm text-muted-foreground italic">code {turf.turfCode}</span>
               ) : null}
             </div>
           ) : null}

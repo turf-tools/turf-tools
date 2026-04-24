@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "./index";
-import { lists } from "./schema/lists";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptQuestions } from "./schema/scripts";
+import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
 import { tracks } from "./schema/tracks";
 import { turfs } from "./schema/turfs";
@@ -17,18 +17,18 @@ const USER_ID = "00000000-0000-4000-8000-000000000001";
 const TRACK_ID = "00000000-0000-4000-8000-000000000002";
 const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
 const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
-const LIST_ID = "00000000-0000-4000-8000-000000000005";
+const SEGMENT_ID = "00000000-0000-4000-8000-000000000005";
 const TURF_ID = "00000000-0000-4000-8000-000000000006";
 
-// Extra tracks + lists for exercising the admin UI. These are not
+// Extra tracks + segments for exercising the admin UI. These are not
 // referenced by the native app (which pins to the four ids above); they
-// exist only to give the tracks and lists tables more than one row and
-// to cover the case where a list belongs to a track other than the default.
+// exist only to give the tracks and segments tables more than one row and
+// to cover the case where a segment belongs to a track other than the default.
 const SPRING_PRIMARY_TRACK_ID = "00000000-0000-4000-8000-000000000007";
 const FALL_GENERAL_TRACK_ID = "00000000-0000-4000-8000-000000000008";
-const SWING_LIST_ID = "00000000-0000-4000-8000-000000000009";
-const BASE_LIST_ID = "00000000-0000-4000-8000-00000000000a";
-const TURNOUT_LIST_ID = "00000000-0000-4000-8000-00000000000b";
+const SWING_SEGMENT_ID = "00000000-0000-4000-8000-000000000009";
+const BASE_SEGMENT_ID = "00000000-0000-4000-8000-00000000000a";
+const TURNOUT_SEGMENT_ID = "00000000-0000-4000-8000-00000000000b";
 
 const DATA_SERVICE_URL = process.env.DATA_SERVICE_PUBLIC_URL ?? "http://localhost:8000";
 
@@ -53,7 +53,7 @@ async function mock() {
       organizationId: ORG_ID,
       name: "Default Organization",
     });
-    console.log("Created default organization");
+    console.log("Created organization");
   }
 
   const existingUser = await db.select().from(users).where(eq(users.userId, USER_ID));
@@ -66,7 +66,7 @@ async function mock() {
       lastName: "User",
       role: "admin",
     });
-    console.log("Created default user");
+    console.log("Created user");
   }
 
   const existingTrack = await db.select().from(tracks).where(eq(tracks.trackId, TRACK_ID));
@@ -77,7 +77,7 @@ async function mock() {
       name: "Default Track",
       createdBy: USER_ID,
     });
-    console.log("Created default track");
+    console.log("Created track");
   }
 
   const existingSpring = await db
@@ -88,10 +88,10 @@ async function mock() {
     await db.insert(tracks).values({
       trackId: SPRING_PRIMARY_TRACK_ID,
       organizationId: ORG_ID,
-      name: "Spring Primary",
+      name: "Petitioning",
       createdBy: USER_ID,
     });
-    console.log("Created Spring Primary track");
+    console.log("Created track");
   }
 
   const existingFall = await db
@@ -102,10 +102,10 @@ async function mock() {
     await db.insert(tracks).values({
       trackId: FALL_GENERAL_TRACK_ID,
       organizationId: ORG_ID,
-      name: "Fall General",
+      name: "Persuasion",
       createdBy: USER_ID,
     });
-    console.log("Created Fall General track");
+    console.log("Created track");
   }
 
   const existingQuestion = await db
@@ -128,7 +128,7 @@ async function mock() {
         createdBy: USER_ID,
       })),
     );
-    console.log("Created default survey question and response options");
+    console.log("Created survey question and response options");
   }
 
   const existingScript = await db.select().from(scripts).where(eq(scripts.scriptId, SCRIPT_ID));
@@ -144,69 +144,81 @@ async function mock() {
       surveyQuestionId: SURVEY_QUESTION_ID,
       order: 0,
     });
-    console.log("Created default script");
+    console.log("Created script");
   }
 
-  const existingList = await db.select().from(lists).where(eq(lists.listId, LIST_ID));
-  if (existingList.length === 0) {
-    await db.insert(lists).values({
-      listId: LIST_ID,
+  const existingSegment = await db
+    .select()
+    .from(segments)
+    .where(eq(segments.segmentId, SEGMENT_ID));
+  if (existingSegment.length === 0) {
+    await db.insert(segments).values({
+      segmentId: SEGMENT_ID,
       trackId: TRACK_ID,
       organizationId: ORG_ID,
-      name: "Default List",
+      name: "Default Segment",
       voterFileId: DEFAULT_VOTER_FILE_ID,
       voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
       createdBy: USER_ID,
     });
-    console.log("Created default list");
+    console.log("Created segment");
   }
 
-  const existingSwing = await db.select().from(lists).where(eq(lists.listId, SWING_LIST_ID));
+  const existingSwing = await db
+    .select()
+    .from(segments)
+    .where(eq(segments.segmentId, SWING_SEGMENT_ID));
   if (existingSwing.length === 0) {
-    await db.insert(lists).values({
-      listId: SWING_LIST_ID,
+    await db.insert(segments).values({
+      segmentId: SWING_SEGMENT_ID,
       trackId: TRACK_ID,
       organizationId: ORG_ID,
-      name: "Swing Voters",
+      name: "Base",
       voterFileId: DEFAULT_VOTER_FILE_ID,
       voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
       doorCount: 1247,
       personCount: 2980,
       createdBy: USER_ID,
     });
-    console.log("Created Swing Voters list");
+    console.log("Created segment");
   }
 
-  const existingBase = await db.select().from(lists).where(eq(lists.listId, BASE_LIST_ID));
+  const existingBase = await db
+    .select()
+    .from(segments)
+    .where(eq(segments.segmentId, BASE_SEGMENT_ID));
   if (existingBase.length === 0) {
-    await db.insert(lists).values({
-      listId: BASE_LIST_ID,
+    await db.insert(segments).values({
+      segmentId: BASE_SEGMENT_ID,
       trackId: SPRING_PRIMARY_TRACK_ID,
       organizationId: ORG_ID,
-      name: "Base Voters",
+      name: "Swing",
       voterFileId: DEFAULT_VOTER_FILE_ID,
       voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
       doorCount: 856,
       personCount: 1920,
       createdBy: USER_ID,
     });
-    console.log("Created Base Voters list");
+    console.log("Created segment");
   }
 
-  const existingTurnout = await db.select().from(lists).where(eq(lists.listId, TURNOUT_LIST_ID));
+  const existingTurnout = await db
+    .select()
+    .from(segments)
+    .where(eq(segments.segmentId, TURNOUT_SEGMENT_ID));
   if (existingTurnout.length === 0) {
-    await db.insert(lists).values({
-      listId: TURNOUT_LIST_ID,
+    await db.insert(segments).values({
+      segmentId: TURNOUT_SEGMENT_ID,
       trackId: FALL_GENERAL_TRACK_ID,
       organizationId: ORG_ID,
-      name: "Turnout Targets",
+      name: "Growth",
       voterFileId: DEFAULT_VOTER_FILE_ID,
       voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
       doorCount: 3456,
       personCount: 7890,
       createdBy: USER_ID,
     });
-    console.log("Created Turnout Targets list");
+    console.log("Created segment");
   }
 
   const existingTurf = await db.select().from(turfs).where(eq(turfs.turfId, TURF_ID));
@@ -214,10 +226,10 @@ async function mock() {
     await db.insert(turfs).values({
       turfId: TURF_ID,
       trackId: TRACK_ID,
-      listId: LIST_ID,
+      segmentId: SEGMENT_ID,
       scriptId: SCRIPT_ID,
       name: "Default Turf",
-      listCode: "121121",
+      turfCode: "121121",
       dataUrl: `${DATA_SERVICE_URL}/turfs/${TURF_ID}/data`,
       assignedTo: USER_ID,
       createdBy: USER_ID,

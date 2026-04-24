@@ -1,5 +1,5 @@
 import { and, asc, eq } from "@field-tools/db";
-import { tracks, turfs } from "@field-tools/db/schema";
+import { segments, tracks, turfs } from "@field-tools/db/schema";
 import { z } from "zod";
 import { pub } from "./context";
 
@@ -7,7 +7,7 @@ import { pub } from "./context";
 const turfSelect = {
   turfId: turfs.turfId,
   name: turfs.name,
-  listCode: turfs.listCode,
+  turfCode: turfs.turfCode,
   dataUrl: turfs.dataUrl,
   doorCount: turfs.doorCount,
   personCount: turfs.personCount,
@@ -38,7 +38,7 @@ export const getById = pub
     return rows[0] ?? null;
   });
 
-// Resolve a turf by its short list code (typed in or scanned from a QR).
+// Resolve a turf by its short code (typed in or scanned from a QR).
 // Returns null if no turf with that code exists or if it's not assigned to
 // the current user.
 export const getByCode = pub
@@ -47,7 +47,7 @@ export const getByCode = pub
     const rows = await context.db
       .select(turfSelect)
       .from(turfs)
-      .where(and(eq(turfs.listCode, input.code), eq(turfs.assignedTo, context.user.userId)));
+      .where(and(eq(turfs.turfCode, input.code), eq(turfs.assignedTo, context.user.userId)));
     return rows[0] ?? null;
   });
 
@@ -63,16 +63,19 @@ export const listForOrg = pub
       .select({
         turfId: turfs.turfId,
         name: turfs.name,
-        listCode: turfs.listCode,
+        turfCode: turfs.turfCode,
         doorCount: turfs.doorCount,
         personCount: turfs.personCount,
         trackId: turfs.trackId,
-        listId: turfs.listId,
+        trackName: tracks.name,
+        segmentId: turfs.segmentId,
+        segmentName: segments.name,
         assignedTo: turfs.assignedTo,
         createdAt: turfs.createdAt,
       })
       .from(turfs)
       .innerJoin(tracks, eq(turfs.trackId, tracks.trackId))
+      .innerJoin(segments, eq(turfs.segmentId, segments.segmentId))
       .where(where)
       .orderBy(asc(turfs.createdAt));
     return rows;

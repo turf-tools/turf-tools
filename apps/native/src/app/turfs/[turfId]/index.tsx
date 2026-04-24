@@ -104,10 +104,10 @@ export default function TurfListScreen() {
     Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   }, []);
 
-  const listTitle = meta?.listCode ? `List ${meta.listCode}` : "Turf";
+  const turfTitle = meta?.turfCode ? `Turf ${meta.turfCode}` : "Turf";
 
   useScreenNav({
-    title: listTitle,
+    title: turfTitle,
     showBack: false,
     bottomButtons: ["search", "list", "next", "mic"],
     onBottomPress: (action) => {

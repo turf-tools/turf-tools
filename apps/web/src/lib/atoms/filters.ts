@@ -1,21 +1,21 @@
 import { atomWithStorage, createJSONStorage } from "jotai/utils";
 
-// Filter state shared across list-style pages (/lists, /turfs). Object-
-// shaped so additional filter dimensions (tags, status, etc.) can be
+// Filter state shared across the top-level admin pages (/segments, /turfs).
+// Object-shaped so additional filter dimensions (tags, status, etc.) can be
 // added without breaking the atom's signature or the localStorage key.
 // Persisted to localStorage so filters stick across reloads.
-export type ListFilter = {
+export type FilterState = {
   trackId: string | null;
   // Future extensions to consider:
   // tagIds: string[];
   // status: "draft" | "active" | "archived" | null;
 };
 
-const DEFAULT_FILTER: ListFilter = {
+const DEFAULT_FILTER: FilterState = {
   trackId: null,
 };
 
-const storage = createJSONStorage<ListFilter>(() =>
+const storage = createJSONStorage<FilterState>(() =>
   typeof window === "undefined"
     ? {
         getItem: () => null,
@@ -25,8 +25,8 @@ const storage = createJSONStorage<ListFilter>(() =>
     : window.localStorage,
 );
 
-export const listFilterAtom = atomWithStorage<ListFilter>(
-  "listFilter",
+export const filterAtom = atomWithStorage<FilterState>(
+  "filter",
   DEFAULT_FILTER,
   storage,
   // Read localStorage synchronously at atom initialization so the client's
