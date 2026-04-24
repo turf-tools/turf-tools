@@ -16,6 +16,10 @@ wheels/
 # Local DuckLake dev data
 *.ducklake
 local_data/
+geo_local_data/
+
+# TIGER shapefile cache
+tiger_cache/
 
 # Local turf data blobs (written by data:mock-turf)
 local_turfs/
@@ -26,3 +30,6 @@ fixtures/*-ad-[0-9]*.parquet
 
 # Quickwit local data
 qwdata/
+
+# Old stuff
+old/**

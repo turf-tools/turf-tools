@@ -1,0 +1,49 @@
+version: 0.7
+index_id: voter-file
+doc_mapping:
+  field_mappings:
+    - name: external_id
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: external_id_type
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: first_name
+      type: text
+      stored: true
+    - name: last_name
+      type: text
+      stored: true
+    - name: address_line_1
+      type: text
+      stored: true
+    - name: address_line_2
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: city
+      type: text
+      stored: true
+    - name: state
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: zip5
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: zip4
+      type: text
+      tokenizer: raw
+      stored: true
+    - name: other_properties
+      type: json
+      stored: true
+search_settings:
+  default_search_fields:
+    - first_name
+    - last_name
+    - address_line_1
+    - city
