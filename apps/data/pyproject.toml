@@ -13,6 +13,16 @@ dependencies = [
   "uvicorn[standard]>=0.42.0",
 ]
 
+[project.scripts]
+update-visualizations = "src.cli:update_visualizations"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
 
 [dependency-groups]
 dev = ["pytest>=9.0.2", "ruff>=0.12.2", "ty>=0.0.1a13"]

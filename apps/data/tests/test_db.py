@@ -1,4 +1,4 @@
-from db import create_tables
+from src.db import create_tables
 
 
 def test_ducklake_tables_created(conn):
