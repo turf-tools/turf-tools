@@ -7,6 +7,7 @@ import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
 import { turfs } from "./schema/turfs";
 import { users } from "./schema/users";
+import { zoneGroups } from "./schema/zone-groups";
 import { zones } from "./schema/zones";
 
 // Deterministic ids so this script is idempotent and other services (e.g. the
@@ -31,6 +32,7 @@ const PERSUASION_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000008";
 const SWING_SEGMENT_ID = "00000000-0000-4000-8000-000000000009";
 const BASE_SEGMENT_ID = "00000000-0000-4000-8000-00000000000a";
 const TURNOUT_SEGMENT_ID = "00000000-0000-4000-8000-00000000000b";
+const NYC_ZONE_GROUP_ID = "00000000-0000-4000-8000-00000000000f";
 const MANHATTAN_ZONE_ID = "00000000-0000-4000-8000-00000000000c";
 const BROOKLYN_ZONE_ID = "00000000-0000-4000-8000-00000000000d";
 const QUEENS_ZONE_ID = "00000000-0000-4000-8000-00000000000e";
@@ -56,6 +58,7 @@ async function mock() {
   if (existingOrg.length === 0) {
     await db.insert(organizations).values({
       organizationId: ORG_ID,
+      slug: "default",
       name: "Default Organization",
     });
     console.log("Created organization");
@@ -229,6 +232,21 @@ async function mock() {
     console.log("Created segment");
   }
 
+  const existingZoneGroup = await db
+    .select()
+    .from(zoneGroups)
+    .where(eq(zoneGroups.zoneGroupId, NYC_ZONE_GROUP_ID));
+  if (existingZoneGroup.length === 0) {
+    await db.insert(zoneGroups).values({
+      zoneGroupId: NYC_ZONE_GROUP_ID,
+      organizationId: ORG_ID,
+      name: "NYC EDs",
+      keyGroup: "nyc_eds",
+      createdBy: USER_ID,
+    });
+    console.log("Created zone group NYC EDs");
+  }
+
   const zoneSeeds: Array<{ id: string; name: string }> = [
     { id: MANHATTAN_ZONE_ID, name: "Manhattan" },
     { id: BROOKLYN_ZONE_ID, name: "Brooklyn" },
@@ -239,8 +257,9 @@ async function mock() {
     if (existing.length === 0) {
       await db.insert(zones).values({
         zoneId: z.id,
-        organizationId: ORG_ID,
+        zoneGroupId: NYC_ZONE_GROUP_ID,
         name: z.name,
+        keys: [],
         createdBy: USER_ID,
       });
       console.log(`Created zone ${z.name}`);

@@ -521,9 +521,9 @@ def blockface_final(
     For each blockface whose ``street_name_tokens`` array intersects any
     equivalency group, the full group's tokens are merged in. For example, a
     blockface with tokens ["broadway", "st"] will also gain "street" so that
-    voter addresses using the full form match correctly.
+    addresses using the full form match correctly.
 
-    This is the stable table that Graph 3 (geocode_voter_data) reads directly.
+    This is the stable table that Graph 3 (geocode) reads directly.
     Incremental: skips blockface_ids already present.
     """
     table = "blockface"

@@ -1,44 +1,44 @@
-"""Hamilton graph for geocoding voter addresses against TIGER blockface data.
+"""Hamilton graph for geocoding person addresses against TIGER blockface data.
 
-Takes the validated voter data produced by Graph 1 (`voter_file_loader`) and the
+Takes the validated persons produced by Graph 1 (`voter_file_loader`) and the
 blockface reference data produced by Graph 2 (`tiger`) and produces a
-geocoded voter table with lat/lon coordinates derived from linear interpolation
-along the matching TIGER edge geometry.
+geocoded persons table with lat/lon coordinates derived from linear
+interpolation along the matching TIGER edge geometry.
 
-Cross-catalog joins are performed on the single shared DuckDB connection which
-has both ``ducklake`` (voter data) and ``geo_ducklake`` (TIGER blockfaces)
-attached.
+Cross-catalog joins are performed on the single shared DuckDB connection
+which has both ``ducklake`` (person data) and ``geo_ducklake`` (TIGER
+blockfaces) attached.
 
 Node dependency chain:
-    validated_voter_data ─► decomposed_voter_addresses ─► candidate_blockfaces
-                                                               │
-    blockface_final ──────────────────────────────────────────┘
-                                                               │
-                                                        scored_matches
-                                                               │
-                                                         best_match
-                                                               │
-                                                       geocoded_voters
-                                                               │
-                                                     geocoding_summary
+    validated_persons ─► decomposed_persons ─► candidate_blockfaces
+                                                     │
+    blockface_final ────────────────────────────────┘
+                                                     │
+                                              scored_matches
+                                                     │
+                                                best_match
+                                                     │
+                                             geocoded_persons
+                                                     │
+                                             geocoding_summary
 """
 
 import duckdb
 
 from src.models import TableRef
 
-VOTER_CATALOG = "ducklake"
-VOTER_SCHEMA = "main"
+PERSON_CATALOG = "ducklake"
+PERSON_SCHEMA = "main"
 GEO_CATALOG = "geo_ducklake"
 TIGER_SCHEMA = "tiger"
 
 
-def _voter_fqn(client_name: str, table_suffix: str) -> str:
-    return f"{VOTER_CATALOG}.{VOTER_SCHEMA}.{client_name}_{table_suffix}"
+def _person_fqn(organization_slug: str, table_suffix: str) -> str:
+    return f"{PERSON_CATALOG}.{PERSON_SCHEMA}.{organization_slug}_{table_suffix}"
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
-    return conn.sql(f"FROM {VOTER_CATALOG}.current_snapshot()").fetchone()[0]
+    return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -46,12 +46,12 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 # ---------------------------------------------------------------------------
 
 
-def decomposed_voter_addresses(
-    validated_voter_data: TableRef,
-    client_name: str,
+def decomposed_persons(
+    validated_persons: TableRef,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Parse voter address strings into structured fields for blockface matching.
+    """Parse person address strings into structured fields for blockface matching.
 
     ``address_line_1`` from the Person schema (e.g. "123 N Broadway") is
     split into:
@@ -67,9 +67,9 @@ def decomposed_voter_addresses(
 
     Incremental: skips external_ids already present.
     """
-    table_suffix = "voters_decomposed"
-    fqn = _voter_fqn(client_name, table_suffix)
-    source_fqn = validated_voter_data.fqn
+    table_suffix = "persons_decomposed"
+    fqn = _person_fqn(organization_slug, table_suffix)
+    source_fqn = validated_persons.fqn
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
@@ -136,25 +136,25 @@ def decomposed_voter_addresses(
 
     version = _current_version(conn)
     return TableRef(
-        catalog=VOTER_CATALOG,
-        schema=VOTER_SCHEMA,
-        table=f"{client_name}_{table_suffix}",
+        catalog=PERSON_CATALOG,
+        schema=PERSON_SCHEMA,
+        table=f"{organization_slug}_{table_suffix}",
         version=version,
     )
 
 
 # ---------------------------------------------------------------------------
-# Node 2 – join voters to candidate blockfaces
+# Node 2 – join persons to candidate blockfaces
 # ---------------------------------------------------------------------------
 
 
 def candidate_blockfaces(
-    decomposed_voter_addresses: TableRef,
+    decomposed_persons: TableRef,
     blockface_final: TableRef,
-    client_name: str,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Match each decomposed voter address to candidate blockfaces.
+    """Match each decomposed person address to candidate blockfaces.
 
     Matching criteria (all must hold):
     1. ZIP code equality (fast partition filter)
@@ -162,17 +162,17 @@ def candidate_blockfaces(
     3. House number falls within the blockface address range (either direction)
     4. Token array intersection is non-empty (street name overlap)
 
-    Multiple blockfaces may match a single voter — ``scored_matches`` narrows
+    Multiple blockfaces may match a single person — ``scored_matches`` narrows
     these to the best one.
 
-    Cross-catalog join: voter data in ``ducklake``, blockfaces in
+    Cross-catalog join: person data in ``ducklake``, blockfaces in
     ``geo_ducklake``. Both catalogs are attached on the same connection.
 
     Incremental: skips external_ids already present.
     """
-    table_suffix = "voters_candidates"
-    fqn = _voter_fqn(client_name, table_suffix)
-    voters_fqn = decomposed_voter_addresses.fqn
+    table_suffix = "persons_candidates"
+    fqn = _person_fqn(organization_slug, table_suffix)
+    persons_fqn = decomposed_persons.fqn
     blockface_fqn = blockface_final.fqn
 
     conn.execute(f"""
@@ -187,7 +187,7 @@ def candidate_blockfaces(
             from_node_id        VARCHAR,
             to_node_id          VARCHAR,
             geom                GEOMETRY,
-            voter_house_number  INTEGER,
+            person_house_number INTEGER,
             token_overlap       INTEGER
         )
     """)
@@ -195,7 +195,7 @@ def candidate_blockfaces(
     conn.execute(f"""
         INSERT INTO {fqn}
         SELECT
-            v.external_id,
+            p.external_id,
             b.blockface_id,
             b.tiger_line_id,
             b.side,
@@ -205,26 +205,26 @@ def candidate_blockfaces(
             b.from_node_id,
             b.to_node_id,
             b.geom,
-            v.house_number                                              AS voter_house_number,
-            len(list_intersect(v.street_name_tokens, b.street_name_tokens))
+            p.house_number                                              AS person_house_number,
+            len(list_intersect(p.street_name_tokens, b.street_name_tokens))
                                                                         AS token_overlap
-        FROM {voters_fqn} v
+        FROM {persons_fqn} p
         JOIN {blockface_fqn} b
-          ON b.zip_code   = v.zip5
-         AND b.number_type IN (v.number_type, 'mixed')
+          ON b.zip_code   = p.zip5
+         AND b.number_type IN (p.number_type, 'mixed')
          AND (
-               v.house_number BETWEEN b.from_house_num AND b.to_house_num
-            OR v.house_number BETWEEN b.to_house_num   AND b.from_house_num
+               p.house_number BETWEEN b.from_house_num AND b.to_house_num
+            OR p.house_number BETWEEN b.to_house_num   AND b.from_house_num
          )
-         AND len(list_intersect(v.street_name_tokens, b.street_name_tokens)) >= 2
-        WHERE v.external_id NOT IN (SELECT external_id FROM {fqn})
+         AND len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
+        WHERE p.external_id NOT IN (SELECT external_id FROM {fqn})
     """)
 
     version = _current_version(conn)
     return TableRef(
-        catalog=VOTER_CATALOG,
-        schema=VOTER_SCHEMA,
-        table=f"{client_name}_{table_suffix}",
+        catalog=PERSON_CATALOG,
+        schema=PERSON_SCHEMA,
+        table=f"{organization_slug}_{table_suffix}",
         version=version,
     )
 
@@ -236,11 +236,11 @@ def candidate_blockfaces(
 
 def scored_matches(
     candidate_blockfaces: TableRef,
-    decomposed_voter_addresses: TableRef,
-    client_name: str,
+    decomposed_persons: TableRef,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Score each voter–blockface candidate pair for match quality.
+    """Score each person–blockface candidate pair for match quality.
 
     Score components:
     - ``token_overlap``      — raw count of shared street name tokens (already
@@ -250,14 +250,14 @@ def scored_matches(
                                "42nd St"), reducing false matches on numbered streets
 
     The combined ``match_score`` is used by ``best_match`` to select the single
-    best blockface per voter.
+    best blockface per person.
 
     Incremental: skips external_ids already present.
     """
-    table_suffix = "voters_scored"
-    fqn = _voter_fqn(client_name, table_suffix)
+    table_suffix = "persons_scored"
+    fqn = _person_fqn(organization_slug, table_suffix)
     candidates_fqn = candidate_blockfaces.fqn
-    voters_fqn = decomposed_voter_addresses.fqn
+    persons_fqn = decomposed_persons.fqn
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
@@ -271,7 +271,7 @@ def scored_matches(
             from_node_id        VARCHAR,
             to_node_id          VARCHAR,
             geom                GEOMETRY,
-            voter_house_number  INTEGER,
+            person_house_number INTEGER,
             token_overlap       INTEGER,
             numeric_token_bonus INTEGER,
             match_score         INTEGER
@@ -291,44 +291,44 @@ def scored_matches(
             c.from_node_id,
             c.to_node_id,
             c.geom,
-            c.voter_house_number,
+            c.person_house_number,
             c.token_overlap,
-            -- Bonus when the voter address contains a purely numeric token (e.g. "42"
+            -- Bonus when the address contains a purely numeric token (e.g. "42"
             -- in "42nd St"). This increases score for numbered-street matches,
             -- reducing false positives from short token overlaps on plain street names.
             CASE WHEN len(list_filter(
-                v.street_name_tokens,
+                p.street_name_tokens,
                 t -> regexp_matches(t, '^[0-9]+$')
             )) > 0 THEN 1 ELSE 0 END                                    AS numeric_token_bonus,
             c.token_overlap + CASE WHEN len(list_filter(
-                v.street_name_tokens,
+                p.street_name_tokens,
                 t -> regexp_matches(t, '^[0-9]+$')
             )) > 0 THEN 1 ELSE 0 END                                    AS match_score
         FROM {candidates_fqn} c
-        JOIN {voters_fqn} v ON c.external_id = v.external_id
+        JOIN {persons_fqn} p ON c.external_id = p.external_id
         WHERE c.external_id NOT IN (SELECT external_id FROM {fqn})
     """)
 
     version = _current_version(conn)
     return TableRef(
-        catalog=VOTER_CATALOG,
-        schema=VOTER_SCHEMA,
-        table=f"{client_name}_{table_suffix}",
+        catalog=PERSON_CATALOG,
+        schema=PERSON_SCHEMA,
+        table=f"{organization_slug}_{table_suffix}",
         version=version,
     )
 
 
 # ---------------------------------------------------------------------------
-# Node 4 – select best blockface per voter
+# Node 4 – select best blockface per person
 # ---------------------------------------------------------------------------
 
 
 def best_match(
     scored_matches: TableRef,
-    client_name: str,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Select the single highest-scoring blockface candidate per voter.
+    """Select the single highest-scoring blockface candidate per person.
 
     Uses ROW_NUMBER() partitioned by external_id ordered by match_score DESC.
     Ties are broken arbitrarily (stable within a run via DuckDB's deterministic
@@ -336,8 +336,8 @@ def best_match(
 
     Incremental: skips external_ids already present.
     """
-    table_suffix = "voters_best_match"
-    fqn = _voter_fqn(client_name, table_suffix)
+    table_suffix = "persons_best_match"
+    fqn = _person_fqn(organization_slug, table_suffix)
     scored_fqn = scored_matches.fqn
 
     conn.execute(f"""
@@ -352,7 +352,7 @@ def best_match(
             from_node_id        VARCHAR,
             to_node_id          VARCHAR,
             geom                GEOMETRY,
-            voter_house_number  INTEGER,
+            person_house_number INTEGER,
             match_score         INTEGER
         )
     """)
@@ -370,7 +370,7 @@ def best_match(
             from_node_id,
             to_node_id,
             geom,
-            voter_house_number,
+            person_house_number,
             match_score
         FROM (
             SELECT
@@ -387,9 +387,9 @@ def best_match(
 
     version = _current_version(conn)
     return TableRef(
-        catalog=VOTER_CATALOG,
-        schema=VOTER_SCHEMA,
-        table=f"{client_name}_{table_suffix}",
+        catalog=PERSON_CATALOG,
+        schema=PERSON_SCHEMA,
+        table=f"{organization_slug}_{table_suffix}",
         version=version,
     )
 
@@ -399,16 +399,16 @@ def best_match(
 # ---------------------------------------------------------------------------
 
 
-def geocoded_voters(
+def geocoded_persons(
     best_match: TableRef,
-    validated_voter_data: TableRef,
-    client_name: str,
+    validated_persons: TableRef,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Produce the final geocoded voter table with lat/lon coordinates.
+    """Produce the final geocoded persons table with lat/lon coordinates.
 
-    For matched voters the coordinate is derived by linear interpolation along
-    the TIGER edge geometry:
+    For matched persons the coordinate is derived by linear interpolation
+    along the TIGER edge geometry:
 
         fraction = (house_number - range_min) / (range_max - range_min)
         point    = ST_LineInterpolatePoint(geom, LEAST(GREATEST(fraction, 0), 1))
@@ -417,15 +417,15 @@ def geocoded_voters(
     stated range (data quality issues) still produce a plausible point rather
     than NULL.
 
-    Unmatched voters (no blockface candidate found) are included with NULL
+    Unmatched persons (no blockface candidate found) are included with NULL
     coordinates and match_type = 'none'.
 
     Incremental: skips external_ids already present.
     """
-    table_suffix = "voters_geocoded"
-    fqn = _voter_fqn(client_name, table_suffix)
+    table_suffix = "persons_geocoded"
+    fqn = _person_fqn(organization_slug, table_suffix)
     match_fqn = best_match.fqn
-    voters_fqn = validated_voter_data.fqn
+    persons_fqn = validated_persons.fqn
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
@@ -442,12 +442,12 @@ def geocoded_voters(
     conn.execute(f"""
         INSERT INTO {fqn}
         SELECT
-            v.external_id,
+            p.external_id,
             CASE WHEN m.geom IS NOT NULL THEN
                 ST_Y(ST_LineInterpolatePoint(
                     m.geom,
                     LEAST(GREATEST(
-                        (m.voter_house_number - LEAST(m.from_house_num, m.to_house_num))::DOUBLE
+                        (m.person_house_number - LEAST(m.from_house_num, m.to_house_num))::DOUBLE
                         / NULLIF(
                             (GREATEST(m.from_house_num, m.to_house_num)
                              - LEAST(m.from_house_num, m.to_house_num))::DOUBLE,
@@ -461,7 +461,7 @@ def geocoded_voters(
                 ST_X(ST_LineInterpolatePoint(
                     m.geom,
                     LEAST(GREATEST(
-                        (m.voter_house_number - LEAST(m.from_house_num, m.to_house_num))::DOUBLE
+                        (m.person_house_number - LEAST(m.from_house_num, m.to_house_num))::DOUBLE
                         / NULLIF(
                             (GREATEST(m.from_house_num, m.to_house_num)
                              - LEAST(m.from_house_num, m.to_house_num))::DOUBLE,
@@ -476,16 +476,16 @@ def geocoded_voters(
             m.match_score,
             CASE WHEN m.external_id IS NOT NULL THEN 'blockface' ELSE 'none' END
                                 AS match_type
-        FROM {voters_fqn} v
-        LEFT JOIN {match_fqn} m ON v.external_id = m.external_id
-        WHERE v.external_id NOT IN (SELECT external_id FROM {fqn})
+        FROM {persons_fqn} p
+        LEFT JOIN {match_fqn} m ON p.external_id = m.external_id
+        WHERE p.external_id NOT IN (SELECT external_id FROM {fqn})
     """)
 
     version = _current_version(conn)
     return TableRef(
-        catalog=VOTER_CATALOG,
-        schema=VOTER_SCHEMA,
-        table=f"{client_name}_{table_suffix}",
+        catalog=PERSON_CATALOG,
+        schema=PERSON_SCHEMA,
+        table=f"{organization_slug}_{table_suffix}",
         version=version,
     )
 
@@ -496,27 +496,27 @@ def geocoded_voters(
 
 
 def geocoding_summary(
-    geocoded_voters: TableRef,
-    client_name: str,
+    geocoded_persons: TableRef,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Compute match-rate diagnostics for the geocoded voter table.
+    """Compute match-rate diagnostics for the geocoded persons table.
 
     Writes a single-row summary table with counts and percentages broken down
     by match_type. Useful for monitoring data quality across pipeline runs.
 
     Always overwrites (non-incremental) since it is cheap and must reflect the
-    current state of geocoded_voters.
+    current state of geocoded_persons.
     """
     table_suffix = "geocoding_summary"
-    fqn = _voter_fqn(client_name, table_suffix)
-    geocoded_fqn = geocoded_voters.fqn
+    fqn = _person_fqn(organization_slug, table_suffix)
+    geocoded_fqn = geocoded_persons.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         SELECT
-            count(*)                                                        AS total_voters,
+            count(*)                                                        AS total_persons,
             count(*) FILTER (WHERE match_type != 'none')                   AS matched,
             count(*) FILTER (WHERE match_type  = 'none')                   AS unmatched,
             round(
@@ -530,8 +530,8 @@ def geocoding_summary(
 
     version = _current_version(conn)
     return TableRef(
-        catalog=VOTER_CATALOG,
-        schema=VOTER_SCHEMA,
-        table=f"{client_name}_{table_suffix}",
+        catalog=PERSON_CATALOG,
+        schema=PERSON_SCHEMA,
+        table=f"{organization_slug}_{table_suffix}",
         version=version,
     )
