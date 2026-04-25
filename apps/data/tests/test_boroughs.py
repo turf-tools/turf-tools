@@ -27,7 +27,7 @@ from hamilton import driver
 
 from src.dags import geocode, tiger, voter_file_loader
 
-VOTER_FILE_URL = "https://zohran-data-backups.nyc3.digitaloceanspaces.com/ny-voters-2026-03-08.parquet"
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-nyc-sample.parquet")
 TIGER_CACHE = str(Path(__file__).parent.parent / "tiger_cache")
 
 # (borough_name, boe_county_code, tiger_fips, min_expected_match_pct)
@@ -103,25 +103,25 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
 
     Asserts:
     - Match rate meets the per-borough minimum threshold
-    - All matched voters have coordinates within the NYC bounding box
+    - All matched persons have coordinates within the NYC bounding box
     - The pipeline completes without error
     """
     t0 = time.time()
 
-    # Graph 1 — load voter data
+    # Graph 1 — load voter file into persons
     dr1 = driver.Builder().with_modules(voter_file_loader).build()
     r1 = dr1.execute(
-        final_vars=["validated_voter_data"],
+        final_vars=["validated_persons"],
         inputs={
             "voter_file_url": VOTER_FILE_URL,
-            "client_name": borough,
+            "organization_slug": borough,
             "transformation_query": make_transformation_query(county_code),
             "conn": dual_conn,
         },
     )
-    validated = r1["validated_voter_data"]
-    voter_count = dual_conn.table(validated.fqn).aggregate("count(*)").fetchone()[0]
-    assert voter_count > 0, f"No voters loaded for {borough}"
+    validated = r1["validated_persons"]
+    person_count = dual_conn.table(validated.fqn).aggregate("count(*)").fetchone()[0]
+    assert person_count > 0, f"No persons loaded for {borough}"
 
     # Graph 2 — prepare TIGER blockfaces
     Path(tiger_cache_dir).mkdir(parents=True, exist_ok=True)
@@ -145,9 +145,9 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
     r3 = dr3.execute(
         final_vars=["geocoding_summary"],
         inputs={
-            "validated_voter_data": validated,
+            "validated_persons": validated,
             "blockface_final": blockfaces,
-            "client_name": borough,
+            "organization_slug": borough,
             "conn": dual_conn,
         },
     )
@@ -162,8 +162,8 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
         f"{borough}: match rate {match_pct}% is below minimum {min_match_pct}%"
     )
 
-    # All matched voters should have coordinates in the NYC bounding box
-    geocoded_fqn = f"ducklake.main.{borough}_voters_geocoded"
+    # All matched persons should have coordinates in the NYC bounding box
+    geocoded_fqn = f"ducklake.main.{borough}_persons_geocoded"
     bad_coords = dual_conn.execute(f"""
         SELECT count(*) FROM {geocoded_fqn}
         WHERE match_type != 'none'
@@ -174,5 +174,5 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
           )
     """).fetchone()[0]
     assert bad_coords == 0, (
-        f"{borough}: {bad_coords} matched voters have invalid or out-of-bounds coordinates"
+        f"{borough}: {bad_coords} matched persons have invalid or out-of-bounds coordinates"
     )

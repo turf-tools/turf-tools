@@ -15,8 +15,8 @@ def get_connection(settings: Settings) -> duckdb.DuckDBPyConnection:
     """Create a DuckDB connection with both DuckLake catalogs attached.
 
     Attaches:
-    - ``ducklake`` -- voter/client data (primary catalog, USE'd by default)
-    - ``geo_ducklake`` -- TIGER/blockface reference data (reusable across clients)
+    - ``ducklake`` -- person data (primary catalog, USE'd by default)
+    - ``geo_ducklake`` -- TIGER/blockface reference data (reusable across organizations)
 
     All three Hamilton graphs share this single connection so that Graph 3
     can perform cross-catalog joins between the two catalogs without copying data.
@@ -49,78 +49,3 @@ def get_connection(settings: Settings) -> duckdb.DuckDBPyConnection:
 
     conn.execute("USE ducklake")
     return conn
-
-
-def create_tables(conn: duckdb.DuckDBPyConnection) -> None:
-    """Create DuckLake tables if they don't exist."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS voter_file (
-            voter_id TEXT,
-            voter_file_id TEXT,
-            voter_file_version INTEGER,
-            door_id TEXT,
-            building_id TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            middle_name TEXT,
-            name_suffix TEXT,
-            date_of_birth DATE,
-            gender TEXT,
-            party TEXT,
-            status TEXT,
-            county_code TEXT,
-            precinct INTEGER,
-            congressional_district INTEGER,
-            senate_district INTEGER,
-            assembly_district INTEGER,
-            city TEXT,
-            state TEXT,
-            zip TEXT,
-            ward TEXT,
-            registration_date DATE,
-            last_voted_date DATE,
-            voter_history TEXT,
-            house_number TEXT,
-            street_name TEXT,
-            unit TEXT,
-            latitude DOUBLE,
-            longitude DOUBLE
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS buildings (
-            building_id TEXT,
-            house_number TEXT,
-            street_name TEXT,
-            city TEXT,
-            state TEXT,
-            zip TEXT,
-            latitude DOUBLE,
-            longitude DOUBLE
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS doors (
-            door_id TEXT,
-            building_id TEXT,
-            house_number TEXT,
-            street_name TEXT,
-            unit TEXT,
-            city TEXT,
-            state TEXT,
-            zip TEXT,
-            latitude DOUBLE,
-            longitude DOUBLE
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS universe_members (
-            universe_id TEXT,
-            voter_id TEXT,
-            voter_file_id TEXT,
-            voter_file_version INTEGER
-        )
-    """)

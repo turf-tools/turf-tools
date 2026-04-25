@@ -1,4 +1,4 @@
-"""Hamilton graph for streaming voter tables into an existing Quickwit index.
+"""Hamilton graph for streaming persons tables into an existing Quickwit index.
 
 This graph assumes the target Quickwit index already exists, typically having
 been created earlier by a running Quickwit server. The graph then uses the
@@ -7,11 +7,11 @@ stdin, which keeps disk usage bounded and lets the dedicated build machine do
 all indexing work locally.
 
 Node dependency chain:
-    voter_file_table_ref ─► quickwit_source_voter_data ─► quickwit_document_count
-             │                                             │
-             └─────────────────────────────────────────────┴─► quickwit_local_ingest_result
-                                                                 │
-                                                                 └─► quickwit_build_manifest_stub
+    persons_table_ref ─► quickwit_source_persons ─► quickwit_document_count
+             │                                        │
+             └────────────────────────────────────────┴─► quickwit_local_ingest_result
+                                                            │
+                                                            └─► quickwit_build_manifest_stub
 """
 
 from __future__ import annotations
@@ -39,33 +39,33 @@ _REQUIRED_COLUMNS = [
 ]
 
 
-def quickwit_source_voter_data(
-    voter_file_table_ref: TableRef,
+def quickwit_source_persons(
+    persons_table_ref: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Validate that the source voter table has the columns Quickwit ingest expects."""
-    rel = conn.table(voter_file_table_ref.fqn)
+    """Validate that the source persons table has the columns Quickwit ingest expects."""
+    rel = conn.table(persons_table_ref.fqn)
     actual_columns = set(rel.columns)
     missing_columns = [column for column in _REQUIRED_COLUMNS if column not in actual_columns]
     if missing_columns:
         msg = (
-            "Quickwit source table is missing required voter columns: "
+            "Quickwit source table is missing required Person columns: "
             f"{missing_columns}"
         )
         raise ValueError(msg)
-    return voter_file_table_ref
+    return persons_table_ref
 
 
 def quickwit_document_count(
-    quickwit_source_voter_data: TableRef,
+    quickwit_source_persons: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> int:
-    """Count the number of voter documents that will be streamed into Quickwit."""
-    return conn.table(quickwit_source_voter_data.fqn).aggregate("count(*)").fetchone()[0]
+    """Count the number of person documents that will be streamed into Quickwit."""
+    return conn.table(quickwit_source_persons.fqn).aggregate("count(*)").fetchone()[0]
 
 
 def quickwit_local_ingest_result(
-    quickwit_source_voter_data: TableRef,
+    quickwit_source_persons: TableRef,
     quickwit_document_count: int,
     quickwit_binary_path: str,
     quickwit_config_path: str,
@@ -73,17 +73,17 @@ def quickwit_local_ingest_result(
     conn: duckdb.DuckDBPyConnection,
     quickwit_batch_size: int = 1_000_000,
 ) -> QuickwitIngestResult:
-    """Stream voter rows into ``quickwit tool local-ingest`` in stdin batches.
+    """Stream person rows into ``quickwit tool local-ingest`` in stdin batches.
 
     The source table is read from DuckLake and serialized to NDJSON entirely in
-    memory, one batch at a time, so the build machine never needs a full copy of
-    the voter file as a temporary NDJSON file on disk.
+    memory, one batch at a time, so the build machine never needs a full copy
+    of the persons file as a temporary NDJSON file on disk.
     """
     if quickwit_batch_size <= 0:
         msg = "quickwit_batch_size must be greater than zero"
         raise ValueError(msg)
 
-    source_fqn = quickwit_source_voter_data.fqn
+    source_fqn = quickwit_source_persons.fqn
     total_batches = 0 if quickwit_document_count == 0 else math.ceil(quickwit_document_count / quickwit_batch_size)
 
     print(
@@ -190,7 +190,7 @@ def quickwit_local_ingest_result(
     return QuickwitIngestResult(
         index_id=quickwit_index_id,
         source_table_fqn=source_fqn,
-        source_table_version=quickwit_source_voter_data.version,
+        source_table_version=quickwit_source_persons.version,
         indexed_doc_count=indexed_doc_count,
         batch_count=batch_count,
         elapsed_seconds=elapsed_seconds,

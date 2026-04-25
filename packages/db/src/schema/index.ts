@@ -5,5 +5,6 @@ export * from "./surveys";
 export * from "./scripts";
 export * from "./segments";
 export * from "./turfs";
+export * from "./zone-groups";
 export * from "./zones";
 export * from "./canvass-events";
