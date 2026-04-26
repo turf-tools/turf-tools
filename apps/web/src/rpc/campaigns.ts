@@ -8,6 +8,9 @@ const campaignSelect = {
   name: campaigns.name,
   startsAt: campaigns.startsAt,
   endsAt: campaigns.endsAt,
+  segmentId: campaigns.segmentId,
+  zoneGroupId: campaigns.zoneGroupId,
+  scriptId: campaigns.scriptId,
   createdAt: campaigns.createdAt,
 };
 

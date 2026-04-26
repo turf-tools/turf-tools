@@ -1,5 +1,7 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
+import { LoaderCircle } from "lucide-react";
+import { Children, isValidElement, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 const buttonVariants = cva(
@@ -39,19 +41,45 @@ const buttonVariants = cva(
   },
 );
 
+type ButtonProps = ButtonPrimitive.Props &
+  VariantProps<typeof buttonVariants> & {
+    // While true, swap the first icon child for a spinner and disable
+    // the button. Use for actions whose pending state belongs visually
+    // attached to the click target rather than a far-away global
+    // indicator.
+    loading?: boolean;
+  };
+
 function Button({
   className,
   variant = "default",
   size = "default",
+  loading = false,
+  disabled,
+  children,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonProps) {
   return (
     <ButtonPrimitive
       data-slot="button"
+      disabled={disabled || loading}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {loading ? withLeadingSpinner(children) : children}
+    </ButtonPrimitive>
   );
+}
+
+// Replace the first icon-shaped child (any React element) with a
+// spinner; if there isn't one, prepend the spinner. This keeps the
+// button's text + width stable across loading transitions.
+function withLeadingSpinner(children: ReactNode): ReactNode {
+  const spinner = <LoaderCircle key="__loading-spinner__" className="animate-spin" />;
+  const arr = Children.toArray(children);
+  const idx = arr.findIndex((c) => isValidElement(c));
+  if (idx === -1) return [spinner, ...arr];
+  return arr.map((c, i) => (i === idx ? spinner : c));
 }
 
 export { Button, buttonVariants };
