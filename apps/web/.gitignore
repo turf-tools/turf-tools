@@ -11,6 +11,11 @@ dist
 .output
 .vinxi
 
+# Local env (use .env.example as the template)
+.env
+.env.*
+!.env.example
+
 # Generated
 src/routeTree.gen.ts
 

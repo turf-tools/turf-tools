@@ -40,6 +40,12 @@ export function Filter() {
 
   const selectedCampaign = campaigns?.find((c) => c.campaignId === filter.campaignId);
   const campaignLabel = mounted ? (selectedCampaign?.name ?? "All campaigns") : "All campaigns";
+  // After mount, if a campaign is persisted but the campaigns query hasn't
+  // resolved yet, `selectedCampaign` is undefined and the label falls back to
+  // "All campaigns" — wrong. Hide the label until lookup completes so we
+  // jump straight from blank to the real name instead of flashing the
+  // unfiltered label.
+  const isResolving = mounted && filter.campaignId !== null && !selectedCampaign;
 
   return (
     <div className="flex items-center gap-2">
@@ -56,7 +62,7 @@ export function Filter() {
       >
         <DropdownMenuTrigger render={<Button variant="outline" />}>
           <Megaphone className="size-3.5" />
-          <span>{campaignLabel}</span>
+          <span className={isResolving ? "invisible" : undefined}>{campaignLabel}</span>
           <ChevronDown className="size-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-44">

@@ -22,7 +22,7 @@ function TurfDetail() {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex h-8 items-center justify-between">
         <div className="flex items-center gap-3">
           <Button
             variant="outline"
@@ -42,7 +42,7 @@ function TurfDetail() {
           ) : null}
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-4 h-[calc(100vh-12rem)]">
+      <div className="grid grid-cols-3 gap-4 h-[calc(100vh-9.75rem)]">
         <div className="col-span-2 flex items-center justify-center rounded-lg border border-dashed border-border bg-muted/40 text-sm text-muted-foreground">
           Map (turf polygon + doors will render here)
         </div>

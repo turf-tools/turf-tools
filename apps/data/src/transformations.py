@@ -1,0 +1,77 @@
+"""Curated voter-file transformation queries.
+
+Each transformation maps a state/source-specific raw voter-file schema onto
+the canonical `Person` schema (see `src/models.py`). The mapping decides
+which raw fields land at the top level vs. inside ``other_properties``.
+
+Curation rule: anything that's a filter primitive in the admin UI's
+`OTHER_PROPERTY_KEYS` (apps/web/src/lib/voter-properties.ts) goes into
+``other_properties``. Anything not used downstream stays out — we can
+always re-add later without a schema change.
+
+The same transformation is used both by tests (via
+``apps/data/tests/test_hamilton_graphs.py``) and by the eventual
+``seed-persons`` CLI command. Importing rather than duplicating keeps them
+in lockstep.
+"""
+
+from __future__ import annotations
+
+
+def nys_sboe_transformation_query(county_codes: list[str] | None = None) -> str:
+    """SQL transformation from NYS SBOE raw voter file → Person schema.
+
+    Args:
+        county_codes: optional list of NYS BOE county codes (e.g. ``['31']``
+            for Manhattan). When provided, the query restricts to those
+            counties and to active voters (status = 'A'). When None,
+            returns all rows.
+    """
+    where_clauses = []
+    if county_codes:
+        joined = ", ".join(f"'{c}'" for c in county_codes)
+        where_clauses.append(f"raw.county_code IN ({joined})")
+        where_clauses.append("raw.status = 'A'")
+    where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+    return f"""
+SELECT
+    raw.sboe_id AS external_id,
+    'ny_sboe' AS external_id_type,
+    raw.first_name,
+    raw.last_name,
+    concat_ws(
+        ' ',
+        nullif(raw.res_house_number, ''),
+        CAST(raw.res_half_code AS VARCHAR),
+        CAST(raw.res_pre_direction AS VARCHAR),
+        nullif(raw.res_street_name, ''),
+        CAST(raw.res_post_direction AS VARCHAR)
+    ) AS address_line_1,
+    CASE
+        WHEN raw.res_apartment IS NOT NULL AND raw.res_apartment != ''
+        THEN concat_ws(' ', CAST(raw.res_apartment_type AS VARCHAR), raw.res_apartment)
+        ELSE NULL
+    END AS address_line_2,
+    raw.res_city AS city,
+    'NY' AS state,
+    raw.res_zip5 AS zip5,
+    nullif(raw.res_zip4, '') AS zip4,
+    -- Curated set: matches the filterable keys exposed in the admin UI's
+    -- OTHER_PROPERTY_KEYS. Native rendering picks its own subset.
+    -- `party` is renamed from NYS's `enrollment` so the key matches the
+    -- filter UI's vocabulary.
+    to_json({{
+        party: raw.enrollment,
+        gender: raw.gender,
+        date_of_birth: raw.date_of_birth,
+        county_code: raw.county_code,
+        status: raw.status,
+        election_district: raw.election_district,
+        assembly_district: raw.assembly_district,
+        senate_district: raw.senate_district,
+        congressional_district: raw.congressional_district
+    }}) AS other_properties
+FROM raw
+{where}
+"""

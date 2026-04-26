@@ -1,17 +1,13 @@
 import { integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { campaigns } from "./campaigns";
 import { organizations } from "./organizations";
 import { users } from "./users";
 
 // A segment is a targeting set defined by a query over the voter file —
-// e.g., "Swing Voters", "Base Voters", "Bushwick North". Currently attached
-// to a campaign via FK, though the longer-term model is for segments to be
-// standalone, with campaigns pointing at them instead.
+// e.g., "Swing Voters", "Base Voters", "Bushwick North". Standalone and
+// reusable across campaigns. Queries can compose by referencing other
+// segments, so a campaign-level "universe" can be built up from leaves.
 export const segments = pgTable("segments", {
   segmentId: uuid().defaultRandom().primaryKey(),
-  campaignId: uuid()
-    .notNull()
-    .references(() => campaigns.campaignId),
   organizationId: uuid()
     .notNull()
     .references(() => organizations.organizationId),
@@ -20,6 +16,7 @@ export const segments = pgTable("segments", {
   voterFileId: text(),
   voterFileVersion: integer(),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   createdBy: uuid()
     .notNull()
     .references(() => users.userId),

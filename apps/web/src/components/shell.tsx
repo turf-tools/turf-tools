@@ -1,6 +1,5 @@
 import { type ReactNode, useState } from "react";
 import { cn } from "~/lib/utils";
-import { LoadingIndicator } from "./loading-indicator";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 
@@ -35,9 +34,8 @@ export function Shell({ children }: ShellProps) {
         >
           <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
         </aside>
-        <main className="flex-1 px-8 py-5">{children}</main>
+        <main className="flex-1 px-8 pt-5 pb-8">{children}</main>
       </div>
-      <LoadingIndicator />
     </div>
   );
 }
