@@ -40,17 +40,26 @@ SELECT
     'ny_sboe' AS external_id_type,
     raw.first_name,
     raw.last_name,
+    -- concat_ws skips NULL but emits empty strings as separators-with-blanks,
+    -- so wrap every column in nullif(CAST..., '') to convert empty inputs into
+    -- NULL. Without this, an empty res_post_direction leaves a trailing space
+    -- on address_line_1, and an empty middle field leaves a double space —
+    -- both observed at meaningful rates in real SBOE data.
     concat_ws(
         ' ',
         nullif(raw.res_house_number, ''),
-        CAST(raw.res_half_code AS VARCHAR),
-        CAST(raw.res_pre_direction AS VARCHAR),
+        nullif(CAST(raw.res_half_code AS VARCHAR), ''),
+        nullif(CAST(raw.res_pre_direction AS VARCHAR), ''),
         nullif(raw.res_street_name, ''),
-        CAST(raw.res_post_direction AS VARCHAR)
+        nullif(CAST(raw.res_post_direction AS VARCHAR), '')
     ) AS address_line_1,
     CASE
         WHEN raw.res_apartment IS NOT NULL AND raw.res_apartment != ''
-        THEN concat_ws(' ', CAST(raw.res_apartment_type AS VARCHAR), raw.res_apartment)
+        THEN concat_ws(
+            ' ',
+            nullif(CAST(raw.res_apartment_type AS VARCHAR), ''),
+            raw.res_apartment
+        )
         ELSE NULL
     END AS address_line_2,
     raw.res_city AS city,

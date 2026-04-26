@@ -27,7 +27,11 @@ from hamilton import driver
 
 from src.dags import geocode, tiger, voter_file_loader
 
-VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-nyc-sample.parquet")
+VOTER_FILE_URL = str(
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "nys-voters-2026-03-08-10k-sample.parquet"
+)
 TIGER_CACHE = str(Path(__file__).parent.parent / "tiger_cache")
 
 # (borough_name, boe_county_code, tiger_fips, min_expected_match_pct)
@@ -140,6 +144,11 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
     bf_count = dual_conn.table(blockfaces.fqn).aggregate("count(*)").fetchone()[0]
     assert bf_count > 0, f"No blockfaces loaded for {borough}"
 
+    # `address_token_table` is populated upstream of blockface_final by
+    # the tiger DAG; we need a TableRef to feed the geocode driver
+    # (geocoded_persons depends on it for the post-hoc quality filter).
+    address_tokens = tiger.address_token_table(conn=dual_conn)
+
     # Graph 3 — geocode
     dr3 = driver.Builder().with_modules(geocode).build()
     r3 = dr3.execute(
@@ -147,6 +156,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
         inputs={
             "validated_persons": validated,
             "blockface_final": blockfaces,
+            "address_token_table": address_tokens,
             "organization_slug": borough,
             "conn": dual_conn,
         },
@@ -162,16 +172,14 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
         f"{borough}: match rate {match_pct}% is below minimum {min_match_pct}%"
     )
 
-    # All matched persons should have coordinates in the NYC bounding box
+    # geocoded_persons now contains only matched rows (INNER JOIN), so any
+    # NULL or out-of-bounds coordinate is a real bug.
     geocoded_fqn = f"ducklake.main.{borough}_persons_geocoded"
     bad_coords = dual_conn.execute(f"""
         SELECT count(*) FROM {geocoded_fqn}
-        WHERE match_type != 'none'
-          AND (
-            latitude  IS NULL OR longitude IS NULL
-            OR latitude  NOT BETWEEN 40.4  AND 41.0
-            OR longitude NOT BETWEEN -74.3 AND -73.7
-          )
+        WHERE latitude  IS NULL OR longitude IS NULL
+           OR latitude  NOT BETWEEN 40.4  AND 41.0
+           OR longitude NOT BETWEEN -74.3 AND -73.7
     """).fetchone()[0]
     assert bad_coords == 0, (
         f"{borough}: {bad_coords} matched persons have invalid or out-of-bounds coordinates"

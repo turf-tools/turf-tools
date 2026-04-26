@@ -2,13 +2,12 @@
 
 Runs against a deterministic NYC-wide sample of the full NY voter file
 (2,000 rows per borough × 5 boroughs = 10,000 rows), stored at
-``fixtures/ny-voters-nyc-sample.parquet``. Regenerate with
+``fixtures/nys-voters-2026-03-08-10k-sample.parquet``. Regenerate with
 ``scripts/sample_voter_file.py`` if the source upstream changes.
 
 The tests in this file filter the sample to Manhattan (county_code='31')
 via the transformation query's WHERE clause and match against Manhattan
-TIGER, mirroring what Ben originally exercised on the full remote file.
-Cross-borough coverage lives in ``test_boroughs.py``.
+TIGER. Cross-borough coverage lives in ``test_boroughs.py``.
 
 Graph 2 (tiger) downloads TIGER data for New York County (Manhattan, FIPS
 061) into a pytest session tmpdir — cached for the session.
@@ -19,10 +18,12 @@ from pathlib import Path
 import pytest
 from hamilton import driver
 
-from src.dags import geocode, tiger, voter_file_loader
+from src.dags import aggregate, geocode, tiger, voter_file_loader
 
 VOTER_FILE_URL = str(
-    Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-nyc-sample.parquet"
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "nys-voters-2026-03-08-10k-sample.parquet"
 )
 
 # Manhattan TIGER params — single county (New York County, FIPS 061)
@@ -399,6 +400,11 @@ class TestGeocodeGraph:
         )
         return result["blockface_final"]
 
+    @pytest.fixture()
+    def address_tokens(self, dual_conn):
+        """Populate the address-token equivalence table (idempotent)."""
+        return tiger.address_token_table(conn=dual_conn)
+
     def test_decomposed_persons(self, dual_conn, validated_persons):
         """decomposed_persons should parse house numbers and tokens."""
         ref = geocode.decomposed_persons(
@@ -436,7 +442,9 @@ class TestGeocodeGraph:
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
-    def test_geocoded_persons_match_rate(self, dual_conn, validated_persons, blockfaces):
+    def test_geocoded_persons_match_rate(
+        self, dual_conn, validated_persons, blockfaces, address_tokens
+    ):
         """Full geocode pipeline should achieve a reasonable match rate for Manhattan."""
         dr = driver.Builder().with_modules(geocode).build()
         result = dr.execute(
@@ -444,6 +452,7 @@ class TestGeocodeGraph:
             inputs={
                 "validated_persons": validated_persons,
                 "blockface_final": blockfaces,
+                "address_token_table": address_tokens,
                 "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
@@ -457,36 +466,46 @@ class TestGeocodeGraph:
         # Expect at least 50% match rate for Manhattan against Manhattan TIGER
         assert match_pct >= 50.0
 
-    def test_geocoded_persons_have_valid_coordinates(self, dual_conn, validated_persons, blockfaces):
-        """Matched persons should have plausible NYC lat/lon coordinates."""
+    def test_geocoded_persons_have_valid_coordinates(
+        self, dual_conn, validated_persons, blockfaces, address_tokens
+    ):
+        """Every row in geocoded_persons should have plausible NYC lat/lon
+        coordinates — the table now contains only matched persons (INNER
+        JOIN), so any bad coords would be a real bug."""
         dr = driver.Builder().with_modules(geocode).build()
         dr.execute(
             final_vars=["geocoded_persons"],
             inputs={
                 "validated_persons": validated_persons,
                 "blockface_final": blockfaces,
+                "address_token_table": address_tokens,
                 "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
         )
         geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
-        # Matched rows should have non-null coordinates in NYC bounding box
         bad_coords = dual_conn.execute(f"""
             SELECT count(*) FROM {geocoded_fqn}
-            WHERE match_type != 'none'
-              AND (
-                latitude  IS NULL OR longitude IS NULL
-                OR latitude  NOT BETWEEN 40.4  AND 41.0
-                OR longitude NOT BETWEEN -74.3 AND -73.7
-              )
+            WHERE latitude  IS NULL OR longitude IS NULL
+               OR latitude  NOT BETWEEN 40.4  AND 41.0
+               OR longitude NOT BETWEEN -74.3 AND -73.7
         """).fetchone()[0]
         assert bad_coords == 0
 
-    def test_geocoded_persons_idempotent(self, dual_conn, validated_persons, blockfaces):
-        """Running geocode twice should not duplicate rows in geocoded_persons."""
+    def test_geocoded_persons_idempotent(
+        self, dual_conn, validated_persons, blockfaces, address_tokens
+    ):
+        """Running geocoded_persons twice should produce the same row count.
+
+        The function now drops and recreates on every run rather than
+        appending — schema changes are routine while the canonical persons
+        table is still being shaped — so "idempotent" here means "stable
+        final state," not "incremental no-op."
+        """
         inputs = {
             "validated_persons": validated_persons,
             "blockface_final": blockfaces,
+            "address_token_table": address_tokens,
             "organization_slug": "geocode_test",
             "conn": dual_conn,
         }
@@ -500,3 +519,131 @@ class TestGeocodeGraph:
             "SELECT count(*) FROM ducklake.main.geocode_test_persons_geocoded"
         ).fetchone()[0]
         assert count1 == count2
+
+    def test_geocoded_persons_structural_invariants(
+        self, dual_conn, validated_persons, blockfaces, address_tokens
+    ):
+        """Two invariants that should always hold for geocoded_persons:
+        - One row per matched person (no duplicates from joins to upstream
+          tables that have stale or duplicated keys).
+        - Row count never exceeds the source `validated_persons` count
+          (geocoded_persons is a subset — matched persons only).
+        """
+        dr = driver.Builder().with_modules(geocode).build()
+        dr.execute(
+            final_vars=["geocoded_persons"],
+            inputs={
+                "validated_persons": validated_persons,
+                "blockface_final": blockfaces,
+                "address_token_table": address_tokens,
+                "organization_slug": "geocode_test",
+                "conn": dual_conn,
+            },
+        )
+        geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
+        validated_count = dual_conn.execute(
+            f"SELECT count(*) FROM {validated_persons.fqn}"
+        ).fetchone()[0]
+        total, distinct = dual_conn.execute(f"""
+            SELECT count(*), count(DISTINCT external_id) FROM {geocoded_fqn}
+        """).fetchone()
+
+        assert total == distinct, (
+            f"geocoded_persons has {total} rows but only {distinct} distinct "
+            f"external_ids — duplicate rows from a join multiplication."
+        )
+        assert total <= validated_count, (
+            f"geocoded_persons has {total} rows but validated_persons only "
+            f"has {validated_count} — geocoded should be a subset."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Graph 4 — aggregate (buildings_geocoded, doors_geocoded)
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateGraph:
+    """Building/door aggregation downstream of the geocode pipeline."""
+
+    @pytest.fixture()
+    def geocoded_persons(
+        self, dual_conn, tiger_cache_dir
+    ):
+        """Run the full voter_file_loader → tiger → geocode pipeline so the
+        aggregate tests have a populated `geocoded_persons` to consume."""
+        dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode).build()
+        result = dr.execute(
+            final_vars=["geocoded_persons"],
+            inputs={
+                "voter_file_url": VOTER_FILE_URL,
+                "organization_slug": "agg_test",
+                "transformation_query": TRANSFORMATION_QUERY,
+                "tiger_year": TEST_TIGER_YEAR,
+                "tiger_state_fips": TEST_STATE_FIPS,
+                "tiger_county_fips": TEST_COUNTY_FIPS,
+                "tiger_data_dir": tiger_cache_dir,
+                "conn": dual_conn,
+            },
+        )
+        return result["geocoded_persons"]
+
+    def test_buildings_geocoded_shape(self, dual_conn, geocoded_persons):
+        """buildings_geocoded should produce one row per distinct building_id
+        with sane counts and lat/lng inside NYC."""
+        ref = aggregate.buildings_geocoded(
+            geocoded_persons=geocoded_persons,
+            organization_slug="agg_test",
+            conn=dual_conn,
+        )
+        assert ref.table == "agg_test_buildings_geocoded"
+        row = dual_conn.execute(f"""
+            SELECT
+                count(*),
+                count(DISTINCT building_id),
+                sum(person_count),
+                count(*) FILTER (WHERE latitude BETWEEN 40.4 AND 41.0
+                                       AND longitude BETWEEN -74.3 AND -73.7)
+            FROM {ref.fqn}
+        """).fetchone()
+        building_count, distinct_buildings, total_persons, in_nyc = row
+        assert building_count > 0
+        assert building_count == distinct_buildings
+        # Every person in geocoded_persons should be counted exactly once.
+        person_total = dual_conn.execute(
+            f"SELECT count(*) FROM {geocoded_persons.fqn}"
+        ).fetchone()[0]
+        assert total_persons == person_total
+        # All buildings should land in the NYC envelope: every contributing
+        # person has coordinates (geocoded_persons is matched-only).
+        assert in_nyc == building_count
+
+    def test_doors_geocoded_shape(self, dual_conn, geocoded_persons):
+        """doors_geocoded should produce one row per distinct door_id, with
+        each door's building_id pointing at a real building."""
+        building_ref = aggregate.buildings_geocoded(
+            geocoded_persons=geocoded_persons,
+            organization_slug="agg_test",
+            conn=dual_conn,
+        )
+        door_ref = aggregate.doors_geocoded(
+            geocoded_persons=geocoded_persons,
+            organization_slug="agg_test",
+            conn=dual_conn,
+        )
+        assert door_ref.table == "agg_test_doors_geocoded"
+        # Doors >= buildings (multi-unit buildings have multiple doors).
+        building_count = dual_conn.execute(
+            f"SELECT count(*) FROM {building_ref.fqn}"
+        ).fetchone()[0]
+        door_count = dual_conn.execute(
+            f"SELECT count(*) FROM {door_ref.fqn}"
+        ).fetchone()[0]
+        assert door_count >= building_count
+        # Every door's building_id should reference an existing building.
+        orphan_doors = dual_conn.execute(f"""
+            SELECT count(*) FROM {door_ref.fqn} d
+            LEFT JOIN {building_ref.fqn} b ON b.building_id = d.building_id
+            WHERE b.building_id IS NULL
+        """).fetchone()[0]
+        assert orphan_doors == 0
