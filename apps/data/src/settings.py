@@ -71,7 +71,11 @@ class Settings(BaseSettings):
         description="State FIPS code for TIGER data (e.g. 36 for New York).",
     )
     tiger_county_fips: list[str] = Field(
-        default=["061"],
+        # All five NYC counties: New York (Manhattan), Bronx, Kings (Brooklyn),
+        # Queens, Richmond (Staten Island). Matches the
+        # `nys-voters-2026-03-08-10k-sample` seed fixture so geocoding has
+        # TIGER coverage for every borough out of the box.
+        default=["061", "005", "047", "081", "085"],
         description="County FIPS codes within the state (e.g. 061 for New York County/Manhattan).",
     )
     tiger_data_dir: str = Field(
