@@ -449,7 +449,7 @@ export function Map({
         }
       >
         <Switch checked={showLabels} onCheckedChange={setShowLabels} />
-        <span>Show labels</span>
+        <span>Show streets</span>
       </label>
     </div>
   );
