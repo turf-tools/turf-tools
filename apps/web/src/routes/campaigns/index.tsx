@@ -2,7 +2,16 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { cleanCoords } from "@turf/clean-coords";
 import { union } from "@turf/union";
-import { ChevronDown, Copy, Pencil, Plus, Scissors, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  DoorClosed,
+  Pencil,
+  Plus,
+  Scissors,
+  Trash2,
+  UserRound,
+} from "lucide-react";
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
@@ -22,6 +31,7 @@ import {
 } from "~/components/dropdown-menu";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
+import { Pill } from "~/components/pill";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
@@ -166,6 +176,11 @@ function CampaignsIndex() {
           queryKey: ["zones", campaign.zoneGroupId],
           queryFn: () => client.zones.list({ zoneGroupId: campaign.zoneGroupId! }),
           staleTime: 0,
+          // Silent so this inner fetch doesn't keep the global
+          // spinner up after the outer mapData query has resolved
+          // (each fetchQuery is its own cache slot, so the outer
+          // query's `meta: { silent: true }` doesn't propagate).
+          meta: { silent: true },
         });
       }
       const keyFilter =
@@ -176,19 +191,24 @@ function CampaignsIndex() {
             }
           : null;
 
-      // Step 2: boundary + points in parallel.
-      const [boundaryFC, pointsBuffer] = await Promise.all([
+      // Step 2: boundary + points + per-key counts in parallel.
+      // The per-key counts feed the click-zone inset (sum of door
+      // and people totals across each zone's keys); shared cache
+      // slot with the zone editor's overlay so visiting one warms
+      // the other.
+      const segmentQuery = segmentDetail?.query;
+      const [boundaryFC, pointsBuffer, perKeyCounts] = await Promise.all([
         boundariesUrl
           ? fetch(boundariesUrl).then(async (res) => {
               if (!res.ok) throw new Error(`boundaries fetch failed: ${res.status}`);
               return (await res.json()) as FeatureCollection;
             })
           : Promise.resolve<FeatureCollection | null>(null),
-        segmentDetail?.query
+        segmentQuery
           ? fetch("/api/query-points", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ query: segmentDetail.query, keyFilter }),
+              body: JSON.stringify({ query: segmentQuery, keyFilter }),
             }).then(async (res) => {
               if (!res.ok) {
                 throw new Error(`query-points failed: ${res.status} ${await res.text()}`);
@@ -196,30 +216,74 @@ function CampaignsIndex() {
               return new Float32Array(await res.arrayBuffer());
             })
           : Promise.resolve<Float32Array | null>(null),
+        segmentQuery && activeZoneGroup
+          ? queryClient
+              .fetchQuery({
+                queryKey: [
+                  "countsByKey",
+                  segmentQueryKey,
+                  activeZoneGroup.keyGroup,
+                  campaign?.zoneGroupId ?? null,
+                ],
+                queryFn: () =>
+                  client.segments.queryCountsByKey({
+                    query: segmentQuery,
+                    keyGroup: activeZoneGroup.keyGroup,
+                    keyFilter: keyFilter ?? undefined,
+                  }),
+                staleTime: 0,
+                meta: { silent: true },
+              })
+              .then((r) => r.counts)
+          : Promise.resolve<Record<string, { doors: number; people: number }> | null>(null),
       ]);
       // Carry the zoneGroupId through to the result so render code
       // can detect "the data we're showing belongs to a different
       // binding than the user is now on." That's how the curtain is
       // derived — pure render-time check, no effects, no races.
-      return { zones, boundaryFC, pointsBuffer, zoneGroupId: campaign?.zoneGroupId ?? null };
+      return {
+        zones,
+        boundaryFC,
+        pointsBuffer,
+        perKeyCounts,
+        zoneGroupId: campaign?.zoneGroupId ?? null,
+      };
     },
     enabled: !!boundariesUrl || !!segmentDetail?.query,
     placeholderData: keepPreviousData,
-    // Default staleTime (0) so zone edits made in the zone editor are
-    // picked up when the user lands here. `keepPreviousData` covers
-    // the swap; the cost of an extra fetch on remount is small and
-    // outweighed by avoiding a "why isn't my edit showing" trap.
-    //
-    // `silent` keeps the global LoadingIndicator out of this query —
-    // the curtain over the map is the loading affordance for it,
-    // and double-signaling (curtain + spinner) is confusing,
-    // especially because the curtain hides earlier than `isFetching`
-    // settles when cache hits short-circuit the visible wait.
-    meta: { silent: true },
+    // Infinite stale: tab-back from elsewhere reuses the cached
+    // triple instantly instead of paying for a half-second
+    // /api/query-points refetch on every mount. Freshness is
+    // preserved by invalidating ["campaign-map-data"] from the
+    // zone-editing mutations in the zones editor — so edits there
+    // do flow through the next time the user lands here, but
+    // navigation alone doesn't.
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const zones = mapData?.zones ?? null;
   const boundaryFC = mapData?.boundaryFC ?? null;
   const pointsBuffer = mapData?.pointsBuffer ?? undefined;
+  const perKeyCounts = mapData?.perKeyCounts ?? null;
+
+  // Sum per-key counts across each zone's keys → per-zone totals.
+  // Used by the click-zone inset.
+  const zoneCounts = useMemo(() => {
+    if (!perKeyCounts || !zones) return null;
+    const out: Record<string, { doors: number; people: number }> = {};
+    for (const z of zones) {
+      let doors = 0;
+      let people = 0;
+      for (const k of z.keys) {
+        const c = perKeyCounts[k];
+        if (c) {
+          doors += c.doors;
+          people += c.people;
+        }
+      }
+      out[z.zoneId] = { doors, people };
+    }
+    return out;
+  }, [perKeyCounts, zones]);
 
   // One unioned polygon per zone, tagged with `zoneId`. Map renders
   // these as a click-target layer that dispatches into the cutter.
@@ -271,22 +335,15 @@ function CampaignsIndex() {
     [zonePerimeters],
   );
 
-  // The Map fires `onLoaded` after MapLibre's `load` event AND its
-  // initial fitBounds is applied. Until that happens, the basemap is
-  // either still loading tiles or sitting at the default view, so
-  // the curtain has to keep covering it even when the data is
-  // already cached.
-  const [mapLoaded, setMapLoaded] = useState(false);
-
-  // White curtain trigger. A single render-time predicate that asks
-  // "is the picture we're about to show the picture the current
-  // bindings would produce, on a map that's actually settled?" Each
-  // stage of the load pipeline (campaigns list, active campaign
-  // detail, segment detail, map data, map mount/fit) gets a check;
+  // Curtain trigger. A single render-time predicate that asks "is
+  // the picture we're about to show the picture the current bindings
+  // would produce?" Each stage of the load pipeline (campaigns list,
+  // active campaign detail, segment detail, map data) gets a check;
   // the curtain stays opaque until every relevant stage has
   // resolved. Pure derivation — no effects, no timers, no races.
+  // The Map component combines this with its own basemap+fitBounds
+  // readiness internally.
   const ready = (() => {
-    if (!mapLoaded) return false;
     if (!campaigns) return false;
     if (campaigns.length === 0) return true;
     if (!campaign) return false;
@@ -296,7 +353,6 @@ function CampaignsIndex() {
     if ((mapData.zoneGroupId ?? null) !== (campaign.zoneGroupId ?? null)) return false;
     return true;
   })();
-  const transitioning = !ready;
 
   // Selected (but not yet cutting) zone. Click on a zone perimeter
   // pops an inset in the upper right with the zone name + a Cut
@@ -312,6 +368,24 @@ function CampaignsIndex() {
   useEffect(() => {
     setSelectedZoneId(null);
   }, [activeCampaignId, campaign?.zoneGroupId]);
+
+  // Clicking outside the map wrapper also clears the selection. The
+  // basemap-click case is already covered by `onBackgroundClick` on
+  // Map; this effect handles the broader "click anywhere else on the
+  // page" case (header, selector cards, etc.) so the inset doesn't
+  // hang around when the user moves on.
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedZoneId) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (mapWrapperRef.current?.contains(target)) return;
+      setSelectedZoneId(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [selectedZoneId]);
 
   // Mutations.
 
@@ -469,24 +543,37 @@ function CampaignsIndex() {
             disabled={!activeCampaign}
           />
         </div>
-        <div className="relative col-span-2 h-full overflow-hidden rounded-lg border border-border">
+        <div ref={mapWrapperRef} className="relative col-span-2 h-full">
           <Map
             className="h-full"
             points={pointsBuffer}
             zonePerimeters={zonePerimeters}
             fitBounds={fitBounds}
+            selectedZoneId={selectedZoneId}
             onZoneClick={(zoneId) => setSelectedZoneId(zoneId)}
             onBackgroundClick={() => setSelectedZoneId(null)}
-            onLoaded={() => setMapLoaded(true)}
+            loading={!ready}
           />
           {selectedZone ? (
             <div
               className={cn(
                 "absolute top-3 right-3 z-10 flex flex-col items-end gap-2",
-                "rounded-md border border-border bg-card/95 px-3 py-2 text-sm shadow-sm backdrop-blur",
+                "rounded-md border border-border bg-card/95 px-3 py-2.5 text-right text-sm shadow-sm backdrop-blur",
               )}
             >
-              <span>{selectedZone.name}</span>
+              <div>{selectedZone.name}</div>
+              {zoneCounts?.[selectedZone.zoneId] ? (
+                <div className="flex justify-end gap-1.5">
+                  <Pill variant="number" className="!w-fit gap-1.5">
+                    <DoorClosed className="size-3.5 text-foreground" />
+                    {zoneCounts[selectedZone.zoneId]!.doors.toLocaleString()}
+                  </Pill>
+                  <Pill variant="number" className="!w-fit gap-1.5">
+                    <UserRound className="size-3.5 text-foreground" />
+                    {zoneCounts[selectedZone.zoneId]!.people.toLocaleString()}
+                  </Pill>
+                </div>
+              ) : null}
               <Button
                 size="sm"
                 onClick={() => {
@@ -502,19 +589,6 @@ function CampaignsIndex() {
               </Button>
             </div>
           ) : null}
-          {/* White curtain over the map while it's resolving the
-                  next data triple (zones + boundary + points) and
-                  fitting the viewport. Hides the piecewise reveal of
-                  the points layer arriving before the perimeter
-                  layer, the basemap pan, etc. */}
-          <div
-            aria-hidden
-            className={cn(
-              "pointer-events-none absolute inset-0 bg-background",
-              "transition-opacity duration-150",
-              transitioning ? "opacity-100" : "opacity-0",
-            )}
-          />
         </div>
       </div>
 

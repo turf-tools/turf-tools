@@ -134,14 +134,21 @@ function SegmentsIndex() {
   // stays true and ordinary updates (segment switches, filter
   // edits) flow through with their own stale signals. Avoids the
   // mid-mount flash where the map paints empty before counts/points
-  // arrive.
-  const [mapLoaded, setMapLoaded] = useState(false);
+  // arrive. The Map component owns the actual curtain and its own
+  // basemap-readiness gating; we just tell it whether our data is
+  // ready yet.
+  //
+  // The predicate must wait for `segments` itself — checking only
+  // `activeSegmentId` would flip true during the brief window
+  // between the segments list arriving and the default-to-first
+  // effect setting an id, fading the curtain before preview kicks
+  // off. Empty-list case still flips immediately.
   const [firstReady, setFirstReady] = useState(false);
   useEffect(() => {
     if (firstReady) return;
-    const ready = mapLoaded && (!activeSegmentId || (preview != null && !stale));
+    const ready = !!segments && (segments.length === 0 || (preview != null && !stale));
     if (ready) setFirstReady(true);
-  }, [firstReady, mapLoaded, activeSegmentId, preview, stale]);
+  }, [firstReady, segments, preview, stale]);
 
   // Optimistic update: write into the ["segment", id] cache in
   // onMutate, snapshot for rollback, restore on error. The cache is
@@ -299,23 +306,8 @@ function SegmentsIndex() {
           ) : null}
         </div>
         <div className="col-span-2 flex h-full flex-col gap-3">
-          <div className="relative flex-1 overflow-hidden rounded-lg border border-border">
-            <div className={cn("h-full transition-opacity", stale ? "opacity-70" : null)}>
-              <Map className="h-full" points={pointsBuffer} onLoaded={() => setMapLoaded(true)} />
-            </div>
-            {/* First-load curtain — only opaque until the map is
-                mounted and the initial preview data has arrived.
-                Sits inside the bordered map box so the surrounding
-                chrome (border, counts panel below) renders without
-                waiting for data. */}
-            <div
-              aria-hidden
-              className={cn(
-                "pointer-events-none absolute inset-0 bg-background",
-                "transition-opacity duration-150",
-                firstReady ? "opacity-0" : "opacity-100",
-              )}
-            />
+          <div className={cn("flex-1 transition-opacity", stale ? "opacity-70" : null)}>
+            <Map className="h-full" points={pointsBuffer} loading={!firstReady} />
           </div>
           <CountsPanel counts={counts} stale={stale} disabled={!activeSegmentId} />
         </div>

@@ -56,6 +56,10 @@ type MapProps = {
   // turf-cutter.
   zonePerimeters?: GeoJSON.FeatureCollection;
   onZoneClick?: (zoneId: string) => void;
+  // The currently-selected zone's id. Its perimeter line renders
+  // with a heavier stroke + full opacity; the rest stay thin and
+  // faded so the selection reads at a glance.
+  selectedZoneId?: string | null;
   // Optional `[minLng, minLat, maxLng, maxLat]` to fit the viewport
   // to. The map calls `fitBounds` whenever this value changes. Pass
   // `null`/`undefined` to leave the viewport alone.
@@ -68,11 +72,14 @@ type MapProps = {
   // on the basemap). Useful for dismissing transient UI like a
   // clicked-key info popup.
   onBackgroundClick?: () => void;
-  // Fires once after MapLibre's `load` event AND any pending
-  // `fitBounds` has been applied. Lets a parent gate its loading
-  // curtain on the map being visually settled, not just "tiles
-  // loaded somewhere underneath."
-  onLoaded?: () => void;
+  // Parent-supplied "data isn't ready yet" flag. Combined with the
+  // map's own internal readiness (basemap loaded, any pending
+  // fitBounds applied) to decide whether to show the loading
+  // curtain. Concentrates the timing logic for "is the map showing
+  // its final state" in one place — segments/zones/campaigns/cutter
+  // each just say `loading={!myDataReady}` and don't have to chase
+  // map-internal events.
+  loading?: boolean;
   // Optional point overlay rendered via a custom WebGL layer. The
   // caller owns the data and passes a flat `[lng, lat, ...]` typed
   // array straight into the GPU buffer — no per-point object
@@ -124,10 +131,11 @@ export function Map({
   activeKeys,
   zonePerimeters,
   onZoneClick,
+  selectedZoneId,
   fitBounds,
   onPolygonClick,
   onBackgroundClick,
-  onLoaded,
+  loading,
   points,
   onViewportChange,
 }: MapProps) {
@@ -157,6 +165,15 @@ export function Map({
   // would vanish on theme change.
   const prevColoredRef = useRef<ReadonlySet<string>>(new Set());
   const prevActiveRef = useRef<ReadonlySet<string>>(new Set());
+  // True from the moment a `fitBounds` prop arrives until we've
+  // actually applied it on the map. Combined with `loading` and
+  // `mapReady` to drive the curtain: parents need fitBounds to land
+  // before they can show the map, but firing the application is
+  // async (we wait for the perimeters source to finish tessellating
+  // before jumping). Tracking the in-flight state here means the
+  // curtain stays up across re-frames without any parent
+  // coordination.
+  const [pendingFit, setPendingFit] = useState(false);
 
   useEffect(() => {
     if (!boundariesUrl) return;
@@ -219,6 +236,40 @@ export function Map({
       map.off("sourcedata", handler);
     };
   }, [activeKeys, boundariesUrl, isDark]);
+
+  // Mark the selected zone's perimeter feature with `selected: true`
+  // so the line layer's paint expression bumps its weight + opacity.
+  // Mirrors the per-key `active` pattern above, just on the
+  // zone-perimeters source (keyed on `zoneId` via `promoteId`).
+  const prevSelectedZoneRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!zonePerimeters) return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    const apply = () => {
+      if (!map.getSource(ZONE_PERIMETERS_SOURCE_ID)) return;
+      if (!map.isSourceLoaded(ZONE_PERIMETERS_SOURCE_ID)) return;
+      const prev = prevSelectedZoneRef.current;
+      const next = selectedZoneId ?? null;
+      if (prev && prev !== next) {
+        map.removeFeatureState({ source: ZONE_PERIMETERS_SOURCE_ID, id: prev }, "selected");
+      }
+      if (next) {
+        map.setFeatureState({ source: ZONE_PERIMETERS_SOURCE_ID, id: next }, { selected: true });
+      }
+      prevSelectedZoneRef.current = next;
+    };
+
+    apply();
+    const handler = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
+      if (e.sourceId === ZONE_PERIMETERS_SOURCE_ID && e.isSourceLoaded) apply();
+    };
+    map.on("sourcedata", handler);
+    return () => {
+      map.off("sourcedata", handler);
+    };
+  }, [selectedZoneId, zonePerimeters, isDark]);
 
   // Switch to pointer only while the cursor is over a clickable polygon;
   // otherwise let MapLibre keep its default pan/grab cursor. Listening to
@@ -313,7 +364,12 @@ export function Map({
   // gate on `isSourceLoaded` and fall back to a `sourcedata`
   // listener if it isn't ready yet.
   useEffect(() => {
-    if (!mapReady || !fitBounds) return;
+    if (!fitBounds) {
+      setPendingFit(false);
+      return;
+    }
+    setPendingFit(true);
+    if (!mapReady) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
     const fit = () => {
@@ -324,6 +380,7 @@ export function Map({
         ],
         { padding: 40, duration: 0 },
       );
+      setPendingFit(false);
     };
     if (
       map.getSource(ZONE_PERIMETERS_SOURCE_ID) &&
@@ -385,10 +442,7 @@ export function Map({
 
   return (
     <div
-      className={cn(
-        "relative",
-        className ?? "h-full overflow-hidden rounded-lg border border-border",
-      )}
+      className={cn("relative h-full overflow-hidden rounded-lg border border-border", className)}
     >
       <MapLibreMap
         ref={mapRef}
@@ -396,17 +450,7 @@ export function Map({
         mapStyle={getMaptilerStyleUrl(isDark)}
         attributionControl={false}
         style={{ width: "100%", height: "100%" }}
-        onLoad={() => {
-          setMapReady(true);
-          // Defer `onLoaded` to the map's next `idle` — fires after
-          // basemap tiles, user-supplied sources (boundaries, zone
-          // perimeters), and any pending fitBounds have all settled.
-          // Lets parents gate their loading curtain on a single
-          // signal that means "the map is finished moving and
-          // nothing is loading," not just "basemap arrived."
-          const m = mapRef.current?.getMap();
-          void m?.once("idle", () => onLoaded?.());
-        }}
+        onLoad={() => setMapReady(true)}
         // `interactiveLayerIds` filters the `features` field on the
         // click event to those layers — without it, basemap clicks
         // would never resolve a polygon. `onClick` itself fires for
@@ -458,7 +502,15 @@ export function Map({
         ) : null}
 
         {zonePerimeters ? (
-          <Source id={ZONE_PERIMETERS_SOURCE_ID} type="geojson" data={zonePerimeters}>
+          <Source
+            id={ZONE_PERIMETERS_SOURCE_ID}
+            type="geojson"
+            data={zonePerimeters}
+            // Promote `zoneId` to feature id so feature-state can
+            // address each zone by its id (used for the selected-
+            // zone outline emphasis below).
+            promoteId="zoneId"
+          >
             <Layer
               id={ZONE_PERIMETERS_FILL_LAYER}
               type="fill"
@@ -480,8 +532,11 @@ export function Map({
               type="line"
               paint={{
                 "line-color": isDark ? "hsl(0, 0%, 95%)" : "hsl(0, 0%, 5%)",
-                "line-width": 1.5,
-                "line-opacity": 0.9,
+                // Thin and faded by default; the selected zone gets
+                // the heavier stroke at full opacity so it reads as
+                // the active one without disrupting the others.
+                "line-width": ["case", ["==", ["feature-state", "selected"], true], 1.5, 0.75],
+                "line-opacity": ["case", ["==", ["feature-state", "selected"], true], 1, 0.5],
               }}
             />
           </Source>
@@ -576,6 +631,15 @@ export function Map({
         <Switch checked={showLabels} onCheckedChange={setShowLabels} />
         <span>Show streets</span>
       </label>
+
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-0 z-30 bg-background",
+          "transition-opacity duration-150",
+          !mapReady || pendingFit || loading ? "opacity-100" : "opacity-0",
+        )}
+      />
     </div>
   );
 }

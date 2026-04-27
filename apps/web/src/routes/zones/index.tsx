@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  UserRound,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
@@ -158,9 +159,17 @@ function ZonesIndex() {
       console.error("zones.updateKeys failed", e);
       if (ctx?.previous) queryClient.setQueryData(["zones", activeGroupId], ctx.previous);
     },
-    // No onSettled invalidate: optimistic write is a complete mirror of
-    // what the server stores, so a refetch would just re-fetch identical
-    // data and flash the global indicator on every polygon click.
+    onSuccess: () => {
+      // Campaign editor's mapData snapshot is keyed by zoneGroupId
+      // (no zones-version), so a key reassignment here doesn't
+      // naturally bust its cache. Invalidate so the next visit to
+      // /campaigns sees the new key membership.
+      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
+    },
+    // No onSettled invalidate of zones list: optimistic write is a
+    // complete mirror of what the server stores, so a refetch would
+    // just re-fetch identical data and flash the global indicator
+    // on every polygon click.
   });
 
   const renameGroup = useDialogMutation({
@@ -186,7 +195,10 @@ function ZonesIndex() {
 
   const clearZones = useDialogMutation({
     mutationFn: (zoneGroupId: string) => client.zones.removeAllInGroup({ zoneGroupId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
+    },
   });
 
   const deleteGroup = useDialogMutation({
@@ -205,6 +217,7 @@ function ZonesIndex() {
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zones.create(input),
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
       setActiveZoneId(created.zoneId);
     },
     onError: (e) => console.error("zones.create failed", e),
@@ -224,12 +237,21 @@ function ZonesIndex() {
       console.error("zones.rename failed", e);
       if (ctx?.previous) queryClient.setQueryData(["zones", activeGroupId], ctx.previous);
     },
-    // No onSettled invalidate: same reasoning as updateKeysMutation.
+    onSuccess: () => {
+      // The campaign editor's click-zone inset shows the zone name,
+      // so a rename here needs to invalidate its cached snapshot.
+      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
+    },
+    // No onSettled invalidate of zones list: same reasoning as
+    // updateKeysMutation.
   });
 
   const removeZoneMutation = useMutation({
     mutationFn: (zoneId: string) => client.zones.remove({ zoneId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
+    },
     onError: (e) => console.error("zones.remove failed", e),
   });
 
@@ -254,18 +276,16 @@ function ZonesIndex() {
   //     the count softens the long tail.
   const overlayActive = showSegmentCounts && !!overlayCounts;
 
-  // First-load curtain over the map. Stays opaque until the Map's
-  // `onLoaded` fires (basemap + boundary source rendered) AND, if a
-  // group is active, its zones have loaded. After that the flag
-  // stays true — further updates within the editor flow through
-  // without a curtain.
-  const [mapLoaded, setMapLoaded] = useState(false);
+  // First-load curtain over the map. Stays opaque until zoneGroups
+  // and (if a group is active) its zones have loaded. The Map
+  // component owns the actual curtain and its own basemap-readiness
+  // gating; we just tell it whether our data is ready yet.
   const [firstReady, setFirstReady] = useState(false);
   useEffect(() => {
     if (firstReady) return;
-    const ready = mapLoaded && !!zoneGroups && (!activeGroupId || !!zones);
+    const ready = !!zoneGroups && (!activeGroupId || !!zones);
     if (ready) setFirstReady(true);
-  }, [firstReady, mapLoaded, zoneGroups, activeGroupId, zones]);
+  }, [firstReady, zoneGroups, activeGroupId, zones]);
   // Counts shape: per key, both door and people totals. Heatmap and
   // zone list read .doors (the canvassing unit); popup shows both.
   type KeyCount = { doors: number; people: number };
@@ -638,10 +658,7 @@ function ZonesIndex() {
             </button>
           ) : null}
         </div>
-        <div
-          ref={mapWrapperRef}
-          className="relative col-span-2 h-full overflow-hidden rounded-lg border border-border"
-        >
+        <div ref={mapWrapperRef} className="relative col-span-2 h-full">
           <Map
             className="h-full"
             boundariesUrl={
@@ -654,7 +671,7 @@ function ZonesIndex() {
             activeKeys={activeKeys}
             onPolygonClick={handlePolygonClick}
             onBackgroundClick={() => setClickedKey(null)}
-            onLoaded={() => setMapLoaded(true)}
+            loading={!firstReady}
           />
 
           {/* Bottom-left: segment-counts overlay control. */}
@@ -721,55 +738,43 @@ function ZonesIndex() {
                   "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
                 )}
               >
-                <div className="space-y-2">
+                <div className="flex flex-col items-end gap-2">
                   {activeZone ? (
                     <>
-                      <div>
-                        <div className="text-muted-foreground">Zone</div>
-                        <div>{activeZone.name}</div>
-                      </div>
-                      <div>
-                        <div className="text-muted-foreground">Count</div>
-                        <div className="font-mono">{activeZone.keys.length}</div>
-                      </div>
-                      {zoneOverlay ? (
-                        <>
-                          <div>
-                            <div className="text-muted-foreground">People</div>
-                            <div className="font-mono">
-                              {(zoneOverlay.people[activeZone.zoneId] ?? 0).toLocaleString()}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Doors</div>
-                            <div className="font-mono">
+                      <div>{activeZone.name}</div>
+                      <div className="flex justify-end gap-1.5">
+                        <Pill variant="number" className="!w-fit gap-1.5">
+                          <Hash className="size-3.5 text-foreground" />
+                          {activeZone.keys.length}
+                        </Pill>
+                        {zoneOverlay ? (
+                          <>
+                            <Pill variant="number" className="!w-fit gap-1.5">
+                              <DoorClosed className="size-3.5 text-foreground" />
                               {(zoneOverlay.doors[activeZone.zoneId] ?? 0).toLocaleString()}
-                            </div>
-                          </div>
-                        </>
-                      ) : null}
+                            </Pill>
+                            <Pill variant="number" className="!w-fit gap-1.5">
+                              <UserRound className="size-3.5 text-foreground" />
+                              {(zoneOverlay.people[activeZone.zoneId] ?? 0).toLocaleString()}
+                            </Pill>
+                          </>
+                        ) : null}
+                      </div>
                     </>
                   ) : clickedKey ? (
                     <>
-                      <div>
-                        <div className="text-muted-foreground">Key</div>
-                        <div className="font-mono">{clickedKey}</div>
-                      </div>
+                      <div className="font-mono">{clickedKey}</div>
                       {overlayCountsByKey ? (
-                        <>
-                          <div>
-                            <div className="text-muted-foreground">People</div>
-                            <div className="font-mono">
-                              {(overlayCountsByKey[clickedKey]?.people ?? 0).toLocaleString()}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Doors</div>
-                            <div className="font-mono">
-                              {(overlayCountsByKey[clickedKey]?.doors ?? 0).toLocaleString()}
-                            </div>
-                          </div>
-                        </>
+                        <div className="flex justify-end gap-1.5">
+                          <Pill variant="number" className="!w-fit gap-1.5">
+                            <DoorClosed className="size-3.5 text-foreground" />
+                            {(overlayCountsByKey[clickedKey]?.doors ?? 0).toLocaleString()}
+                          </Pill>
+                          <Pill variant="number" className="!w-fit gap-1.5">
+                            <UserRound className="size-3.5 text-foreground" />
+                            {(overlayCountsByKey[clickedKey]?.people ?? 0).toLocaleString()}
+                          </Pill>
+                        </div>
                       ) : null}
                     </>
                   ) : null}
@@ -777,21 +782,6 @@ function ZonesIndex() {
               </div>
             );
           })()}
-
-          {/* First-load curtain — only opaque until the Map fires
-              `onLoaded` (basemap + boundary source rendered) AND
-              zones for the active group have arrived. After that
-              the flag stays true; further updates flow through with
-              their own stale signals. z-20 to sit above the in-map
-              overlay controls so they don't peek through. */}
-          <div
-            aria-hidden
-            className={cn(
-              "pointer-events-none absolute inset-0 z-20 bg-background",
-              "transition-opacity duration-150",
-              firstReady ? "opacity-0" : "opacity-100",
-            )}
-          />
         </div>
       </div>
 

@@ -5,7 +5,6 @@ import { ArrowLeft, Eraser, Sparkles, Undo2 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { Map } from "~/components/map";
-import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/campaigns/$campaignId/cut/$zoneId")({
@@ -68,27 +67,34 @@ function CutterPage() {
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-  // Points scoped to segment ∩ this zone's keys.
+  // Buildings scoped to segment ∩ this zone's keys. Each row carries
+  // its own buildingId + per-building door/person counts, which the
+  // cutter will use to compute "what's inside this drawn polygon"
+  // client-side. Until cutting is implemented, we just feed the
+  // centroids (lng/lat pairs) into the points layer.
   const segmentQueryKey = segmentDetail?.query ? JSON.stringify(segmentDetail.query) : null;
-  const { data: pointsBuffer } = useQuery({
-    queryKey: ["cutter-points", zoneId, segmentQueryKey],
-    queryFn: async () => {
-      const res = await fetch("/api/query-points", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: segmentDetail!.query,
-          keyFilter: zoneGroup ? { keyGroup: zoneGroup.keyGroup, keys: zone!.keys } : null,
-        }),
-      });
-      if (!res.ok) throw new Error(`query-points failed: ${res.status} ${await res.text()}`);
-      return new Float32Array(await res.arrayBuffer());
-    },
+  const { data: buildingsResult } = useQuery({
+    queryKey: ["cutter-buildings", zoneId, segmentQueryKey],
+    queryFn: () =>
+      client.segments.queryBuildings({
+        query: segmentDetail!.query,
+        keyFilter: zoneGroup ? { keyGroup: zoneGroup.keyGroup, keys: zone!.keys } : undefined,
+      }),
     enabled: !!segmentDetail?.query && !!zone,
     placeholderData: keepPreviousData,
     staleTime: Number.POSITIVE_INFINITY,
     meta: { silent: true },
   });
+  const buildings = buildingsResult?.buildings;
+  const pointsBuffer = useMemo(() => {
+    if (!buildings) return undefined;
+    const buf = new Float32Array(buildings.length * 2);
+    for (let i = 0; i < buildings.length; i++) {
+      buf[i * 2] = buildings[i]!.longitude;
+      buf[i * 2 + 1] = buildings[i]!.latitude;
+    }
+    return buf;
+  }, [buildings]);
 
   // BBox of the zone's keys' polygons. We don't bother unioning —
   // bbox accumulates the same regardless.
@@ -123,19 +129,20 @@ function CutterPage() {
   }, [zone, boundaryFC]);
 
   // First-load curtain over the map. Same pattern as the editor:
-  // wait until the map is mounted+framed AND data is ready, then
-  // fade. Stays gone for the rest of the session.
-  const [mapLoaded, setMapLoaded] = useState(false);
+  // wait until data is ready, then fade. Stays gone for the rest of
+  // the session. The Map component owns the actual curtain and its
+  // own basemap+fitBounds-readiness gating; we just tell it whether
+  // our data is ready yet.
   const [firstReady, setFirstReady] = useState(false);
   useEffect(() => {
     if (firstReady) return;
     const dataReady =
       !!campaign &&
       !!zone &&
-      (!campaign.segmentId || pointsBuffer !== undefined) &&
+      (!campaign.segmentId || buildings !== undefined) &&
       (!campaign.zoneGroupId || !!boundaryFC);
-    if (mapLoaded && dataReady) setFirstReady(true);
-  }, [firstReady, mapLoaded, campaign, zone, pointsBuffer, boundaryFC]);
+    if (dataReady) setFirstReady(true);
+  }, [firstReady, campaign, zone, buildings, boundaryFC]);
 
   const onBack = () => {
     void navigate({ to: "/campaigns" });
@@ -172,21 +179,8 @@ function CutterPage() {
           </Button>
         </div>
       </div>
-      <div className="relative h-[calc(100vh-9.75rem)] overflow-hidden rounded-lg border border-border">
-        <Map
-          className="h-full"
-          points={pointsBuffer}
-          fitBounds={fitBounds}
-          onLoaded={() => setMapLoaded(true)}
-        />
-        <div
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute inset-0 bg-background",
-            "transition-opacity duration-150",
-            firstReady ? "opacity-0" : "opacity-100",
-          )}
-        />
+      <div className="h-[calc(100vh-9.75rem)]">
+        <Map className="h-full" points={pointsBuffer} fitBounds={fitBounds} loading={!firstReady} />
       </div>
     </div>
   );

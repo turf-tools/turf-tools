@@ -37,6 +37,7 @@ export const router = {
     updateQuery: segmentsProcedures.updateQuery,
     queryCounts: segmentsProcedures.queryCounts,
     queryCountsByKey: segmentsProcedures.queryCountsByKey,
+    queryBuildings: segmentsProcedures.queryBuildings,
   },
   zoneGroups: {
     list: zoneGroupsProcedures.list,
