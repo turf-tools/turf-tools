@@ -324,19 +324,29 @@ function ZonesIndex() {
   // round trip.
   const zoneOverlay = useMemo(() => {
     if (!overlayCountsByKey || !zones) return null;
-    const sums: Record<string, number> = {};
-    let max = 0;
+    const doors: Record<string, number> = {};
+    const people: Record<string, number> = {};
+    let maxDoors = 0;
     for (const zone of zones) {
-      const sum = zone.keys.reduce((acc, k) => acc + (overlayCountsByKey[k]?.doors ?? 0), 0);
-      sums[zone.zoneId] = sum;
-      if (sum > max) max = sum;
+      let d = 0;
+      let p = 0;
+      for (const k of zone.keys) {
+        const c = overlayCountsByKey[k];
+        if (c) {
+          d += c.doors;
+          p += c.people;
+        }
+      }
+      doors[zone.zoneId] = d;
+      people[zone.zoneId] = p;
+      if (d > maxDoors) maxDoors = d;
     }
     const colors: Record<string, string> = {};
-    for (const [zoneId, count] of Object.entries(sums)) {
-      const t = max === 0 ? 0 : Math.sqrt(count / max);
+    for (const [zoneId, count] of Object.entries(doors)) {
+      const t = maxDoors === 0 ? 0 : Math.sqrt(count / maxDoors);
       colors[zoneId] = interpolateYlOrRd(t);
     }
-    return { sums, colors };
+    return { doors, people, colors };
   }, [overlayCountsByKey, zones]);
 
   const handlePolygonClick = (key: string) => {
@@ -606,7 +616,7 @@ function ZonesIndex() {
                   {zoneOverlay ? (
                     <>
                       <DoorClosed className="size-3.5 text-foreground" />
-                      {(zoneOverlay.sums[zone.zoneId] ?? 0).toLocaleString()}
+                      {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
                     </>
                   ) : (
                     <>
@@ -661,7 +671,7 @@ function ZonesIndex() {
           {/* Bottom-left: segment-counts overlay control. */}
           <div
             className={cn(
-              "absolute bottom-3 left-3 z-10 flex w-64 flex-col gap-2",
+              "absolute bottom-3 left-3 z-10 flex w-64 flex-col gap-2.5",
               "rounded-md border border-border bg-card/95 px-3 py-3 shadow-sm backdrop-blur",
             )}
           >
@@ -705,41 +715,79 @@ function ZonesIndex() {
             </DropdownMenu>
           </div>
 
-          {/* Top-right: clicked-key info popup. Only when no zone is
-              active — zone-selected mode reserves clicks for
-              assignment. Auto-dismissed by clicking the basemap (see
-              onBackgroundClick) or selecting a zone (see effect). */}
-          {!activeZoneId && clickedKey ? (
-            <div
-              className={cn(
-                "absolute top-3 right-3 z-10",
-                "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
-              )}
-            >
-              <div className="space-y-2">
-                <div>
-                  <div className="text-muted-foreground">Key</div>
-                  <div className="font-mono">{clickedKey}</div>
+          {/* Top-right: info popup. Two modes — zone-selected shows
+              the zone summary, no-zone-selected + key-clicked shows
+              the single key. Auto-dismissed via the document mousedown
+              handler (clicks outside the map list) or the basemap
+              click (see onBackgroundClick). */}
+          {(() => {
+            const activeZone = activeZoneId
+              ? (zones?.find((z) => z.zoneId === activeZoneId) ?? null)
+              : null;
+            if (!activeZone && !clickedKey) return null;
+            return (
+              <div
+                className={cn(
+                  "absolute top-3 right-3 z-10",
+                  "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
+                )}
+              >
+                <div className="space-y-2">
+                  {activeZone ? (
+                    <>
+                      <div>
+                        <div className="text-muted-foreground">Zone</div>
+                        <div>{activeZone.name}</div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Count</div>
+                        <div className="font-mono">{activeZone.keys.length}</div>
+                      </div>
+                      {zoneOverlay ? (
+                        <>
+                          <div>
+                            <div className="text-muted-foreground">People</div>
+                            <div className="font-mono">
+                              {(zoneOverlay.people[activeZone.zoneId] ?? 0).toLocaleString()}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-muted-foreground">Doors</div>
+                            <div className="font-mono">
+                              {(zoneOverlay.doors[activeZone.zoneId] ?? 0).toLocaleString()}
+                            </div>
+                          </div>
+                        </>
+                      ) : null}
+                    </>
+                  ) : clickedKey ? (
+                    <>
+                      <div>
+                        <div className="text-muted-foreground">Key</div>
+                        <div className="font-mono">{clickedKey}</div>
+                      </div>
+                      {overlayCountsByKey ? (
+                        <>
+                          <div>
+                            <div className="text-muted-foreground">People</div>
+                            <div className="font-mono">
+                              {(overlayCountsByKey[clickedKey]?.people ?? 0).toLocaleString()}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-muted-foreground">Doors</div>
+                            <div className="font-mono">
+                              {(overlayCountsByKey[clickedKey]?.doors ?? 0).toLocaleString()}
+                            </div>
+                          </div>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
-                {overlayCountsByKey ? (
-                  <>
-                    <div>
-                      <div className="text-muted-foreground">Doors</div>
-                      <div className="font-mono">
-                        {(overlayCountsByKey[clickedKey]?.doors ?? 0).toLocaleString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">People</div>
-                      <div className="font-mono">
-                        {(overlayCountsByKey[clickedKey]?.people ?? 0).toLocaleString()}
-                      </div>
-                    </div>
-                  </>
-                ) : null}
               </div>
-            </div>
-          ) : null}
+            );
+          })()}
         </div>
       </div>
 
