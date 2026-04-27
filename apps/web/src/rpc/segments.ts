@@ -220,20 +220,58 @@ async function loadOrgSlug(context: { db: Db; user: { organizationId: string } }
   return slug;
 }
 
+// Optional spatial scope passed to the query procedures: clips
+// matches to people whose boundary-key falls in `keys`. Mirrors the
+// shape `/api/query-points` already accepts, so the same primitive
+// covers JSON aggregations and the binary points stream.
+const keyFilterSchema = z
+  .object({
+    keyGroup: z.string(),
+    keys: z.array(z.string()),
+  })
+  .optional();
+
+// Composes the segment WHERE clause with an optional key-set filter.
+// Empty `keys` short-circuits to `1=0` so the query returns no rows
+// rather than emitting invalid `IN ()` SQL.
+function applyKeyFilter(
+  base: { where: string; params: unknown[] },
+  keyFilter: z.infer<typeof keyFilterSchema>,
+): { where: string; params: unknown[] } {
+  if (!keyFilter) return base;
+  if (keyFilter.keys.length === 0) {
+    return {
+      where: base.where ? `${base.where} AND 1=0` : "WHERE 1=0",
+      params: base.params,
+    };
+  }
+  const expr = boundaryKeyExprFor(keyFilter.keyGroup);
+  const placeholders = keyFilter.keys.map(() => "?").join(", ");
+  const clause = `${expr} IN (${placeholders})`;
+  return {
+    where: base.where ? `${base.where} AND ${clause}` : `WHERE ${clause}`,
+    params: [...base.params, ...keyFilter.keys],
+  };
+}
+
 // Live counts for an arbitrary query — person/door/building totals
 // plus a 100-row sample. Takes the query as an explicit argument
 // rather than looking it up from a saved segment, because the segment
 // editor wants live preview against the in-progress draft, not the
 // persisted snapshot.
 //
-// Builds one SQL statement against the org's persons table that
-// returns all four numbers in a single row. The data service is a
-// generic executor — see /query/counts in apps/data/main.py.
+// `keyFilter` optionally clips the result to people whose boundary-
+// key falls in the supplied set. Used by the campaign editor when it
+// wants segment ∩ zone-group totals; segment editor leaves it
+// unset.
 export const queryCounts = mut
-  .input(z.object({ query: z.unknown() }))
+  .input(z.object({ query: z.unknown(), keyFilter: keyFilterSchema }))
   .handler(async ({ context, input }) => {
     const orgSlug = await loadOrgSlug(context);
-    const { where, params } = queryToWhere(input.query as QueryShape);
+    const { where, params } = applyKeyFilter(
+      queryToWhere(input.query as QueryShape),
+      input.keyFilter,
+    );
     const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
     // CTE materialised once so the WHERE evaluates a single time
     // even though three subqueries reference it.
@@ -278,11 +316,18 @@ export const queryCounts = mut
 // Per-zone aggregation: count of people matching `query` grouped by
 // the zone-key column corresponding to `keyGroup`. Used by the zone
 // editor's heatmap overlay and the campaign editor.
+//
+// `keyFilter` optionally clips the result to a subset of keys (e.g.
+// only the keys belonging to the campaign's zone group). Without it,
+// the query groups across every key the persons table contains.
 export const queryCountsByKey = mut
-  .input(z.object({ query: z.unknown(), keyGroup: z.string() }))
+  .input(z.object({ query: z.unknown(), keyGroup: z.string(), keyFilter: keyFilterSchema }))
   .handler(async ({ context, input }) => {
     const orgSlug = await loadOrgSlug(context);
-    const { where, params } = queryToWhere(input.query as QueryShape);
+    const { where, params } = applyKeyFilter(
+      queryToWhere(input.query as QueryShape),
+      input.keyFilter,
+    );
     const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
     const groupExpr = boundaryKeyExprFor(input.keyGroup);
     const sql = `
@@ -302,6 +347,57 @@ export const queryCountsByKey = mut
       counts[key] = { doors: Number(r.doors), people: Number(r.people) };
     }
     return { counts };
+  });
+
+// Per-building aggregation: one row per building that contains at
+// least one matching person, with door + person counts and the
+// building's centroid. Used by the turf cutter to render buildings
+// scoped to segment ∩ zone, with enough detail (building id, per-
+// building doors/people) to compute "what's inside this drawn
+// polygon" client-side.
+//
+// Returns JSON rather than the binary `/api/query-points` because
+// rows carry strings (UUIDs) and integers alongside floats — mixing
+// types in a binary frame would need length-prefixing and layout
+// metadata that JSON gives for free, and per-zone payloads stay
+// small enough that the wire-format efficiency doesn't matter.
+export const queryBuildings = mut
+  .input(z.object({ query: z.unknown(), keyFilter: keyFilterSchema }))
+  .handler(async ({ context, input }) => {
+    const orgSlug = await loadOrgSlug(context);
+    const { where, params } = applyKeyFilter(
+      queryToWhere(input.query as QueryShape),
+      input.keyFilter,
+    );
+    const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
+    const buildings = `ducklake.main.${orgSlug}_buildings_geocoded`;
+    // The segment WHERE + keyFilter is applied INSIDE a subquery so
+    // its unqualified column refs (e.g. `zip5`) only see persons.
+    // Without the subquery, columns that exist on both buildings and
+    // persons (zip5, address fields, etc.) would be ambiguous in the
+    // outer JOIN's WHERE.
+    const sql = `
+      SELECT
+        b.building_id              AS "buildingId",
+        b.longitude,
+        b.latitude,
+        count(DISTINCT fp.door_id) AS "doorCount",
+        count(*)                   AS "personCount"
+      FROM ${buildings} b
+      JOIN (SELECT * FROM ${persons} ${where}) fp
+        ON fp.building_id = b.building_id
+      GROUP BY b.building_id, b.longitude, b.latitude
+    `;
+    const rows = await execute(sql, params);
+    return {
+      buildings: rows as Array<{
+        buildingId: string;
+        longitude: number;
+        latitude: number;
+        doorCount: number;
+        personCount: number;
+      }>,
+    };
   });
 
 async function execute(sql: string, params: unknown[]): Promise<Array<Record<string, unknown>>> {
