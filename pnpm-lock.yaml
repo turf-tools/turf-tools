@@ -205,6 +205,12 @@ importers:
       '@tanstack/react-start':
         specifier: ^1
         version: 1.167.12(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4)
+      '@turf/clean-coords':
+        specifier: ^7.3.5
+        version: 7.3.5
+      '@turf/union':
+        specifier: ^7.3.5
+        version: 7.3.5
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -257,6 +263,9 @@ importers:
       '@types/d3-scale-chromatic':
         specifier: ^3.1.0
         version: 3.1.0
+      '@types/geojson':
+        specifier: ^7946.0.16
+        version: 7946.0.16
       '@types/node':
         specifier: ^22
         version: 22.19.15
@@ -4957,6 +4966,25 @@ packages:
       path-browserify: 1.0.1
     dev: false
 
+  /@turf/boolean-point-on-line@7.3.5:
+    resolution: {integrity: sha512-TuWfrAT63W43BDzgYc94UzQ5/PjF1aTnh4AIzmQwez1YnimShYcOTwo8OIHzDaB6gbbvFsfxYMuOA5JOp942Kg==}
+    dependencies:
+      '@turf/helpers': 7.3.5
+      '@turf/invariant': 7.3.5
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+    dev: false
+
+  /@turf/clean-coords@7.3.5:
+    resolution: {integrity: sha512-e0ZTqVWiQaCI/b8EFb+HAS8lCDomWafAKxQuIv0IYks0GwOlVTDWTwsY2RX2685j2Y+QssqOsyHsPZCtAjc3YQ==}
+    dependencies:
+      '@turf/boolean-point-on-line': 7.3.5
+      '@turf/helpers': 7.3.5
+      '@turf/invariant': 7.3.5
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+    dev: false
+
   /@turf/distance@7.3.4:
     resolution: {integrity: sha512-9drWgd46uHPPyzgrcRQLgSvdS/SjVlQ6ZIBoRQagS5P2kSjUbcOXHIMeOSPwfxwlKhEtobLyr+IiR2ns1TfF8w==}
     dependencies:
@@ -4973,10 +5001,25 @@ packages:
       tslib: 2.8.1
     dev: false
 
+  /@turf/helpers@7.3.5:
+    resolution: {integrity: sha512-E/NMGV5MwbjjP7AJXBtsanC3yY8N2MQ87IGdIgkB2ji5AtBpwnH4L3gEqpYN4RlCJJWbLbzO91BbKv2waUd0eg==}
+    dependencies:
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+    dev: false
+
   /@turf/invariant@7.3.4:
     resolution: {integrity: sha512-88Eo4va4rce9sNZs6XiMJowWkikM3cS2TBhaCKlU+GFHdNf8PFEpiU42VDU8q5tOF6/fu21Rvlke5odgOGW4AQ==}
     dependencies:
       '@turf/helpers': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+    dev: false
+
+  /@turf/invariant@7.3.5:
+    resolution: {integrity: sha512-ZVIvsBvjr8lO7WxC5zYNjRsjSDvyGvWkJMjuWaJjTU8x+1tmfNnw3gDX/TI2Sit83gcRYLYkNo23lB/udqx/Hg==}
+    dependencies:
+      '@turf/helpers': 7.3.5
       '@types/geojson': 7946.0.16
       tslib: 2.8.1
     dev: false
@@ -4999,6 +5042,14 @@ packages:
       tslib: 2.8.1
     dev: false
 
+  /@turf/meta@7.3.5:
+    resolution: {integrity: sha512-r+ohqxoyqeigFB0oFrQx/YEHIkOKqcKpCjvZkvZs7Tkv+IFco5MezAd2zd4rzK+0DfFgDP3KpJc7HqrYjvEjhg==}
+    dependencies:
+      '@turf/helpers': 7.3.5
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+    dev: false
+
   /@turf/nearest-point-on-line@7.3.4:
     resolution: {integrity: sha512-DQrP3lRju83rIXFN68tUEpc7ki/eRwdwBkK2CTT4RAcyCxbcH2NGJPQv8dYiww/Ar77u1WLVn+aINXZH904dWw==}
     dependencies:
@@ -5007,6 +5058,16 @@ packages:
       '@turf/invariant': 7.3.4
       '@turf/meta': 7.3.4
       '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+    dev: false
+
+  /@turf/union@7.3.5:
+    resolution: {integrity: sha512-/FSKhl+LX4+M7L/Trmiln0CDPWS8vCneGnQktt1o5XbCY/zIpH1JdxHEBFXhFZg4beAyXCz0uuxRyW9N/DH+KA==}
+    dependencies:
+      '@turf/helpers': 7.3.5
+      '@turf/meta': 7.3.5
+      '@types/geojson': 7946.0.16
+      polyclip-ts: 0.16.8
       tslib: 2.8.1
     dev: false
 
@@ -5089,7 +5150,7 @@ packages:
   /@types/mssql@9.1.11(@azure/core-client@1.10.1):
     resolution: {integrity: sha512-vcujgrDbDezCxNDO4KY6gjwduLYOKfrexpRUwhoysRvcXZ3+IgZ/PMYFDgh8c3cQIxZ6skAwYo+H6ibMrBWPjQ==}
     dependencies:
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
       tarn: 3.0.2
       tedious: 19.2.1(@azure/core-client@1.10.1)
     transitivePeerDependencies:
@@ -5127,7 +5188,7 @@ packages:
   /@types/readable-stream@4.0.23:
     resolution: {integrity: sha512-wwXrtQvbMHxCbBgjHaMGEmImFTQxxpfMOR/ZoQnXxB1woqkUbdLGFDgauo00Py9IudiaqSeiBiulSV9i6XIPig==}
     dependencies:
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
 
   /@types/stack-utils@2.0.3:
     resolution: {integrity: sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw==}
@@ -6162,6 +6223,10 @@ packages:
   /big-integer@1.6.52:
     resolution: {integrity: sha512-QxD8cf2eVqJOOz63z6JIN9BzvVs/dlySa5HGSBH5xtR8dPteIRQnBxxKqkNTiT6jbDTF6jAfrd4oMcND9RGbQg==}
     engines: {node: '>=0.6'}
+
+  /bignumber.js@9.3.1:
+    resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
+    dev: false
 
   /binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
@@ -10151,6 +10216,13 @@ packages:
     engines: {node: '>=14.19.0'}
     dev: true
 
+  /polyclip-ts@0.16.8:
+    resolution: {integrity: sha512-JPtKbDRuPEuAjuTdhR62Gph7Is2BS1Szx69CFOO3g71lpJDFo78k4tFyi+qFOMVPePEzdSKkpGU3NBXPHHjvKQ==}
+    dependencies:
+      bignumber.js: 9.3.1
+      splaytree-ts: 1.0.2
+    dev: false
+
   /postcss-import@15.1.0(postcss@8.5.8):
     resolution: {integrity: sha512-hpr+J05B2FVYUAXHeK1YyI267J/dDDhMU6B6civm8hSY1jYJnBXxzKDKDswzJmtLHryrjhnDjqqp/49t8FALew==}
     engines: {node: '>=14.0.0'}
@@ -11317,6 +11389,10 @@ packages:
     engines: {node: '>= 12'}
     dev: false
 
+  /splaytree-ts@1.0.2:
+    resolution: {integrity: sha512-0kGecIZNIReCSiznK3uheYB8sbstLjCZLiwcQwbmLhgHJj2gz6OnSPkVzJQCMnmEz1BQ4gPK59ylhBoEWOhGNA==}
+    dev: false
+
   /split-on-first@1.1.0:
     resolution: {integrity: sha512-43ZssAJaMusuKWL8sKUBQXHWOpq8d6CfN/u1p4gUzfJkM05C8rxTmYrkIPTXapZpORA6LkkzcUulJ8FqA7Uudw==}
     engines: {node: '>=6'}
@@ -11566,7 +11642,7 @@ packages:
       '@azure/identity': 4.13.1
       '@azure/keyvault-keys': 4.10.0(@azure/core-client@1.10.1)
       '@js-joda/core': 5.7.0
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
       bl: 6.1.6
       iconv-lite: 0.6.3
       js-md4: 0.3.2
@@ -11584,7 +11660,7 @@ packages:
       '@azure/identity': 4.13.1
       '@azure/keyvault-keys': 4.10.0(@azure/core-client@1.10.1)
       '@js-joda/core': 5.7.0
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
       bl: 6.1.6
       iconv-lite: 0.7.2
       js-md4: 0.3.2

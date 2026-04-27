@@ -129,6 +129,20 @@ function SegmentsIndex() {
   const counts = preview?.counts;
   const pointsBuffer = preview?.pointsBuffer;
 
+  // First-load curtain over the map + counts pane. Only covers the
+  // initial render — once the data has been ready once, the flag
+  // stays true and ordinary updates (segment switches, filter
+  // edits) flow through with their own stale signals. Avoids the
+  // mid-mount flash where the map paints empty before counts/points
+  // arrive.
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [firstReady, setFirstReady] = useState(false);
+  useEffect(() => {
+    if (firstReady) return;
+    const ready = mapLoaded && (!activeSegmentId || (preview != null && !stale));
+    if (ready) setFirstReady(true);
+  }, [firstReady, mapLoaded, activeSegmentId, preview, stale]);
+
   // Optimistic update: write into the ["segment", id] cache in
   // onMutate, snapshot for rollback, restore on error. The cache is
   // the single source of truth — `filters` above reads from it, so
@@ -285,10 +299,23 @@ function SegmentsIndex() {
           ) : null}
         </div>
         <div className="col-span-2 flex h-full flex-col gap-3">
-          <div className="flex-1 overflow-hidden rounded-lg border border-border">
+          <div className="relative flex-1 overflow-hidden rounded-lg border border-border">
             <div className={cn("h-full transition-opacity", stale ? "opacity-70" : null)}>
-              <Map className="h-full" points={pointsBuffer} />
+              <Map className="h-full" points={pointsBuffer} onLoaded={() => setMapLoaded(true)} />
             </div>
+            {/* First-load curtain — only opaque until the map is
+                mounted and the initial preview data has arrived.
+                Sits inside the bordered map box so the surrounding
+                chrome (border, counts panel below) renders without
+                waiting for data. */}
+            <div
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute inset-0 bg-background",
+                "transition-opacity duration-150",
+                firstReady ? "opacity-0" : "opacity-100",
+              )}
+            />
           </div>
           <CountsPanel counts={counts} stale={stale} disabled={!activeSegmentId} />
         </div>

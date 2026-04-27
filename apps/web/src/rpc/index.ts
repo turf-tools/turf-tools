@@ -20,6 +20,11 @@ export const router = {
   campaigns: {
     list: campaignsProcedures.list,
     getById: campaignsProcedures.getById,
+    create: campaignsProcedures.create,
+    rename: campaignsProcedures.rename,
+    update: campaignsProcedures.update,
+    clone: campaignsProcedures.clone,
+    remove: campaignsProcedures.remove,
   },
   segments: {
     list: segmentsProcedures.list,
@@ -59,6 +64,7 @@ export const router = {
     getByIdForOrg: turfsProcedures.getByIdForOrg,
   },
   script: {
+    list: scriptProcedures.list,
     get: scriptProcedures.get,
   },
   canvass: {
