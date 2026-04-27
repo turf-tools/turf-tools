@@ -66,10 +66,18 @@ SELECT
     'NY' AS state,
     raw.res_zip5 AS zip5,
     nullif(raw.res_zip4, '') AS zip4,
-    -- Curated set: matches the filterable keys exposed in the admin UI's
-    -- OTHER_PROPERTY_KEYS. Native rendering picks its own subset.
-    -- `party` is renamed from NYS's `enrollment` so the key matches the
-    -- filter UI's vocabulary.
+    -- Curated set: matches the filterable keys exposed by the admin UI's
+    -- filters catalog. Native rendering picks its own subset. `party` is
+    -- renamed from NYS's `enrollment` so the key matches the filter UI's
+    -- vocabulary.
+    --
+    -- `ad_ed` is a derived composite of (assembly_district, election_district)
+    -- in NYC's canonical "AA-EEE" form (e.g. "23-001"). Bare ED is
+    -- meaningless without AD — ED numbers like 4 or 51 repeat across
+    -- assembly districts — so the filter UI exposes `ad_ed` as the
+    -- single field people actually mean when they say "ED 23-001".
+    -- The raw `assembly_district` and `election_district` are kept
+    -- alongside for any consumer that wants them.
     to_json({{
         party: raw.enrollment,
         gender: raw.gender,
@@ -78,6 +86,8 @@ SELECT
         status: raw.status,
         election_district: raw.election_district,
         assembly_district: raw.assembly_district,
+        ad_ed: lpad(CAST(raw.assembly_district AS VARCHAR), 2, '0')
+            || '-' || lpad(CAST(raw.election_district AS VARCHAR), 3, '0'),
         senate_district: raw.senate_district,
         congressional_district: raw.congressional_district
     }}) AS other_properties

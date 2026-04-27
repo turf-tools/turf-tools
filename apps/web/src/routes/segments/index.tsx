@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Copy, List, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -21,7 +21,18 @@ import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
-import { OTHER_PROPERTY_KEYS, type OtherPropertyDefinition } from "~/lib/voter-properties";
+import {
+  type AgeRangeFilter,
+  definitionFor,
+  emptyFilterFor,
+  type EnumFilter,
+  type Filter,
+  type FilterDef,
+  FILTERS,
+  isActiveFilter,
+  type Query,
+  type TextFilter,
+} from "~/lib/filters";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/segments/")({
@@ -29,26 +40,10 @@ export const Route = createFileRoute("/segments/")({
 });
 
 // Segment editor: dropdown to pick the active segment, filter rows on
-// the left, map on the right. Mirrors the zones editor structurally so
-// the management surface (Create / Rename / Save as / Delete) feels
-// uniform across the two editors.
+// the left, map on the right.
 //
 // Phase 1: leaf filters only, all AND'd. Phase 2 will bring composition
 // (OR / NOT / segmentRef) and a density visualization on the map.
-
-type EnumFilter = { kind: "enum"; key: string; values: string[] };
-type AgeRangeFilter = { kind: "age-range"; key: string; min: number | null; max: number | null };
-type Filter = EnumFilter | AgeRangeFilter;
-type Query = { filters: Filter[] };
-
-function emptyFilterFor(def: OtherPropertyDefinition): Filter {
-  if (def.kind === "enum") return { kind: "enum", key: def.key, values: [] };
-  return { kind: "age-range", key: def.key, min: null, max: null };
-}
-
-function definitionFor(key: string): OtherPropertyDefinition | undefined {
-  return OTHER_PROPERTY_KEYS.find((d) => d.key === key);
-}
 
 function SegmentsIndex() {
   const queryClient = useQueryClient();
@@ -81,40 +76,80 @@ function SegmentsIndex() {
     placeholderData: keepPreviousData,
   });
 
-  // Local draft of the query — saved explicitly via the Save button.
-  // Hydrate when a different segment's detail row arrives; never on
-  // background refetches of the same segment so we don't clobber
-  // in-progress edits.
-  const [draft, setDraft] = useState<Query>({ filters: [] });
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => {
-    if (!activeSegmentDetail) return;
-    const q = (activeSegmentDetail.query as Query | undefined) ?? { filters: [] };
-    setDraft(q);
-    setDirty(false);
-    // Re-hydrate only when the loaded segment id changes, not on every
-    // refetch — once the user starts editing, dirty work is preserved.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSegmentDetail?.segmentId]);
+  // Read filters straight from the detail cache — no separate draft
+  // layer. Mutations update the cache optimistically (see
+  // updateQueryMutation below), so every commit is reflected on the
+  // next render without a hydration step. During a segment switch with
+  // `keepPreviousData`, the previous segment's filters render briefly
+  // while the new detail loads; the map/counts dim via `stale`, which
+  // reads as a "transitioning" state rather than a mismatch.
+  const filters = (activeSegmentDetail?.query as Query | undefined)?.filters ?? [];
 
-  // Autosave: every edit bumps `dirty`, a debounce fires the mutation
-  // ~500ms after the user stops typing/clicking. The local draft is the
-  // source of truth, so we don't invalidate after success — the cache
-  // would just refetch data identical to what we already have.
-  const saveQueryMutation = useMutation({
-    mutationFn: () => client.segments.updateQuery({ segmentId: activeSegmentId!, query: draft }),
-    onSuccess: () => setDirty(false),
-    onError: (e) => console.error("segments.updateQuery failed", e),
+  // Preview keys on active filters only so adding/removing an empty
+  // filter doesn't trigger a refetch. One query fetches counts and
+  // points in parallel via Promise.all — `data` only updates when both
+  // resolve, so map and counts can never disagree.
+  const effectiveQuery = useMemo<Query>(
+    () => ({ filters: filters.filter(isActiveFilter) }),
+    [filters],
+  );
+  const effectiveKey = JSON.stringify(effectiveQuery);
+  const { data: preview, isPlaceholderData: stale } = useQuery({
+    queryKey: ["query-preview", effectiveKey],
+    queryFn: async () => {
+      const [counts, pointsBuffer] = await Promise.all([
+        client.segments.queryCounts({ query: effectiveQuery }),
+        (async () => {
+          const res = await fetch("/api/query-points", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: effectiveQuery }),
+          });
+          if (!res.ok) {
+            throw new Error(`query-points failed: ${res.status} ${await res.text()}`);
+          }
+          return new Float32Array(await res.arrayBuffer());
+        })(),
+      ]);
+      return { counts, pointsBuffer };
+    },
+    enabled: !!activeSegmentDetail,
+    placeholderData: keepPreviousData,
+    // Preview data is a pure function of `effectiveKey` (active filters).
+    // The key changes whenever filters change, so cached results for a
+    // given key can never be "stale" relative to that key — no need for
+    // background refetches on revisit.
+    staleTime: Infinity,
   });
+  // `isPlaceholderData` is the right "stale" signal: true only when
+  // we're showing the previous key's data while waiting for the
+  // current key's. `isFetching` would also flip true on cache-hit
+  // background refetches, which is misleading — the displayed data
+  // is already correct in that case.
+  const counts = preview?.counts;
+  const pointsBuffer = preview?.pointsBuffer;
 
-  useEffect(() => {
-    if (!activeSegmentId || !dirty) return;
-    const handle = setTimeout(() => saveQueryMutation.mutate(), 500);
-    return () => clearTimeout(handle);
-    // saveQueryMutation is stable across renders; we only re-arm when the
-    // user-visible state we care about changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, dirty, activeSegmentId]);
+  // Optimistic update: write into the ["segment", id] cache in
+  // onMutate, snapshot for rollback, restore on error. The cache is
+  // the single source of truth — `filters` above reads from it, so
+  // the UI updates instantly.
+  const updateQueryMutation = useMutation({
+    mutationFn: (input: { segmentId: string; query: Query }) =>
+      client.segments.updateQuery({ segmentId: input.segmentId, query: input.query }),
+    onMutate: async ({ segmentId, query }) => {
+      await queryClient.cancelQueries({ queryKey: ["segment", segmentId] });
+      const previous = queryClient.getQueryData(["segment", segmentId]);
+      queryClient.setQueryData(
+        ["segment", segmentId],
+        (old: { query: unknown } | null | undefined) => (old ? { ...old, query } : old),
+      );
+      return { previous };
+    },
+    onError: (e, { segmentId }, ctx) => {
+      console.error("segments.updateQuery failed", e);
+      if (ctx?.previous) queryClient.setQueryData(["segment", segmentId], ctx.previous);
+    },
+  });
 
   const renameSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; name: string }) => client.segments.rename(input),
@@ -124,7 +159,7 @@ function SegmentsIndex() {
   const createSegment = useDialogMutation({
     mutationFn: (input: { name: string }) => client.segments.create(input),
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["segments"] });
+      void queryClient.invalidateQueries({ queryKey: ["segments"] });
       setActiveSegmentId(created.segmentId);
     },
   });
@@ -132,7 +167,7 @@ function SegmentsIndex() {
   const cloneSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; newName: string }) => client.segments.clone(input),
     onSuccess: ({ segmentId }) => {
-      queryClient.invalidateQueries({ queryKey: ["segments"] });
+      void queryClient.invalidateQueries({ queryKey: ["segments"] });
       setActiveSegmentId(segmentId);
     },
   });
@@ -140,7 +175,7 @@ function SegmentsIndex() {
   const deleteSegment = useDialogMutation({
     mutationFn: (segmentId: string) => client.segments.remove({ segmentId }),
     onSuccess: (_res, deletedId) => {
-      queryClient.invalidateQueries({ queryKey: ["segments"] });
+      void queryClient.invalidateQueries({ queryKey: ["segments"] });
       const next = segments?.find((s) => s.segmentId !== deletedId);
       setActiveSegmentId(next?.segmentId ?? null);
     },
@@ -148,21 +183,17 @@ function SegmentsIndex() {
 
   const [deleteCampaignCount, setDeleteCampaignCount] = useState(0);
 
-  const updateFilter = (idx: number, next: Filter) => {
-    setDraft((d) => ({ ...d, filters: d.filters.map((f, i) => (i === idx ? next : f)) }));
-    setDirty(true);
+  const commit = (nextFilters: Filter[]) => {
+    if (!activeSegmentId) return;
+    updateQueryMutation.mutate({ segmentId: activeSegmentId, query: { filters: nextFilters } });
   };
-  const removeFilter = (idx: number) => {
-    setDraft((d) => ({ ...d, filters: d.filters.filter((_, i) => i !== idx) }));
-    setDirty(true);
-  };
-  const addFilter = (def: OtherPropertyDefinition) => {
-    setDraft((d) => ({ ...d, filters: [...d.filters, emptyFilterFor(def)] }));
-    setDirty(true);
-  };
+  const updateFilter = (idx: number, next: Filter) =>
+    commit(filters.map((f, i) => (i === idx ? next : f)));
+  const removeFilter = (idx: number) => commit(filters.filter((_, i) => i !== idx));
+  const addFilter = (def: FilterDef) => commit([...filters, emptyFilterFor(def)]);
 
-  const usedKeys = new Set(draft.filters.map((f) => f.key));
-  const availableDefs = OTHER_PROPERTY_KEYS.filter((d) => !usedKeys.has(d.key));
+  const usedKeys = new Set(filters.map((f) => f.key));
+  const availableDefs = FILTERS.filter((d) => !usedKeys.has(d.key));
 
   return (
     <>
@@ -237,13 +268,9 @@ function SegmentsIndex() {
 
       <div className="grid grid-cols-3 gap-4 h-[calc(100vh-9.75rem)]">
         <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
-          {!activeSegment ? (
-            <div className="text-sm text-muted-foreground italic">
-              No segment selected. Create one to start defining filters.
-            </div>
-          ) : (
+          {activeSegmentDetail ? (
             <>
-              {draft.filters.map((filter, idx) => (
+              {filters.map((filter, idx) => (
                 <FilterRow
                   key={`${filter.key}-${idx}`}
                   filter={filter}
@@ -255,10 +282,15 @@ function SegmentsIndex() {
                 <AddFilterMenu defs={availableDefs} onPick={addFilter} />
               ) : null}
             </>
-          )}
+          ) : null}
         </div>
-        <div className="col-span-2 h-full overflow-hidden rounded-lg border border-border">
-          <Map className="h-full" />
+        <div className="col-span-2 flex h-full flex-col gap-3">
+          <div className="flex-1 overflow-hidden rounded-lg border border-border">
+            <div className={cn("h-full transition-opacity", stale ? "opacity-70" : null)}>
+              <Map className="h-full" points={pointsBuffer} />
+            </div>
+          </div>
+          <CountsPanel counts={counts} stale={stale} disabled={!activeSegmentId} />
         </div>
       </div>
 
@@ -546,6 +578,52 @@ function DeleteDialog({
   );
 }
 
+function CountsPanel({
+  counts,
+  stale,
+  disabled,
+}: {
+  counts:
+    | {
+        personCount: number;
+        doorCount: number;
+        buildingCount: number;
+        samplePeople: Array<Record<string, unknown>>;
+      }
+    | undefined;
+  stale: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-3">
+      <div
+        className={cn(
+          "grid grid-cols-3 gap-4",
+          // Dim the contents while the editor is mid-edit / mid-save so
+          // it's clear the shown numbers reflect the last saved query.
+          // Border + background stay solid so the panel keeps its shape.
+          stale ? "opacity-30" : null,
+        )}
+      >
+        <Stat label="Persons" value={disabled ? null : counts?.personCount} />
+        <Stat label="Doors" value={disabled ? null : counts?.doorCount} />
+        <Stat label="Buildings" value={disabled ? null : counts?.buildingCount} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number | null | undefined }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="font-mono text-xl tracking-tight tabular-nums">
+        {value == null ? "—" : value.toLocaleString()}
+      </span>
+    </div>
+  );
+}
+
 // ---- Filter editing pieces (lifted from the old per-id editor) ----
 
 function FilterRow({
@@ -562,14 +640,8 @@ function FilterRow({
     return (
       <div className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-sm">
         <span>Unknown property: {filter.key}</span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onRemove}
-          aria-label="Remove filter"
-          className="-translate-y-0.5"
-        >
-          <X className="size-5" />
+        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove filter">
+          <X className="size-4" />
         </Button>
       </div>
     );
@@ -577,15 +649,9 @@ function FilterRow({
   return (
     <div className="rounded-md border border-border bg-card p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-medium">{def.label}</span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onRemove}
-          aria-label="Remove filter"
-          className="-translate-y-0.5"
-        >
-          <X className="size-5" />
+        <span className="text-sm">{def.label}</span>
+        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove filter">
+          <X className="size-4" />
         </Button>
       </div>
       {filter.kind === "enum" && def.kind === "enum" ? (
@@ -594,6 +660,47 @@ function FilterRow({
       {filter.kind === "age-range" && def.kind === "age-range" ? (
         <AgeRangeFilterEditor filter={filter} onChange={onChange} />
       ) : null}
+      {filter.kind === "text" && def.kind === "text" ? (
+        <TextFilterEditor filter={filter} def={def} onChange={onChange} />
+      ) : null}
+    </div>
+  );
+}
+
+function TextFilterEditor({
+  filter,
+  def,
+  onChange,
+}: {
+  filter: TextFilter;
+  def: Extract<FilterDef, { kind: "text" }>;
+  onChange: (next: Filter) => void;
+}) {
+  // Local input state so typing doesn't fire onChange per keystroke
+  // (which would refetch counts/points on every character). The
+  // committed value lives in the segment cache; we sync down when the
+  // prop changes (e.g. segment switch) and commit up on blur or Enter.
+  const [local, setLocal] = useState(filter.value);
+  useEffect(() => setLocal(filter.value), [filter.value]);
+  const commit = () => {
+    if (local !== filter.value) onChange({ ...filter, value: local });
+  };
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <span className="text-muted-foreground">{def.op === "contains" ? "Contains" : "Equals"}</span>
+      <Input
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        className="h-8 text-sm"
+        placeholder={def.op === "contains" ? "any substring" : "exact match"}
+      />
     </div>
   );
 }
@@ -604,7 +711,7 @@ function EnumFilterEditor({
   onChange,
 }: {
   filter: EnumFilter;
-  def: Extract<OtherPropertyDefinition, { kind: "enum" }>;
+  def: Extract<FilterDef, { kind: "enum" }>;
   onChange: (next: Filter) => void;
 }) {
   const toggle = (value: string) => {
@@ -643,6 +750,23 @@ function AgeRangeFilterEditor({
   filter: AgeRangeFilter;
   onChange: (next: Filter) => void;
 }) {
+  // Same commit-on-blur/Enter pattern as text — typing in the number
+  // boxes is local until the user finishes the field.
+  const [localMin, setLocalMin] = useState(filter.min == null ? "" : String(filter.min));
+  const [localMax, setLocalMax] = useState(filter.max == null ? "" : String(filter.max));
+  useEffect(() => setLocalMin(filter.min == null ? "" : String(filter.min)), [filter.min]);
+  useEffect(() => setLocalMax(filter.max == null ? "" : String(filter.max)), [filter.max]);
+  const commit = () => {
+    const min = localMin === "" ? null : Number(localMin);
+    const max = localMax === "" ? null : Number(localMax);
+    if (min !== filter.min || max !== filter.max) onChange({ ...filter, min, max });
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+    }
+  };
   return (
     <div className="flex items-center gap-2 text-sm">
       <span className="text-muted-foreground">Between</span>
@@ -650,10 +774,10 @@ function AgeRangeFilterEditor({
         type="number"
         min={0}
         max={120}
-        value={filter.min ?? ""}
-        onChange={(e) =>
-          onChange({ ...filter, min: e.target.value === "" ? null : Number(e.target.value) })
-        }
+        value={localMin}
+        onChange={(e) => setLocalMin(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
         className="w-16 rounded-md border border-border bg-background px-2 py-1"
         placeholder="min"
       />
@@ -662,10 +786,10 @@ function AgeRangeFilterEditor({
         type="number"
         min={0}
         max={120}
-        value={filter.max ?? ""}
-        onChange={(e) =>
-          onChange({ ...filter, max: e.target.value === "" ? null : Number(e.target.value) })
-        }
+        value={localMax}
+        onChange={(e) => setLocalMax(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
         className="w-16 rounded-md border border-border bg-background px-2 py-1"
         placeholder="max"
       />
@@ -678,12 +802,26 @@ function AddFilterMenu({
   defs,
   onPick,
 }: {
-  defs: ReadonlyArray<OtherPropertyDefinition>;
-  onPick: (def: OtherPropertyDefinition) => void;
+  defs: ReadonlyArray<FilterDef>;
+  onPick: (def: FilterDef) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  // Close on click outside the menu wrapper. Without this the popup
+  // sticks open when the user clicks elsewhere — `onMouseLeave` alone
+  // covered hover-out but missed clicks.
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapRef}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -699,10 +837,9 @@ function AddFilterMenu({
       {open ? (
         <div
           className={cn(
-            "absolute top-full left-0 right-0 z-10 mt-1",
+            "absolute top-full right-0 left-0 z-10 mt-1",
             "flex flex-col rounded-md border border-border bg-background py-1 shadow-md",
           )}
-          onMouseLeave={() => setOpen(false)}
         >
           {defs.map((def) => (
             <button

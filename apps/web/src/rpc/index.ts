@@ -30,6 +30,8 @@ export const router = {
     remove: segmentsProcedures.remove,
     countCampaigns: segmentsProcedures.countCampaigns,
     updateQuery: segmentsProcedures.updateQuery,
+    queryCounts: segmentsProcedures.queryCounts,
+    queryCountsByKey: segmentsProcedures.queryCountsByKey,
   },
   zoneGroups: {
     list: zoneGroupsProcedures.list,

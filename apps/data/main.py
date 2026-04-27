@@ -1,9 +1,12 @@
+import array
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from src.db import get_connection
 from src.settings import get_settings
@@ -25,7 +28,7 @@ app = FastAPI(title="Data Service")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -114,3 +117,53 @@ async def key_group_geojson(key_group: str):
             "Cache-Control": "public, max-age=31536000, immutable",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Generic SQL execute endpoint.
+#
+# The web layer owns the segment-query DSL and emits parameterised
+# DuckDB SQL. This endpoint is the only thing the service does at
+# request time: prepared-statement execute, JSON or binary out
+# depending on the caller's `Accept` header.
+#
+# - `Accept: application/json` (default) → `{rows: [{col: value, ...}]}`
+#   with STRUCT/ARRAY columns deserialised to nested dicts/lists. Used
+#   by the segment editor for counts, samples, per-zone aggregation,
+#   stats summaries — anything whose result is naturally JSON-shaped.
+#
+# - `Accept: application/octet-stream` → raw Float32 bytes in row-major
+#   order (col0row0, col1row0, col0row1, ...). Designed for SQL like
+#   `SELECT longitude, latitude FROM ...` that streams directly into a
+#   Float32Array on the browser, then into a GPU buffer with no
+#   per-byte decode work. Servers and browsers in practice are all
+#   little-endian, so we skip an explicit byteswap.
+#
+# Connections are opened ``read_only=True`` so a bug or misrouted call
+# physically cannot mutate the lake — the Hamilton ingestion DAGs are
+# the only writers, and they run as CLI jobs.
+# ---------------------------------------------------------------------------
+
+
+class _ExecuteRequest(BaseModel):
+    sql: str
+    params: list[Any] = []
+
+
+@app.post("/query")
+async def query(req: _ExecuteRequest, request: Request):
+    binary = request.headers.get("accept", "").lower() == "application/octet-stream"
+    conn = get_connection(settings, read_only=True)
+    try:
+        cursor = conn.execute(req.sql, req.params)
+        if binary:
+            arr = array.array("f")
+            for row in cursor.fetchall():
+                for v in row:
+                    arr.append(v)
+            return Response(content=arr.tobytes(), media_type="application/octet-stream")
+        cols = [desc[0] for desc in cursor.description]
+        rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+    return {"rows": rows}

@@ -27,19 +27,15 @@ from hamilton import driver
 
 from src.dags import geocode, tiger, voter_file_loader
 
-VOTER_FILE_URL = str(
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "nys-voters-2026-03-08-10k-sample.parquet"
-)
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
 TIGER_CACHE = str(Path(__file__).parent.parent / "tiger_cache")
 
 # (borough_name, boe_county_code, tiger_fips, min_expected_match_pct)
 BOROUGH_PARAMS = [
-    ("manhattan",     "31", "061", 90.0),
-    ("bronx",         "03", "005", 90.0),
-    ("brooklyn",      "24", "047", 90.0),
-    ("queens",        "41", "081", 90.0),
+    ("manhattan", "31", "061", 90.0),
+    ("bronx", "03", "005", 90.0),
+    ("brooklyn", "24", "047", 90.0),
+    ("queens", "41", "081", 90.0),
     ("staten_island", "43", "085", 90.0),
 ]
 
@@ -168,9 +164,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
     print(f"\n{borough}: {matched:,}/{total:,} matched ({match_pct}%) in {elapsed:.1f}s")
 
     # Match rate threshold
-    assert match_pct >= min_match_pct, (
-        f"{borough}: match rate {match_pct}% is below minimum {min_match_pct}%"
-    )
+    assert match_pct >= min_match_pct, f"{borough}: match rate {match_pct}% is below minimum {min_match_pct}%"
 
     # geocoded_persons now contains only matched rows (INNER JOIN), so any
     # NULL or out-of-bounds coordinate is a real bug.
@@ -181,6 +175,4 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
            OR latitude  NOT BETWEEN 40.4  AND 41.0
            OR longitude NOT BETWEEN -74.3 AND -73.7
     """).fetchone()[0]
-    assert bad_coords == 0, (
-        f"{borough}: {bad_coords} matched persons have invalid or out-of-bounds coordinates"
-    )
+    assert bad_coords == 0, f"{borough}: {bad_coords} matched persons have invalid or out-of-bounds coordinates"
