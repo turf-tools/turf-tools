@@ -53,7 +53,9 @@ class Settings(BaseSettings):
 
     geo_ducklake_metadata_postgres_url: str | None = Field(
         default=None,
-        description="PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file.",
+        description=(
+            "PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file."
+        ),
     )
 
     ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)

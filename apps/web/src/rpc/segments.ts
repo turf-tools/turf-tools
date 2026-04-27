@@ -1,7 +1,10 @@
-import { and, asc, eq } from "@field-tools/db";
-import { campaigns, segments } from "@field-tools/db/schema";
+import { and, asc, type Db, eq } from "@field-tools/db";
+import { campaigns, organizations, segments } from "@field-tools/db/schema";
 import { z } from "zod";
-import { pub } from "./context";
+import { type Query as QueryShape } from "../lib/filters";
+import { boundaryKeyExprFor } from "../lib/key-groups";
+import { queryToWhere } from "../lib/query-to-sql";
+import { mut, pub } from "./context";
 
 const segmentSelect = {
   segmentId: segments.segmentId,
@@ -204,3 +207,117 @@ export const updateQuery = pub
       .where(eq(segments.segmentId, input.segmentId));
     return { ok: true as const };
   });
+
+// Resolve the user's org slug from the auth context. The data service
+// uses it to namespace the persons/buildings tables.
+async function loadOrgSlug(context: { db: Db; user: { organizationId: string } }): Promise<string> {
+  const rows = await context.db
+    .select({ slug: organizations.slug })
+    .from(organizations)
+    .where(eq(organizations.organizationId, context.user.organizationId));
+  const slug = rows[0]?.slug;
+  if (!slug) throw new Error("Organization not found");
+  return slug;
+}
+
+// Live counts for an arbitrary query — person/door/building totals
+// plus a 100-row sample. Takes the query as an explicit argument
+// rather than looking it up from a saved segment, because the segment
+// editor wants live preview against the in-progress draft, not the
+// persisted snapshot.
+//
+// Builds one SQL statement against the org's persons table that
+// returns all four numbers in a single row. The data service is a
+// generic executor — see /query/counts in apps/data/main.py.
+export const queryCounts = mut
+  .input(z.object({ query: z.unknown() }))
+  .handler(async ({ context, input }) => {
+    const orgSlug = await loadOrgSlug(context);
+    const { where, params } = queryToWhere(input.query as QueryShape);
+    const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
+    // CTE materialised once so the WHERE evaluates a single time
+    // even though three subqueries reference it.
+    const sql = `
+      WITH filtered AS MATERIALIZED (SELECT * FROM ${persons} ${where})
+      SELECT
+        (SELECT count(*) FROM filtered) AS "personCount",
+        (SELECT count(DISTINCT door_id) FROM filtered) AS "doorCount",
+        (SELECT count(DISTINCT building_id) FROM filtered) AS "buildingCount",
+        (
+          SELECT array_agg({
+            'external_id': external_id,
+            'first_name': first_name,
+            'last_name': last_name,
+            'address_line_1': address_line_1,
+            'address_line_2': address_line_2,
+            'city': city,
+            'state': state,
+            'zip5': zip5,
+            'latitude': latitude,
+            'longitude': longitude
+          })
+          FROM (SELECT * FROM filtered LIMIT 100)
+        ) AS "samplePeople"
+    `;
+    const rows = await execute(sql, params);
+    const row = rows[0] as {
+      personCount: number;
+      doorCount: number;
+      buildingCount: number;
+      // array_agg over an empty input returns null; flatten to [].
+      samplePeople: Array<Record<string, unknown>> | null;
+    };
+    return {
+      personCount: row.personCount,
+      doorCount: row.doorCount,
+      buildingCount: row.buildingCount,
+      samplePeople: row.samplePeople ?? [],
+    };
+  });
+
+// Per-zone aggregation: count of people matching `query` grouped by
+// the zone-key column corresponding to `keyGroup`. Used by the zone
+// editor's heatmap overlay and the campaign editor.
+export const queryCountsByKey = mut
+  .input(z.object({ query: z.unknown(), keyGroup: z.string() }))
+  .handler(async ({ context, input }) => {
+    const orgSlug = await loadOrgSlug(context);
+    const { where, params } = queryToWhere(input.query as QueryShape);
+    const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
+    const groupExpr = boundaryKeyExprFor(input.keyGroup);
+    const sql = `
+      SELECT
+        ${groupExpr} AS key,
+        count(DISTINCT door_id) AS doors,
+        count(*) AS people
+      FROM ${persons}
+      ${where}
+      GROUP BY ${groupExpr}
+    `;
+    const rows = await execute(sql, params);
+    const counts: Record<string, { doors: number; people: number }> = {};
+    for (const r of rows) {
+      const key = r.key as string | null;
+      if (key == null) continue;
+      counts[key] = { doors: Number(r.doors), people: Number(r.people) };
+    }
+    return { counts };
+  });
+
+async function execute(sql: string, params: unknown[]): Promise<Array<Record<string, unknown>>> {
+  const res = await fetch(`${import.meta.env.VITE_DATA_URL}/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ sql, params }),
+  });
+  if (!res.ok) throw new Error(`/query failed: ${res.status} ${await res.text()}`);
+  const body = (await res.json()) as { rows: Array<Record<string, unknown>> };
+  return body.rows;
+}
+
+// Note: there's no `queryPoints` oRPC procedure — points come back as
+// raw binary, which oRPC's JSON envelope doesn't accommodate without
+// base64 (and the per-byte decode that imposes on the main thread).
+// The browser hits `POST /api/query-points` directly; that route
+// (apps/web/src/routes/api/query-points.ts) handles auth + org
+// scoping, builds the SQL, and proxies the binary response.

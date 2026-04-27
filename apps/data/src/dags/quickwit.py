@@ -20,7 +20,7 @@ import math
 import subprocess
 import time
 
-import duckdb
+import duckdb  # noqa: TC002  # Hamilton resolves annotations at runtime via typing.get_type_hints
 
 from src.models import QuickwitBuildManifestStub, QuickwitIngestResult, TableRef
 
@@ -48,10 +48,7 @@ def quickwit_source_persons(
     actual_columns = set(rel.columns)
     missing_columns = [column for column in _REQUIRED_COLUMNS if column not in actual_columns]
     if missing_columns:
-        msg = (
-            "Quickwit source table is missing required Person columns: "
-            f"{missing_columns}"
-        )
+        msg = f"Quickwit source table is missing required Person columns: {missing_columns}"
         raise ValueError(msg)
     return persons_table_ref
 

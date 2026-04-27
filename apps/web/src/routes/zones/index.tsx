@@ -1,6 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrushCleaning, ChevronDown, Copy, List, Pencil, Plus, Trash2 } from "lucide-react";
+import { interpolateYlOrRd } from "d3-scale-chromatic";
+import {
+  BrushCleaning,
+  ChevronDown,
+  Copy,
+  DoorClosed,
+  Hash,
+  List,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -20,6 +31,7 @@ import {
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
+import { Switch } from "~/components/switch";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -75,6 +87,20 @@ function ZonesIndex() {
   const [groupOpen, setGroupOpen] = useState(false);
   const pendingValueRef = useRef<string | undefined>(undefined);
 
+  // Segment-counts overlay state. The user toggles a switch to enable
+  // count shading on the boundary fill, and picks which segment's
+  // counts to show. Both pieces of state stick around when the
+  // toggle is off — flicking it back on resumes with the same
+  // segment selected.
+  const [showSegmentCounts, setShowSegmentCounts] = useState(false);
+  const [overlaySegmentId, setOverlaySegmentId] = useState<string | null>(null);
+  const [overlaySegmentOpen, setOverlaySegmentOpen] = useState(false);
+
+  // Key-info popup. Visible when the user has clicked a key while no
+  // zone is selected (zone-selected mode reserves clicks for
+  // assignment, see `handlePolygonClick`).
+  const [clickedKey, setClickedKey] = useState<string | null>(null);
+
   useEffect(() => {
     if (!activeGroupId && zoneGroups && zoneGroups.length > 0) {
       setActiveGroupId(zoneGroups[0].zoneGroupId);
@@ -90,9 +116,58 @@ function ZonesIndex() {
     placeholderData: keepPreviousData,
   });
 
+  // Segments dropdown for the overlay. Reuses the same list payload
+  // the segments editor displays.
+  const { data: segments } = useQuery({
+    queryKey: ["segments"],
+    queryFn: () => client.segments.list(),
+    placeholderData: keepPreviousData,
+  });
+
+  // Pull the overlay segment's full row (with `query`) when one is
+  // selected. The list payload omits the query JSON for size; we need
+  // the full thing to forward into queryCountsByKey.
+  const { data: overlaySegmentDetail } = useQuery({
+    queryKey: ["segment", overlaySegmentId],
+    queryFn: () => client.segments.getById({ segmentId: overlaySegmentId! }),
+    enabled: !!overlaySegmentId,
+    placeholderData: keepPreviousData,
+  });
+
+  // Per-key counts for the overlay segment, grouped by the active
+  // zone group's key column (e.g. ad_ed for nyc_eds). Fires only when
+  // the overlay is on, the segment detail has loaded for the current
+  // selection, and a zone group is active. Cached on the effective
+  // key — segment query JSON plus key group name — so revisits are
+  // free and unrelated re-renders don't refetch.
+  const overlayQuery = overlaySegmentDetail?.query ?? null;
+  const overlayQueryKey = overlayQuery ? JSON.stringify(overlayQuery) : null;
+  const { data: overlayCounts } = useQuery({
+    queryKey: ["countsByKey", overlayQueryKey, activeGroup?.keyGroup],
+    queryFn: () =>
+      client.segments.queryCountsByKey({
+        query: overlayQuery!,
+        keyGroup: activeGroup!.keyGroup,
+      }),
+    enabled:
+      showSegmentCounts &&
+      !!overlaySegmentDetail &&
+      overlaySegmentDetail.segmentId === overlaySegmentId &&
+      !!activeGroup,
+    placeholderData: keepPreviousData,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
   useEffect(() => {
     setActiveZoneId(null);
+    setClickedKey(null);
   }, [activeGroupId]);
+
+  // Selecting a zone enters assignment mode; the info popup belongs to
+  // no-zone-selected mode, so clear it.
+  useEffect(() => {
+    if (activeZoneId) setClickedKey(null);
+  }, [activeZoneId]);
 
   const updateKeysMutation = useMutation({
     mutationFn: (input: { zoneId: string; keys: string[] }) => client.zones.updateKeys(input),
@@ -121,7 +196,7 @@ function ZonesIndex() {
   const createGroup = useDialogMutation({
     mutationFn: (input: { name: string; keyGroup: string }) => client.zoneGroups.create(input),
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+      void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
       setActiveGroupId(created.zoneGroupId);
     },
   });
@@ -129,7 +204,7 @@ function ZonesIndex() {
   const cloneGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; newName: string }) => client.zoneGroups.clone(input),
     onSuccess: ({ zoneGroupId }) => {
-      queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+      void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
       setActiveGroupId(zoneGroupId);
     },
   });
@@ -142,7 +217,7 @@ function ZonesIndex() {
   const deleteGroup = useDialogMutation({
     mutationFn: (zoneGroupId: string) => client.zoneGroups.remove({ zoneGroupId }),
     onSuccess: (_res, deletedId) => {
-      queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+      void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
       // Pick another group (first surviving) so the editor doesn't
       // freeze on a dangling id.
       const next = zoneGroups?.find((g) => g.zoneGroupId !== deletedId);
@@ -154,7 +229,7 @@ function ZonesIndex() {
   const createZoneMutation = useMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zones.create(input),
     onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
+      void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
       setActiveZoneId(created.zoneId);
     },
     onError: (e) => console.error("zones.create failed", e),
@@ -193,17 +268,86 @@ function ZonesIndex() {
     renameZoneMutation.mutate({ zoneId, name: next });
   };
 
+  // Per-key fill color. Two modes:
+  //
+  //  1. No overlay → each zoned key gets its zone's hue. Keys not in
+  //     a zone fall through to the map's default unassigned style.
+  //
+  //  2. Overlay on → every key with a count gets a YlOrRd shade
+  //     (pale yellow = low, deep red = high). Zone tints are dropped
+  //     entirely; the heatmap stands alone. Square-root scaling on
+  //     the count softens the long tail.
+  const overlayActive = showSegmentCounts && !!overlayCounts;
+  // Counts shape: per key, both door and people totals. Heatmap and
+  // zone list read .doors (the canvassing unit); popup shows both.
+  type KeyCount = { doors: number; people: number };
+  const overlayCountsByKey = overlayActive
+    ? (overlayCounts.counts as Record<string, KeyCount>)
+    : null;
+
   const coloringByKey = useMemo(() => {
+    if (overlayCountsByKey) {
+      let max = 0;
+      for (const v of Object.values(overlayCountsByKey)) if (v.doors > max) max = v.doors;
+      const out: Record<string, string> = {};
+      for (const [key, c] of Object.entries(overlayCountsByKey)) {
+        const t = max === 0 ? 0 : Math.sqrt(c.doors / max);
+        out[key] = interpolateYlOrRd(t);
+      }
+      return out;
+    }
     const out: Record<string, string> = {};
     zones?.forEach((zone, idx) => {
       const color = colorFor(idx);
       for (const key of zone.keys) out[key] = color;
     });
     return out;
-  }, [zones]);
+  }, [zones, overlayCountsByKey]);
+
+  // Keys to highlight with a thicker outline. The selected zone's
+  // keys, or the clicked key if no zone is selected. Same rule with
+  // or without the overlay — the highlight is the user's visual
+  // handle on what they last picked.
+  const activeKeys = useMemo(() => {
+    if (activeZoneId && zones) {
+      return zones.find((z) => z.zoneId === activeZoneId)?.keys;
+    }
+    if (clickedKey) return [clickedKey];
+    return undefined;
+  }, [activeZoneId, zones, clickedKey]);
+
+  // Per-zone rollup of the segment counts. When overlay is active,
+  // each zone's sidebar swatch+pill uses these (YlOrRd shade for the
+  // zone's total, formatted total instead of key count) so the
+  // sidebar reads as a sorted summary of the heatmap. Computed in TS
+  // by summing the per-key counts across each zone's keys; no extra
+  // round trip.
+  const zoneOverlay = useMemo(() => {
+    if (!overlayCountsByKey || !zones) return null;
+    const sums: Record<string, number> = {};
+    let max = 0;
+    for (const zone of zones) {
+      const sum = zone.keys.reduce((acc, k) => acc + (overlayCountsByKey[k]?.doors ?? 0), 0);
+      sums[zone.zoneId] = sum;
+      if (sum > max) max = sum;
+    }
+    const colors: Record<string, string> = {};
+    for (const [zoneId, count] of Object.entries(sums)) {
+      const t = max === 0 ? 0 : Math.sqrt(count / max);
+      colors[zoneId] = interpolateYlOrRd(t);
+    }
+    return { sums, colors };
+  }, [overlayCountsByKey, zones]);
 
   const handlePolygonClick = (key: string) => {
-    if (!activeZoneId || !zones) return;
+    // No zone selected → key click reveals the info popup; otherwise
+    // the click toggles membership in the active zone (assignment
+    // works regardless of whether the segment-counts overlay is on).
+    if (!activeZoneId) {
+      setClickedKey(key);
+      return;
+    }
+    if (!zones) return;
     const active = zones.find((z) => z.zoneId === activeZoneId);
     if (!active) return;
 
@@ -238,22 +382,29 @@ function ZonesIndex() {
   // needs to pre-fetch before opening (campaign-usage count).
   const [deleteCampaignCount, setDeleteCampaignCount] = useState(0);
 
-  // Click anywhere outside the map deselects the active zone. Clicks on
-  // zone buttons in the list still bubble to this handler (clearing the
-  // selection), but the button's own onClick fires right after and
-  // re-sets the selection — net result is the right zone ends up active.
-  // Skipped while any modal/inline-rename is open so we don't clobber
-  // state behind a dialog.
+  // Click anywhere outside the map clears both the active zone and
+  // any clicked-key selection. Zone-button clicks individually
+  // stopPropagation on mousedown (see their `onMouseDown` below) so
+  // toggling between zones doesn't flash through a no-selection
+  // frame. Empty space in the sidebar still deselects, matching the
+  // user's intuition. Skipped while any modal/inline-rename is open
+  // so we don't clobber state behind a dialog.
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!activeZoneId) return;
+    if (!activeZoneId && !clickedKey) return;
     if (
       createGroup.isOpen ||
       cloneGroup.isOpen ||
       clearZones.isOpen ||
       renameGroup.isOpen ||
       deleteGroup.isOpen ||
-      renamingZoneId
+      renamingZoneId ||
+      // Dropdowns render their content in a portal outside the map
+      // wrapper. Without this gate, clicking an item would register
+      // as "outside the map" and clear the selection before the
+      // dropdown's own onValueChange runs.
+      groupOpen ||
+      overlaySegmentOpen
     ) {
       return;
     }
@@ -261,18 +412,27 @@ function ZonesIndex() {
       const target = e.target as Node | null;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;
+      // Zone-box clicks must not fire the deselect: the box's own
+      // onClick already toggles activeZoneId, and clearing here on
+      // mousedown would flash through a no-selection frame between
+      // mousedown and click.
+      if (target instanceof Element && target.closest("[data-zone-button]")) return;
       setActiveZoneId(null);
+      setClickedKey(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [
     activeZoneId,
+    clickedKey,
     createGroup.isOpen,
     cloneGroup.isOpen,
     clearZones.isOpen,
     renameGroup.isOpen,
     deleteGroup.isOpen,
     renamingZoneId,
+    groupOpen,
+    overlaySegmentOpen,
   ]);
 
   return (
@@ -362,15 +522,16 @@ function ZonesIndex() {
                 key={zone.zoneId}
                 role="button"
                 tabIndex={0}
+                data-zone-button=""
                 onClick={() => {
                   if (isRenaming) return;
-                  setActiveZoneId(isActive ? null : zone.zoneId);
+                  setActiveZoneId(zone.zoneId);
                 }}
                 onKeyDown={(e) => {
                   if (isRenaming) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setActiveZoneId(isActive ? null : zone.zoneId);
+                    setActiveZoneId(zone.zoneId);
                   }
                 }}
                 className={cn(
@@ -380,8 +541,10 @@ function ZonesIndex() {
               >
                 <span
                   aria-hidden
-                  className="mr-1 size-3 shrink-0 rounded-sm"
-                  style={{ backgroundColor: colorFor(idx) }}
+                  className="mr-1 size-3 shrink-0 rounded-sm border border-border"
+                  style={{
+                    backgroundColor: zoneOverlay ? zoneOverlay.colors[zone.zoneId] : colorFor(idx),
+                  }}
                 />
                 {isRenaming ? (
                   <Input
@@ -403,7 +566,16 @@ function ZonesIndex() {
                   />
                 ) : (
                   <>
-                    <span className="flex-1 truncate text-sm">{zone.name}</span>
+                    <span
+                      className="flex-1 truncate text-sm select-none"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        setRenameDraft(zone.name);
+                        setRenamingZoneId(zone.zoneId);
+                      }}
+                    >
+                      {zone.name}
+                    </span>
                     <button
                       type="button"
                       aria-label="Rename zone"
@@ -430,21 +602,29 @@ function ZonesIndex() {
                 >
                   <Trash2 className="size-3.5" />
                 </button>
-                <span className="w-9 shrink-0">
-                  <Pill variant="number" className="justify-center">
-                    {zone.keys.length}
-                  </Pill>
-                </span>
+                <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                  {zoneOverlay ? (
+                    <>
+                      <DoorClosed className="size-3.5 text-foreground" />
+                      {(zoneOverlay.sums[zone.zoneId] ?? 0).toLocaleString()}
+                    </>
+                  ) : (
+                    <>
+                      <Hash className="size-3.5 text-foreground" />
+                      {zone.keys.length}
+                    </>
+                  )}
+                </Pill>
               </div>
             );
           })}
-          {activeGroupId ? (
+          {activeGroupId && zones ? (
             <button
               type="button"
               onClick={() =>
                 createZoneMutation.mutate({
                   zoneGroupId: activeGroupId,
-                  name: `Zone ${(zones?.length ?? 0) + 1}`,
+                  name: `Zone ${zones.length + 1}`,
                 })
               }
               className={cn(
@@ -462,18 +642,104 @@ function ZonesIndex() {
         </div>
         <div
           ref={mapWrapperRef}
-          className="col-span-2 h-full overflow-hidden rounded-lg border border-border"
+          className="relative col-span-2 h-full overflow-hidden rounded-lg border border-border"
         >
           <Map
             className="h-full"
             boundariesUrl={
               activeGroup
-                ? `${import.meta.env.VITE_DATA_URL ?? "http://localhost:8000"}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+                ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
                 : undefined
             }
             coloringByKey={coloringByKey}
-            onPolygonClick={activeZoneId ? handlePolygonClick : undefined}
+            coloredFillOpacity={overlayActive ? 1 : 0.4}
+            activeKeys={activeKeys}
+            onPolygonClick={handlePolygonClick}
+            onBackgroundClick={() => setClickedKey(null)}
           />
+
+          {/* Bottom-left: segment-counts overlay control. */}
+          <div
+            className={cn(
+              "absolute bottom-3 left-3 z-10 flex w-64 flex-col gap-2",
+              "rounded-md border border-border bg-card/95 px-3 py-3 shadow-sm backdrop-blur",
+            )}
+          >
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <Switch
+                checked={showSegmentCounts}
+                onCheckedChange={(checked) => setShowSegmentCounts(checked)}
+              />
+              <span>Show segment counts</span>
+            </label>
+            <DropdownMenu open={overlaySegmentOpen} onOpenChange={setOverlaySegmentOpen}>
+              <DropdownMenuTrigger
+                disabled={!showSegmentCounts}
+                className={cn(
+                  "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  "enabled:hover:border-muted-foreground",
+                )}
+              >
+                <span className="truncate">
+                  {segments?.find((s) => s.segmentId === overlaySegmentId)?.name ??
+                    "Pick a segment…"}
+                </span>
+                <ChevronDown className="size-3.5 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuRadioGroup
+                  value={overlaySegmentId ?? ""}
+                  onValueChange={(v) => {
+                    setOverlaySegmentId(v || null);
+                    setOverlaySegmentOpen(false);
+                  }}
+                >
+                  {segments?.map((s) => (
+                    <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
+                      {s.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Top-right: clicked-key info popup. Only when no zone is
+              active — zone-selected mode reserves clicks for
+              assignment. Auto-dismissed by clicking the basemap (see
+              onBackgroundClick) or selecting a zone (see effect). */}
+          {!activeZoneId && clickedKey ? (
+            <div
+              className={cn(
+                "absolute top-3 right-3 z-10",
+                "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
+              )}
+            >
+              <div className="space-y-2">
+                <div>
+                  <div className="text-muted-foreground">Key</div>
+                  <div className="font-mono">{clickedKey}</div>
+                </div>
+                {overlayCountsByKey ? (
+                  <>
+                    <div>
+                      <div className="text-muted-foreground">Doors</div>
+                      <div className="font-mono">
+                        {(overlayCountsByKey[clickedKey]?.doors ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">People</div>
+                      <div className="font-mono">
+                        {(overlayCountsByKey[clickedKey]?.people ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 

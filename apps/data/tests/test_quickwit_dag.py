@@ -11,10 +11,11 @@ from __future__ import annotations
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import textwrap
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -24,11 +25,7 @@ from hamilton import driver
 
 from src.dags import quickwit, voter_file_loader
 
-VOTER_FILE_URL = str(
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "nys-voters-2026-03-08-10k-sample.parquet"
-)
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
 
 
 def _find_quickwit_binary() -> Path | None:
@@ -92,6 +89,17 @@ def _http_json(method: str, url: str, body: str | None = None, content_type: str
         raise RuntimeError(f"HTTP request failed: {exc}") from exc
 
 
+def _pick_free_port() -> int:
+    """Ask the OS for a free TCP port. Used to keep the test's Quickwit
+    off port 7280 (the dev server's port) — otherwise `pnpm dev:search`
+    and the test race for the same listener and the test silently ends
+    up POSTing to the dev metastore.
+    """
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def _wait_for_server(endpoint: str, timeout: float = 30.0) -> None:
     deadline = time.time() + timeout
     last_error: Exception | None = None
@@ -107,7 +115,7 @@ def _wait_for_server(endpoint: str, timeout: float = 30.0) -> None:
 
 
 @contextmanager
-def _running_quickwit(binary_path: Path, config_path: Path) -> subprocess.Popen[str]:
+def _running_quickwit(binary_path: Path, config_path: Path, endpoint: str) -> subprocess.Popen[str]:
     process = subprocess.Popen(  # noqa: S603
         [str(binary_path), "run", "--config", str(config_path)],
         stdout=subprocess.PIPE,
@@ -115,7 +123,7 @@ def _running_quickwit(binary_path: Path, config_path: Path) -> subprocess.Popen[
         text=True,
     )
     try:
-        _wait_for_server("http://127.0.0.1:7280")
+        _wait_for_server(endpoint)
         yield process
     finally:
         if process.poll() is None:
@@ -127,7 +135,7 @@ def _running_quickwit(binary_path: Path, config_path: Path) -> subprocess.Popen[
                 process.wait(timeout=5)
 
 
-def _write_quickwit_runtime(tmp_path: Path, index_id: str) -> tuple[Path, Path]:
+def _write_quickwit_runtime(tmp_path: Path, index_id: str, port: int) -> tuple[Path, Path]:
     data_dir = tmp_path / "qwdata"
     data_dir.mkdir(parents=True, exist_ok=True)
     config_path = tmp_path / "quickwit.yaml"
@@ -137,7 +145,7 @@ def _write_quickwit_runtime(tmp_path: Path, index_id: str) -> tuple[Path, Path]:
             version: 0.7
             listen_address: 127.0.0.1
             rest:
-              listen_port: 7280
+              listen_port: {port}
             data_dir: {data_dir}
             """
         ).strip()
@@ -191,10 +199,11 @@ def _run_quickwit_benchmark(
         )
 
     index_id = f"{organization_slug}-index"
-    config_path, index_config_path = _write_quickwit_runtime(tmp_path, index_id)
-    endpoint = "http://127.0.0.1:7280"
+    port = _pick_free_port()
+    config_path, index_config_path = _write_quickwit_runtime(tmp_path, index_id, port)
+    endpoint = f"http://127.0.0.1:{port}"
 
-    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path):
+    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path, endpoint):
         _create_index(endpoint, index_config_path)
 
     loader_driver = driver.Builder().with_modules(voter_file_loader).build()
@@ -226,7 +235,7 @@ def _run_quickwit_benchmark(
     )["quickwit_build_manifest_stub"]
     ingest_elapsed = time.perf_counter() - ingest_start
 
-    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path):
+    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path, endpoint):
         describe_body = _describe_index(endpoint, index_id)
 
     return {

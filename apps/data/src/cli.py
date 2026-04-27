@@ -27,9 +27,7 @@ def update_visualizations() -> None:
     _render(driver.Builder().with_modules(quickwit).build(), "quickwit_graph.png")
     _render(driver.Builder().with_modules(boundaries).build(), "boundaries_graph.png")
     _render(
-        driver.Builder()
-        .with_modules(voter_file_loader, tiger, geocode, aggregate, quickwit)
-        .build(),
+        driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate, quickwit).build(),
         "pipeline_graph.png",
     )
 
@@ -47,11 +45,11 @@ _FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 def seed_boundaries() -> None:
     """Load every available boundary source into ``geo_ducklake.boundaries.*``.
 
-    Add a new entry to BOUNDARY_SOURCES below to seed another key group.
+    Add a new entry to boundary_sources below to seed another key group.
     Skips sources whose source file isn't on disk so partial setups don't
     error.
     """
-    BOUNDARY_SOURCES = [
+    boundary_sources = [
         {
             "key_group": "nyc_eds",
             "geojson_path": _FIXTURES_DIR / "nyc-eds.geojson",
@@ -70,7 +68,7 @@ def seed_boundaries() -> None:
     conn = get_connection(settings)
     dr = driver.Builder().with_modules(boundaries).build()
 
-    for source in BOUNDARY_SOURCES:
+    for source in boundary_sources:
         path: Path = source["geojson_path"]  # type: ignore[assignment]
         if not path.exists():
             print(f"Skipping {source['key_group']}: {path} not found")
@@ -105,7 +103,7 @@ def seed_boundaries() -> None:
 # packages/db/src/mock.ts so the web app's RPC layer can resolve voter
 # data for the seeded organization.
 _DEFAULT_ORG_SLUG = "default"
-_DEFAULT_VOTER_FIXTURE = _FIXTURES_DIR / "nys-voters-2026-03-08-10k-sample.parquet"
+_DEFAULT_VOTER_FIXTURE = _FIXTURES_DIR / "nys-voters-2026-03-08-nyc.parquet"
 
 
 def seed_persons() -> None:

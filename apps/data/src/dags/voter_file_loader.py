@@ -29,9 +29,7 @@ def raw_voter_data(
     remote = conn.read_parquet(voter_file_url)
     remote.create(fqn)
     version = conn.sql(f"FROM {CATALOG}.current_snapshot()").fetchone()[0]
-    return TableRef(
-        catalog=CATALOG, schema=SCHEMA, table=table_name, version=version
-    )
+    return TableRef(catalog=CATALOG, schema=SCHEMA, table=table_name, version=version)
 
 
 def transformed_persons(
@@ -52,9 +50,7 @@ def transformed_persons(
         f"CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.{table_name} AS {transformation_query}",
     )
     version = conn.sql(f"FROM {CATALOG}.current_snapshot()").fetchone()[0]
-    return TableRef(
-        catalog=CATALOG, schema=SCHEMA, table=table_name, version=version
-    )
+    return TableRef(catalog=CATALOG, schema=SCHEMA, table=table_name, version=version)
 
 
 def validated_persons(
@@ -84,7 +80,7 @@ def validated_persons(
     sample = rel.limit(100).fetchall()
     columns = rel.columns
     for i, row in enumerate(sample):
-        row_dict = dict(zip(columns, row))
+        row_dict = dict(zip(columns, row, strict=True))
         try:
             Person.model_validate(row_dict)
         except Exception as e:
