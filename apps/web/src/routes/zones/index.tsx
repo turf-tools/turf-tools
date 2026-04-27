@@ -34,37 +34,12 @@ import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
+import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/zones/")({
   component: ZonesIndex,
 });
-
-// Distinct fill colors for zones in a group. Tailwind's 500 scale across
-// the rainbow, shuffled so adjacent zones land on far-apart hues — up to
-// 17 zones render distinctly; beyond that the cycle repeats.
-const ZONE_COLORS = [
-  "#3b82f6", // blue-500
-  "#f97316", // orange-500
-  "#22c55e", // green-500
-  "#d946ef", // fuchsia-500
-  "#eab308", // yellow-500
-  "#06b6d4", // cyan-500
-  "#ec4899", // pink-500
-  "#84cc16", // lime-500
-  "#8b5cf6", // violet-500
-  "#10b981", // emerald-500
-  "#f43f5e", // rose-500
-  "#0ea5e9", // sky-500
-  "#f59e0b", // amber-500
-  "#a855f7", // purple-500
-  "#14b8a6", // teal-500
-  "#ef4444", // red-500
-  "#6366f1", // indigo-500
-];
-function colorFor(i: number): string {
-  return ZONE_COLORS[i % ZONE_COLORS.length]!;
-}
 
 // Hardcoded for now — eventually will come from a data-service registry
 // endpoint that enumerates which `boundaries.*` tables exist for an org.
@@ -278,6 +253,19 @@ function ZonesIndex() {
   //     entirely; the heatmap stands alone. Square-root scaling on
   //     the count softens the long tail.
   const overlayActive = showSegmentCounts && !!overlayCounts;
+
+  // First-load curtain over the map. Stays opaque until the Map's
+  // `onLoaded` fires (basemap + boundary source rendered) AND, if a
+  // group is active, its zones have loaded. After that the flag
+  // stays true — further updates within the editor flow through
+  // without a curtain.
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [firstReady, setFirstReady] = useState(false);
+  useEffect(() => {
+    if (firstReady) return;
+    const ready = mapLoaded && !!zoneGroups && (!activeGroupId || !!zones);
+    if (ready) setFirstReady(true);
+  }, [firstReady, mapLoaded, zoneGroups, activeGroupId, zones]);
   // Counts shape: per key, both door and people totals. Heatmap and
   // zone list read .doors (the canvassing unit); popup shows both.
   type KeyCount = { doors: number; people: number };
@@ -666,6 +654,7 @@ function ZonesIndex() {
             activeKeys={activeKeys}
             onPolygonClick={handlePolygonClick}
             onBackgroundClick={() => setClickedKey(null)}
+            onLoaded={() => setMapLoaded(true)}
           />
 
           {/* Bottom-left: segment-counts overlay control. */}
@@ -788,6 +777,21 @@ function ZonesIndex() {
               </div>
             );
           })()}
+
+          {/* First-load curtain — only opaque until the Map fires
+              `onLoaded` (basemap + boundary source rendered) AND
+              zones for the active group have arrived. After that
+              the flag stays true; further updates flow through with
+              their own stale signals. z-20 to sit above the in-map
+              overlay controls so they don't peek through. */}
+          <div
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute inset-0 z-20 bg-background",
+              "transition-opacity duration-150",
+              firstReady ? "opacity-0" : "opacity-100",
+            )}
+          />
         </div>
       </div>
 

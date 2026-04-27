@@ -17,6 +17,7 @@ import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
 import { createFileRoute } from "@tanstack/react-router";
 import { type Query as QueryShape } from "../../lib/filters";
+import { boundaryKeyExprFor } from "../../lib/key-groups";
 import { queryToWhere } from "../../lib/query-to-sql";
 import { loadUser } from "../../rpc/context";
 
@@ -32,7 +33,14 @@ export const Route = createFileRoute("/api/query-points")({
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
         const user = await loadUser(db, request);
-        const body = (await request.json()) as { query?: unknown };
+        const body = (await request.json()) as {
+          query?: unknown;
+          // Optional scope constraint: limits the result to people
+          // whose boundary-key falls in the supplied set. Used by the
+          // campaign editor to clip the points layer to the bound
+          // zone group's zones (segment ∩ zone group).
+          keyFilter?: { keyGroup: string; keys: string[] };
+        };
         const query = (body.query ?? { filters: [] }) as QueryShape;
 
         const rows = await db
@@ -49,10 +57,32 @@ export const Route = createFileRoute("/api/query-points")({
         const { where, params } = queryToWhere(query);
         const persons = `ducklake.main.${slug}_persons_geocoded`;
         const buildings = `ducklake.main.${slug}_buildings_geocoded`;
+
+        // Compose the inner persons-WHERE: the segment filters plus,
+        // if a keyFilter is supplied, an additional `IN (...)` on the
+        // boundary-key column. Empty `keys` short-circuits to "no
+        // matches" — return zero buildings rather than letting an
+        // empty IN-list become a SQL error.
+        let innerWhere = where;
+        const innerParams = [...params];
+        if (body.keyFilter) {
+          if (body.keyFilter.keys.length === 0) {
+            return new Response(new Uint8Array(0), {
+              status: 200,
+              headers: { "Content-Type": "application/octet-stream", ...corsHeaders },
+            });
+          }
+          const expr = boundaryKeyExprFor(body.keyFilter.keyGroup);
+          const placeholders = body.keyFilter.keys.map(() => "?").join(", ");
+          const clause = `${expr} IN (${placeholders})`;
+          innerWhere = innerWhere ? `${innerWhere} AND ${clause}` : `WHERE ${clause}`;
+          innerParams.push(...body.keyFilter.keys);
+        }
+
         const sql = `
           SELECT longitude, latitude
           FROM ${buildings}
-          WHERE building_id IN (SELECT DISTINCT building_id FROM ${persons} ${where})
+          WHERE building_id IN (SELECT DISTINCT building_id FROM ${persons} ${innerWhere})
         `;
 
         const upstream = await fetch(`${import.meta.env.VITE_DATA_URL}/query`, {
@@ -61,7 +91,7 @@ export const Route = createFileRoute("/api/query-points")({
             "Content-Type": "application/json",
             Accept: "application/octet-stream",
           },
-          body: JSON.stringify({ sql, params }),
+          body: JSON.stringify({ sql, params: innerParams }),
         });
         if (!upstream.ok) {
           return new Response(await upstream.text(), {

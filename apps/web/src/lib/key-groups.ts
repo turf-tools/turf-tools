@@ -29,9 +29,17 @@ const CONFIG: Record<string, KeyGroupConfig> = {
     toBoundaryKey: (expr) => `replace(${expr}, '-', '')`,
   },
   nyc_zips: {
-    // ZIP5 and MODZCTA agree for most NYC ZIPs. The handful that
-    // don't (P.O.-only codes, merged adjacent ZIPs) just show up as
-    // boundaries with no count; tighten later if it matters.
+    // ZIP5 and MODZCTA agree for most NYC ZIPs but diverge in the
+    // handful of cases where USPS split or added a ZIP after the
+    // 2010 Census MODZCTA was frozen — e.g. 11249 (carved out of
+    // 11211 in 2011) has no MODZCTA polygon and never matches.
+    //
+    // TODO: swap this dataset for OpenDataDE/State-zip-code-GeoJSON
+    // (TIGER-derived ZCTA5, native zip5 keys, includes 11249) and
+    // drop the `nyc_zips` MODZCTA boundary. See the chat on
+    // 2026-04-27 for the migration recipe — drop the geojson into
+    // apps/data/fixtures, add a `nyc_zcta` entry to seed_boundaries,
+    // map `nyc_zcta: { fieldKey: "zip5" }` here, retire `nyc_zips`.
     fieldKey: "zip5",
   },
 };

@@ -48,6 +48,18 @@ type MapProps = {
   // Keys to draw with a thicker stroke. Used by the zone editor to
   // make the active zone's polygons stand out under any fill.
   activeKeys?: ReadonlyArray<string>;
+  // Optional pre-unioned zone perimeters (one feature per zone) — drawn
+  // as a translucent fill + black outline. Each feature's
+  // `properties.zoneId` is fed to `onZoneClick` when the user clicks
+  // its polygon. The campaign editor uses this to render zones as
+  // single shapes (no per-key boundaries) and dispatch into the
+  // turf-cutter.
+  zonePerimeters?: GeoJSON.FeatureCollection;
+  onZoneClick?: (zoneId: string) => void;
+  // Optional `[minLng, minLat, maxLng, maxLat]` to fit the viewport
+  // to. The map calls `fitBounds` whenever this value changes. Pass
+  // `null`/`undefined` to leave the viewport alone.
+  fitBounds?: [number, number, number, number] | null;
   // Fired with the clicked polygon's `key` when the user clicks anywhere
   // on the boundary layer. Caller decides what to do (toggle membership in
   // a zone, add to a filter, etc.).
@@ -56,6 +68,11 @@ type MapProps = {
   // on the basemap). Useful for dismissing transient UI like a
   // clicked-key info popup.
   onBackgroundClick?: () => void;
+  // Fires once after MapLibre's `load` event AND any pending
+  // `fitBounds` has been applied. Lets a parent gate its loading
+  // curtain on the map being visually settled, not just "tiles
+  // loaded somewhere underneath."
+  onLoaded?: () => void;
   // Optional point overlay rendered via a custom WebGL layer. The
   // caller owns the data and passes a flat `[lng, lat, ...]` typed
   // array straight into the GPU buffer — no per-point object
@@ -93,6 +110,9 @@ const LABEL_PAINT = (isDark: boolean) => ({
 
 const BOUNDARIES_SOURCE_ID = "boundaries";
 const BOUNDARIES_FILL_LAYER = "boundaries-fill";
+const ZONE_PERIMETERS_SOURCE_ID = "zone-perimeters";
+const ZONE_PERIMETERS_FILL_LAYER = "zone-perimeters-fill";
+const ZONE_PERIMETERS_LINE_LAYER = "zone-perimeters-line";
 const BOUNDARIES_LINE_LAYER = "boundaries-line";
 
 export function Map({
@@ -102,8 +122,12 @@ export function Map({
   coloringByKey,
   coloredFillOpacity = 0.4,
   activeKeys,
+  zonePerimeters,
+  onZoneClick,
+  fitBounds,
   onPolygonClick,
   onBackgroundClick,
+  onLoaded,
   points,
   onViewportChange,
 }: MapProps) {
@@ -203,22 +227,37 @@ export function Map({
   // the editor is active.
   useEffect(() => {
     const map = mapRef.current?.getMap();
-    if (!map || !onPolygonClick) {
+    if (!map) return;
+    const layers: string[] = [];
+    if (onPolygonClick) layers.push(BOUNDARIES_FILL_LAYER);
+    if (onZoneClick) layers.push(ZONE_PERIMETERS_FILL_LAYER);
+    if (layers.length === 0) {
       setHoveringPolygon(false);
       return;
     }
     const onEnter = () => setHoveringPolygon(true);
     const onLeave = () => setHoveringPolygon(false);
-    map.on("mouseenter", BOUNDARIES_FILL_LAYER, onEnter);
-    map.on("mouseleave", BOUNDARIES_FILL_LAYER, onLeave);
+    for (const layer of layers) {
+      map.on("mouseenter", layer, onEnter);
+      map.on("mouseleave", layer, onLeave);
+    }
     return () => {
-      map.off("mouseenter", BOUNDARIES_FILL_LAYER, onEnter);
-      map.off("mouseleave", BOUNDARIES_FILL_LAYER, onLeave);
+      for (const layer of layers) {
+        map.off("mouseenter", layer, onEnter);
+        map.off("mouseleave", layer, onLeave);
+      }
     };
-  }, [onPolygonClick]);
+  }, [onPolygonClick, onZoneClick]);
 
   const handleClick = (e: MapMouseEvent) => {
+    // Zone perimeters take priority — they sit on top of boundary
+    // fills, so a click on one is a zone click, not a key click.
     const feature = e.features?.[0];
+    const zoneId = feature?.properties?.zoneId;
+    if (typeof zoneId === "string") {
+      onZoneClick?.(zoneId);
+      return;
+    }
     const key = feature?.properties?.key;
     if (typeof key === "string") {
       onPolygonClick?.(key);
@@ -261,6 +300,49 @@ export function Map({
       color: isDark ? "#e5e5e5" : "#0a0a0a",
     });
   }, [isDark, mapReady]);
+
+  // Fit the viewport to the supplied bounds whenever the prop value
+  // changes. `duration: 0` jumps instantly — when a curtain is
+  // covering the map, an animation underneath is invisible work to
+  // wait on, and even without one a snap reads cleaner than a sweep.
+  //
+  // Waits for the zone-perimeters source to finish re-tessellating
+  // before jumping. setData on a GeoJSON source is async (worker
+  // thread); a sync fitBounds beats it to the screen and shows the
+  // *previous* perimeters at the *new* bounds for one frame. We
+  // gate on `isSourceLoaded` and fall back to a `sourcedata`
+  // listener if it isn't ready yet.
+  useEffect(() => {
+    if (!mapReady || !fitBounds) return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const fit = () => {
+      map.fitBounds(
+        [
+          [fitBounds[0], fitBounds[1]],
+          [fitBounds[2], fitBounds[3]],
+        ],
+        { padding: 40, duration: 0 },
+      );
+    };
+    if (
+      map.getSource(ZONE_PERIMETERS_SOURCE_ID) &&
+      !map.isSourceLoaded(ZONE_PERIMETERS_SOURCE_ID)
+    ) {
+      const handler = (e: { sourceId?: string; isSourceLoaded?: boolean }) => {
+        if (e.sourceId === ZONE_PERIMETERS_SOURCE_ID && e.isSourceLoaded) {
+          map.off("sourcedata", handler);
+          fit();
+        }
+      };
+      map.on("sourcedata", handler);
+      return () => {
+        map.off("sourcedata", handler);
+      };
+    }
+    fit();
+    return undefined;
+  }, [fitBounds, mapReady]);
 
   // Surface viewport changes after pan/zoom settles. Caller owns
   // debounce + fetch.
@@ -314,15 +396,28 @@ export function Map({
         mapStyle={getMaptilerStyleUrl(isDark)}
         attributionControl={false}
         style={{ width: "100%", height: "100%" }}
-        onLoad={() => setMapReady(true)}
+        onLoad={() => {
+          setMapReady(true);
+          // Defer `onLoaded` to the map's next `idle` — fires after
+          // basemap tiles, user-supplied sources (boundaries, zone
+          // perimeters), and any pending fitBounds have all settled.
+          // Lets parents gate their loading curtain on a single
+          // signal that means "the map is finished moving and
+          // nothing is loading," not just "basemap arrived."
+          const m = mapRef.current?.getMap();
+          void m?.once("idle", () => onLoaded?.());
+        }}
         // `interactiveLayerIds` filters the `features` field on the
         // click event to those layers — without it, basemap clicks
         // would never resolve a polygon. `onClick` itself fires for
         // every map click, so background-vs-polygon dispatch happens
         // in `handleClick`.
-        interactiveLayerIds={onPolygonClick ? [BOUNDARIES_FILL_LAYER] : []}
-        onClick={onPolygonClick || onBackgroundClick ? handleClick : undefined}
-        cursor={onPolygonClick && hoveringPolygon ? "pointer" : "grab"}
+        interactiveLayerIds={[
+          ...(onPolygonClick ? [BOUNDARIES_FILL_LAYER] : []),
+          ...(onZoneClick ? [ZONE_PERIMETERS_FILL_LAYER] : []),
+        ]}
+        onClick={onPolygonClick || onZoneClick || onBackgroundClick ? handleClick : undefined}
+        cursor={(onPolygonClick || onZoneClick) && hoveringPolygon ? "pointer" : "grab"}
       >
         {boundariesUrl ? (
           <Source
@@ -357,6 +452,36 @@ export function Map({
                 "line-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
                 "line-width": ["case", ["==", ["feature-state", "active"], true], 1.75, 0.5],
                 "line-opacity": ["case", ["==", ["feature-state", "active"], true], 1, 0.6],
+              }}
+            />
+          </Source>
+        ) : null}
+
+        {zonePerimeters ? (
+          <Source id={ZONE_PERIMETERS_SOURCE_ID} type="geojson" data={zonePerimeters}>
+            <Layer
+              id={ZONE_PERIMETERS_FILL_LAYER}
+              type="fill"
+              paint={{
+                // Per-feature `color` falls through to a neutral gray
+                // when a caller passes perimeters without a color
+                // attribute (haven't shipped that path yet, but the
+                // contract stays open).
+                "fill-color": [
+                  "coalesce",
+                  ["get", "color"],
+                  isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+                ],
+                "fill-opacity": 0.4,
+              }}
+            />
+            <Layer
+              id={ZONE_PERIMETERS_LINE_LAYER}
+              type="line"
+              paint={{
+                "line-color": isDark ? "hsl(0, 0%, 95%)" : "hsl(0, 0%, 5%)",
+                "line-width": 1.5,
+                "line-opacity": 0.9,
               }}
             />
           </Source>
