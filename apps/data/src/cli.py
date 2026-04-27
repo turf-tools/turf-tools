@@ -6,6 +6,7 @@ from hamilton import driver
 
 from src.dags import aggregate, boundaries, geocode, quickwit, tiger, voter_file_loader
 from src.db import get_connection
+from src.models import TableRef
 from src.settings import get_settings
 from src.transformations import nys_sboe_transformation_query
 
@@ -43,49 +44,71 @@ _FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def seed_boundaries() -> None:
-    """Load every available boundary source into ``geo_ducklake.boundaries.*``.
+    """Derive every key group's polygons from the voter file + TIGER blocks.
 
-    Add a new entry to boundary_sources below to seed another key group.
-    Skips sources whose source file isn't on disk so partial setups don't
-    error.
+    For each configured key group, downloads (if missing) the TIGER
+    census-block polygons for the configured counties and unions the
+    blocks where voters tagged with each distinct key live. Output goes
+    to ``geo_ducklake.boundaries.{key_group}``.
+
+    Requires ``seed_persons`` to have run first — we read from the
+    organisation's geocoded persons table for the keys + coordinates.
+
+    Add a new entry to ``key_group_sources`` to seed another key group;
+    each entry is the destination key-group name plus the SQL expression
+    that produces the key from a row of the persons table.
     """
-    boundary_sources = [
+    key_group_sources = [
         {
             "key_group": "nyc_eds",
-            "geojson_path": _FIXTURES_DIR / "nyc-eds.geojson",
-            "key_property": "district",
-            "name_property": None,
+            "key_expression": "json_extract_string(other_properties, '$.ad_ed')",
         },
         {
             "key_group": "nyc_zips",
-            "geojson_path": _FIXTURES_DIR / "nyc-zips.geojson",
-            "key_property": "modzcta",
-            "name_property": "label",
+            "key_expression": "zip5",
         },
     ]
 
     settings = get_settings()
     conn = get_connection(settings)
-    dr = driver.Builder().with_modules(boundaries).build()
 
-    for source in boundary_sources:
-        path: Path = source["geojson_path"]  # type: ignore[assignment]
-        if not path.exists():
-            print(f"Skipping {source['key_group']}: {path} not found")
-            continue
+    # Single driver — Hamilton resolves the tiger_tabblock_raw →
+    # boundary_from_blocks edge itself and we don't have to plumb the
+    # TableRef through manually. tiger_tabblock_raw is idempotent
+    # (skips counties already loaded) so re-running it once per
+    # key-group iteration is cheap after the first pass.
+    dr = driver.Builder().with_modules(tiger, boundaries).build()
 
-        print(f"Loading {source['key_group']} from {path}…")
+    # Persons table referenced by FQN — must already exist
+    # (seed_persons output). The persons reference is the same for
+    # every key group; only `key_group` and `key_expression` vary.
+    persons_ref = TableRef(
+        catalog="ducklake",
+        schema="main",
+        table=f"{_DEFAULT_ORG_SLUG}_persons_geocoded",
+        version=0,
+    )
+
+    base_inputs = {
+        "tiger_year": settings.tiger_year,
+        "tiger_state_fips": settings.tiger_state_fips,
+        "tiger_county_fips": settings.tiger_county_fips,
+        "tiger_data_dir": settings.tiger_data_dir,
+        "geocoded_persons": persons_ref,
+        "conn": conn,
+    }
+
+    for source in key_group_sources:
+        print(f"Deriving {source['key_group']} from voter file…")
         result = dr.execute(
-            final_vars=["boundary_from_geojson"],
+            final_vars=["boundary_from_blocks"],
             inputs={
-                "geojson_url": str(path),
+                **base_inputs,
                 "key_group": source["key_group"],
-                "key_property": source["key_property"],
-                "name_property": source["name_property"],
-                "conn": conn,
+                "key_expression": source["key_expression"],
             },
         )
-        ref = result["boundary_from_geojson"]
+        ref = result["boundary_from_blocks"]
         count = conn.sql(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0]
         print(f"  → {count:,} polygons in {ref.fqn}")
 

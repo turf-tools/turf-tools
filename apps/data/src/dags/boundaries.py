@@ -9,16 +9,23 @@ table is populated regardless of source:
         name  VARCHAR    -- nullable display label
         geom  GEOMETRY   -- polygon, simplified for map rendering
 
-Two flavours of loader, same destination contract:
+Three flavours of loader, same destination contract:
 
-- ``boundary_from_geojson`` — for external sources (NYC Open Data, custom
-  exports). Reads a GeoJSON file/URL via DuckDB's spatial ``ST_Read``.
-- ``boundary_from_table`` — for sources already in DuckLake (TIGER ZCTAs,
-  TIGER tracts, etc.). Pure SQL projection, no file fetch.
+- ``boundary_from_blocks`` — preferred. Derives polygons from the voter
+  file: per key, union the census blocks that voters with that key live
+  in. No external boundary shapefile required, and the polygons match
+  the voter file by construction (no MODZCTA/ZIP5 mismatch and no "ED
+  exists in shapefile but no voters live in it").
+- ``boundary_from_geojson`` — for external sources (NYC Open Data,
+  custom exports). Reads a GeoJSON file/URL via DuckDB's spatial
+  ``ST_Read``. Kept around as an escape hatch for key groups that
+  don't have voter coverage.
+- ``boundary_from_table`` — for sources already in DuckLake (TIGER
+  ZCTAs, TIGER tracts, etc.). Pure SQL projection, no file fetch.
 
-Both pre-simplify the geometry so the served file stays small. The
-simplification tolerance is in degrees (EPSG:4326), so 0.0001 ≈ 11 m at the
-equator — invisible at city zoom levels but cuts file size by ~5x.
+All variants pre-simplify the geometry so the served file stays small.
+The simplification tolerance is in degrees (EPSG:4326), so 0.0001 ≈ 11 m
+at the equator — invisible at city zoom levels but cuts file size ~5x.
 """
 
 import duckdb
@@ -75,6 +82,152 @@ def boundary_from_geojson(
             ST_Simplify(geom, {simplify_tolerance})                  AS geom
         FROM ST_Read('{geojson_url}')
         WHERE {key_property} IS NOT NULL
+    """)
+
+    version = _current_version(conn)
+    return TableRef(
+        catalog=GEO_CATALOG,
+        schema=BOUNDARIES_SCHEMA,
+        table=key_group,
+        version=version,
+    )
+
+
+def boundary_from_blocks(
+    geocoded_persons: TableRef,
+    tiger_tabblock_raw: TableRef,
+    key_group: str,
+    key_expression: str,
+    conn: duckdb.DuckDBPyConnection,
+    simplify_tolerance: float = DEFAULT_SIMPLIFY_TOLERANCE,
+) -> TableRef:
+    """Derive per-key polygons from the voter file + TIGER census blocks.
+
+    For each distinct key value, takes the set of blocks where any voter
+    tagged with that key lives, unions them into a single polygon, and
+    writes one row to ``boundaries.{key_group}``. No external boundary
+    shapefile is involved; the polygon for ED 23-001 literally is the
+    union of blocks containing voters with `ad_ed = '23-001'`. The
+    polygon for ZIP 11211 is the union of blocks containing voters with
+    `zip5 = '11211'` — which sidesteps the ZIP5/MODZCTA-shape mismatch
+    that plagues external ZIP shapefiles.
+
+    `key_expression` is a SQL fragment producing the key from a row in
+    the geocoded persons table, e.g.:
+      - ``"zip5"``                                                for ZIPs
+      - ``"json_extract_string(other_properties, '$.ad_ed')"``    for AD-EDs
+
+    Each block is assigned to *one* key — the key with the most voters
+    in that block — so polygons partition cleanly instead of
+    overlapping. Without majority assignment a block straddling two EDs
+    (most blocks, since ED lines don't follow block edges) would land
+    in both polygons. Ties broken by key ASC for stability.
+
+    Spatial join uses distinct (key, lng, lat) tuples with voter
+    counts collapsed in. Voters within a building share coordinates,
+    so this drops ~5M voters down to ~600K building-key tuples on the
+    NYC sample, ~10x speedup vs. joining one row per voter.
+
+    Land blocks that contain no voters (parks, industrial parcels,
+    cemetery blocks, etc.) are backfilled by nearest-neighbor: each
+    unassigned land block inherits the key of the closest voter-
+    assigned block by centroid distance. Without this, large
+    no-voter blocks become visible holes in the polygon coverage,
+    especially for ZIPs.
+
+    Water-only blocks (``land_area = 0``) are excluded from
+    backfilling so polygons don't extend across rivers, the harbor,
+    Central Park's reservoir, etc.
+    """
+    _ensure_schema(conn)
+    fqn = f"{GEO_CATALOG}.{BOUNDARIES_SCHEMA}.{key_group}"
+    persons_fqn = geocoded_persons.fqn
+    tabblock_fqn = tiger_tabblock_raw.fqn
+
+    conn.execute(f"DROP TABLE IF EXISTS {fqn}")
+    conn.execute(f"""
+        CREATE TABLE {fqn} AS
+        WITH unique_points AS (
+            SELECT
+                ({key_expression}) AS key,
+                longitude,
+                latitude,
+                COUNT(*) AS voters_at_point
+            FROM {persons_fqn}
+            WHERE ({key_expression}) IS NOT NULL
+            GROUP BY 1, 2, 3
+        ),
+        point_blocks AS (
+            SELECT
+                up.key,
+                up.voters_at_point,
+                b.block_geoid,
+                b.geom AS block_geom
+            FROM unique_points up
+            JOIN {tabblock_fqn} b
+              ON ST_Contains(b.geom, ST_Point(up.longitude, up.latitude))
+        ),
+        block_key_counts AS (
+            SELECT
+                block_geoid,
+                key,
+                SUM(voters_at_point) AS voter_count,
+                ANY_VALUE(block_geom) AS block_geom
+            FROM point_blocks
+            GROUP BY block_geoid, key
+        ),
+        winning_key AS (
+            SELECT block_geoid, key, block_geom
+            FROM (
+                SELECT
+                    *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY block_geoid
+                        ORDER BY voter_count DESC, key
+                    ) AS rn
+                FROM block_key_counts
+            )
+            WHERE rn = 1
+        ),
+        -- Pre-compute centroids once: nearest-neighbor uses
+        -- centroid-to-centroid distance (cheap, ~point-vs-point)
+        -- rather than full polygon-to-polygon ST_Distance, which
+        -- would be ~30x slower for the same conceptual answer at
+        -- block scale.
+        winning_centroids AS (
+            SELECT block_geoid, key, ST_Centroid(block_geom) AS centroid
+            FROM winning_key
+        ),
+        unassigned AS (
+            SELECT b.block_geoid, b.geom AS block_geom, ST_Centroid(b.geom) AS centroid
+            FROM {tabblock_fqn} b
+            LEFT JOIN winning_key wk USING (block_geoid)
+            WHERE wk.block_geoid IS NULL
+              AND b.land_area > 0
+        ),
+        backfilled AS (
+            SELECT
+                u.block_geoid,
+                (
+                    SELECT wk.key
+                    FROM winning_centroids wk
+                    ORDER BY ST_Distance(wk.centroid, u.centroid)
+                    LIMIT 1
+                )                                              AS key,
+                u.block_geom
+            FROM unassigned u
+        ),
+        all_assignments AS (
+            SELECT block_geoid, key, block_geom FROM winning_key
+            UNION ALL
+            SELECT block_geoid, key, block_geom FROM backfilled
+        )
+        SELECT
+            key,
+            NULL                                                          AS name,
+            ST_Simplify(ST_Union_Agg(block_geom), {simplify_tolerance})   AS geom
+        FROM all_assignments
+        GROUP BY key
     """)
 
     version = _current_version(conn)
