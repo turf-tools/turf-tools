@@ -243,6 +243,98 @@ def tiger_edges_raw(
 
 
 # ---------------------------------------------------------------------------
+# Node 2.5 – raw tabblock polygons
+# ---------------------------------------------------------------------------
+
+
+def tiger_tabblock_raw(
+    tiger_year: str,
+    tiger_state_fips: str,
+    tiger_county_fips: list[str],
+    tiger_data_dir: str,
+    conn: duckdb.DuckDBPyConnection,
+) -> TableRef:
+    """Download TIGER TABBLOCK20 shapefiles and load into geo_ducklake.tiger.tabblock.
+
+    Tabblock20 is the polygon geometry for every census block — the
+    smallest standard areal unit in TIGER. Used by the boundaries graph
+    to derive per-key polygons (ED, ZIP, …) by unioning the blocks where
+    voters tagged with each key live, instead of ingesting external
+    boundary shapefiles.
+
+    Unlike addrfeat/edges, tabblock is published per-state, not
+    per-county. We download the state's full file once and filter rows
+    to the configured counties on insert.
+
+    Incremental: skips counties already loaded.
+    """
+    table = "tabblock"
+    fqn = _fqn(table)
+    data_dir = Path(tiger_data_dir) / "tabblock"
+
+    _ensure_schema(conn)
+
+    # Schema migration: a pre-2026-04 tabblock lacks `land_area`,
+    # which the boundaries graph needs to filter water-only blocks
+    # out of gap-filling. Drop & re-ingest if the column's missing —
+    # cheap (~40K rows for NYC, zip cache hot).
+    try:
+        cols = {c[0] for c in conn.execute(f"DESCRIBE {fqn}").fetchall()}
+        if "land_area" not in cols:
+            conn.execute(f"DROP TABLE {fqn}")
+    except duckdb.CatalogException:
+        pass  # table doesn't exist yet — fresh install
+
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {fqn} (
+            block_geoid    VARCHAR,
+            state_fips     VARCHAR,
+            county_fips    VARCHAR,
+            land_area      BIGINT,
+            geom           GEOMETRY
+        )
+    """)
+
+    counties_to_load = []
+    for county in tiger_county_fips:
+        existing = conn.execute(
+            f"SELECT count(*) FROM {fqn} WHERE state_fips = ? AND county_fips = ?",
+            [tiger_state_fips, county],
+        ).fetchone()[0]
+        if existing == 0:
+            counties_to_load.append(county)
+
+    if not counties_to_load:
+        version = _current_version(conn)
+        return TableRef(catalog=GEO_CATALOG, schema=TIGER_SCHEMA, table=table, version=version)
+
+    filename = f"tl_{tiger_year}_{tiger_state_fips}_tabblock20.zip"
+    url = f"{CENSUS_BASE_URL}/TIGER{tiger_year}/TABBLOCK20/{filename}"
+    zip_path = data_dir / filename
+    extract_dir = data_dir / tiger_state_fips
+
+    _download_and_extract(url, zip_path, extract_dir)
+
+    counties_sql_list = ", ".join(f"'{c}'" for c in counties_to_load)
+    for shp in _shp_files(extract_dir, "*.shp"):
+        conn.execute(f"""
+            INSERT INTO {fqn}
+            SELECT
+                GEOID20                           AS block_geoid,
+                STATEFP20                         AS state_fips,
+                COUNTYFP20                        AS county_fips,
+                ALAND20                           AS land_area,
+                geom
+            FROM ST_Read('{shp}')
+            WHERE STATEFP20 = '{tiger_state_fips}'
+              AND COUNTYFP20 IN ({counties_sql_list})
+        """)
+
+    version = _current_version(conn)
+    return TableRef(catalog=GEO_CATALOG, schema=TIGER_SCHEMA, table=table, version=version)
+
+
+# ---------------------------------------------------------------------------
 # Node 3 – address token equivalency table
 # ---------------------------------------------------------------------------
 
