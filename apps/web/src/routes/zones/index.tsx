@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { interpolateYlOrRd } from "d3-scale-chromatic";
 import {
   BrushCleaning,
   ChevronDown,
@@ -37,7 +36,7 @@ import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
-import { colorFor } from "~/lib/zone-colors";
+import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/zones/")({
@@ -296,7 +295,7 @@ function ZonesIndex() {
       const out: Record<string, string> = {};
       for (const [key, c] of Object.entries(overlayCountsByKey)) {
         const t = max === 0 ? 0 : Math.sqrt(c.doors / max);
-        out[key] = interpolateYlOrRd(t);
+        out[key] = interpolateRamp(t);
       }
       return out;
     }
@@ -348,7 +347,7 @@ function ZonesIndex() {
     const colors: Record<string, string> = {};
     for (const [zoneId, count] of Object.entries(doors)) {
       const t = maxDoors === 0 ? 0 : Math.sqrt(count / maxDoors);
-      colors[zoneId] = interpolateYlOrRd(t);
+      colors[zoneId] = interpolateRamp(t);
     }
     return { doors, people, colors };
   }, [overlayCountsByKey, zones]);
@@ -644,7 +643,7 @@ function ZonesIndex() {
                 : undefined
             }
             coloringByKey={coloringByKey}
-            coloredFillOpacity={overlayActive ? 1 : 0.4}
+            coloredFillOpacity={0.8}
             activeKeys={activeKeys}
             onPolygonClick={handlePolygonClick}
             onBackgroundClick={() => setClickedKey(null)}

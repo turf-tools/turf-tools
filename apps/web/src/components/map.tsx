@@ -524,7 +524,7 @@ export function Map({
                   ["get", "color"],
                   isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
                 ],
-                "fill-opacity": 0.4,
+                "fill-opacity": 0.65,
               }}
             />
             <Layer
