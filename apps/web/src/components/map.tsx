@@ -494,8 +494,8 @@ export function Map({
               type="line"
               paint={{
                 "line-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
-                "line-width": ["case", ["==", ["feature-state", "active"], true], 1.75, 0.5],
-                "line-opacity": ["case", ["==", ["feature-state", "active"], true], 1, 0.6],
+                "line-width": ["case", ["==", ["feature-state", "active"], true], 1.5, 0.75],
+                "line-opacity": ["case", ["==", ["feature-state", "active"], true], 1, 0.5],
               }}
             />
           </Source>
