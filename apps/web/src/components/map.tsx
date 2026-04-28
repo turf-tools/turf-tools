@@ -389,6 +389,36 @@ export function Map({
     };
   }, [mapReady]);
 
+  // Keep the points layer on top of every other layer, whenever the
+  // style changes. The JSX-driven Source/Layer components
+  // (boundaries, zone perimeters) add their layers via react-map-
+  // gl's own internal effects, which we don't directly observe and
+  // which run on a different schedule from our imperative addLayer
+  // for points. Result: any time someone else adds a layer (style
+  // load, source mount, dynamic toggle), points can end up beneath
+  // it and stay there.
+  //
+  // `styledata` fires after every style mutation, so we just listen
+  // and re-stack whenever points isn't already the topmost layer.
+  // moveLayer itself fires `styledata` again, but the next check
+  // sees points at the top and exits — no loop.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const ensure = () => {
+      if (!map.getLayer("segment-points")) return;
+      const layers = map.getStyle().layers;
+      if (!layers || layers.length === 0) return;
+      if (layers[layers.length - 1]?.id === "segment-points") return;
+      map.moveLayer("segment-points");
+    };
+    map.on("styledata", ensure);
+    return () => {
+      map.off("styledata", ensure);
+    };
+  }, [mapReady]);
+
   // Push point data to the layer whenever it changes — and also when
   // the layer first becomes ready, in case the query resolved before
   // the map's `load` fired (cached response, fast network). Without
