@@ -1,8 +1,9 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useAtom } from "jotai";
 import { ChevronDown, Megaphone } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { filterAtom } from "~/lib/atoms/filters";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { client } from "~/rpc/client";
 import { Button } from "./button";
 import {
@@ -22,8 +23,9 @@ const ALL_CAMPAIGNS = "__all__";
 
 export function Filter() {
   const [filter, setFilter] = useAtom(filterAtom);
-  const [open, setOpen] = useState(false);
-  const pendingValueRef = useRef<string | undefined>(undefined);
+  const dd = useDeferredRadioDropdown({
+    onCommit: (v) => setFilter({ ...filter, campaignId: v === ALL_CAMPAIGNS ? null : v }),
+  });
   // Mount gate: server renders with the default atom value (campaignId=null),
   // but the client has `getOnInit: true` so it reads the persisted value
   // synchronously — those diverge and React throws a hydration mismatch.
@@ -49,30 +51,14 @@ export function Filter() {
 
   return (
     <div className="flex items-center gap-2">
-      <DropdownMenu
-        open={open}
-        onOpenChange={setOpen}
-        onOpenChangeComplete={(isOpen) => {
-          if (!isOpen && pendingValueRef.current !== undefined) {
-            const v = pendingValueRef.current;
-            pendingValueRef.current = undefined;
-            setFilter({ ...filter, campaignId: v === ALL_CAMPAIGNS ? null : v });
-          }
-        }}
-      >
+      <DropdownMenu {...dd.menu}>
         <DropdownMenuTrigger render={<Button variant="outline" />}>
           <Megaphone className="size-3.5" />
           <span className={isResolving ? "invisible" : undefined}>{campaignLabel}</span>
           <ChevronDown className="size-3.5" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-44">
-          <DropdownMenuRadioGroup
-            value={filter.campaignId ?? ALL_CAMPAIGNS}
-            onValueChange={(v) => {
-              pendingValueRef.current = v;
-              setOpen(false);
-            }}
-          >
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuRadioGroup {...dd.radio} value={filter.campaignId ?? ALL_CAMPAIGNS}>
             <DropdownMenuRadioItem value={ALL_CAMPAIGNS}>All campaigns</DropdownMenuRadioItem>
             {campaigns?.map((c) => (
               <DropdownMenuRadioItem key={c.campaignId} value={c.campaignId}>

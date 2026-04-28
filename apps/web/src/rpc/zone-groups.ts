@@ -1,6 +1,15 @@
-import { and, asc, eq } from "@field-tools/db";
-import { campaigns, zoneGroups, zones } from "@field-tools/db/schema";
+import { and, asc, type Db, eq } from "@field-tools/db";
+import {
+  campaigns,
+  organizations,
+  segments as segmentsTable,
+  zoneGroups,
+  zones,
+} from "@field-tools/db/schema";
 import { z } from "zod";
+import { type Query as QueryShape } from "../lib/filters";
+import { boundaryKeyExprFor } from "../lib/key-groups";
+import { queryToWhere } from "../lib/query-to-sql";
 import { pub } from "./context";
 
 const zoneGroupSelect = {
@@ -187,3 +196,108 @@ export const clone = pub
 
     return { zoneGroupId: newId };
   });
+
+// One-shot "skip the zones editor and just give me a zone group with
+// one giant zone" path used by the New Campaign modal. Creates a
+// zone group + a single default zone whose keys are the distinct
+// values of `keyGroup`'s boundary-key expression over voters
+// matched by `segmentId`.
+//
+// The keys are scoped to the segment (not "every key in this
+// keyGroup") so the resulting polygon visually traces only where
+// canvassing will actually happen — see the `boundaryKeyExprFor`
+// usage in segments.queryCountsByKey for the same pattern.
+//
+// Snapshot semantics: the keys are recorded on the zone at creation
+// time. If the user later edits the segment, this zone's keys will
+// drift from "what the segment matches now". Same drift applies to
+// any manually-built zone group; we'd address with a "Refresh from
+// segment" affordance if it bites.
+export const createWithDefaultZone = pub
+  .input(
+    z.object({
+      name: z.string().min(1),
+      keyGroup: z.string().min(1),
+      segmentId: z.string().uuid(),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    // 1. Pull the segment's query JSON, scoped to org.
+    const segmentRows = await context.db
+      .select({ query: segmentsTable.query })
+      .from(segmentsTable)
+      .where(
+        and(
+          eq(segmentsTable.segmentId, input.segmentId),
+          eq(segmentsTable.organizationId, context.user.organizationId),
+        ),
+      );
+    const segment = segmentRows[0];
+    if (!segment) throw new Error("Segment not found");
+
+    // 2. Run a DISTINCT-keys query against DuckLake and collect the
+    // results into the zone's `keys` array.
+    const orgSlug = await loadOrgSlug(context);
+    const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
+    const groupExpr = boundaryKeyExprFor(input.keyGroup);
+    const { where, params } = queryToWhere(segment.query as QueryShape);
+    const sql = `
+      SELECT DISTINCT ${groupExpr} AS key
+      FROM ${persons}
+      ${where}
+    `;
+    const rows = await execute(sql, params);
+    const keys = rows
+      .map((r) => r.key as string | null)
+      .filter((k): k is string => typeof k === "string" && k.length > 0)
+      .sort();
+
+    // 3. Insert zone group + zone in one transaction so a partial
+    // failure can't leave a zone-less group behind.
+    const created = await context.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(zoneGroups)
+        .values({
+          organizationId: context.user.organizationId,
+          name: input.name,
+          keyGroup: input.keyGroup,
+          createdBy: context.user.userId,
+        })
+        .returning(zoneGroupSelect);
+      const zg = inserted[0]!;
+
+      await tx.insert(zones).values({
+        zoneGroupId: zg.zoneGroupId,
+        name: "Default",
+        keys,
+        createdBy: context.user.userId,
+      });
+
+      return zg;
+    });
+
+    return created;
+  });
+
+// Local copies of segments.ts's helpers — small enough that
+// duplicating beats lifting them into a shared module right now.
+async function loadOrgSlug(context: { db: Db; user: { organizationId: string } }): Promise<string> {
+  const rows = await context.db
+    .select({ slug: organizations.slug })
+    .from(organizations)
+    .where(eq(organizations.organizationId, context.user.organizationId));
+  const slug = rows[0]?.slug;
+  if (!slug) throw new Error("Organization not found");
+  return slug;
+}
+
+async function execute(sql: string, params: unknown[]): Promise<Array<Record<string, unknown>>> {
+  const res = await fetch(`${import.meta.env.VITE_DATA_URL}/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ sql, params }),
+  });
+  if (!res.ok) throw new Error(`/query failed: ${res.status} ${await res.text()}`);
+  const body = (await res.json()) as { rows: Array<Record<string, unknown>> };
+  return body.rows;
+}

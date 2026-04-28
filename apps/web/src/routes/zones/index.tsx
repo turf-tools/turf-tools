@@ -33,6 +33,8 @@ import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
+import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
@@ -41,13 +43,6 @@ import { client } from "~/rpc/client";
 export const Route = createFileRoute("/zones/")({
   component: ZonesIndex,
 });
-
-// Hardcoded for now — eventually will come from a data-service registry
-// endpoint that enumerates which `boundaries.*` tables exist for an org.
-const KEY_GROUPS_AVAILABLE = [
-  { value: "nyc_eds", label: "NYC EDs" },
-  { value: "nyc_zips", label: "NYC ZIPs" },
-];
 
 function ZonesIndex() {
   const queryClient = useQueryClient();
@@ -60,8 +55,7 @@ function ZonesIndex() {
 
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
-  const [groupOpen, setGroupOpen] = useState(false);
-  const pendingValueRef = useRef<string | undefined>(undefined);
+  const groupDropdown = useDeferredRadioDropdown({ onCommit: setActiveGroupId });
 
   // Segment-counts overlay state. The user toggles a switch to enable
   // count shading on the boundary fill, and picks which segment's
@@ -70,7 +64,9 @@ function ZonesIndex() {
   // segment selected.
   const [showSegmentCounts, setShowSegmentCounts] = useState(false);
   const [overlaySegmentId, setOverlaySegmentId] = useState<string | null>(null);
-  const [overlaySegmentOpen, setOverlaySegmentOpen] = useState(false);
+  const overlaySegmentDropdown = useDeferredRadioDropdown({
+    onCommit: (v) => setOverlaySegmentId(v || null),
+  });
 
   // Key-info popup. Visible when the user has clicked a key while no
   // zone is selected (zone-selected mode reserves clicks for
@@ -421,8 +417,8 @@ function ZonesIndex() {
       // wrapper. Without this gate, clicking an item would register
       // as "outside the map" and clear the selection before the
       // dropdown's own onValueChange runs.
-      groupOpen ||
-      overlaySegmentOpen
+      groupDropdown.open ||
+      overlaySegmentDropdown.open
     ) {
       return;
     }
@@ -430,11 +426,9 @@ function ZonesIndex() {
       const target = e.target as Node | null;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;
-      // Zone-box clicks must not fire the deselect: the box's own
-      // onClick already toggles activeZoneId, and clearing here on
-      // mousedown would flash through a no-selection frame between
-      // mousedown and click.
-      if (target instanceof Element && target.closest("[data-zone-button]")) return;
+      // Zone-row clicks fall through to the deselect: the brief
+      // no-selection frame between mousedown and click reads as
+      // click feedback (the polygon outline blinks on every pick).
       setActiveZoneId(null);
       setClickedKey(null);
     };
@@ -449,8 +443,8 @@ function ZonesIndex() {
     renameGroup.isOpen,
     deleteGroup.isOpen,
     renamingZoneId,
-    groupOpen,
-    overlaySegmentOpen,
+    groupDropdown.open,
+    overlaySegmentDropdown.open,
   ]);
 
   return (
@@ -458,17 +452,7 @@ function ZonesIndex() {
       <div className="mb-4 flex h-8 items-center justify-between">
         <h1 className="text-xl font-extrabold tracking-wide italic">Zone Editor</h1>
         <div className="flex items-center gap-2">
-          <DropdownMenu
-            open={groupOpen}
-            onOpenChange={setGroupOpen}
-            onOpenChangeComplete={(isOpen) => {
-              if (!isOpen && pendingValueRef.current !== undefined) {
-                const v = pendingValueRef.current;
-                pendingValueRef.current = undefined;
-                setActiveGroupId(v);
-              }
-            }}
-          >
+          <DropdownMenu {...groupDropdown.menu}>
             <DropdownMenuTrigger render={<Button variant="outline" />}>
               <List className="size-3.5" />
               <span className={activeGroup ? undefined : "invisible"}>
@@ -476,14 +460,8 @@ function ZonesIndex() {
               </span>
               <ChevronDown className="size-3.5" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-44">
-              <DropdownMenuRadioGroup
-                value={activeGroupId ?? ""}
-                onValueChange={(v) => {
-                  pendingValueRef.current = v;
-                  setGroupOpen(false);
-                }}
-              >
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuRadioGroup {...groupDropdown.radio} value={activeGroupId ?? ""}>
                 {zoneGroups?.map((g) => (
                   <DropdownMenuRadioItem key={g.zoneGroupId} value={g.zoneGroupId}>
                     {g.name}
@@ -540,7 +518,6 @@ function ZonesIndex() {
                 key={zone.zoneId}
                 role="button"
                 tabIndex={0}
-                data-zone-button=""
                 onClick={() => {
                   if (isRenaming) return;
                   setActiveZoneId(zone.zoneId);
@@ -688,7 +665,7 @@ function ZonesIndex() {
               />
               <span>Show segment counts</span>
             </label>
-            <DropdownMenu open={overlaySegmentOpen} onOpenChange={setOverlaySegmentOpen}>
+            <DropdownMenu {...overlaySegmentDropdown.menu}>
               <DropdownMenuTrigger
                 disabled={!showSegmentCounts}
                 className={cn(
@@ -705,11 +682,8 @@ function ZonesIndex() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
                 <DropdownMenuRadioGroup
+                  {...overlaySegmentDropdown.radio}
                   value={overlaySegmentId ?? ""}
-                  onValueChange={(v) => {
-                    setOverlaySegmentId(v || null);
-                    setOverlaySegmentOpen(false);
-                  }}
                 >
                   {segments?.map((s) => (
                     <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>

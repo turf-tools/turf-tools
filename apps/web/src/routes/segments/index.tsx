@@ -19,6 +19,7 @@ import {
 } from "~/components/dropdown-menu";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import {
@@ -55,8 +56,7 @@ function SegmentsIndex() {
   });
 
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const [segmentDropdownOpen, setSegmentDropdownOpen] = useState(false);
-  const pendingValueRef = useRef<string | undefined>(undefined);
+  const segmentDropdown = useDeferredRadioDropdown({ onCommit: setActiveSegmentId });
 
   // Default to the first segment once the list loads.
   useEffect(() => {
@@ -221,17 +221,7 @@ function SegmentsIndex() {
       <div className="mb-4 flex h-8 items-center justify-between">
         <h1 className="text-xl font-extrabold tracking-wide italic">Segment Editor</h1>
         <div className="flex items-center gap-2">
-          <DropdownMenu
-            open={segmentDropdownOpen}
-            onOpenChange={setSegmentDropdownOpen}
-            onOpenChangeComplete={(isOpen) => {
-              if (!isOpen && pendingValueRef.current !== undefined) {
-                const v = pendingValueRef.current;
-                pendingValueRef.current = undefined;
-                setActiveSegmentId(v);
-              }
-            }}
-          >
+          <DropdownMenu {...segmentDropdown.menu}>
             <DropdownMenuTrigger render={<Button variant="outline" />}>
               <List className="size-3.5" />
               <span className={activeSegment ? undefined : "invisible"}>
@@ -239,14 +229,8 @@ function SegmentsIndex() {
               </span>
               <ChevronDown className="size-3.5" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-44">
-              <DropdownMenuRadioGroup
-                value={activeSegmentId ?? ""}
-                onValueChange={(v) => {
-                  pendingValueRef.current = v;
-                  setSegmentDropdownOpen(false);
-                }}
-              >
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuRadioGroup {...segmentDropdown.radio} value={activeSegmentId ?? ""}>
                 {segments?.map((s) => (
                   <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
                     {s.name}
