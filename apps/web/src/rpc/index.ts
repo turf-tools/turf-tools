@@ -43,6 +43,7 @@ export const router = {
     list: zoneGroupsProcedures.list,
     getById: zoneGroupsProcedures.getById,
     create: zoneGroupsProcedures.create,
+    createWithDefaultZone: zoneGroupsProcedures.createWithDefaultZone,
     rename: zoneGroupsProcedures.rename,
     clone: zoneGroupsProcedures.clone,
     remove: zoneGroupsProcedures.remove,

@@ -40,17 +40,29 @@ export const getById = pub
     return rows[0] ?? null;
   });
 
-// Create a draft campaign with the given name. FKs (segment, zone
-// group, script) start unset — the editor binds them via
-// subsequent `update` calls.
+// Create a campaign with optional initial bindings. The New
+// Campaign modal exposes the three FK selectors so users can pick
+// segment/zone-group/script up front; if any is omitted the
+// campaign is created with that binding null and the user can set
+// it later via `update`.
 export const create = pub
-  .input(z.object({ name: z.string().min(1) }))
+  .input(
+    z.object({
+      name: z.string().min(1),
+      segmentId: z.string().uuid().nullish(),
+      zoneGroupId: z.string().uuid().nullish(),
+      scriptId: z.string().uuid().nullish(),
+    }),
+  )
   .handler(async ({ context, input }) => {
     const rows = await context.db
       .insert(campaigns)
       .values({
         organizationId: context.user.organizationId,
         name: input.name,
+        segmentId: input.segmentId ?? null,
+        zoneGroupId: input.zoneGroupId ?? null,
+        scriptId: input.scriptId ?? null,
         createdBy: context.user.userId,
       })
       .returning();
