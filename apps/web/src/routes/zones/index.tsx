@@ -67,10 +67,20 @@ function ZonesIndex() {
     onCommit: (v) => setOverlaySegmentId(v || null),
   });
 
-  // Key-info popup. Visible when the user has clicked a key while no
-  // zone is selected (zone-selected mode reserves clicks for
-  // assignment, see `handlePolygonClick`).
-  const [clickedKey, setClickedKey] = useState<string | null>(null);
+  // Key-info popup. Tracks the polygon currently under the cursor —
+  // populated by `onPolygonHover` from the Map and cleared when the
+  // cursor leaves the boundary layer. Lets users inspect a key's
+  // counts without consuming a click (clicks are reserved for zone
+  // selection / shift-click for membership editing).
+  //
+  // `displayedHoverKey` lags `hoveredKey` so the inset can fade out
+  // gracefully — without it, the content unmounts the instant the
+  // cursor leaves the layer and the fade has nothing to fade.
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [displayedHoverKey, setDisplayedHoverKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (hoveredKey) setDisplayedHoverKey(hoveredKey);
+  }, [hoveredKey]);
 
   useEffect(() => {
     if (!activeGroupId && zoneGroups && zoneGroups.length > 0) {
@@ -131,14 +141,7 @@ function ZonesIndex() {
 
   useEffect(() => {
     setActiveZoneId(null);
-    setClickedKey(null);
   }, [activeGroupId]);
-
-  // Selecting a zone enters assignment mode; the info popup belongs to
-  // no-zone-selected mode, so clear it.
-  useEffect(() => {
-    if (activeZoneId) setClickedKey(null);
-  }, [activeZoneId]);
 
   const updateKeysMutation = useMutation({
     mutationFn: (input: { zoneId: string; keys: string[] }) => client.zones.updateKeys(input),
@@ -307,17 +310,16 @@ function ZonesIndex() {
     return out;
   }, [zones, overlayCountsByKey]);
 
-  // Keys to highlight with a thicker outline. The selected zone's
-  // keys, or the clicked key if no zone is selected. Same rule with
-  // or without the overlay — the highlight is the user's visual
-  // handle on what they last picked.
+  // Keys to highlight with a thicker outline — every key in the
+  // selected zone. The highlight is the user's visual handle on
+  // what they last picked. Hover doesn't enter this state: the
+  // cursor itself is enough hover affordance.
   const activeKeys = useMemo(() => {
     if (activeZoneId && zones) {
       return zones.find((z) => z.zoneId === activeZoneId)?.keys;
     }
-    if (clickedKey) return [clickedKey];
     return undefined;
-  }, [activeZoneId, zones, clickedKey]);
+  }, [activeZoneId, zones]);
 
   // Per-zone rollup of the segment counts. When overlay is active,
   // each zone's sidebar swatch+pill uses these (YlOrRd shade for the
@@ -352,40 +354,45 @@ function ZonesIndex() {
     return { doors, people, colors };
   }, [overlayCountsByKey, zones]);
 
-  const handlePolygonClick = (key: string) => {
-    // No zone selected → key click reveals the info popup; otherwise
-    // the click toggles membership in the active zone (assignment
-    // works regardless of whether the segment-counts overlay is on).
-    if (!activeZoneId) {
-      setClickedKey(key);
-      return;
-    }
+  const handlePolygonClick = (key: string, opts: { shiftKey: boolean }) => {
     if (!zones) return;
-    const active = zones.find((z) => z.zoneId === activeZoneId);
-    if (!active) return;
+    if (opts.shiftKey) {
+      // Shift-click toggles the key's membership in the active zone
+      // (the assignment gesture). No-op if no zone is active —
+      // there's nothing to assign to.
+      if (!activeZoneId) return;
+      const active = zones.find((z) => z.zoneId === activeZoneId);
+      if (!active) return;
 
-    if (active.keys.includes(key)) {
+      if (active.keys.includes(key)) {
+        updateKeysMutation.mutate({
+          zoneId: activeZoneId,
+          keys: active.keys.filter((k) => k !== key),
+        });
+        return;
+      }
+
+      // A key belongs to at most one zone in the group. If another
+      // zone already owns it, strip it from there before adding to
+      // the active zone — both mutations fire optimistically.
+      const previousOwner = zones.find((z) => z.zoneId !== activeZoneId && z.keys.includes(key));
+      if (previousOwner) {
+        updateKeysMutation.mutate({
+          zoneId: previousOwner.zoneId,
+          keys: previousOwner.keys.filter((k) => k !== key),
+        });
+      }
       updateKeysMutation.mutate({
         zoneId: activeZoneId,
-        keys: active.keys.filter((k) => k !== key),
+        keys: [...active.keys, key],
       });
       return;
     }
-
-    // A key belongs to at most one zone in the group. If another zone
-    // already owns it, strip it from there before adding to the active
-    // zone — both mutations fire optimistically.
-    const previousOwner = zones.find((z) => z.zoneId !== activeZoneId && z.keys.includes(key));
-    if (previousOwner) {
-      updateKeysMutation.mutate({
-        zoneId: previousOwner.zoneId,
-        keys: previousOwner.keys.filter((k) => k !== key),
-      });
-    }
-    updateKeysMutation.mutate({
-      zoneId: activeZoneId,
-      keys: [...active.keys, key],
-    });
+    // Plain click → activate the zone that contains this key (or
+    // clear active if the key is in no zone). Symmetric with
+    // clicking a row in the zone list.
+    const owner = zones.find((z) => z.keys.includes(key));
+    setActiveZoneId(owner?.zoneId ?? null);
   };
 
   // ---- Modal state ----
@@ -404,7 +411,7 @@ function ZonesIndex() {
   // so we don't clobber state behind a dialog.
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!activeZoneId && !clickedKey) return;
+    if (!activeZoneId) return;
     if (
       createGroup.isOpen ||
       cloneGroup.isOpen ||
@@ -429,13 +436,11 @@ function ZonesIndex() {
       // no-selection frame between mousedown and click reads as
       // click feedback (the polygon outline blinks on every pick).
       setActiveZoneId(null);
-      setClickedKey(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [
     activeZoneId,
-    clickedKey,
     createGroup.isOpen,
     cloneGroup.isOpen,
     clearZones.isOpen,
@@ -596,19 +601,23 @@ function ZonesIndex() {
                 >
                   <Trash2 className="size-3.5" />
                 </button>
-                <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                  {zoneOverlay ? (
-                    <>
+                {zoneOverlay ? (
+                  <>
+                    <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
                       <DoorClosed className="size-3.5 text-foreground" />
                       {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
-                    </>
-                  ) : (
-                    <>
-                      <Hash className="size-3.5 text-foreground" />
-                      {zone.keys.length}
-                    </>
-                  )}
-                </Pill>
+                    </Pill>
+                    <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                      <UserRound className="size-3.5 text-foreground" />
+                      {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
+                    </Pill>
+                  </>
+                ) : (
+                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                    <Hash className="size-3.5 text-foreground" />
+                    {zone.keys.length}
+                  </Pill>
+                )}
               </div>
             );
           })}
@@ -646,7 +655,8 @@ function ZonesIndex() {
             coloredFillOpacity={0.8}
             activeKeys={activeKeys}
             onPolygonClick={handlePolygonClick}
-            onBackgroundClick={() => setClickedKey(null)}
+            onPolygonHover={setHoveredKey}
+            onBackgroundClick={() => setActiveZoneId(null)}
             loading={!firstReady}
           />
 
@@ -699,62 +709,40 @@ function ZonesIndex() {
               the single key. Auto-dismissed via the document mousedown
               handler (clicks outside the map list) or the basemap
               click (see onBackgroundClick). */}
-          {(() => {
-            const activeZone = activeZoneId
-              ? (zones?.find((z) => z.zoneId === activeZoneId) ?? null)
-              : null;
-            if (!activeZone && !clickedKey) return null;
-            return (
-              <div
-                className={cn(
-                  "absolute top-3 right-3 z-10",
-                  "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
-                )}
-              >
-                <div className="flex flex-col items-end gap-2">
-                  {activeZone ? (
-                    <>
-                      <div>{activeZone.name}</div>
-                      <div className="flex justify-end gap-1.5">
-                        <Pill variant="number" className="!w-fit gap-1.5">
-                          <Hash className="size-3.5 text-foreground" />
-                          {activeZone.keys.length}
-                        </Pill>
-                        {zoneOverlay ? (
-                          <>
-                            <Pill variant="number" className="!w-fit gap-1.5">
-                              <DoorClosed className="size-3.5 text-foreground" />
-                              {(zoneOverlay.doors[activeZone.zoneId] ?? 0).toLocaleString()}
-                            </Pill>
-                            <Pill variant="number" className="!w-fit gap-1.5">
-                              <UserRound className="size-3.5 text-foreground" />
-                              {(zoneOverlay.people[activeZone.zoneId] ?? 0).toLocaleString()}
-                            </Pill>
-                          </>
-                        ) : null}
-                      </div>
-                    </>
-                  ) : clickedKey ? (
-                    <>
-                      <div className="font-mono">{clickedKey}</div>
-                      {overlayCountsByKey ? (
-                        <div className="flex justify-end gap-1.5">
-                          <Pill variant="number" className="!w-fit gap-1.5">
-                            <DoorClosed className="size-3.5 text-foreground" />
-                            {(overlayCountsByKey[clickedKey]?.doors ?? 0).toLocaleString()}
-                          </Pill>
-                          <Pill variant="number" className="!w-fit gap-1.5">
-                            <UserRound className="size-3.5 text-foreground" />
-                            {(overlayCountsByKey[clickedKey]?.people ?? 0).toLocaleString()}
-                          </Pill>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
+          {/* Hover-driven key inspector. Active-zone info lives in
+              the zone list (sidebar), so the inset is purely the
+              "what's this polygon" affordance. Stays mounted with
+              opacity transitioned by hover state — so a quick drag
+              between polygons reads as content swap rather than
+              flicker. `displayedHoverKey` lags so the fade-out has
+              content to fade. */}
+          {displayedHoverKey ? (
+            <div
+              aria-hidden={!hoveredKey}
+              className={cn(
+                "pointer-events-none absolute top-3 right-3 z-10",
+                "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
+                "transition-opacity duration-150",
+                hoveredKey ? "opacity-100" : "opacity-0",
+              )}
+            >
+              <div className="flex flex-col items-end gap-2">
+                <div className="font-mono">{displayedHoverKey}</div>
+                {overlayCountsByKey ? (
+                  <div className="flex justify-end gap-1.5">
+                    <Pill variant="number" className="!w-fit gap-1.5">
+                      <DoorClosed className="size-3.5 text-foreground" />
+                      {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
+                    </Pill>
+                    <Pill variant="number" className="!w-fit gap-1.5">
+                      <UserRound className="size-3.5 text-foreground" />
+                      {(overlayCountsByKey[displayedHoverKey]?.people ?? 0).toLocaleString()}
+                    </Pill>
+                  </div>
+                ) : null}
               </div>
-            );
-          })()}
+            </div>
+          ) : null}
         </div>
       </div>
 

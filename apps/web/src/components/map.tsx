@@ -64,10 +64,21 @@ type MapProps = {
   // to. The map calls `fitBounds` whenever this value changes. Pass
   // `null`/`undefined` to leave the viewport alone.
   fitBounds?: [number, number, number, number] | null;
-  // Fired with the clicked polygon's `key` when the user clicks anywhere
-  // on the boundary layer. Caller decides what to do (toggle membership in
-  // a zone, add to a filter, etc.).
-  onPolygonClick?: (key: string) => void;
+  // Fired with the clicked polygon's `key` when the user clicks
+  // anywhere on the boundary layer. The second argument carries
+  // modifier-key state from the underlying mouse event so callers
+  // can distinguish click vs. shift-click without needing their
+  // own DOM listener — the zone editor uses this to differentiate
+  // "activate the containing zone" (plain click) from "toggle key
+  // membership in the active zone" (shift-click).
+  onPolygonClick?: (key: string, opts: { shiftKey: boolean }) => void;
+  // Fires when the cursor moves over a polygon, with the
+  // hovered polygon's `key`, and again with `null` when the cursor
+  // leaves the boundary layer. Deduplicated so consecutive calls
+  // never repeat the same key. Used by the zone editor to drive a
+  // hover-driven info popup without each consumer having to wire
+  // up its own MapLibre layer listeners.
+  onPolygonHover?: (key: string | null) => void;
   // Fired when the user clicks on the map but not on a polygon (i.e.
   // on the basemap). Useful for dismissing transient UI like a
   // clicked-key info popup.
@@ -134,6 +145,7 @@ export function Map({
   selectedZoneId,
   fitBounds,
   onPolygonClick,
+  onPolygonHover,
   onBackgroundClick,
   loading,
   points,
@@ -300,6 +312,50 @@ export function Map({
     };
   }, [onPolygonClick, onZoneClick]);
 
+  // Hover surface for the boundaries layer. Sets a `hover` feature-
+  // state on the polygon under the cursor (read by the line layer's
+  // paint expression for an outline highlight) and fires
+  // `onPolygonHover` with the same key for callers that want to
+  // surface info elsewhere (the zones editor's inset). Both side
+  // effects are deduplicated so consecutive moves over the same
+  // feature don't repaint or re-fire.
+  //
+  // `mousemove` (not `mouseenter`) is the right event here because
+  // we want to detect cursor crossings between adjacent polygons,
+  // not just enter/leave from outside the layer.
+  //
+  // Gated on `mapReady` so the listener attaches after the
+  // boundaries layer has been added by react-map-gl — listeners
+  // registered before the layer exists silently never fire.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    let last: string | null = null;
+    const fire = (next: string | null) => {
+      if (next === last) return;
+      if (last) {
+        map.removeFeatureState({ source: BOUNDARIES_SOURCE_ID, id: last }, "hover");
+      }
+      if (next) {
+        map.setFeatureState({ source: BOUNDARIES_SOURCE_ID, id: next }, { hover: true });
+      }
+      last = next;
+      onPolygonHover?.(next);
+    };
+    const onMove = (e: MapMouseEvent) => {
+      const k = e.features?.[0]?.properties?.key;
+      fire(typeof k === "string" ? k : null);
+    };
+    const onLeave = () => fire(null);
+    map.on("mousemove", BOUNDARIES_FILL_LAYER, onMove);
+    map.on("mouseleave", BOUNDARIES_FILL_LAYER, onLeave);
+    return () => {
+      map.off("mousemove", BOUNDARIES_FILL_LAYER, onMove);
+      map.off("mouseleave", BOUNDARIES_FILL_LAYER, onLeave);
+    };
+  }, [onPolygonHover, mapReady]);
+
   const handleClick = (e: MapMouseEvent) => {
     // Zone perimeters take priority — they sit on top of boundary
     // fills, so a click on one is a zone click, not a key click.
@@ -311,7 +367,7 @@ export function Map({
     }
     const key = feature?.properties?.key;
     if (typeof key === "string") {
-      onPolygonClick?.(key);
+      onPolygonClick?.(key, { shiftKey: e.originalEvent.shiftKey });
     } else {
       onBackgroundClick?.();
     }
@@ -451,6 +507,12 @@ export function Map({
         attributionControl={false}
         style={{ width: "100%", height: "100%" }}
         onLoad={() => setMapReady(true)}
+        // Disabled: MapLibre's box-zoom handler intercepts
+        // shift+drag (and effectively shift+click) to draw a zoom
+        // rectangle. The zone editor uses shift+click to toggle
+        // key membership in a zone, so we need the click event to
+        // pass through unmolested.
+        boxZoom={false}
         // `interactiveLayerIds` filters the `features` field on the
         // click event to those layers — without it, basemap clicks
         // would never resolve a polygon. `onClick` itself fires for
@@ -494,8 +556,27 @@ export function Map({
               type="line"
               paint={{
                 "line-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
-                "line-width": ["case", ["==", ["feature-state", "active"], true], 1.5, 0.75],
-                "line-opacity": ["case", ["==", ["feature-state", "active"], true], 1, 0.5],
+                // Three-way stroke weight: active zone keys >
+                // hovered key > everything else. Active wins over
+                // hover so the active zone outline doesn't lose
+                // emphasis when the user moves their cursor across
+                // its own keys.
+                "line-width": [
+                  "case",
+                  ["==", ["feature-state", "active"], true],
+                  1.5,
+                  ["==", ["feature-state", "hover"], true],
+                  1.25,
+                  0.75,
+                ],
+                "line-opacity": [
+                  "case",
+                  ["==", ["feature-state", "active"], true],
+                  1,
+                  ["==", ["feature-state", "hover"], true],
+                  0.85,
+                  0.5,
+                ],
               }}
             />
           </Source>
