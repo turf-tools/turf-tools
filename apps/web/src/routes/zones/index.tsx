@@ -378,6 +378,10 @@ function ZonesIndex() {
       return;
     }
     const handler = (e: MouseEvent) => {
+      // Skip the second click of a double-click so dbl-click to rename
+      // doesn't deselect-then-reselect a second time (one visible flash
+      // from click 1 is what we want).
+      if (e.detail >= 2) return;
       const target = e.target as Node | null;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;

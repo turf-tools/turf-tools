@@ -69,7 +69,6 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
             key={turf.id}
             role="button"
             tabIndex={0}
-            data-turf-row=""
             onClick={() => onSelect(turf.id)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {

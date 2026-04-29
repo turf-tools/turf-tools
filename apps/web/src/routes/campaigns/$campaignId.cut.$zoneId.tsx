@@ -303,8 +303,10 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
     setSelectedTurfId((s) => (s === id ? null : s));
   };
 
-  // Document-level deselect-on-outside-click. Map and rows handle their
-  // own clicks; this catches everything else.
+  // Document-level deselect-on-outside-click. Clicks on a turf row trigger
+  // the deselect (which then reselects via the row's onClick) — that
+  // deselect-reselect cycle is the visible flash that confirms which turf
+  // the user is now looking at on the map.
   const mapAreaRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selectedTurfId) return;
@@ -312,7 +314,6 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
       const target = e.target;
       if (!(target instanceof Element)) return;
       if (mapAreaRef.current?.contains(target)) return;
-      if (target.closest("[data-turf-row]")) return;
       setSelectedTurfId(null);
     };
     document.addEventListener("mousedown", onMouseDown);
