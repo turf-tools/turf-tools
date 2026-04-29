@@ -793,7 +793,7 @@ export function Map({
           own border or background. */}
       <div
         className={
-          "absolute right-3 bottom-3 flex flex-col items-stretch " +
+          "absolute right-3 bottom-3 z-20 flex flex-col items-stretch " +
           "rounded-md border border-border bg-background text-sm"
         }
       >
