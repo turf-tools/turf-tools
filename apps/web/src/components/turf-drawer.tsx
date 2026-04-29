@@ -1,5 +1,6 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import { type MapMouseEvent, useMap } from "react-map-gl/maplibre";
+import { pointInPolygon } from "~/lib/geometry";
 import { colorFor } from "~/lib/zone-colors";
 
 // Polygon-drawing surface for the turf cutter. Reads the underlying
@@ -73,6 +74,11 @@ type Props = {
   // from the cursor back to the first vertex, so the count needs
   // the cursor position the same frame.
   onCursorChange?: (lngLat: [number, number] | null) => void;
+  // Fires once per discrete "commit" — polygon close, vertex drag-end,
+  // midpoint drag-end, vertex delete on a closed turf — with the
+  // committed turfs. Intermediate updates (mid-drag, drawing-turf
+  // mutations) don't fire it.
+  onCommit?: (turfs: Turf[]) => void;
 };
 
 export function TurfDrawer({
@@ -81,7 +87,14 @@ export function TurfDrawer({
   selectedTurfId,
   setSelectedTurfId,
   onCursorChange,
+  onCommit,
 }: Props) {
+  // Mirror `turfs` for commit-time reads from drag-end handlers, where
+  // the latest state isn't available inline.
+  const turfsPropRef = useRef(turfs);
+  useEffect(() => {
+    turfsPropRef.current = turfs;
+  }, [turfs]);
   // `useMap().current` only resolves for children rendered inside
   // a Map; we're a sibling, so we read by registration id. With no
   // explicit `id` prop, the underlying `MapLibreMap` registers
@@ -227,6 +240,8 @@ export function TurfDrawer({
       midpointDragRef.current = null;
       map.dragPan.enable();
       document.body.style.userSelect = "";
+      // Midpoints only render on closed turfs, so this is always a commit.
+      onCommit?.(turfsPropRef.current);
     };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
@@ -234,7 +249,7 @@ export function TurfDrawer({
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
     };
-  }, [map, setTurfs]);
+  }, [map, setTurfs, onCommit]);
 
   // Click handler routes between three behaviors, in priority:
   //   1. Hit a closed turf → select it.
@@ -288,7 +303,13 @@ export function TurfDrawer({
       if (active && active.vertices.length >= 3) {
         const v0 = map.project(active.vertices[0]!);
         if (Math.hypot(click[0] - v0.x, click[1] - v0.y) <= SNAP_RADIUS) {
-          setTurfs((ts) => ts.map((t, i) => (i === activeIdx ? { ...t, mode: "editing" } : t)));
+          setTurfs((ts) => {
+            const next = ts.map((t, i) =>
+              i === activeIdx ? { ...t, mode: "editing" as const } : t,
+            );
+            onCommit?.(next);
+            return next;
+          });
           setFreshVertex(null);
           return;
         }
@@ -314,7 +335,7 @@ export function TurfDrawer({
     return () => {
       map.off("click", onClick);
     };
-  }, [map, turfs, setTurfs, selectedTurfId, setSelectedTurfId]);
+  }, [map, turfs, setTurfs, selectedTurfId, setSelectedTurfId, onCommit]);
 
   // Escape is the only deselect/cancel gesture (clicking on empty
   // always creates a new turf). When a turf is mid-draw, Escape
@@ -588,14 +609,17 @@ export function TurfDrawer({
                       // restart if they really want to redo it).
                       if (e.altKey) {
                         if (turf.mode === "editing" && turf.vertices.length <= 3) return;
-                        setTurfs((ts) =>
-                          ts.flatMap((t) => {
+                        const wasEditing = turf.mode === "editing";
+                        setTurfs((ts) => {
+                          const next = ts.flatMap((t) => {
                             if (t.id !== turf.id) return [t];
-                            const next = t.vertices.filter((_, vi) => vi !== j);
-                            if (next.length === 0) return [];
-                            return [{ ...t, vertices: next }];
-                          }),
-                        );
+                            const v = t.vertices.filter((_, vi) => vi !== j);
+                            if (v.length === 0) return [];
+                            return [{ ...t, vertices: v }];
+                          });
+                          if (wasEditing) onCommit?.(next);
+                          return next;
+                        });
                         // If we just removed the last vertex of a
                         // drawing turf the turf itself is gone; drop
                         // the selection so the sidebar/map don't
@@ -652,9 +676,12 @@ export function TurfDrawer({
                     onPointerUp={(e) => {
                       e.currentTarget.releasePointerCapture(e.pointerId);
                       if (dragRef.current) {
-                        // Was a drag — clean up.
+                        // Was a drag — clean up. Commit if the dragged
+                        // vertex belonged to a closed turf.
+                        const wasEditing = turf.mode === "editing";
                         dragRef.current = null;
                         map.dragPan.enable();
+                        if (wasEditing) onCommit?.(turfsPropRef.current);
                       } else {
                         // Was a click on the vertex. The only click
                         // semantic so far: snap-close the polygon
@@ -668,9 +695,13 @@ export function TurfDrawer({
                           turf.mode === "drawing" &&
                           turf.vertices.length >= 3
                         ) {
-                          setTurfs((ts) =>
-                            ts.map((t) => (t.id === start.turfId ? { ...t, mode: "editing" } : t)),
-                          );
+                          setTurfs((ts) => {
+                            const next = ts.map((t) =>
+                              t.id === start.turfId ? { ...t, mode: "editing" as const } : t,
+                            );
+                            onCommit?.(next);
+                            return next;
+                          });
                           setFreshVertex(null);
                         }
                       }
@@ -746,21 +777,4 @@ export function TurfDrawer({
       })}
     </svg>
   );
-}
-
-// Standard ray-casting point-in-polygon test. Works on any
-// coordinate system (we use screen coords here for hit-testing
-// against projected vertex positions). Inlined to avoid a
-// `@turf/boolean-point-in-polygon` dep for ten lines.
-function pointInPolygon(point: [number, number], polygon: Array<[number, number]>): boolean {
-  const [x, y] = point;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i]!;
-    const [xj, yj] = polygon[j]!;
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
-      inside = !inside;
-    }
-  }
-  return inside;
 }

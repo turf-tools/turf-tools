@@ -95,11 +95,17 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
             <span className="flex-1 truncate text-sm">Turf {idx + 1}</span>
             {turf.counts ? (
               <>
-                <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
+                <Pill
+                  variant="number"
+                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+                >
                   <DoorClosed className="size-3.5 text-foreground" />
                   {turf.counts.doors.toLocaleString()}
                 </Pill>
-                <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
+                <Pill
+                  variant="number"
+                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+                >
                   <UserRound className="size-3.5 text-foreground" />
                   {turf.counts.people.toLocaleString()}
                 </Pill>

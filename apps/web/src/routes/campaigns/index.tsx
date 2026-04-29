@@ -1,5 +1,11 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { cleanCoords } from "@turf/clean-coords";
 import { union } from "@turf/union";
 import {
@@ -35,19 +41,106 @@ import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
+import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
+import {
+  campaignDetailQuery,
+  campaignKeyCountsQuery,
+  campaignPointsQuery,
+  campaignsListQuery,
+  type KeyFilter,
+} from "~/lib/queries/campaigns";
+import { scriptsListQuery } from "~/lib/queries/scripts";
+import { type SegmentQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
+import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
+type CampaignsSearch = {
+  campaignId?: string;
+};
+
+function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Sorted union of all keys across the zone group's zones, used as the
+// `keyFilter` for points and per-key counts.
+function deriveKeyFilter(
+  zoneGroup: { keyGroup: string } | null | undefined,
+  zones: Awaited<ReturnType<typeof client.zones.list>> | null | undefined,
+): KeyFilter | null {
+  if (!zoneGroup || !zones) return null;
+  return {
+    keyGroup: zoneGroup.keyGroup,
+    keys: Array.from(new Set(zones.flatMap((z) => z.keys))).sort(),
+  };
+}
+
 export const Route = createFileRoute("/campaigns/")({
+  validateSearch: (s): CampaignsSearch => ({
+    campaignId: typeof s.campaignId === "string" ? s.campaignId : undefined,
+  }),
+  loaderDeps: ({ search }) => ({ campaignId: search.campaignId }),
+  loader: async ({ context: { queryClient }, deps }) => {
+    // Tier 0: campaigns list + reference data in parallel.
+    const [campaigns, , zoneGroups] = await Promise.all([
+      queryClient.fetchQuery(campaignsListQuery()),
+      queryClient.fetchQuery(segmentsListQuery()),
+      queryClient.fetchQuery(zoneGroupsQuery()),
+      queryClient.fetchQuery(scriptsListQuery()),
+    ]);
+
+    const fallbackId = sortByName(campaigns)[0]?.campaignId;
+    const idInUrl = deps.campaignId;
+    const exists = idInUrl ? campaigns.some((c) => c.campaignId === idInUrl) : false;
+    if (!idInUrl || !exists) {
+      if (fallbackId) {
+        throw redirect({ to: "/campaigns", search: { campaignId: fallbackId } });
+      }
+      return;
+    }
+
+    // Tier 1: active campaign detail.
+    const campaign = await queryClient.fetchQuery(campaignDetailQuery(idInUrl));
+
+    // Tier 2: bound segment detail + zones, in parallel.
+    const [segmentDetail, zones] = await Promise.all([
+      campaign.segmentId
+        ? queryClient.fetchQuery(segmentDetailQuery(campaign.segmentId))
+        : Promise.resolve(undefined),
+      campaign.zoneGroupId
+        ? queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId))
+        : Promise.resolve(undefined),
+    ]);
+
+    const zoneGroup = campaign.zoneGroupId
+      ? (zoneGroups.find((g) => g.zoneGroupId === campaign.zoneGroupId) ?? undefined)
+      : undefined;
+    const keyFilter = deriveKeyFilter(zoneGroup, zones);
+
+    // Tier 3: heavy stuff — boundary GeoJSON, points, per-key counts.
+    await Promise.all([
+      zoneGroup
+        ? queryClient.fetchQuery(boundariesGeoJsonQuery(zoneGroup.keyGroup, zoneGroup.updatedAt))
+        : Promise.resolve(),
+      segmentDetail?.query && keyFilter
+        ? queryClient.fetchQuery(campaignPointsQuery(segmentDetail.query, keyFilter))
+        : Promise.resolve(),
+      segmentDetail?.query && keyFilter
+        ? queryClient.fetchQuery(
+            campaignKeyCountsQuery(segmentDetail.query, keyFilter.keyGroup, keyFilter.keys),
+          )
+        : Promise.resolve(),
+    ]);
+  },
   component: CampaignsIndex,
 });
 
-// Walks every coord in a polygon/multipolygon FeatureCollection and
-// returns its [minLng, minLat, maxLng, maxLat]. Inlined to avoid a
-// dep on @turf/bbox for one straightforward loop.
+// Walks every coord in a polygon/multipolygon FeatureCollection.
 function bboxOfPolys(fc: FeatureCollection): [number, number, number, number] | null {
   let minLng = Infinity;
   let minLat = Infinity;
@@ -74,205 +167,78 @@ function bboxOfPolys(fc: FeatureCollection): [number, number, number, number] | 
   return touched ? [minLng, minLat, maxLng, maxLat] : null;
 }
 
-// Campaign editor: a single-item editor (mirrors segments / zones) for
-// the campaign that binds together a segment, a zone group, and a
-// script. Top bar carries the active-campaign selector + management
-// buttons (Configure / New / Rename / Duplicate / Delete). Left column is the three
-// FK selectors. Right pane is a map showing the segment's points and
-// the zone group's zone perimeters; clicking a zone perimeter pops a
-// "Cut" inset that navigates to the turf-cutter route
-// (/campaigns/$campaignId/cut/$zoneId).
-
 function CampaignsIndex() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { campaignId: activeCampaignId = null } = Route.useSearch();
+  const shouldFade = useFadeOnce("/campaigns");
 
-  const { data: campaigns } = useQuery({
-    queryKey: ["campaigns"],
-    queryFn: () => client.campaigns.list(),
-    placeholderData: keepPreviousData,
+  const setActiveCampaignId = (id: string | null) => {
+    void navigate({ search: { campaignId: id ?? undefined } });
+  };
+
+  const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
+  const { data: segments } = useSuspenseQuery(segmentsListQuery());
+  const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
+  const { data: scripts } = useSuspenseQuery(scriptsListQuery());
+  const sortedCampaigns = useMemo(() => sortByName(campaigns), [campaigns]);
+
+  const campaignDropdown = useDeferredRadioDropdown({
+    onCommit: (v) => setActiveCampaignId(v || null),
   });
 
-  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
-  const campaignDropdown = useDeferredRadioDropdown({ onCommit: setActiveCampaignId });
+  const activeCampaign = campaigns.find((c) => c.campaignId === activeCampaignId) ?? null;
 
-  // Default to the first campaign once the list loads.
-  useEffect(() => {
-    if (!activeCampaignId && campaigns && campaigns.length > 0) {
-      setActiveCampaignId(campaigns[0].campaignId);
-    }
-  }, [campaigns, activeCampaignId]);
-
-  const activeCampaign = campaigns?.find((c) => c.campaignId === activeCampaignId) ?? null;
-
-  // Pull the active campaign's row directly. The list payload already
-  // carries every FK we need, but a per-campaign query gives us a
-  // cache slot to update optimistically when the user changes a
-  // binding without invalidating the whole list.
-  const { data: activeCampaignDetail } = useQuery({
-    queryKey: ["campaign", activeCampaignId],
-    queryFn: () => client.campaigns.getById({ campaignId: activeCampaignId! }),
+  // Loader prefetched when `campaignId` is set, so this is a cache hit.
+  const { data: campaignDetail } = useQuery({
+    ...campaignDetailQuery(activeCampaignId ?? ""),
     enabled: !!activeCampaignId,
-    placeholderData: keepPreviousData,
   });
-  const campaign = activeCampaignDetail ?? activeCampaign;
+  const campaign = campaignDetail ?? activeCampaign;
 
-  // Reference data for the three selectors.
-  const { data: segments } = useQuery({
-    queryKey: ["segments"],
-    queryFn: () => client.segments.list(),
-    placeholderData: keepPreviousData,
-  });
-  const { data: zoneGroups } = useQuery({
-    queryKey: ["zoneGroups"],
-    queryFn: () => client.zoneGroups.list(),
-    placeholderData: keepPreviousData,
-  });
-  const { data: scripts } = useQuery({
-    queryKey: ["scripts"],
-    queryFn: () => client.script.list(),
-    placeholderData: keepPreviousData,
-  });
+  const activeZoneGroup = zoneGroups.find((g) => g.zoneGroupId === campaign?.zoneGroupId) ?? null;
 
-  const activeZoneGroup = zoneGroups?.find((g) => g.zoneGroupId === campaign?.zoneGroupId) ?? null;
-
-  // Pull the bound segment's full row to get its query JSON, which
-  // drives the points-layer fetch. `isPlaceholderData` flips true
-  // while we're showing the previous segment's row during a swap —
-  // the `ready` predicate uses it to keep the curtain up until the
-  // new segment's mapData has caught up too.
   const { data: segmentDetail, isPlaceholderData: segmentDetailStale } = useQuery({
-    queryKey: ["segment", campaign?.segmentId],
-    queryFn: () => client.segments.getById({ segmentId: campaign!.segmentId! }),
+    ...segmentDetailQuery(campaign?.segmentId ?? ""),
     enabled: !!campaign?.segmentId,
     placeholderData: keepPreviousData,
   });
 
-  const boundariesUrl = activeZoneGroup
-    ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeZoneGroup.keyGroup}/geojson?v=${new Date(activeZoneGroup.updatedAt).getTime()}`
-    : null;
-
-  // Single coordinated fetch for everything the map needs to render:
-  // the zone group's zones, its boundary GeoJSON, and the segment's
-  // points (clipped to the zone group's scope when one is bound).
-  // Unifying these into one query is what keeps the map flip atomic
-  // — separate queries used to race, briefly showing new zones
-  // against an old boundary (mismatched keys → empty perimeters)
-  // until the slower fetch caught up. `keepPreviousData` keeps the
-  // last-good triple visible during the swap.
-  //
-  // Zones are fetched via `queryClient.fetchQuery` so the cache slot
-  // is shared with the zone editor — visiting one editor warms the
-  // other. The boundary GeoJSON is a static immutable URL, so the
-  // browser HTTP cache makes the second fetch free.
-  const segmentQueryKey = segmentDetail?.query ? JSON.stringify(segmentDetail.query) : null;
-  const { data: mapData, isPlaceholderData: mapDataStale } = useQuery({
-    queryKey: [
-      "campaign-map-data",
-      segmentQueryKey,
-      campaign?.zoneGroupId ?? null,
-      activeZoneGroup?.keyGroup ?? null,
-      activeZoneGroup ? new Date(activeZoneGroup.updatedAt).getTime() : null,
-    ],
-    queryFn: async () => {
-      // Step 1: zones (we need scope keys before firing /api/query-points).
-      let zones: Awaited<ReturnType<typeof client.zones.list>> | null = null;
-      if (campaign?.zoneGroupId) {
-        zones = await queryClient.fetchQuery({
-          queryKey: ["zones", campaign.zoneGroupId],
-          queryFn: () => client.zones.list({ zoneGroupId: campaign.zoneGroupId! }),
-          staleTime: 0,
-          // Silent so this inner fetch doesn't keep the global
-          // spinner up after the outer mapData query has resolved
-          // (each fetchQuery is its own cache slot, so the outer
-          // query's `meta: { silent: true }` doesn't propagate).
-          meta: { silent: true },
-        });
-      }
-      const keyFilter =
-        zones && activeZoneGroup
-          ? {
-              keyGroup: activeZoneGroup.keyGroup,
-              keys: Array.from(new Set(zones.flatMap((z) => z.keys))).sort(),
-            }
-          : null;
-
-      // Step 2: boundary + points + per-key counts in parallel.
-      // The per-key counts feed the click-zone inset (sum of door
-      // and people totals across each zone's keys); shared cache
-      // slot with the zone editor's overlay so visiting one warms
-      // the other.
-      const segmentQuery = segmentDetail?.query;
-      const [boundaryFC, pointsBuffer, perKeyCounts] = await Promise.all([
-        boundariesUrl
-          ? fetch(boundariesUrl).then(async (res) => {
-              if (!res.ok) throw new Error(`boundaries fetch failed: ${res.status}`);
-              return (await res.json()) as FeatureCollection;
-            })
-          : Promise.resolve<FeatureCollection | null>(null),
-        segmentQuery
-          ? fetch("/api/query-points", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ query: segmentQuery, keyFilter }),
-            }).then(async (res) => {
-              if (!res.ok) {
-                throw new Error(`query-points failed: ${res.status} ${await res.text()}`);
-              }
-              return new Float32Array(await res.arrayBuffer());
-            })
-          : Promise.resolve<Float32Array | null>(null),
-        segmentQuery && activeZoneGroup
-          ? queryClient
-              .fetchQuery({
-                queryKey: [
-                  "countsByKey",
-                  segmentQueryKey,
-                  activeZoneGroup.keyGroup,
-                  campaign?.zoneGroupId ?? null,
-                ],
-                queryFn: () =>
-                  client.segments.queryCountsByKey({
-                    query: segmentQuery,
-                    keyGroup: activeZoneGroup.keyGroup,
-                    keyFilter: keyFilter ?? undefined,
-                  }),
-                staleTime: 0,
-                meta: { silent: true },
-              })
-              .then((r) => r.counts)
-          : Promise.resolve<Record<string, { doors: number; people: number }> | null>(null),
-      ]);
-      // Carry the zoneGroupId through to the result so render code
-      // can detect "the data we're showing belongs to a different
-      // binding than the user is now on." That's how the curtain is
-      // derived — pure render-time check, no effects, no races.
-      return {
-        zones,
-        boundaryFC,
-        pointsBuffer,
-        perKeyCounts,
-        zoneGroupId: campaign?.zoneGroupId ?? null,
-      };
-    },
-    enabled: !!boundariesUrl || !!segmentDetail?.query,
+  const { data: zones, isPlaceholderData: zonesStale } = useQuery({
+    ...zonesQuery(campaign?.zoneGroupId ?? ""),
+    enabled: !!campaign?.zoneGroupId,
     placeholderData: keepPreviousData,
-    // Infinite stale: tab-back from elsewhere reuses the cached
-    // triple instantly instead of paying for a half-second
-    // /api/query-points refetch on every mount. Freshness is
-    // preserved by invalidating ["campaign-map-data"] from the
-    // zone-editing mutations in the zones editor — so edits there
-    // do flow through the next time the user lands here, but
-    // navigation alone doesn't.
-    staleTime: Number.POSITIVE_INFINITY,
   });
-  const zones = mapData?.zones ?? null;
-  const boundaryFC = mapData?.boundaryFC ?? null;
-  const pointsBuffer = mapData?.pointsBuffer ?? undefined;
-  const perKeyCounts = mapData?.perKeyCounts ?? null;
 
-  // Sum per-key counts across each zone's keys → per-zone totals.
-  // Used by the click-zone inset.
+  const { data: boundaryFC, isPlaceholderData: boundaryStale } = useQuery({
+    ...boundariesGeoJsonQuery(activeZoneGroup?.keyGroup ?? "", activeZoneGroup?.updatedAt ?? ""),
+    enabled: !!activeZoneGroup,
+    placeholderData: keepPreviousData,
+  });
+
+  const keyFilter = useMemo(
+    () => deriveKeyFilter(activeZoneGroup, zones),
+    [activeZoneGroup, zones],
+  );
+
+  const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
+    ...(segmentDetail?.query && keyFilter
+      ? campaignPointsQuery(segmentDetail.query, keyFilter)
+      : campaignPointsQuery({} as SegmentQuery, null)),
+    enabled: !!segmentDetail?.query && !!keyFilter,
+    placeholderData: keepPreviousData,
+  });
+
+  const { data: keyCountsResult, isPlaceholderData: countsStale } = useQuery({
+    ...(segmentDetail?.query && keyFilter
+      ? campaignKeyCountsQuery(segmentDetail.query, keyFilter.keyGroup, keyFilter.keys)
+      : campaignKeyCountsQuery({} as SegmentQuery, "", [])),
+    enabled: !!segmentDetail?.query && !!keyFilter,
+    placeholderData: keepPreviousData,
+  });
+  const perKeyCounts = keyCountsResult?.counts ?? null;
+
+  // Per-zone totals = sum per-key counts across each zone's keys.
   const zoneCounts = useMemo(() => {
     if (!perKeyCounts || !zones) return null;
     const out: Record<string, { doors: number; people: number }> = {};
@@ -291,10 +257,8 @@ function CampaignsIndex() {
     return out;
   }, [perKeyCounts, zones]);
 
-  // One unioned polygon per zone, tagged with `zoneId`. Map renders
-  // these as a click-target layer that dispatches into the cutter.
-  // Single-key zones short-circuit union (turf.union returns null
-  // for degenerate inputs in some versions).
+  // One unioned polygon per zone, tagged with `zoneId`. Single-key zones
+  // short-circuit because turf.union returns null for degenerate inputs.
   const zonePerimeters = useMemo<FeatureCollection | undefined>(() => {
     if (!zones || !boundaryFC) return undefined;
     const featuresByKey: Record<string, Feature<Polygon | MultiPolygon>> = {};
@@ -309,83 +273,70 @@ function CampaignsIndex() {
     }
     const out: Feature[] = [];
     zones.forEach((zone, idx) => {
-      const polys = zone.keys
-        .map((k) => featuresByKey[k])
-        .filter((f): f is Feature<Polygon | MultiPolygon> => !!f);
-      if (polys.length === 0) return;
-      const raw =
-        polys.length === 1
-          ? polys[0]!
-          : (union({ type: "FeatureCollection", features: polys }) ?? polys[0]!);
-      // turf.union output sometimes carries near-duplicate vertices
-      // along input-polygon shared edges; cleanCoords drops the
-      // redundant points. Doesn't fully eliminate the dark-triangle
-      // tessellation artifact we saw at certain zoom levels (that
-      // probably needs server-side ST_Union via DuckDB's GEOS to
-      // really clean up), but is cheap defensive hygiene.
-      const merged = cleanCoords(raw) as Feature<Polygon | MultiPolygon>;
-      // `color` matches the zone editor's per-zone hue (same `colorFor`
-      // index → same color across both surfaces).
-      out.push({
-        ...merged,
-        properties: { zoneId: zone.zoneId, name: zone.name, color: colorFor(idx) },
-      });
+      try {
+        const polys = zone.keys
+          .map((k) => featuresByKey[k])
+          .filter((f): f is Feature<Polygon | MultiPolygon> => !!f);
+        if (polys.length === 0) return;
+        const raw =
+          polys.length === 1
+            ? polys[0]!
+            : (union({ type: "FeatureCollection", features: polys }) ?? polys[0]!);
+        // turf.union output sometimes carries near-duplicate vertices along
+        // input-polygon shared edges; cleanCoords drops them. Wrapped in
+        // try/catch because cleanCoords throws on rings it considers
+        // degenerate (e.g. <4 points after dedup) — one bad zone shouldn't
+        // crash the whole page.
+        let merged: Feature<Polygon | MultiPolygon>;
+        try {
+          merged = cleanCoords(raw) as Feature<Polygon | MultiPolygon>;
+        } catch {
+          merged = raw as Feature<Polygon | MultiPolygon>;
+        }
+        out.push({
+          ...merged,
+          properties: { zoneId: zone.zoneId, name: zone.name, color: colorFor(idx) },
+        });
+      } catch (e) {
+        console.warn(`zonePerimeters: skipping zone ${zone.zoneId}`, e);
+      }
     });
     return { type: "FeatureCollection", features: out };
   }, [zones, boundaryFC]);
 
-  // BBox of all zone perimeters — passed to Map so it fits the viewport
-  // to the campaign scope each time we get a fresh perimeter set.
   const fitBounds = useMemo(
     () => (zonePerimeters ? bboxOfPolys(zonePerimeters) : null),
     [zonePerimeters],
   );
 
-  // Curtain trigger. A single render-time predicate that asks "is
-  // the picture we're about to show the picture the current bindings
-  // would produce?" Each stage of the load pipeline (campaigns list,
-  // active campaign detail, segment detail, map data) gets a check;
-  // the curtain stays opaque until every relevant stage has
-  // resolved. Pure derivation — no effects, no timers, no races.
-  // The Map component combines this with its own basemap+fitBounds
-  // readiness internally.
+  // Curtain stays up until every relevant query has data for the current
+  // bindings (no `isPlaceholderData` from a previous binding).
   const ready = (() => {
-    if (!campaigns) return false;
-    if (campaigns.length === 0) return true;
-    if (!campaign) return false;
-    if (!campaign.segmentId && !campaign.zoneGroupId) return true;
-    if (campaign.segmentId && !segmentDetail) return false;
-    if (!mapData) return false;
-    // A fresh segment/zone-group/script change leaves
-    // `keepPreviousData` rows visible briefly while the new key's
-    // fetch is in flight. Both `isPlaceholderData` flags catch that
-    // — keeps the curtain up until the underlying data lines up
-    // with the current bindings.
-    if (segmentDetailStale) return false;
-    if (mapDataStale) return false;
-    if ((mapData.zoneGroupId ?? null) !== (campaign.zoneGroupId ?? null)) return false;
+    if (!campaign) return campaigns.length === 0;
+    const s = !!campaign.segmentId;
+    const z = !!campaign.zoneGroupId;
+    if (s) {
+      if (!segmentDetail || segmentDetailStale) return false;
+    }
+    if (z) {
+      if (!zones || zonesStale) return false;
+      if (!boundaryFC || boundaryStale) return false;
+    }
+    if (s && z) {
+      if (!pointsBuffer || pointsStale) return false;
+      if (!perKeyCounts || countsStale) return false;
+    }
     return true;
   })();
 
-  // Selected (but not yet cutting) zone. Click on a zone perimeter
-  // pops an inset in the upper right with the zone name + a Cut
-  // Shared between the map and the zones list: clicking a polygon
-  // highlights its row in the list, clicking a row highlights the
-  // polygon. Cleared by clicking the basemap or switching campaign /
-  // zone group.
+  // Selected zone (click on a perimeter pops the inset). Cleared on
+  // campaign / zoneGroup change.
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
-
-  // Drop the selection when the active campaign or its zone group
-  // changes — the zone we had selected may no longer exist in scope.
   useEffect(() => {
     setSelectedZoneId(null);
   }, [activeCampaignId, campaign?.zoneGroupId]);
 
-  // Clicking outside the map wrapper also clears the selection. The
-  // basemap-click case is already covered by `onBackgroundClick` on
-  // Map; this effect handles the broader "click anywhere else on the
-  // page" case (header, selector cards, etc.) so the inset doesn't
-  // hang around when the user moves on.
+  // Click outside the map wrapper clears the selection.
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selectedZoneId) return;
@@ -398,8 +349,6 @@ function CampaignsIndex() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [selectedZoneId]);
-
-  // Mutations.
 
   const updateCampaignMutation = useMutation({
     mutationFn: (input: {
@@ -435,22 +384,15 @@ function CampaignsIndex() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["campaigns"] }),
   });
 
-  // The modal lets the user either pick an existing zone group OR
-  // construct a fresh one from a key group. The construct path
-  // chains two RPCs: zoneGroups.createWithDefaultZone first to mint
-  // the group + a single zone, then campaigns.create with the new
-  // zoneGroupId. Wrapping the chain in one mutation keeps the
-  // dialog's pending/error UX coherent (one spinner, one error
-  // surface) regardless of which path the user picked.
+  // The construct path chains zoneGroups.createWithDefaultZone +
+  // campaigns.create. Wrapping in one mutation keeps the dialog's
+  // pending/error UX coherent across both paths.
   const createCampaign = useDialogMutation({
     mutationFn: async (input: {
       name: string;
       segmentId: string;
       scriptId: string;
       zoneGroupId: string | null;
-      // When set, a fresh zone group is constructed from this key
-      // group's distinct values over the segment, and that new
-      // group is bound to the campaign instead of `zoneGroupId`.
       constructFromKeyGroup: string | null;
     }) => {
       let zoneGroupId = input.zoneGroupId;
@@ -461,8 +403,6 @@ function CampaignsIndex() {
           segmentId: input.segmentId,
         });
         zoneGroupId = zg.zoneGroupId;
-        // Refresh the zone-groups list so the new group is visible
-        // if the user opens Configure later.
         void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
       }
       return client.campaigns.create({
@@ -488,19 +428,15 @@ function CampaignsIndex() {
 
   const deleteCampaign = useDialogMutation({
     mutationFn: (campaignId: string) => client.campaigns.remove({ campaignId }),
-    onSuccess: (_res, deletedId) => {
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      const next = campaigns?.find((c) => c.campaignId !== deletedId);
-      setActiveCampaignId(next?.campaignId ?? null);
+      // Loader picks the alphabetical-first survivor.
+      setActiveCampaignId(null);
     },
   });
 
-  // Configure modal owns its own open state; the bind() commit happens
-  // through the same updateCampaignMutation as before, so opening the
-  // modal is just a UI thing — no extra mutation wrapper needed.
   const [configOpen, setConfigOpen] = useState(false);
 
-  // Selector commits — write through `update` for each FK independently.
   const bind = (patch: {
     segmentId?: string | null;
     zoneGroupId?: string | null;
@@ -512,93 +448,90 @@ function CampaignsIndex() {
 
   return (
     <>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Campaign Editor</h1>
-        <div className="flex items-center gap-2">
-          <DropdownMenu {...campaignDropdown.menu}>
-            <DropdownMenuTrigger render={<Button variant="outline" />}>
-              <List className="size-3.5" />
-              <span className={activeCampaign ? undefined : "invisible"}>
-                {activeCampaign?.name ?? "—"}
-              </span>
-              <ChevronDown className="size-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuRadioGroup {...campaignDropdown.radio} value={activeCampaignId ?? ""}>
-                {campaigns?.map((c) => (
-                  <DropdownMenuRadioItem key={c.campaignId} value={c.campaignId}>
-                    {c.name}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="outline" onClick={() => setConfigOpen(true)} disabled={!activeCampaign}>
-            <Settings2 />
-            Configure
-          </Button>
-          <Button variant="outline" onClick={createCampaign.open}>
-            <Plus />
-            New campaign
-          </Button>
-          <Button variant="outline" onClick={renameCampaign.open} disabled={!activeCampaign}>
-            <Pencil />
-            Rename
-          </Button>
-          <Button variant="outline" onClick={cloneCampaign.open} disabled={!activeCampaign}>
-            <Copy />
-            Duplicate
-          </Button>
-          <Button variant="outline" onClick={deleteCampaign.open} disabled={!activeCampaign}>
-            <Trash2 />
-            Delete
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 h-[calc(100vh-9.75rem)]">
-        {/* Zones list — clicking a row syncs to the map's
-            selectedZone (highlights the polygon); clicking the Cut
-            button on a row jumps straight to the cutter. Status
-            badges are placeholders until cut/publish state lands. */}
-        {/* Fade the list to match the map curtain — same `ready`
-            predicate, same 150ms duration. While transitioning
-            between campaigns the previous campaign's zones are
-            still in the cache (keepPreviousData), so we don't
-            unmount, we just hide them; fade-in on the new side
-            shows the new list. */}
-        <div
-          className={cn(
-            "h-full min-h-0 transition-opacity duration-150",
-            ready ? "opacity-100" : "opacity-0",
-          )}
-        >
-          <ZonesList
-            zones={zones}
-            selectedZoneId={selectedZoneId}
-            zoneCounts={zoneCounts}
-            onSelect={setSelectedZoneId}
-            onCut={(zoneId) => {
-              if (!activeCampaignId) return;
-              void navigate({
-                to: "/campaigns/$campaignId/cut/$zoneId",
-                params: { campaignId: activeCampaignId, zoneId },
-              });
-            }}
-          />
+      <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+        <div className="mb-4 flex h-8 items-center justify-between">
+          <h1 className="text-xl font-extrabold tracking-wide italic">Campaign Editor</h1>
+          <div className="flex items-center gap-2">
+            <DropdownMenu {...campaignDropdown.menu}>
+              <DropdownMenuTrigger render={<Button variant="outline" />}>
+                <List className="size-3.5" />
+                <span className={activeCampaign ? undefined : "invisible"}>
+                  {activeCampaign?.name ?? "—"}
+                </span>
+                <ChevronDown className="size-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuRadioGroup {...campaignDropdown.radio} value={activeCampaignId ?? ""}>
+                  {sortedCampaigns.map((c) => (
+                    <DropdownMenuRadioItem key={c.campaignId} value={c.campaignId}>
+                      {c.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="outline"
+              onClick={() => setConfigOpen(true)}
+              disabled={!activeCampaign}
+            >
+              <Settings2 />
+              Configure
+            </Button>
+            <Button variant="outline" onClick={createCampaign.open}>
+              <Plus />
+              New campaign
+            </Button>
+            <Button variant="outline" onClick={renameCampaign.open} disabled={!activeCampaign}>
+              <Pencil />
+              Rename
+            </Button>
+            <Button variant="outline" onClick={cloneCampaign.open} disabled={!activeCampaign}>
+              <Copy />
+              Duplicate
+            </Button>
+            <Button variant="outline" onClick={deleteCampaign.open} disabled={!activeCampaign}>
+              <Trash2 />
+              Delete
+            </Button>
+          </div>
         </div>
 
-        <div ref={mapWrapperRef} className="relative h-full">
-          <Map
-            className="h-full"
-            points={pointsBuffer}
-            zonePerimeters={zonePerimeters}
-            fitBounds={fitBounds}
-            selectedZoneId={selectedZoneId}
-            onZoneClick={(zoneId) => setSelectedZoneId(zoneId)}
-            onBackgroundClick={() => setSelectedZoneId(null)}
-            loading={!ready}
-          />
+        <div className="grid grid-cols-2 gap-4 h-[calc(100vh-9.75rem)]">
+          {/* Sidebar fades in step with the map curtain. */}
+          <div
+            className={cn(
+              "h-full min-h-0 transition-opacity duration-150",
+              ready ? "opacity-100" : "opacity-0",
+            )}
+          >
+            <ZonesList
+              zones={zones ?? null}
+              selectedZoneId={selectedZoneId}
+              zoneCounts={zoneCounts}
+              onSelect={setSelectedZoneId}
+              onCut={(zoneId) => {
+                if (!activeCampaignId) return;
+                void navigate({
+                  to: "/campaigns/$campaignId/cut/$zoneId",
+                  params: { campaignId: activeCampaignId, zoneId },
+                });
+              }}
+            />
+          </div>
+
+          <div ref={mapWrapperRef} className="relative h-full">
+            <Map
+              className="h-full"
+              points={pointsBuffer ?? undefined}
+              zonePerimeters={zonePerimeters}
+              fitBounds={fitBounds}
+              selectedZoneId={selectedZoneId}
+              onZoneClick={(zoneId) => setSelectedZoneId(zoneId)}
+              onBackgroundClick={() => setSelectedZoneId(null)}
+              loading={!ready}
+            />
+          </div>
         </div>
       </div>
 
@@ -607,9 +540,9 @@ function CampaignsIndex() {
         onOpenChange={createCampaign.onOpenChange}
         pending={createCampaign.isPending}
         error={createCampaign.error}
-        segmentOptions={(segments ?? []).map((s) => ({ value: s.segmentId, label: s.name }))}
-        zoneGroupOptions={(zoneGroups ?? []).map((g) => ({ value: g.zoneGroupId, label: g.name }))}
-        scriptOptions={(scripts ?? []).map((s) => ({ value: s.scriptId, label: s.name }))}
+        segmentOptions={segments.map((s) => ({ value: s.segmentId, label: s.name }))}
+        zoneGroupOptions={zoneGroups.map((g) => ({ value: g.zoneGroupId, label: g.name }))}
+        scriptOptions={scripts.map((s) => ({ value: s.scriptId, label: s.name }))}
         onSubmit={(values) => createCampaign.mutate(values)}
       />
 
@@ -655,9 +588,9 @@ function CampaignsIndex() {
         currentSegmentId={campaign?.segmentId ?? null}
         currentZoneGroupId={campaign?.zoneGroupId ?? null}
         currentScriptId={campaign?.scriptId ?? null}
-        segmentOptions={(segments ?? []).map((s) => ({ value: s.segmentId, label: s.name }))}
-        zoneGroupOptions={(zoneGroups ?? []).map((g) => ({ value: g.zoneGroupId, label: g.name }))}
-        scriptOptions={(scripts ?? []).map((s) => ({ value: s.scriptId, label: s.name }))}
+        segmentOptions={segments.map((s) => ({ value: s.segmentId, label: s.name }))}
+        zoneGroupOptions={zoneGroups.map((g) => ({ value: g.zoneGroupId, label: g.name }))}
+        scriptOptions={scripts.map((s) => ({ value: s.scriptId, label: s.name }))}
         onSubmit={(patch) => {
           bind(patch);
           setConfigOpen(false);
@@ -667,14 +600,6 @@ function CampaignsIndex() {
   );
 }
 
-// Right-pane list of zones for the active campaign. Rows mirror the
-// shape of the click-zone inset on the map — name on the left,
-// status pills + Cut button on the right — so users have two
-// equivalent paths into the cutter (click the polygon, click the
-// row).
-//
-// Cut/published/stale status pills are placeholders until the
-// per-zone cut state lands on the backend.
 function ZonesList({
   zones,
   selectedZoneId,
@@ -694,9 +619,6 @@ function ZonesList({
         <ZoneRow
           key={zone.zoneId}
           zone={zone}
-          // Same colorFor(idx) used by the map's perimeter fill and
-          // the zones editor's sidebar swatches — keeps the visual
-          // identity of each zone consistent across surfaces.
           color={colorFor(idx)}
           selected={zone.zoneId === selectedZoneId}
           counts={zoneCounts?.[zone.zoneId] ?? null}
@@ -757,10 +679,7 @@ function ZoneRow({
           </Pill>
         </>
       ) : null}
-      {/* Status pill — placeholder. When cut state lands this swaps
-          between "uncut" / "cut" / "published" with the appropriate
-          variant. Sits next to the Cut button so the action and the
-          state it'll change are colocated. */}
+      {/* Placeholder pending per-zone cut state on the backend. */}
       <Pill variant="text" className="!w-fit shrink-0">
         Uncut
       </Pill>
@@ -768,9 +687,6 @@ function ZoneRow({
         size="sm"
         variant="outline"
         onClick={(e) => {
-          // Stop the row's onClick from also firing (which would
-          // re-select what's already implicitly selected and is
-          // confusing in screen readers).
           e.stopPropagation();
           onCut();
         }}
@@ -782,11 +698,6 @@ function ZoneRow({
   );
 }
 
-// Inline button-toggle for the New Campaign modal's "Define from"
-// field — only renders when the user has chosen "Define
-// automatically" in the Zones dropdown above. Same pill style as
-// the enum-filter buttons in the segments editor for visual
-// consistency.
 function KeyGroupRadio({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -854,17 +765,13 @@ function CreateCampaignDialog({
   const [name, setName] = useState("");
   const [segmentId, setSegmentId] = useState<string | null>(null);
   const [scriptId, setScriptId] = useState<string | null>(null);
-  // Two paths for the "Zones" binding folded into a single
-  // dropdown: a sentinel "Define automatically" entry sits above
-  // the existing zone groups, and selecting it reveals a key-group
-  // segmented control below. No default — the user must pick a
-  // path explicitly. The key-group radio is conditional on
-  // auto-mode, so it doesn't draw attention until it's relevant.
+  // The "Zones" dropdown folds two paths: a sentinel "Define automatically"
+  // option above the existing zone groups; selecting it reveals a key-group
+  // segmented control below. No default — the user picks a path explicitly.
   const [zonesValue, setZonesValue] = useState<string | null>(null);
   const [constructKeyGroup, setConstructKeyGroup] = useState<string>(
     KEY_GROUPS_AVAILABLE[0]!.value,
   );
-  // Reset all fields each time the dialog opens.
   useEffect(() => {
     if (open) {
       setName("");
@@ -1099,20 +1006,10 @@ function DeleteDialog({
   );
 }
 
-// Bindings editor — segment, zone group, script in one form. Local
-// draft state is initialised from the props on open and committed
-// only on Save, so users can experiment without writing partial
-// state through to the campaign. Eventually the place to surface
-// "this change will invalidate N cut zones" warnings, hence its own
-// dialog rather than reusing the management buttons' dialog
-// machinery.
 type SelectOption = { value: string; label: string };
 
-// Sentinel value the New Campaign modal's "Zones" dropdown uses to
-// represent "construct a fresh zone group from a key group" — sits
-// alongside real zone-group ids in the same dropdown so the user
-// can pick existing-or-auto in one click. Picked to be impossible
-// as a real zone group id (UUIDs are 36 chars, this isn't).
+// Sentinel for the "construct fresh zone group from key group" path —
+// sits alongside real zone-group ids in the dropdown.
 const AUTO_ZONES_SENTINEL = "__auto__";
 
 function ConfigureDialog({
@@ -1144,10 +1041,7 @@ function ConfigureDialog({
   const [zoneGroupId, setZoneGroupId] = useState(currentZoneGroupId);
   const [scriptId, setScriptId] = useState(currentScriptId);
 
-  // Re-sync drafts whenever the dialog opens — the user might have
-  // edited bindings via some other path (or switched campaigns)
-  // since the last open. Only running on `open` true→ avoids
-  // clobbering in-progress edits while the dialog is up.
+  // Resync drafts when the dialog opens.
   useEffect(() => {
     if (open) {
       setSegmentId(currentSegmentId);
@@ -1220,9 +1114,6 @@ function ConfigField({
   options,
   onChange,
 }: {
-  // Empty string suppresses the label — used for the "Zones"
-  // composite field where the radio toggle owns the label slot
-  // and the dropdown sits unlabeled below it.
   label: string;
   placeholder: string;
   value: string | null;

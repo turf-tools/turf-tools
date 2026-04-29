@@ -1,8 +1,7 @@
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import type { FeatureCollection } from "geojson";
 import { ArrowLeft, Eraser, Send, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
 import { Button } from "~/components/button";
 import {
@@ -16,88 +15,84 @@ import { Map } from "~/components/map";
 import { Switch } from "~/components/switch";
 import { TurfDrawer, type Turf } from "~/components/turf-drawer";
 import { TurfList } from "~/components/turf-list";
+import { pointInPolygon, polygonToVertices, verticesToPolygon } from "~/lib/geometry";
+import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
+import { campaignDetailQuery } from "~/lib/queries/campaigns";
+import { cutterBuildingsQuery, segmentDetailQuery } from "~/lib/queries/segments";
+import { turfDraftsQuery } from "~/lib/queries/turf-drafts";
+import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import { useFadeOnce } from "~/lib/use-fade-once";
+import { parseHexRgb } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/campaigns/$campaignId/cut/$zoneId")({
+  // Boundaries + buildings are intentionally out of the loader — they're
+  // the heavy queries, and we'd rather get the user to the cutter chrome
+  // fast and let the Map curtain hide their fetch than block navigation.
+  loader: async ({ context: { queryClient }, params: { campaignId, zoneId } }) => {
+    const [campaign] = await Promise.all([
+      queryClient.fetchQuery(campaignDetailQuery(campaignId)),
+      queryClient.fetchQuery(zoneGroupsQuery()),
+      queryClient.fetchQuery(turfDraftsQuery(campaignId, zoneId)),
+    ]);
+
+    await Promise.all([
+      campaign.zoneGroupId
+        ? queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId))
+        : Promise.resolve(undefined),
+      campaign.segmentId
+        ? queryClient.fetchQuery(segmentDetailQuery(campaign.segmentId))
+        : Promise.resolve(undefined),
+    ]);
+  },
   component: CutterPage,
 });
 
-// Turf cutter — its own page so the browser back button works and
-// refreshes preserve context. Reads campaign + zone from path
-// params and pulls everything else (campaign detail, zones,
-// segment detail, boundaries) from React Query cache when warm
-// (user came in via the editor) or fetches fresh on a cold load.
-//
-// Cutting itself is a stub: Autocut / Clear / Undo are placeholders
-// for the next PR. The page renders the points layer scoped to
-// segment ∩ zone, framed to the zone's bbox.
+// Thin shell so `key={zoneId}` remounts the Cutter on zone change,
+// resetting in-progress drawing state, selection, auto-save timer, etc.
 function CutterPage() {
   const { campaignId, zoneId } = Route.useParams();
+  return <Cutter key={zoneId} campaignId={campaignId} zoneId={zoneId} />;
+}
+
+function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const shouldFade = useFadeOnce("/campaigns/cut");
 
-  const { data: campaign } = useQuery({
-    queryKey: ["campaign", campaignId],
-    queryFn: () => client.campaigns.getById({ campaignId }),
-    placeholderData: keepPreviousData,
-  });
+  const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
+  const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
+  const { data: drafts } = useSuspenseQuery(turfDraftsQuery(campaignId, zoneId));
 
-  const { data: zoneGroups } = useQuery({
-    queryKey: ["zoneGroups"],
-    queryFn: () => client.zoneGroups.list(),
-    placeholderData: keepPreviousData,
-  });
-  const zoneGroup = zoneGroups?.find((g) => g.zoneGroupId === campaign?.zoneGroupId) ?? null;
+  const zoneGroup = zoneGroups.find((g) => g.zoneGroupId === campaign.zoneGroupId) ?? null;
 
   const { data: zones } = useQuery({
-    queryKey: ["zones", campaign?.zoneGroupId],
-    queryFn: () => client.zones.list({ zoneGroupId: campaign!.zoneGroupId! }),
-    enabled: !!campaign?.zoneGroupId,
-    placeholderData: keepPreviousData,
+    ...zonesQuery(campaign.zoneGroupId ?? ""),
+    enabled: !!campaign.zoneGroupId,
   });
   const zone = zones?.find((z) => z.zoneId === zoneId) ?? null;
 
   const { data: segmentDetail } = useQuery({
-    queryKey: ["segment", campaign?.segmentId],
-    queryFn: () => client.segments.getById({ segmentId: campaign!.segmentId! }),
-    enabled: !!campaign?.segmentId,
-    placeholderData: keepPreviousData,
+    ...segmentDetailQuery(campaign.segmentId ?? ""),
+    enabled: !!campaign.segmentId,
   });
 
-  // Boundary GeoJSON — used to compute the zone's bbox for fitBounds.
-  const boundariesUrl = zoneGroup
-    ? `${import.meta.env.VITE_DATA_URL}/key-groups/${zoneGroup.keyGroup}/geojson?v=${new Date(zoneGroup.updatedAt).getTime()}`
-    : null;
-  const { data: boundaryFC } = useQuery<FeatureCollection>({
-    queryKey: ["boundaries-geojson", zoneGroup?.keyGroup, zoneGroup?.updatedAt],
-    queryFn: async () => {
-      const res = await fetch(boundariesUrl!);
-      if (!res.ok) throw new Error(`boundaries fetch failed: ${res.status}`);
-      return (await res.json()) as FeatureCollection;
-    },
-    enabled: !!boundariesUrl,
-    staleTime: Number.POSITIVE_INFINITY,
+  const { data: boundaryFC } = useQuery({
+    ...boundariesGeoJsonQuery(zoneGroup?.keyGroup ?? "", zoneGroup?.updatedAt ?? ""),
+    enabled: !!zoneGroup,
   });
 
-  // Buildings scoped to segment ∩ this zone's keys. Each row carries
-  // its own buildingId + per-building door/person counts, which the
-  // cutter will use to compute "what's inside this drawn polygon"
-  // client-side. Until cutting is implemented, we just feed the
-  // centroids (lng/lat pairs) into the points layer.
-  const segmentQueryKey = segmentDetail?.query ? JSON.stringify(segmentDetail.query) : null;
   const { data: buildingsResult } = useQuery({
-    queryKey: ["cutter-buildings", zoneId, segmentQueryKey],
-    queryFn: () =>
-      client.segments.queryBuildings({
-        query: segmentDetail!.query,
-        keyFilter: zoneGroup ? { keyGroup: zoneGroup.keyGroup, keys: zone!.keys } : undefined,
-      }),
+    ...cutterBuildingsQuery(
+      zoneId,
+      segmentDetail?.query,
+      zoneGroup && zone ? { keyGroup: zoneGroup.keyGroup, keys: zone.keys } : undefined,
+    ),
     enabled: !!segmentDetail?.query && !!zone,
-    placeholderData: keepPreviousData,
-    staleTime: Number.POSITIVE_INFINITY,
-    meta: { silent: true },
   });
   const buildings = buildingsResult?.buildings;
+
   const pointsBuffer = useMemo(() => {
     if (!buildings) return undefined;
     const buf = new Float32Array(buildings.length * 2);
@@ -108,8 +103,7 @@ function CutterPage() {
     return buf;
   }, [buildings]);
 
-  // BBox of the zone's keys' polygons. We don't bother unioning —
-  // bbox accumulates the same regardless.
+  // BBox of the zone's keys' polygons (no unioning needed — bbox accumulates the same).
   const fitBounds = useMemo(() => {
     if (!zone || !boundaryFC) return null;
     const keys = new Set(zone.keys);
@@ -140,82 +134,35 @@ function CutterPage() {
     return touched ? ([minLng, minLat, maxLng, maxLat] as [number, number, number, number]) : null;
   }, [zone, boundaryFC]);
 
-  // Turfs being cut for this zone. Lifted here so the sidebar and
-  // the drawer share the same source of truth — the drawer is
-  // where vertices get added/closed, the sidebar is where they're
-  // listed/named/removed, and they have to agree. Selection is
-  // bidirectional: clicking a row or a polygon both write to
-  // `selectedTurfId`.
-  const [turfs, setTurfs] = useState<Turf[]>([]);
+  // In-progress turfs. Lives in the parent so the sidebar list and the
+  // drawer share one source of truth. Initialised from loader-fresh drafts.
+  const [turfs, setTurfs] = useState<Turf[]>(() =>
+    drafts.map((d) => ({
+      id: d.turfDraftId,
+      vertices: polygonToVertices(d.geometry),
+      mode: "editing" as const,
+    })),
+  );
   const [selectedTurfId, setSelectedTurfId] = useState<string | null>(null);
 
-  // Drafts persistence. The server is canonical between cutter
-  // mounts; the cutter is canonical *while* mounted. We refetch on
-  // every mount and hydrate the local `turfs` state once the fresh
-  // fetch lands, then auto-save changes back via a debounced effect
-  // below. Silent (`meta.silent`) because the load happens behind
-  // the first-load curtain.
-  const { data: draftsData, isFetching: draftsFetching } = useQuery({
-    queryKey: ["turfDrafts", campaignId, zoneId],
-    queryFn: () => client.turfDrafts.list({ campaignId, zoneId }),
-    meta: { silent: true },
-  });
-
-  // Hydration is one-shot per mount, gated on `isFetching === false`
-  // so we hydrate to the post-fetch fresh data — not the cached
-  // copy that tanstack-query serves synchronously on a remount
-  // (which would be stale relative to whatever the user saved
-  // last session).
-  const [draftsHydrated, setDraftsHydrated] = useState(false);
-  useEffect(() => {
-    if (draftsHydrated || !draftsData || draftsFetching) return;
-    setTurfs(
-      draftsData.map((d) => ({
-        id: d.turfDraftId,
-        vertices: polygonToVertices(d.geometry),
-        mode: "editing" as const,
-      })),
-    );
-    setDraftsHydrated(true);
-  }, [draftsData, draftsFetching, draftsHydrated]);
-
-  // Replace-all save mutation. Single round trip, single
-  // transaction, no per-row bookkeeping. Not silent — the user
-  // wants to see saves in the global indicator. No cache
-  // bookkeeping needed: the next mount refetches.
+  // Replace-all save. `scope.id` serializes mutations so rapid commits
+  // hit the server in order — last write reliably wins.
   const replaceAllDrafts = useMutation({
     mutationFn: (
-      drafts: Array<{
+      payload: Array<{
         turfDraftId: string;
         geometry: { type: "Polygon"; coordinates: number[][][] };
         name: string | null;
         sortOrder: number;
       }>,
-    ) => client.turfDrafts.replaceAll({ campaignId, zoneId, drafts }),
+    ) => client.turfDrafts.replaceAll({ campaignId, zoneId, drafts: payload }),
+    scope: { id: `turf-drafts-${campaignId}-${zoneId}` },
   });
 
-  // Auto-save: debounced 500ms after the last change to a *closed*
-  // turf. Drawing-mode polygons aren't saved (no committed shape
-  // yet), and we don't want every vertex-add during drawing to
-  // reschedule a redundant save of the same closed-polygon set —
-  // so the effect deps on a signature derived only from editing-
-  // mode turfs. The latest `turfs` is read through a ref at fire
-  // time so the payload reflects whatever the user has at second
-  // 0.5, not at the moment the timer was scheduled. `mutate` is a
-  // stable reference per tanstack-query.
   const mutateDrafts = replaceAllDrafts.mutate;
-  const turfsRef = useRef(turfs);
-  useEffect(() => {
-    turfsRef.current = turfs;
-  }, [turfs]);
-  const saveSignature = useMemo(
-    () => JSON.stringify(turfs.filter((t) => t.mode === "editing").map((t) => [t.id, t.vertices])),
-    [turfs],
-  );
-  useEffect(() => {
-    if (!draftsHydrated) return;
-    const timer = setTimeout(() => {
-      const drafts = turfsRef.current
+  const save = useCallback(
+    (turfsNow: Turf[]) => {
+      const payload = turfsNow
         .filter((t) => t.mode === "editing")
         .map((t, i) => ({
           turfDraftId: t.id,
@@ -223,48 +170,17 @@ function CutterPage() {
           name: null,
           sortOrder: i,
         }));
-      mutateDrafts(drafts);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [saveSignature, draftsHydrated, mutateDrafts]);
+      mutateDrafts(payload);
+    },
+    [mutateDrafts],
+  );
 
-  // First-load curtain over the map. Same pattern as the editor:
-  // wait until data is ready, then fade. Stays gone for the rest of
-  // the session. The Map component owns the actual curtain and its
-  // own basemap+fitBounds-readiness gating; we just tell it whether
-  // our data is ready yet. Sits *after* the drafts hydration block
-  // so `draftsHydrated` is in scope (TDZ otherwise).
-  const [firstReady, setFirstReady] = useState(false);
-  useEffect(() => {
-    if (firstReady) return;
-    const dataReady =
-      !!campaign &&
-      !!zone &&
-      (!campaign.segmentId || buildings !== undefined) &&
-      (!campaign.zoneGroupId || !!boundaryFC) &&
-      // Don't lift the curtain until drafts have hydrated, otherwise
-      // the user briefly sees an empty list before their saved
-      // turfs pop in.
-      draftsHydrated;
-    if (dataReady) setFirstReady(true);
-  }, [firstReady, campaign, zone, buildings, boundaryFC, draftsHydrated]);
-
-  // Live cursor lng/lat from the drawer. Only meaningful for the
-  // count of the in-progress drawing turf — that polygon is
-  // implicitly closed by a segment from the cursor back to the
-  // first vertex, so the count needs the cursor position the same
-  // frame to stay live. Null when the cursor is outside the map.
+  // Live cursor lng/lat from the drawer. Used by the in-progress turf's
+  // count (cursor closes the polygon implicitly) and by per-point colors.
   const [cursorLngLat, setCursorLngLat] = useState<[number, number] | null>(null);
 
-  // Per-turf door + people aggregates over the segment buildings
-  // contained in each polygon. Closed (`editing`) turfs use their
-  // vertices directly. Drawing turfs with ≥2 vertices include the
-  // cursor as the implicit closing vertex, so the user sees a live
-  // count of what they'd capture if they closed the polygon now.
-  // Below 2 vertices there's no triangle to enclose anything, so
-  // the drawing row stays blank. Inlined ray-casting point-in-
-  // polygon — fast for the typical scale (~600 buildings × handful
-  // of turfs × ~5–20 vertices) even at 60fps cursor updates.
+  // Per-turf door + people aggregates. Drawing turfs include the cursor as
+  // implicit closing vertex when there are ≥2 vertices.
   const turfCounts = useMemo(() => {
     const out: Record<string, { doors: number; people: number }> = {};
     if (!buildings) return out;
@@ -295,9 +211,6 @@ function CutterPage() {
     [turfs, turfCounts],
   );
 
-  // Publishable totals — only closed polygons participate (drawing-
-  // mode turfs aren't saved as drafts, so the server wouldn't see
-  // them anyway). Used by the Publish button and dialog summary.
   const publishSummary = useMemo(() => {
     let count = 0;
     let doors = 0;
@@ -314,49 +227,28 @@ function CutterPage() {
     return { count, doors, people };
   }, [turfs, turfCounts]);
 
-  // Toggle for the door-count size encoding. Off by default — the
-  // baseline is uniform dots; flicking it on highlights the high-
-  // door buildings (50+ doors). Default off because the size
-  // encoding is informational, not navigational.
   const [sizeByDoors, setSizeByDoors] = useState(false);
-
-  // Clear-confirmation dialog. Owns its own open flag rather than
-  // a ref so the destructive button can't fire from a stale event
-  // loop. Local-state-only — no server round trip — so nothing
-  // pending/error to track.
   const [clearOpen, setClearOpen] = useState(false);
-
-  // Publish dialog + mutation. Publishing reads server-side drafts
-  // (already auto-saved), runs PIP per polygon, and inserts new
-  // turfs rows. Drafts are retained — the user can keep editing
-  // and re-publish; each publish appends a fresh batch.
   const [publishOpen, setPublishOpen] = useState(false);
+
   const publishMutation = useMutation({
     mutationFn: () => client.turfs.publish({ campaignId, zoneId }),
     onSuccess: () => {
       setPublishOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["turfs"] });
     },
   });
 
-  // Per-point colors. Each building gets the palette color of the
-  // first turf that contains it (matching the sidebar/stroke
-  // palette), or a neutral default. Recomputes on every cursor move
-  // when there's a drawing turf — that's a lot of point-in-polygon,
-  // but the work is bounded (~600 buildings × handful of turfs ×
-  // ~10 vertices) and stays under a frame.
+  // Per-point colors. Each building gets the palette color of the first
+  // turf that contains it, or a near-black default. Recomputes on every
+  // cursor move when there's a drawing turf — bounded work (~600 buildings
+  // × handful of turfs × ~10 vertices), stays under a frame.
   const pointColors = useMemo(() => {
     if (!buildings) return null;
     const colors = new Uint8Array(buildings.length * 3);
-    // Unassigned points get a slightly-softer-than-black so the
-    // dot mass on the map doesn't read as harsh ink. #1a1a1a is
-    // a small step off pure black — same family of "near-black"
-    // values worth aligning the rest of the UI to in a follow-up.
     const DEFAULT_R = 26;
     const DEFAULT_G = 26;
     const DEFAULT_B = 26;
-    // Pre-derive both polygons and palette per turf so the inner
-    // loop just looks up by index. Skipped turfs (drawing with <2
-    // vertices, or no cursor) get a null polygon and never match.
     const polygons: Array<Array<[number, number]> | null> = turfs.map((t) => {
       if (t.mode === "editing") return t.vertices;
       if (t.vertices.length >= 2 && cursorLngLat) return [...t.vertices, cursorLngLat];
@@ -389,14 +281,8 @@ function CutterPage() {
     return colors;
   }, [buildings, turfs, cursorLngLat]);
 
-  // Per-point sizes — sqrt-scaled relative to a fixed reference
-  // (`SIZE_REF_DOORS = 10`). Buildings at or below the reference
-  // stay at scale 1 (the zoom-driven base size); a 40-door building
-  // is 2× radius, 90-door is 3×. Absolute scale (no median-based
-  // normalization) so a 100-door tower looks the same regardless of
-  // what else is on screen — the goal is flagging giant buildings,
-  // not relative comparison. Returns null when the toggle is off,
-  // which makes the layer fall back to scale 1 across the board.
+  // Per-point sizes — sqrt-scaled relative to a fixed reference. Off
+  // returns null so the layer falls back to scale 1 across the board.
   const SIZE_REF_DOORS = 10;
   const pointSizes = useMemo(() => {
     if (!buildings || !sizeByDoors) return null;
@@ -409,16 +295,16 @@ function CutterPage() {
   }, [buildings, sizeByDoors]);
 
   const removeTurf = (id: string) => {
-    setTurfs((ts) => ts.filter((t) => t.id !== id));
+    setTurfs((ts) => {
+      const next = ts.filter((t) => t.id !== id);
+      save(next);
+      return next;
+    });
     setSelectedTurfId((s) => (s === id ? null : s));
   };
 
-  // Document-level deselect-on-outside-click. The map's own click
-  // handler (in TurfDrawer) covers clicks landing on the map; the
-  // row's own onClick covers clicks on a turf in the sidebar.
-  // Anything else — empty space below the list, the header,
-  // outside the editor — deselects, so users have a way to "step
-  // out" of a selection without an explicit deselect button.
+  // Document-level deselect-on-outside-click. Map and rows handle their
+  // own clicks; this catches everything else.
   const mapAreaRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selectedTurfId) return;
@@ -437,8 +323,14 @@ function CutterPage() {
     void navigate({ to: "/campaigns" });
   };
 
+  // Map curtain holds until the heavy queries (boundaries + buildings)
+  // arrive, so the user sees a fully-formed map rather than empty zone
+  // polygons popping into points.
+  const mapLoading =
+    (!!campaign.segmentId && buildings === undefined) || (!!campaign.zoneGroupId && !boundaryFC);
+
   return (
-    <div>
+    <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
       <div className="mb-4 flex h-8 items-center justify-between">
         <div className="flex items-center gap-3">
           <Button variant="outline" size="icon" onClick={onBack} aria-label="Back to campaign">
@@ -450,7 +342,6 @@ function CutterPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* Autocut is still a stub. */}
           <Button variant="outline" disabled>
             <Sparkles />
             Autocut
@@ -476,9 +367,7 @@ function CutterPage() {
             selectedTurfId={selectedTurfId}
             onSelect={setSelectedTurfId}
             onRemove={removeTurf}
-            // Gated on `firstReady` so the placeholder doesn't
-            // flash in before the curtain lifts on first load.
-            emptyMessage={firstReady ? "Click the map to draw a turf" : undefined}
+            emptyMessage="Click the map to draw a turf"
           />
         </div>
         <div ref={mapAreaRef} className="col-span-3 relative h-full">
@@ -489,7 +378,7 @@ function CutterPage() {
               pointColors={pointColors}
               pointSizes={pointSizes}
               fitBounds={fitBounds}
-              loading={!firstReady}
+              loading={mapLoading}
               cornerControls={
                 <label className="flex items-center gap-3 px-3 py-3 -mt-3">
                   <Switch checked={sizeByDoors} onCheckedChange={setSizeByDoors} />
@@ -503,6 +392,7 @@ function CutterPage() {
               selectedTurfId={selectedTurfId}
               setSelectedTurfId={setSelectedTurfId}
               onCursorChange={setCursorLngLat}
+              onCommit={save}
             />
           </MapProvider>
         </div>
@@ -521,6 +411,7 @@ function CutterPage() {
               variant="destructive"
               onClick={() => {
                 setTurfs([]);
+                save([]);
                 setSelectedTurfId(null);
                 setClearOpen(false);
               }}
@@ -534,8 +425,8 @@ function CutterPage() {
       <Dialog
         open={publishOpen}
         onOpenChange={(next) => {
-          // Block close-while-pending so a click-outside doesn't
-          // strand the user wondering whether the publish landed.
+          // Block close-while-pending so click-outside doesn't strand the
+          // user wondering whether the publish landed.
           if (publishMutation.isPending) return;
           setPublishOpen(next);
           if (!next) publishMutation.reset();
@@ -580,78 +471,4 @@ function CutterPage() {
       </Dialog>
     </div>
   );
-}
-
-// Standard ray-casting point-in-polygon test in lng/lat space.
-// Used to count buildings inside each turf's polygon (turf bbox is
-// small enough that planar testing is fine — no projection
-// distortion to worry about). Inlined to avoid a
-// `@turf/boolean-point-in-polygon` dep for ten lines.
-function pointInPolygon(point: [number, number], polygon: Array<[number, number]>): boolean {
-  const [x, y] = point;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i]!;
-    const [xj, yj] = polygon[j]!;
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-// Convert the cutter's open-ring vertex list `[[lng,lat],...]` to a
-// GeoJSON Polygon (closed ring; first === last). Drafts and
-// published turfs both store polygons in this canonical form.
-function verticesToPolygon(vertices: Array<[number, number]>): {
-  type: "Polygon";
-  coordinates: number[][][];
-} {
-  const ring: number[][] = vertices.map((v) => [v[0], v[1]]);
-  const first = ring[0];
-  const last = ring[ring.length - 1];
-  if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
-    ring.push([first[0]!, first[1]!]);
-  }
-  return { type: "Polygon", coordinates: [ring] };
-}
-
-// Inverse of `verticesToPolygon` — strip the closing duplicate so
-// the in-memory cutter shape matches what the drawer expects.
-function polygonToVertices(polygon: {
-  type: "Polygon";
-  coordinates: number[][][];
-}): Array<[number, number]> {
-  const ring = polygon.coordinates[0] ?? [];
-  const open = ring.slice(0, -1);
-  // Defensive: if the ring wasn't closed, slice(-1) drops a real
-  // vertex. Detect by checking first vs last; if equal, drop. If
-  // not, keep the full ring.
-  if (ring.length >= 2) {
-    const first = ring[0]!;
-    const last = ring[ring.length - 1]!;
-    if (first[0] === last[0] && first[1] === last[1]) {
-      return open.map((p) => [p[0]!, p[1]!] as [number, number]);
-    }
-  }
-  return ring.map((p) => [p[0]!, p[1]!] as [number, number]);
-}
-
-// "#rrggbb" or "#rgb" → [r, g, b] in 0..255. Used to convert the
-// categorical-palette hex strings into bytes for the points layer's
-// per-point color VBO.
-function parseHexRgb(css: string): [number, number, number] {
-  let hex = css.replace(/^#/, "");
-  if (hex.length === 3) {
-    hex = hex
-      .split("")
-      .map((c) => c + c)
-      .join("");
-  }
-  if (hex.length !== 6) return [0, 0, 0];
-  return [
-    parseInt(hex.slice(0, 2), 16),
-    parseInt(hex.slice(2, 4), 16),
-    parseInt(hex.slice(4, 6), 16),
-  ];
 }

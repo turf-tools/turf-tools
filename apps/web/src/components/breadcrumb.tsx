@@ -19,7 +19,13 @@ export function Breadcrumb({ children }: BreadcrumbProps) {
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
       <span className="font-bold text-foreground italic">Field Tools</span>
-      {org ? <Segment label={org.name} /> : null}
+      {/* Fades in when the org query resolves; only fires on mount. */}
+      {org ? (
+        <div className="flex items-center gap-2 animate-in fade-in duration-100">
+          <Separator />
+          <span className="italic">{org.name}</span>
+        </div>
+      ) : null}
       {children ? (
         <>
           <Separator />
@@ -27,15 +33,6 @@ export function Breadcrumb({ children }: BreadcrumbProps) {
         </>
       ) : null}
     </div>
-  );
-}
-
-function Segment({ label }: { label: string }) {
-  return (
-    <>
-      <Separator />
-      <span className="italic">{label}</span>
-    </>
   );
 }
 

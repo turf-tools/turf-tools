@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import {
   Eraser,
   ChevronDown,
@@ -33,94 +33,97 @@ import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
+import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
+import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
+type ZonesSearch = {
+  groupId?: string;
+};
+
+function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export const Route = createFileRoute("/zones/")({
+  validateSearch: (s): ZonesSearch => ({
+    groupId: typeof s.groupId === "string" ? s.groupId : undefined,
+  }),
+  loaderDeps: ({ search }) => ({ groupId: search.groupId }),
+  loader: async ({ context: { queryClient }, deps }) => {
+    const groups = await queryClient.fetchQuery(zoneGroupsQuery());
+    const fallbackId = sortByName(groups)[0]?.zoneGroupId;
+
+    const idInUrl = deps.groupId;
+    const exists = idInUrl ? groups.some((g) => g.zoneGroupId === idInUrl) : false;
+
+    if (!idInUrl || !exists) {
+      if (fallbackId) {
+        throw redirect({ to: "/zones", search: { groupId: fallbackId } });
+      }
+      return;
+    }
+
+    await queryClient.fetchQuery(zonesQuery(idInUrl));
+  },
   component: ZonesIndex,
 });
 
 function ZonesIndex() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { groupId: activeGroupId = null } = Route.useSearch();
+  const shouldFade = useFadeOnce("/zones");
 
-  const { data: zoneGroups } = useQuery({
-    queryKey: ["zoneGroups"],
-    queryFn: () => client.zoneGroups.list(),
-    placeholderData: keepPreviousData,
+  const setActiveGroupId = (id: string | null) => {
+    void navigate({ search: { groupId: id ?? undefined } });
+  };
+
+  const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
+  const sortedZoneGroups = useMemo(() => sortByName(zoneGroups), [zoneGroups]);
+
+  const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
+  const groupDropdown = useDeferredRadioDropdown({
+    onCommit: (v) => setActiveGroupId(v || null),
   });
 
-  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
-  const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
-  const groupDropdown = useDeferredRadioDropdown({ onCommit: setActiveGroupId });
-
-  // Segment-counts overlay state. The user toggles a switch to enable
-  // count shading on the boundary fill, and picks which segment's
-  // counts to show. Both pieces of state stick around when the
-  // toggle is off — flicking it back on resumes with the same
-  // segment selected.
+  // Segment-counts overlay. State sticks across toggle off/on so flicking
+  // back resumes with the same segment.
   const [showSegmentCounts, setShowSegmentCounts] = useState(false);
   const [overlaySegmentId, setOverlaySegmentId] = useState<string | null>(null);
   const overlaySegmentDropdown = useDeferredRadioDropdown({
     onCommit: (v) => setOverlaySegmentId(v || null),
   });
 
-  // Key-info popup. Tracks the polygon currently under the cursor —
-  // populated by `onPolygonHover` from the Map and cleared when the
-  // cursor leaves the boundary layer. Lets users inspect a key's
-  // counts without consuming a click (clicks are reserved for zone
-  // selection / shift-click for membership editing).
-  //
-  // `displayedHoverKey` lags `hoveredKey` so the inset can fade out
-  // gracefully — without it, the content unmounts the instant the
-  // cursor leaves the layer and the fade has nothing to fade.
+  // `displayedHoverKey` lags `hoveredKey` so the popup's fade-out has
+  // content to fade.
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [displayedHoverKey, setDisplayedHoverKey] = useState<string | null>(null);
   useEffect(() => {
     if (hoveredKey) setDisplayedHoverKey(hoveredKey);
   }, [hoveredKey]);
 
-  useEffect(() => {
-    if (!activeGroupId && zoneGroups && zoneGroups.length > 0) {
-      setActiveGroupId(zoneGroups[0].zoneGroupId);
-    }
-  }, [zoneGroups, activeGroupId]);
-
-  const activeGroup = zoneGroups?.find((g) => g.zoneGroupId === activeGroupId) ?? null;
+  const activeGroup = zoneGroups.find((g) => g.zoneGroupId === activeGroupId) ?? null;
 
   const { data: zones } = useQuery({
-    queryKey: ["zones", activeGroupId],
-    queryFn: () => client.zones.list({ zoneGroupId: activeGroupId! }),
+    ...zonesQuery(activeGroupId ?? ""),
     enabled: !!activeGroupId,
-    placeholderData: keepPreviousData,
   });
 
-  // Segments dropdown for the overlay. Reuses the same list payload
-  // the segments editor displays.
-  const { data: segments } = useQuery({
-    queryKey: ["segments"],
-    queryFn: () => client.segments.list(),
-    placeholderData: keepPreviousData,
-  });
+  const { data: segments } = useQuery(segmentsListQuery());
 
-  // Pull the overlay segment's full row (with `query`) when one is
-  // selected. The list payload omits the query JSON for size; we need
-  // the full thing to forward into queryCountsByKey.
+  // Full row for the segment — list payload omits `query` for size.
   const { data: overlaySegmentDetail } = useQuery({
-    queryKey: ["segment", overlaySegmentId],
-    queryFn: () => client.segments.getById({ segmentId: overlaySegmentId! }),
+    ...segmentDetailQuery(overlaySegmentId ?? ""),
     enabled: !!overlaySegmentId,
-    placeholderData: keepPreviousData,
   });
 
-  // Per-key counts for the overlay segment, grouped by the active
-  // zone group's key column (e.g. ad_ed for nyc_eds). Fires only when
-  // the overlay is on, the segment detail has loaded for the current
-  // selection, and a zone group is active. Cached on the effective
-  // key — segment query JSON plus key group name — so revisits are
-  // free and unrelated re-renders don't refetch.
+  // Key-determined: same query + keyGroup always yields the same result.
   const overlayQuery = overlaySegmentDetail?.query ?? null;
   const overlayQueryKey = overlayQuery ? JSON.stringify(overlayQuery) : null;
   const { data: overlayCounts } = useQuery({
@@ -135,10 +138,10 @@ function ZonesIndex() {
       !!overlaySegmentDetail &&
       overlaySegmentDetail.segmentId === overlaySegmentId &&
       !!activeGroup,
-    placeholderData: keepPreviousData,
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+  // Reset zone selection on group change.
   useEffect(() => {
     setActiveZoneId(null);
   }, [activeGroupId]);
@@ -157,17 +160,11 @@ function ZonesIndex() {
       console.error("zones.updateKeys failed", e);
       if (ctx?.previous) queryClient.setQueryData(["zones", activeGroupId], ctx.previous);
     },
-    onSuccess: () => {
-      // Campaign editor's mapData snapshot is keyed by zoneGroupId
-      // (no zones-version), so a key reassignment here doesn't
-      // naturally bust its cache. Invalidate so the next visit to
-      // /campaigns sees the new key membership.
-      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
-    },
-    // No onSettled invalidate of zones list: optimistic write is a
-    // complete mirror of what the server stores, so a refetch would
-    // just re-fetch identical data and flash the global indicator
-    // on every polygon click.
+    // No invalidate of zones list: optimistic write is a complete mirror,
+    // so refetching would just flash the spinner on every polygon click.
+    // Cross-page propagation is automatic — campaign editor's points/counts
+    // queries key on the resolved zone keys, so a key change here busts
+    // their cache via key change rather than explicit invalidation.
   });
 
   const renameGroup = useDialogMutation({
@@ -178,14 +175,8 @@ function ZonesIndex() {
   const createGroup = useDialogMutation({
     mutationFn: (input: { name: string; keyGroup: string }) => client.zoneGroups.create(input),
     onSuccess: (created) => {
-      // Optimistically inject the new group into the cache *before*
-      // flipping `activeGroupId`, so `activeGroup` resolves
-      // immediately on the next render. Without this, there's a
-      // window where `activeGroupId` points at a row not yet in the
-      // list — `activeGroup` falls back to `null`, `boundariesUrl`
-      // goes undefined, the boundaries Source unmounts, and the
-      // remount races with feature-state cleanup in a way that
-      // crashes MapLibre's render loop.
+      // Inject before navigating so the loader's URL-validates-against-list
+      // check sees the new group instead of redirecting back to the survivor.
       queryClient.setQueryData<typeof zoneGroups>(["zoneGroups"], (old) =>
         old ? [...old, created] : [created],
       );
@@ -206,18 +197,15 @@ function ZonesIndex() {
     mutationFn: (zoneGroupId: string) => client.zones.removeAllInGroup({ zoneGroupId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
-      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
     },
   });
 
   const deleteGroup = useDialogMutation({
     mutationFn: (zoneGroupId: string) => client.zoneGroups.remove({ zoneGroupId }),
-    onSuccess: (_res, deletedId) => {
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
-      // Pick another group (first surviving) so the editor doesn't
-      // freeze on a dangling id.
-      const next = zoneGroups?.find((g) => g.zoneGroupId !== deletedId);
-      setActiveGroupId(next?.zoneGroupId ?? null);
+      // Loader picks the alphabetical-first survivor.
+      setActiveGroupId(null);
       setActiveZoneId(null);
     },
   });
@@ -226,7 +214,6 @@ function ZonesIndex() {
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zones.create(input),
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
-      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
       setActiveZoneId(created.zoneId);
     },
     onError: (e) => console.error("zones.create failed", e),
@@ -246,20 +233,14 @@ function ZonesIndex() {
       console.error("zones.rename failed", e);
       if (ctx?.previous) queryClient.setQueryData(["zones", activeGroupId], ctx.previous);
     },
-    onSuccess: () => {
-      // The campaign editor's click-zone inset shows the zone name,
-      // so a rename here needs to invalidate its cached snapshot.
-      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
-    },
-    // No onSettled invalidate of zones list: same reasoning as
-    // updateKeysMutation.
+    // No invalidate: optimistic update on ["zones", id] propagates to all
+    // consumers (campaign editor reads the same cache slot).
   });
 
   const removeZoneMutation = useMutation({
     mutationFn: (zoneId: string) => client.zones.remove({ zoneId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["zones", activeGroupId] });
-      void queryClient.invalidateQueries({ queryKey: ["campaign-map-data"] });
     },
     onError: (e) => console.error("zones.remove failed", e),
   });
@@ -274,29 +255,10 @@ function ZonesIndex() {
     renameZoneMutation.mutate({ zoneId, name: next });
   };
 
-  // Per-key fill color. Two modes:
-  //
-  //  1. No overlay → each zoned key gets its zone's hue. Keys not in
-  //     a zone fall through to the map's default unassigned style.
-  //
-  //  2. Overlay on → every key with a count gets a YlOrRd shade
-  //     (pale yellow = low, deep red = high). Zone tints are dropped
-  //     entirely; the heatmap stands alone. Square-root scaling on
-  //     the count softens the long tail.
+  // Two coloring modes: no overlay → zone hue per key; overlay on → YlOrRd
+  // heatmap on doors with sqrt scaling.
   const overlayActive = showSegmentCounts && !!overlayCounts;
 
-  // First-load curtain over the map. Stays opaque until zoneGroups
-  // and (if a group is active) its zones have loaded. The Map
-  // component owns the actual curtain and its own basemap-readiness
-  // gating; we just tell it whether our data is ready yet.
-  const [firstReady, setFirstReady] = useState(false);
-  useEffect(() => {
-    if (firstReady) return;
-    const ready = !!zoneGroups && (!activeGroupId || !!zones);
-    if (ready) setFirstReady(true);
-  }, [firstReady, zoneGroups, activeGroupId, zones]);
-  // Counts shape: per key, both door and people totals. Heatmap and
-  // zone list read .doors (the canvassing unit); popup shows both.
   type KeyCount = { doors: number; people: number };
   const overlayCountsByKey = overlayActive
     ? (overlayCounts.counts as Record<string, KeyCount>)
@@ -321,10 +283,7 @@ function ZonesIndex() {
     return out;
   }, [zones, overlayCountsByKey]);
 
-  // Keys to highlight with a thicker outline — every key in the
-  // selected zone. The highlight is the user's visual handle on
-  // what they last picked. Hover doesn't enter this state: the
-  // cursor itself is enough hover affordance.
+  // Keys with a thicker outline — every key in the selected zone.
   const activeKeys = useMemo(() => {
     if (activeZoneId && zones) {
       return zones.find((z) => z.zoneId === activeZoneId)?.keys;
@@ -332,12 +291,8 @@ function ZonesIndex() {
     return undefined;
   }, [activeZoneId, zones]);
 
-  // Per-zone rollup of the segment counts. When overlay is active,
-  // each zone's sidebar swatch+pill uses these (YlOrRd shade for the
-  // zone's total, formatted total instead of key count) so the
-  // sidebar reads as a sorted summary of the heatmap. Computed in TS
-  // by summing the per-key counts across each zone's keys; no extra
-  // round trip.
+  // Per-zone rollup of segment counts — sums per-key counts across each
+  // zone's keys, no extra round trip. Drives the sidebar's pills/colors.
   const zoneOverlay = useMemo(() => {
     if (!overlayCountsByKey || !zones) return null;
     const doors: Record<string, number> = {};
@@ -368,9 +323,7 @@ function ZonesIndex() {
   const handlePolygonClick = (key: string, opts: { shiftKey: boolean }) => {
     if (!zones) return;
     if (opts.shiftKey) {
-      // Shift-click toggles the key's membership in the active zone
-      // (the assignment gesture). No-op if no zone is active —
-      // there's nothing to assign to.
+      // Shift-click toggles the key's membership in the active zone.
       if (!activeZoneId) return;
       const active = zones.find((z) => z.zoneId === activeZoneId);
       if (!active) return;
@@ -383,9 +336,8 @@ function ZonesIndex() {
         return;
       }
 
-      // A key belongs to at most one zone in the group. If another
-      // zone already owns it, strip it from there before adding to
-      // the active zone — both mutations fire optimistically.
+      // A key belongs to at most one zone — strip from the previous owner
+      // before adding to the active zone.
       const previousOwner = zones.find((z) => z.zoneId !== activeZoneId && z.keys.includes(key));
       if (previousOwner) {
         updateKeysMutation.mutate({
@@ -399,27 +351,17 @@ function ZonesIndex() {
       });
       return;
     }
-    // Plain click → activate the zone that contains this key (or
-    // clear active if the key is in no zone). Symmetric with
-    // clicking a row in the zone list.
+    // Plain click activates the zone that contains the key (or clears).
     const owner = zones.find((z) => z.keys.includes(key));
     setActiveZoneId(owner?.zoneId ?? null);
   };
 
-  // ---- Modal state ----
-  // The five dialog mutations (createGroup, renameGroup, cloneGroup,
-  // clearZones, deleteGroup) own their own open flags via
-  // `useDialogMutation`; this local state is only for the data Delete
-  // needs to pre-fetch before opening (campaign-usage count).
   const [deleteCampaignCount, setDeleteCampaignCount] = useState(0);
 
-  // Click anywhere outside the map clears both the active zone and
-  // any clicked-key selection. Zone-button clicks individually
-  // stopPropagation on mousedown (see their `onMouseDown` below) so
-  // toggling between zones doesn't flash through a no-selection
-  // frame. Empty space in the sidebar still deselects, matching the
-  // user's intuition. Skipped while any modal/inline-rename is open
-  // so we don't clobber state behind a dialog.
+  // Click outside the map clears the active zone. Suppressed while any
+  // modal/inline-rename is open and while a dropdown is open — dropdowns
+  // portal their content outside the map wrapper, so a click on an item
+  // would otherwise register as outside-the-map.
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!activeZoneId) return;
@@ -430,10 +372,6 @@ function ZonesIndex() {
       renameGroup.isOpen ||
       deleteGroup.isOpen ||
       renamingZoneId ||
-      // Dropdowns render their content in a portal outside the map
-      // wrapper. Without this gate, clicking an item would register
-      // as "outside the map" and clear the selection before the
-      // dropdown's own onValueChange runs.
       groupDropdown.open ||
       overlaySegmentDropdown.open
     ) {
@@ -443,9 +381,6 @@ function ZonesIndex() {
       const target = e.target as Node | null;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;
-      // Zone-row clicks fall through to the deselect: the brief
-      // no-selection frame between mousedown and click reads as
-      // click feedback (the polygon outline blinks on every pick).
       setActiveZoneId(null);
     };
     document.addEventListener("mousedown", handler);
@@ -464,283 +399,274 @@ function ZonesIndex() {
 
   return (
     <>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Zone Editor</h1>
-        <div className="flex items-center gap-2">
-          <DropdownMenu {...groupDropdown.menu}>
-            <DropdownMenuTrigger render={<Button variant="outline" />}>
-              <List className="size-3.5" />
-              <span className={activeGroup ? undefined : "invisible"}>
-                {activeGroup?.name ?? "—"}
-              </span>
-              <ChevronDown className="size-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuRadioGroup {...groupDropdown.radio} value={activeGroupId ?? ""}>
-                {zoneGroups?.map((g) => (
-                  <DropdownMenuRadioItem key={g.zoneGroupId} value={g.zoneGroupId}>
-                    {g.name}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="outline" onClick={createGroup.open}>
-            <Plus />
-            New group
-          </Button>
-          <Button variant="outline" onClick={renameGroup.open}>
-            <Pencil />
-            Rename
-          </Button>
-          <Button variant="outline" onClick={cloneGroup.open}>
-            <Copy />
-            Duplicate
-          </Button>
-          <Button variant="outline" onClick={clearZones.open}>
-            <Eraser />
-            Clear
-          </Button>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              if (!activeGroupId) return;
-              // Fetch first, open after — avoids a "Checking…" flash in
-              // the dialog and keeps the count fresh per click.
-              const { count } = await queryClient.fetchQuery({
-                queryKey: ["zoneGroups", "countCampaigns", activeGroupId],
-                queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
-                staleTime: 0,
-              });
-              setDeleteCampaignCount(count);
-              deleteGroup.open();
-            }}
-            disabled={!activeGroup}
-          >
-            <Trash2 />
-            Delete
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4 h-[calc(100vh-9.75rem)]">
-        <div className="col-span-1 flex flex-col gap-2 overflow-y-auto">
-          {zones?.map((zone, idx) => {
-            const isActive = zone.zoneId === activeZoneId;
-            const isRenaming = renamingZoneId === zone.zoneId;
-            return (
-              <div
-                key={zone.zoneId}
-                role="button"
-                tabIndex={0}
-                onClick={() => {
-                  if (isRenaming) return;
-                  setActiveZoneId(zone.zoneId);
-                }}
-                onKeyDown={(e) => {
-                  if (isRenaming) return;
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setActiveZoneId(zone.zoneId);
-                  }
-                }}
-                className={cn(
-                  "flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
-                  isActive ? "border-foreground" : "border-border hover:border-muted-foreground",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className="mr-1 size-3 shrink-0 rounded-sm border border-border"
-                  style={{
-                    backgroundColor: zoneOverlay ? zoneOverlay.colors[zone.zoneId] : colorFor(idx),
-                  }}
-                />
-                {isRenaming ? (
-                  <Input
-                    autoFocus
-                    value={renameDraft}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onBlur={() => commitRename(zone.zoneId, zone.name)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        commitRename(zone.zoneId, zone.name);
-                      } else if (e.key === "Escape") {
-                        e.preventDefault();
-                        setRenamingZoneId(null);
-                      }
-                    }}
-                    className="h-7 flex-1 px-2 text-sm"
-                  />
-                ) : (
-                  <span
-                    className="flex-1 truncate text-sm select-none"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      setRenameDraft(zone.name);
-                      setRenamingZoneId(zone.zoneId);
-                    }}
-                  >
-                    {zone.name}
-                  </span>
-                )}
-                {zoneOverlay ? (
-                  <>
-                    <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                      <DoorClosed className="size-3.5 text-foreground" />
-                      {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
-                    </Pill>
-                    <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                      <UserRound className="size-3.5 text-foreground" />
-                      {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
-                    </Pill>
-                  </>
-                ) : (
-                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                    <Diamond className="size-3.5 text-foreground" />
-                    {zone.keys.length}
-                  </Pill>
-                )}
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="-ml-[1px]"
-                  aria-label="Delete zone"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (activeZoneId === zone.zoneId) setActiveZoneId(null);
-                    removeZoneMutation.mutate(zone.zoneId);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            );
-          })}
-          {activeGroupId && zones ? (
-            <button
-              type="button"
-              onClick={() =>
-                createZoneMutation.mutate({
-                  zoneGroupId: activeGroupId,
-                  name: `Zone ${zones.length + 1}`,
-                })
-              }
-              className={cn(
-                "flex items-center justify-between gap-2",
-                "rounded-md border border-border bg-card px-3 py-2 text-left",
-                "text-muted-foreground hover:border-muted-foreground hover:text-foreground",
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <Plus className="size-3.5" />
-                <span className="text-sm">New zone</span>
-              </div>
-            </button>
-          ) : null}
-        </div>
-        <div ref={mapWrapperRef} className="relative col-span-2 h-full">
-          <Map
-            className="h-full"
-            boundariesUrl={
-              activeGroup
-                ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
-                : undefined
-            }
-            coloringByKey={coloringByKey}
-            coloredFillOpacity={0.8}
-            activeKeys={activeKeys}
-            onPolygonClick={handlePolygonClick}
-            onPolygonHover={setHoveredKey}
-            onBackgroundClick={() => setActiveZoneId(null)}
-            loading={!firstReady}
-          />
-
-          {/* Bottom-left: segment-counts overlay control. */}
-          <div
-            className={cn(
-              "absolute bottom-3 left-3 z-10 flex w-64 flex-col gap-2.5",
-              "rounded-md border border-border bg-card/95 px-3 py-3 shadow-sm backdrop-blur",
-            )}
-          >
-            <label className="flex cursor-pointer items-center gap-2 text-sm">
-              <Switch
-                checked={showSegmentCounts}
-                onCheckedChange={(checked) => setShowSegmentCounts(checked)}
-              />
-              <span>Show segment counts</span>
-            </label>
-            <DropdownMenu {...overlaySegmentDropdown.menu}>
-              <DropdownMenuTrigger
-                disabled={!showSegmentCounts}
-                className={cn(
-                  "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
-                  "enabled:hover:border-muted-foreground",
-                )}
-              >
-                <span className="truncate">
-                  {segments?.find((s) => s.segmentId === overlaySegmentId)?.name ??
-                    "Pick a segment…"}
+      <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+        <div className="mb-4 flex h-8 items-center justify-between">
+          <h1 className="text-xl font-extrabold tracking-wide italic">Zone Editor</h1>
+          <div className="flex items-center gap-2">
+            <DropdownMenu {...groupDropdown.menu}>
+              <DropdownMenuTrigger render={<Button variant="outline" />}>
+                <List className="size-3.5" />
+                <span className={activeGroup ? undefined : "invisible"}>
+                  {activeGroup?.name ?? "—"}
                 </span>
-                <ChevronDown className="size-3.5 shrink-0" />
+                <ChevronDown className="size-3.5" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuRadioGroup
-                  {...overlaySegmentDropdown.radio}
-                  value={overlaySegmentId ?? ""}
-                >
-                  {segments?.map((s) => (
-                    <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
-                      {s.name}
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuRadioGroup {...groupDropdown.radio} value={activeGroupId ?? ""}>
+                  {sortedZoneGroups.map((g) => (
+                    <DropdownMenuRadioItem key={g.zoneGroupId} value={g.zoneGroupId}>
+                      {g.name}
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Button variant="outline" onClick={createGroup.open}>
+              <Plus />
+              New group
+            </Button>
+            <Button variant="outline" onClick={renameGroup.open}>
+              <Pencil />
+              Rename
+            </Button>
+            <Button variant="outline" onClick={cloneGroup.open}>
+              <Copy />
+              Duplicate
+            </Button>
+            <Button variant="outline" onClick={clearZones.open}>
+              <Eraser />
+              Clear
+            </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!activeGroupId) return;
+                // Fetch before opening so the dialog has the count up front.
+                const { count } = await queryClient.fetchQuery({
+                  queryKey: ["zoneGroups", "countCampaigns", activeGroupId],
+                  queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
+                  staleTime: 0,
+                });
+                setDeleteCampaignCount(count);
+                deleteGroup.open();
+              }}
+              disabled={!activeGroup}
+            >
+              <Trash2 />
+              Delete
+            </Button>
           </div>
+        </div>
 
-          {/* Top-right: info popup. Two modes — zone-selected shows
-              the zone summary, no-zone-selected + key-clicked shows
-              the single key. Auto-dismissed via the document mousedown
-              handler (clicks outside the map list) or the basemap
-              click (see onBackgroundClick). */}
-          {/* Hover-driven key inspector. Active-zone info lives in
-              the zone list (sidebar), so the inset is purely the
-              "what's this polygon" affordance. Stays mounted with
-              opacity transitioned by hover state — so a quick drag
-              between polygons reads as content swap rather than
-              flicker. `displayedHoverKey` lags so the fade-out has
-              content to fade. */}
-          {displayedHoverKey ? (
+        <div className="grid grid-cols-3 gap-4 h-[calc(100vh-9.75rem)]">
+          <div className="col-span-1 flex flex-col gap-2 overflow-y-auto">
+            {zones?.map((zone, idx) => {
+              const isActive = zone.zoneId === activeZoneId;
+              const isRenaming = renamingZoneId === zone.zoneId;
+              return (
+                <div
+                  key={zone.zoneId}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    if (isRenaming) return;
+                    setActiveZoneId(zone.zoneId);
+                  }}
+                  onKeyDown={(e) => {
+                    if (isRenaming) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setActiveZoneId(zone.zoneId);
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+                    isActive ? "border-foreground" : "border-border hover:border-muted-foreground",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className="mr-1 size-3 shrink-0 rounded-sm border border-border"
+                    style={{
+                      backgroundColor: zoneOverlay
+                        ? zoneOverlay.colors[zone.zoneId]
+                        : colorFor(idx),
+                    }}
+                  />
+                  {isRenaming ? (
+                    <Input
+                      autoFocus
+                      value={renameDraft}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => commitRename(zone.zoneId, zone.name)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRename(zone.zoneId, zone.name);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setRenamingZoneId(null);
+                        }
+                      }}
+                      className="h-7 flex-1 px-2 text-sm"
+                    />
+                  ) : (
+                    <span
+                      className="flex-1 truncate text-sm select-none"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        setRenameDraft(zone.name);
+                        setRenamingZoneId(zone.zoneId);
+                      }}
+                    >
+                      {zone.name}
+                    </span>
+                  )}
+                  {zoneOverlay ? (
+                    <>
+                      <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                        <DoorClosed className="size-3.5 text-foreground" />
+                        {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
+                      </Pill>
+                      <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                        <UserRound className="size-3.5 text-foreground" />
+                        {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
+                      </Pill>
+                    </>
+                  ) : (
+                    <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                      <Diamond className="size-3.5 text-foreground" />
+                      {zone.keys.length}
+                    </Pill>
+                  )}
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className="-ml-[1px]"
+                    aria-label="Delete zone"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (activeZoneId === zone.zoneId) setActiveZoneId(null);
+                      removeZoneMutation.mutate(zone.zoneId);
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              );
+            })}
+            {activeGroupId && zones ? (
+              <button
+                type="button"
+                onClick={() =>
+                  createZoneMutation.mutate({
+                    zoneGroupId: activeGroupId,
+                    name: `Zone ${zones.length + 1}`,
+                  })
+                }
+                className={cn(
+                  "flex items-center justify-between gap-2",
+                  "rounded-md border border-border bg-card px-3 py-2 text-left",
+                  "text-muted-foreground hover:border-muted-foreground hover:text-foreground",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Plus className="size-3.5" />
+                  <span className="text-sm">New zone</span>
+                </div>
+              </button>
+            ) : null}
+          </div>
+          <div ref={mapWrapperRef} className="relative col-span-2 h-full">
+            <Map
+              className="h-full"
+              boundariesUrl={
+                activeGroup
+                  ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+                  : undefined
+              }
+              coloringByKey={coloringByKey}
+              coloredFillOpacity={0.8}
+              activeKeys={activeKeys}
+              onPolygonClick={handlePolygonClick}
+              onPolygonHover={setHoveredKey}
+              onBackgroundClick={() => setActiveZoneId(null)}
+            />
+
             <div
-              aria-hidden={!hoveredKey}
               className={cn(
-                "pointer-events-none absolute top-3 right-3 z-10",
-                "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
-                "transition-opacity duration-150",
-                hoveredKey ? "opacity-100" : "opacity-0",
+                "absolute bottom-3 left-3 z-10 flex w-64 flex-col gap-2.5",
+                "rounded-md border border-border bg-card/95 px-3 py-3 shadow-sm backdrop-blur",
               )}
             >
-              <div className="flex flex-col items-end gap-2">
-                <div className="font-mono">{displayedHoverKey}</div>
-                {overlayCountsByKey ? (
-                  <div className="flex justify-end gap-1.5">
-                    <Pill variant="number" className="!w-fit gap-1.5">
-                      <DoorClosed className="size-3.5 text-foreground" />
-                      {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
-                    </Pill>
-                    <Pill variant="number" className="!w-fit gap-1.5">
-                      <UserRound className="size-3.5 text-foreground" />
-                      {(overlayCountsByKey[displayedHoverKey]?.people ?? 0).toLocaleString()}
-                    </Pill>
-                  </div>
-                ) : null}
-              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <Switch
+                  checked={showSegmentCounts}
+                  onCheckedChange={(checked) => setShowSegmentCounts(checked)}
+                />
+                <span>Show segment counts</span>
+              </label>
+              <DropdownMenu {...overlaySegmentDropdown.menu}>
+                <DropdownMenuTrigger
+                  disabled={!showSegmentCounts}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                    "enabled:hover:border-muted-foreground",
+                  )}
+                >
+                  <span className="truncate">
+                    {segments?.find((s) => s.segmentId === overlaySegmentId)?.name ??
+                      "Pick a segment…"}
+                  </span>
+                  <ChevronDown className="size-3.5 shrink-0" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuRadioGroup
+                    {...overlaySegmentDropdown.radio}
+                    value={overlaySegmentId ?? ""}
+                  >
+                    {segments?.map((s) => (
+                      <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
+                        {s.name}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-          ) : null}
+
+            {/* Hover-driven key inspector. Stays mounted, opacity-toggled,
+                so cursor drags between polygons read as content swap. */}
+            {displayedHoverKey ? (
+              <div
+                aria-hidden={!hoveredKey}
+                className={cn(
+                  "pointer-events-none absolute top-3 right-3 z-10",
+                  "rounded-md border border-border bg-card/95 px-3 py-2 text-right text-sm shadow-sm backdrop-blur",
+                  "transition-opacity duration-150",
+                  hoveredKey ? "opacity-100" : "opacity-0",
+                )}
+              >
+                <div className="flex flex-col items-end gap-2">
+                  <div className="font-mono">{displayedHoverKey}</div>
+                  {overlayCountsByKey ? (
+                    <div className="flex justify-end gap-1.5">
+                      <Pill variant="number" className="!w-fit gap-1.5">
+                        <DoorClosed className="size-3.5 text-foreground" />
+                        {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
+                      </Pill>
+                      <Pill variant="number" className="!w-fit gap-1.5">
+                        <UserRound className="size-3.5 text-foreground" />
+                        {(overlayCountsByKey[displayedHoverKey]?.people ?? 0).toLocaleString()}
+                      </Pill>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -808,8 +734,6 @@ function ZonesIndex() {
   );
 }
 
-// Inline error block for dialog action mutations. Renders nothing when
-// there's no error, so callers can drop it in unconditionally.
 function DialogError({ error }: { error: string | null }) {
   if (!error) return null;
   return (

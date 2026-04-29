@@ -20,10 +20,9 @@ export default defineConfig({
   plugins: isTest
     ? []
     : [
-        tanstackStart(),
-        // https://tanstack.com/start/latest/docs/framework/react/guide/hosting
+        tanstackStart({ spa: { enabled: true } }),
         nitro(),
-        // React's Vite plugin must come after Start's Vite plugin
+        // React's plugin must come after Start's.
         react(),
         tailwindcss(),
       ],

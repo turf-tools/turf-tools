@@ -243,7 +243,7 @@ export function Map({
     return () => {
       map.off("sourcedata", handler);
     };
-  }, [coloringByKey, boundariesUrl, isDark]);
+  }, [coloringByKey, boundariesUrl, isDark, mapReady]);
 
   useEffect(() => {
     if (!boundariesUrl) return;
@@ -273,7 +273,7 @@ export function Map({
     return () => {
       map.off("sourcedata", handler);
     };
-  }, [activeKeys, boundariesUrl, isDark]);
+  }, [activeKeys, boundariesUrl, isDark, mapReady]);
 
   // Mark the selected zone's perimeter feature with `selected: true`
   // so the line layer's paint expression bumps its weight + opacity.
@@ -307,7 +307,7 @@ export function Map({
     return () => {
       map.off("sourcedata", handler);
     };
-  }, [selectedZoneId, zonePerimeters, isDark]);
+  }, [selectedZoneId, zonePerimeters, isDark, mapReady]);
 
   // Switch to pointer only while the cursor is over a clickable polygon;
   // otherwise let MapLibre keep its default pan/grab cursor. Listening to
@@ -336,7 +336,7 @@ export function Map({
         map.off("mouseleave", layer, onLeave);
       }
     };
-  }, [onPolygonClick, onZoneClick]);
+  }, [onPolygonClick, onZoneClick, mapReady]);
 
   // Hover surface for the boundaries layer. Sets a `hover` feature-
   // state on the polygon under the cursor (read by the line layer's

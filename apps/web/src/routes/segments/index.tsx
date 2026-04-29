@@ -1,5 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Copy, List, Pencil, Plus, Trash2, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
@@ -19,9 +25,6 @@ import {
 } from "~/components/dropdown-menu";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
-import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
-import { useDialogMutation } from "~/lib/use-dialog-mutation";
-import { cn } from "~/lib/utils";
 import {
   type AgeRangeFilter,
   definitionFor,
@@ -34,126 +37,105 @@ import {
   type Query,
   type TextFilter,
 } from "~/lib/filters";
+import { queryPreviewQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
+import { useDialogMutation } from "~/lib/use-dialog-mutation";
+import { useFadeOnce } from "~/lib/use-fade-once";
+import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
+type SegmentsSearch = {
+  segmentId?: string;
+};
+
+// Sort segments alphabetically by name. Used by the dropdown and the
+// loader's "redirect to a segment" fallback so both pick consistently.
+function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export const Route = createFileRoute("/segments/")({
+  validateSearch: (s): SegmentsSearch => ({
+    segmentId: typeof s.segmentId === "string" ? s.segmentId : undefined,
+  }),
+  loaderDeps: ({ search }) => ({ segmentId: search.segmentId }),
+  loader: async ({ context: { queryClient }, deps }) => {
+    const segments = await queryClient.fetchQuery(segmentsListQuery());
+    const sorted = sortByName(segments);
+    const fallbackId = sorted[0]?.segmentId;
+
+    const idInUrl = deps.segmentId;
+    const exists = idInUrl ? segments.some((s) => s.segmentId === idInUrl) : false;
+
+    if (!idInUrl || !exists) {
+      if (fallbackId) {
+        throw redirect({ to: "/segments", search: { segmentId: fallbackId } });
+      }
+      // No segments at all — render with no active segment.
+      return;
+    }
+
+    await queryClient.fetchQuery(segmentDetailQuery(idInUrl));
+  },
   component: SegmentsIndex,
 });
 
 // Segment editor: dropdown to pick the active segment, filter rows on
 // the left, map on the right.
-//
-// Phase 1: leaf filters only, all AND'd. Phase 2 will bring composition
-// (OR / NOT / segmentRef) and a density visualization on the map.
-
 function SegmentsIndex() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { segmentId = null } = Route.useSearch();
+  const shouldFade = useFadeOnce("/segments");
 
-  const { data: segments } = useQuery({
-    queryKey: ["segments"],
-    queryFn: () => client.segments.list(),
-    placeholderData: keepPreviousData,
+  const setActiveSegmentId = (id: string | null) => {
+    void navigate({ search: { segmentId: id ?? undefined } });
+  };
+
+  const { data: segments } = useSuspenseQuery(segmentsListQuery());
+  const sortedSegments = useMemo(() => sortByName(segments), [segments]);
+
+  const segmentDropdown = useDeferredRadioDropdown({
+    onCommit: (id) => setActiveSegmentId(id || null),
   });
 
-  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const segmentDropdown = useDeferredRadioDropdown({ onCommit: setActiveSegmentId });
+  const activeSegment = segments.find((s) => s.segmentId === segmentId) ?? null;
 
-  // Default to the first segment once the list loads.
-  useEffect(() => {
-    if (!activeSegmentId && segments && segments.length > 0) {
-      setActiveSegmentId(segments[0].segmentId);
-    }
-  }, [segments, activeSegmentId]);
-
-  const activeSegment = segments?.find((s) => s.segmentId === activeSegmentId) ?? null;
-
-  // Pull the active segment's full row (with `query`) — list responses
-  // don't carry the query JSON to keep the dropdown payload small.
+  // Loader prefetched when `segmentId` is set, so this is a cache hit.
+  // `enabled: false` when no segment is active (empty state).
   const { data: activeSegmentDetail } = useQuery({
-    queryKey: ["segment", activeSegmentId],
-    queryFn: () => client.segments.getById({ segmentId: activeSegmentId! }),
-    enabled: !!activeSegmentId,
-    placeholderData: keepPreviousData,
+    ...segmentDetailQuery(segmentId ?? ""),
+    enabled: !!segmentId,
   });
 
-  // Read filters straight from the detail cache — no separate draft
-  // layer. Mutations update the cache optimistically (see
-  // updateQueryMutation below), so every commit is reflected on the
-  // next render without a hydration step. During a segment switch with
-  // `keepPreviousData`, the previous segment's filters render briefly
-  // while the new detail loads; the map/counts dim via `stale`, which
-  // reads as a "transitioning" state rather than a mismatch.
+  // Read filters straight from the detail cache — no separate draft layer.
+  // The optimistic mutation below writes to the same cache, so commits
+  // reflect on the next render without a hydration step.
   const filters = (activeSegmentDetail?.query as Query | undefined)?.filters ?? [];
 
-  // Preview keys on active filters only so adding/removing an empty
-  // filter doesn't trigger a refetch. One query fetches counts and
-  // points in parallel via Promise.all — `data` only updates when both
-  // resolve, so map and counts can never disagree.
+  // Preview keys on active filters only so adding/removing an empty filter
+  // doesn't trigger a refetch. One query fetches counts and points in
+  // parallel — `data` only updates when both resolve, so map and counts
+  // can never disagree.
   const effectiveQuery = useMemo<Query>(
     () => ({ filters: filters.filter(isActiveFilter) }),
     [filters],
   );
-  const effectiveKey = JSON.stringify(effectiveQuery);
+  // `placeholderData: keepPreviousData` + `isPlaceholderData` is what
+  // gives us "show stale data dimmed while the new key fetches" — the
+  // canonical signal for filter-commit transitions. Stays in-component
+  // (not in the loader) so this UX is preserved.
   const { data: preview, isPlaceholderData: stale } = useQuery({
-    queryKey: ["query-preview", effectiveKey],
-    queryFn: async () => {
-      const [counts, pointsBuffer] = await Promise.all([
-        client.segments.queryCounts({ query: effectiveQuery }),
-        (async () => {
-          const res = await fetch("/api/query-points", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: effectiveQuery }),
-          });
-          if (!res.ok) {
-            throw new Error(`query-points failed: ${res.status} ${await res.text()}`);
-          }
-          return new Float32Array(await res.arrayBuffer());
-        })(),
-      ]);
-      return { counts, pointsBuffer };
-    },
+    ...queryPreviewQuery(effectiveQuery),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
-    // Preview data is a pure function of `effectiveKey` (active filters).
-    // The key changes whenever filters change, so cached results for a
-    // given key can never be "stale" relative to that key — no need for
-    // background refetches on revisit.
-    staleTime: Infinity,
   });
-  // `isPlaceholderData` is the right "stale" signal: true only when
-  // we're showing the previous key's data while waiting for the
-  // current key's. `isFetching` would also flip true on cache-hit
-  // background refetches, which is misleading — the displayed data
-  // is already correct in that case.
   const counts = preview?.counts;
   const pointsBuffer = preview?.pointsBuffer;
 
-  // First-load curtain over the map + counts pane. Only covers the
-  // initial render — once the data has been ready once, the flag
-  // stays true and ordinary updates (segment switches, filter
-  // edits) flow through with their own stale signals. Avoids the
-  // mid-mount flash where the map paints empty before counts/points
-  // arrive. The Map component owns the actual curtain and its own
-  // basemap-readiness gating; we just tell it whether our data is
-  // ready yet.
-  //
-  // The predicate must wait for `segments` itself — checking only
-  // `activeSegmentId` would flip true during the brief window
-  // between the segments list arriving and the default-to-first
-  // effect setting an id, fading the curtain before preview kicks
-  // off. Empty-list case still flips immediately.
-  const [firstReady, setFirstReady] = useState(false);
-  useEffect(() => {
-    if (firstReady) return;
-    const ready = !!segments && (segments.length === 0 || (preview != null && !stale));
-    if (ready) setFirstReady(true);
-  }, [firstReady, segments, preview, stale]);
-
-  // Optimistic update: write into the ["segment", id] cache in
-  // onMutate, snapshot for rollback, restore on error. The cache is
-  // the single source of truth — `filters` above reads from it, so
-  // the UI updates instantly.
+  // Optimistic update: write into the ["segment", id] cache in onMutate,
+  // snapshot for rollback, restore on error. The cache is the single
+  // source of truth — `filters` above reads from it.
   const updateQueryMutation = useMutation({
     mutationFn: (input: { segmentId: string; query: Query }) =>
       client.segments.updateQuery({ segmentId: input.segmentId, query: input.query }),
@@ -187,26 +169,26 @@ function SegmentsIndex() {
 
   const cloneSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; newName: string }) => client.segments.clone(input),
-    onSuccess: ({ segmentId }) => {
+    onSuccess: ({ segmentId: cloneId }) => {
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
-      setActiveSegmentId(segmentId);
+      setActiveSegmentId(cloneId);
     },
   });
 
   const deleteSegment = useDialogMutation({
     mutationFn: (segmentId: string) => client.segments.remove({ segmentId }),
-    onSuccess: (_res, deletedId) => {
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
-      const next = segments?.find((s) => s.segmentId !== deletedId);
-      setActiveSegmentId(next?.segmentId ?? null);
+      // Clear the URL id; the loader picks the alphabetical-first survivor.
+      setActiveSegmentId(null);
     },
   });
 
   const [deleteCampaignCount, setDeleteCampaignCount] = useState(0);
 
   const commit = (nextFilters: Filter[]) => {
-    if (!activeSegmentId) return;
-    updateQueryMutation.mutate({ segmentId: activeSegmentId, query: { filters: nextFilters } });
+    if (!segmentId) return;
+    updateQueryMutation.mutate({ segmentId, query: { filters: nextFilters } });
   };
   const updateFilter = (idx: number, next: Filter) =>
     commit(filters.map((f, i) => (i === idx ? next : f)));
@@ -218,82 +200,87 @@ function SegmentsIndex() {
 
   return (
     <>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Segment Editor</h1>
-        <div className="flex items-center gap-2">
-          <DropdownMenu {...segmentDropdown.menu}>
-            <DropdownMenuTrigger render={<Button variant="outline" />}>
-              <List className="size-3.5" />
-              <span className={activeSegment ? undefined : "invisible"}>
-                {activeSegment?.name ?? "—"}
-              </span>
-              <ChevronDown className="size-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuRadioGroup {...segmentDropdown.radio} value={activeSegmentId ?? ""}>
-                {segments?.map((s) => (
-                  <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
-                    {s.name}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button variant="outline" onClick={createSegment.open}>
-            <Plus />
-            New segment
-          </Button>
-          <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
-            <Pencil />
-            Rename
-          </Button>
-          <Button variant="outline" onClick={cloneSegment.open} disabled={!activeSegment}>
-            <Copy />
-            Duplicate
-          </Button>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              if (!activeSegmentId) return;
-              const { count } = await queryClient.fetchQuery({
-                queryKey: ["segments", "countCampaigns", activeSegmentId],
-                queryFn: () => client.segments.countCampaigns({ segmentId: activeSegmentId }),
-                staleTime: 0,
-              });
-              setDeleteCampaignCount(count);
-              deleteSegment.open();
-            }}
-            disabled={!activeSegment}
-          >
-            <Trash2 />
-            Delete
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4 h-[calc(100vh-9.75rem)]">
-        <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
-          {activeSegmentDetail ? (
-            <>
-              {filters.map((filter, idx) => (
-                <FilterRow
-                  key={`${filter.key}-${idx}`}
-                  filter={filter}
-                  onChange={(next) => updateFilter(idx, next)}
-                  onRemove={() => removeFilter(idx)}
-                />
-              ))}
-              {availableDefs.length > 0 ? (
-                <AddFilterMenu defs={availableDefs} onPick={addFilter} />
-              ) : null}
-            </>
-          ) : null}
-        </div>
-        <div className="col-span-2 flex h-full flex-col gap-3">
-          <div className={cn("flex-1 transition-opacity", stale ? "opacity-70" : null)}>
-            <Map className="h-full" points={pointsBuffer} loading={!firstReady} />
+      <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+        <div className="mb-4 flex h-8 items-center justify-between">
+          <h1 className="text-xl font-extrabold tracking-wide italic">Segment Editor</h1>
+          <div className="flex items-center gap-2">
+            <DropdownMenu {...segmentDropdown.menu}>
+              <DropdownMenuTrigger render={<Button variant="outline" />}>
+                <List className="size-3.5" />
+                <span className={activeSegment ? undefined : "invisible"}>
+                  {activeSegment?.name ?? "—"}
+                </span>
+                <ChevronDown className="size-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuRadioGroup {...segmentDropdown.radio} value={segmentId ?? ""}>
+                  {sortedSegments.map((s) => (
+                    <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
+                      {s.name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button variant="outline" onClick={createSegment.open}>
+              <Plus />
+              New segment
+            </Button>
+            <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
+              <Pencil />
+              Rename
+            </Button>
+            <Button variant="outline" onClick={cloneSegment.open} disabled={!activeSegment}>
+              <Copy />
+              Duplicate
+            </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!segmentId) return;
+                const { count } = await queryClient.fetchQuery({
+                  queryKey: ["segments", "countCampaigns", segmentId],
+                  queryFn: () => client.segments.countCampaigns({ segmentId }),
+                  staleTime: 0,
+                });
+                setDeleteCampaignCount(count);
+                deleteSegment.open();
+              }}
+              disabled={!activeSegment}
+            >
+              <Trash2 />
+              Delete
+            </Button>
           </div>
-          <CountsPanel counts={counts} stale={stale} disabled={!activeSegmentId} />
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 h-[calc(100vh-9.75rem)]">
+          <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
+            {activeSegmentDetail ? (
+              <>
+                {filters.map((filter, idx) => (
+                  <FilterRow
+                    key={`${filter.key}-${idx}`}
+                    filter={filter}
+                    onChange={(next) => updateFilter(idx, next)}
+                    onRemove={() => removeFilter(idx)}
+                  />
+                ))}
+                {availableDefs.length > 0 ? (
+                  <AddFilterMenu defs={availableDefs} onPick={addFilter} />
+                ) : null}
+              </>
+            ) : null}
+          </div>
+          <div className="col-span-2 flex h-full flex-col gap-3">
+            <div className={cn("flex-1 transition-opacity", stale ? "opacity-70" : null)}>
+              {/* Map curtain stays up until the first preview lands; after
+                  that `preview` stays defined via keepPreviousData, so
+                  filter-change transitions use the dim wrapper instead. */}
+              <Map className="h-full" points={pointsBuffer} loading={!preview} />
+            </div>
+            <CountsPanel counts={counts} stale={stale} disabled={!segmentId} />
+          </div>
         </div>
       </div>
 
@@ -312,8 +299,8 @@ function SegmentsIndex() {
         pending={cloneSegment.isPending}
         error={cloneSegment.error}
         onSubmit={(newName) => {
-          if (!activeSegmentId) return;
-          cloneSegment.mutate({ segmentId: activeSegmentId, newName });
+          if (!segmentId) return;
+          cloneSegment.mutate({ segmentId, newName });
         }}
       />
 
@@ -324,12 +311,12 @@ function SegmentsIndex() {
         pending={renameSegment.isPending}
         error={renameSegment.error}
         onSubmit={(name) => {
-          if (!activeSegmentId) return;
+          if (!segmentId) return;
           if (name === activeSegment?.name) {
             renameSegment.close();
             return;
           }
-          renameSegment.mutate({ segmentId: activeSegmentId, name });
+          renameSegment.mutate({ segmentId, name });
         }}
       />
 
@@ -341,8 +328,8 @@ function SegmentsIndex() {
         pending={deleteSegment.isPending}
         error={deleteSegment.error}
         onConfirm={() => {
-          if (!activeSegmentId) return;
-          deleteSegment.mutate(activeSegmentId);
+          if (!segmentId) return;
+          deleteSegment.mutate(segmentId);
         }}
       />
     </>
@@ -553,8 +540,10 @@ function DeleteDialog({
           {inUse ? (
             <>
               Can't delete <span className="font-medium text-foreground">{segmentName}</span>{" "}
-              because it is used by {campaignCount} campaign{campaignCount === 1 ? "" : "s"}. Detach
-              or delete those campaigns first, then try again.
+              because it is used by{" "}
+              <span className="font-bold text-foreground">{campaignCount}</span> campaign
+              {campaignCount === 1 ? "" : "s"}. Detach or delete those campaigns first, then try
+              again.
             </>
           ) : (
             <>
@@ -601,10 +590,9 @@ function CountsPanel({
     <div className="rounded-lg border border-border bg-card px-4 py-3">
       <div
         className={cn(
+          // Dim while mid-edit/save so it's clear the numbers reflect the
+          // last saved query. Border + background stay solid.
           "grid grid-cols-3 gap-4",
-          // Dim the contents while the editor is mid-edit / mid-save so
-          // it's clear the shown numbers reflect the last saved query.
-          // Border + background stay solid so the panel keeps its shape.
           stale ? "opacity-30" : null,
         )}
       >
@@ -626,8 +614,6 @@ function Stat({ label, value }: { label: string; value: number | null | undefine
     </div>
   );
 }
-
-// ---- Filter editing pieces (lifted from the old per-id editor) ----
 
 function FilterRow({
   filter,
@@ -680,9 +666,8 @@ function TextFilterEditor({
   onChange: (next: Filter) => void;
 }) {
   // Local input state so typing doesn't fire onChange per keystroke
-  // (which would refetch counts/points on every character). The
-  // committed value lives in the segment cache; we sync down when the
-  // prop changes (e.g. segment switch) and commit up on blur or Enter.
+  // (which would refetch on every character). Committed value lives in
+  // the segment cache; sync down on prop change, commit up on blur/Enter.
   const [local, setLocal] = useState(filter.value);
   useEffect(() => setLocal(filter.value), [filter.value]);
   const commit = () => {
@@ -753,8 +738,7 @@ function AgeRangeFilterEditor({
   filter: AgeRangeFilter;
   onChange: (next: Filter) => void;
 }) {
-  // Same commit-on-blur/Enter pattern as text — typing in the number
-  // boxes is local until the user finishes the field.
+  // Same commit-on-blur/Enter pattern as text.
   const [localMin, setLocalMin] = useState(filter.min == null ? "" : String(filter.min));
   const [localMax, setLocalMax] = useState(filter.max == null ? "" : String(filter.max));
   useEffect(() => setLocalMin(filter.min == null ? "" : String(filter.min)), [filter.min]);
@@ -810,9 +794,7 @@ function AddFilterMenu({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // Close on click outside the menu wrapper. Without this the popup
-  // sticks open when the user clicks elsewhere — `onMouseLeave` alone
-  // covered hover-out but missed clicks.
+  // Close on click outside the menu wrapper.
   useEffect(() => {
     if (!open) return;
     const onDocMouseDown = (e: MouseEvent) => {
