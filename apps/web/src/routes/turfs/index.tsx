@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
+import { DoorClosed, UserRound } from "lucide-react";
 import { Filter } from "~/components/filter";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
@@ -35,13 +36,13 @@ function TurfsIndex() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Zone</TableHead>
               <TableHead>Turf</TableHead>
-              <TableHead>Campaign</TableHead>
-              <TableHead>Segment</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Doors</TableHead>
               <TableHead>People</TableHead>
+              <TableHead>Campaign</TableHead>
+              <TableHead>Zone</TableHead>
+              <TableHead>Segment</TableHead>
               <TableHead>Published</TableHead>
             </TableRow>
           </TableHeader>
@@ -49,29 +50,31 @@ function TurfsIndex() {
             {data.map((t) => (
               <TableRow key={t.turfId}>
                 <TableCell>
-                  <Pill>{t.zoneName ?? "—"}</Pill>
-                </TableCell>
-                <TableCell>
                   <Pill>{t.name}</Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill>{t.campaignName}</Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill>{t.segmentName ?? "—"}</Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">{t.turfCode ?? "—"}</Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">
+                  <Pill variant="number" className="gap-1.5">
+                    <DoorClosed className="size-3.5 text-foreground" />
                     {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
                   </Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">
+                  <Pill variant="number" className="gap-1.5">
+                    <UserRound className="size-3.5 text-foreground" />
                     {t.personCount != null ? t.personCount.toLocaleString() : "—"}
                   </Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill>{t.campaignName}</Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill>{t.zoneName ?? "—"}</Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill>{t.segmentName ?? "—"}</Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">{formatDate(t.createdAt)}</Pill>

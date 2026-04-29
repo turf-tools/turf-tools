@@ -19,7 +19,12 @@ export function Pill({ variant = "text", className, children }: PillProps) {
   return (
     <span
       className={cn(
-        "flex w-full items-center rounded-md px-2 py-1 text-sm",
+        // Bump SVG stroke-width to 2.5 inside pills only — icons sit
+        // alongside small text in the badge, where the default 2 reads
+        // a touch too thin against the surrounding font weight. Other
+        // icons in the app (header buttons, modal triggers, etc.)
+        // stay on the lucide default.
+        "flex w-full items-center rounded-md px-2 py-1 text-sm [&_svg]:[stroke-width:2.5]",
         variantClasses(variant),
         className,
       )}
