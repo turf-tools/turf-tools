@@ -283,6 +283,8 @@ function BuildingRow({
 }
 
 function formatBuildingAddress(b: TurfDataBuilding): string {
-  const parts = [b.address.houseNumber, b.address.street].filter(Boolean);
-  return parts.join(" ").trim() || "Unknown address";
+  // The data pipeline produces `street` as the canonical full
+  // address line ("123 MAIN ST"); house number isn't tracked
+  // separately on the blob.
+  return (b.address.street ?? "").trim() || "Unknown address";
 }

@@ -8,43 +8,22 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { client } from "@/rpc/client";
 
-// The data service base URL. In dev this points at localhost or a LAN IP;
-// in production it'll be the deployed data service. The dataUrl stored on
-// the turf row is a full URL, but we extract just the path and prepend
-// this base so the app works regardless of where the turf was seeded.
-const DATA_BASE_URL = process.env.EXPO_PUBLIC_DATA_URL ?? "http://localhost:8000";
-
-function resolveDataUrl(dataUrl: string): string {
-  // If dataUrl is already a full URL, extract the path and re-base it.
-  // This handles the case where the turf was seeded with localhost but
-  // the app is running on a device that needs a LAN IP.
-  try {
-    const parsed = new URL(dataUrl);
-    return `${DATA_BASE_URL}${parsed.pathname}`;
-  } catch {
-    // Not a full URL — treat as a relative path
-    return `${DATA_BASE_URL}${dataUrl}`;
-  }
-}
-
-// Fetch the turf data blob from its dataUrl. The blob is a self-contained
-// snapshot of everything the canvasser needs to walk the turf: geometry +
-// buildings -> doors -> persons. We download it once when the user enters a
-// turf and serve it from the persisted React Query cache for the rest of the
-// session. Pull-to-refresh re-fetches.
-export function useTurfData(dataUrl: string | null | undefined) {
-  const resolvedUrl = dataUrl ? resolveDataUrl(dataUrl) : null;
+// Fetch the turf data blob via the dedicated RPC. Replaces the old
+// HTTP-based fetch through `dataUrl` — the data service is no
+// longer in the canvasser runtime path; native talks to Postgres
+// (via the web RPC layer) for everything. Self-contained snapshot:
+// once loaded, served from the persisted React Query cache for the
+// rest of the session. Pull-to-refresh re-fetches.
+export function useTurfData(turfId: string | null | undefined) {
   return useQuery({
-    queryKey: ["turfData", resolvedUrl] as const,
+    queryKey: ["turfData", turfId] as const,
     queryFn: async (): Promise<TurfData> => {
-      if (!resolvedUrl) throw new Error("No dataUrl provided");
-      const resp = await fetch(resolvedUrl);
-      if (!resp.ok) {
-        throw new Error(`Failed to fetch turf data: ${resp.status}`);
-      }
-      return (await resp.json()) as TurfData;
+      if (!turfId) throw new Error("No turfId provided");
+      const data = await client.turfs.getData({ turfId });
+      if (!data) throw new Error("Turf data not found");
+      return data;
     },
-    enabled: !!resolvedUrl,
+    enabled: !!turfId,
     staleTime: Infinity,
   });
 }
@@ -98,6 +77,47 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
   };
 }
 
+// Compute integer age from a date_of_birth string. Voter-file
+// fields land in the blob as raw `otherProperties` (state-specific
+// formats), so consumers do the parse on read. NYS BOE in
+// particular ships dates as compact `YYYYMMDD` with no separators,
+// which `Date.parse` returns NaN for — we expand those to ISO
+// before parsing. Other parseable forms (ISO, US "MM/DD/YYYY")
+// pass through.
+export function ageFromDob(dob: string | null | undefined): number | null {
+  if (!dob) return null;
+  let s = dob.trim();
+  if (/^\d{8}$/.test(s)) {
+    s = `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  }
+  const ts = Date.parse(s);
+  if (Number.isNaN(ts)) return null;
+  const ms = Date.now() - ts;
+  if (ms < 0) return null;
+  return Math.floor(ms / (365.25 * 24 * 60 * 60 * 1000));
+}
+
+// Each formatter renders a single property as a short label fit
+// for a pill — one property per badge so missing fields are
+// visually attributable. Returns "?" for null/missing.
+
+export function formatAge(p: TurfDataPerson): string {
+  const age = ageFromDob(p.otherProperties.date_of_birth);
+  return age != null ? String(age) : "?";
+}
+
+export function formatGender(p: TurfDataPerson): string {
+  const g = (p.otherProperties.gender ?? "").trim();
+  if (!g) return "?";
+  return g.charAt(0).toUpperCase();
+}
+
+export function formatParty(p: TurfDataPerson): string {
+  const party = (p.otherProperties.party ?? "").trim();
+  if (!party) return "?";
+  return party.charAt(0).toUpperCase();
+}
+
 // Combined hook: fetches turf metadata + data blob + builds indexes.
 // Returns everything screens need in one call.
 export function useTurf(turfId: string) {
@@ -107,7 +127,7 @@ export function useTurf(turfId: string) {
     enabled: !!turfId,
     staleTime: Infinity,
   });
-  const dataQuery = useTurfData(metaQuery.data?.dataUrl ?? null);
+  const dataQuery = useTurfData(turfId);
   const indexes = useMemo(
     () => (dataQuery.data ? buildTurfIndexes(dataQuery.data) : null),
     [dataQuery.data],

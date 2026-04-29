@@ -5,7 +5,6 @@ import { organizations } from "./schema/organizations";
 import { scripts, scriptQuestions } from "./schema/scripts";
 import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
-import { turfs } from "./schema/turfs";
 import { users } from "./schema/users";
 import { zoneGroups } from "./schema/zone-groups";
 import { zones } from "./schema/zones";
@@ -20,7 +19,6 @@ const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000002";
 const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
 const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
 const SEGMENT_ID = "00000000-0000-4000-8000-000000000005";
-const TURF_ID = "00000000-0000-4000-8000-000000000006";
 
 // Extra campaigns + segments for exercising the admin UI.
 const PETITIONING_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000007";
@@ -33,8 +31,6 @@ const NYC_ZIPS_GROUP_ID = "00000000-0000-4000-8000-000000000010";
 const MANHATTAN_ZONE_ID = "00000000-0000-4000-8000-00000000000c";
 const BROOKLYN_ZONE_ID = "00000000-0000-4000-8000-00000000000d";
 const QUEENS_ZONE_ID = "00000000-0000-4000-8000-00000000000e";
-
-const DATA_SERVICE_URL = process.env.DATA_SERVICE_PUBLIC_URL ?? "http://localhost:8000";
 
 const DEFAULT_VOTER_FILE_ID = "nys_boe";
 const DEFAULT_VOTER_FILE_VERSION = 1;
@@ -224,22 +220,6 @@ async function mock() {
       });
       console.log(`Created campaign ${c.name}`);
     }
-  }
-
-  const existingTurf = await db.select().from(turfs).where(eq(turfs.turfId, TURF_ID));
-  if (existingTurf.length === 0) {
-    await db.insert(turfs).values({
-      turfId: TURF_ID,
-      campaignId: CAMPAIGN_ID,
-      segmentId: SEGMENT_ID,
-      scriptId: SCRIPT_ID,
-      name: "Default Turf",
-      turfCode: "121121",
-      dataUrl: `${DATA_SERVICE_URL}/turfs/${TURF_ID}/data`,
-      assignedTo: USER_ID,
-      createdBy: USER_ID,
-    });
-    console.log("Created default turf");
   }
 
   console.log("Mock data in database.");

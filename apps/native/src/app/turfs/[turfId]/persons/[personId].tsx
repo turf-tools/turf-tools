@@ -13,7 +13,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { TurfDataPerson } from "@field-tools/db/schema";
 import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
 import { WideButton } from "@/components/wide-button";
@@ -26,7 +25,7 @@ import {
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { toTitleCase } from "@/lib/format";
-import { useTurf } from "@/lib/turf-data";
+import { formatAge, formatGender, formatParty, useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
 
 type Mode = "script" | "unavailable" | "note" | "view-notes";
@@ -153,9 +152,7 @@ export default function PersonScreen() {
     Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   };
 
-  const buildingAddress = building
-    ? toTitleCase([building.address.houseNumber, building.address.street].filter(Boolean).join(" "))
-    : "";
+  const buildingAddress = building ? toTitleCase((building.address.street ?? "").trim()) : "";
 
   useScreenNav({
     title: buildingAddress || "Person",
@@ -207,7 +204,8 @@ export default function PersonScreen() {
               {toTitleCase(fullName)}
             </Text>
             <View className="flex-row items-center gap-2">
-              <Pill>{formatAgeGender(person)}</Pill>
+              <Pill>{formatAge(person)}</Pill>
+              <Pill>{formatGender(person)}</Pill>
               <Pill>{formatParty(person)}</Pill>
               <View className="flex-1" />
               {noteExists && <Pill icon={<Scroll size={18} color={iconColor} />} />}
@@ -518,19 +516,6 @@ function NotesList({
       ))}
     </View>
   );
-}
-
-function formatAgeGender(p: TurfDataPerson): string {
-  const age = p.age != null ? String(p.age) : "?";
-  const g = (p.gender ?? "").trim();
-  const initial = g ? g.charAt(0).toUpperCase() : "";
-  return `${age}${initial}`;
-}
-
-function formatParty(p: TurfDataPerson): string {
-  const party = (p.party ?? "").trim();
-  if (!party) return "?";
-  return party.charAt(0).toUpperCase();
 }
 
 function formatNoteDate(dateStr: string): string {

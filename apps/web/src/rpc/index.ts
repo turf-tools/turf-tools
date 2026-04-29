@@ -5,6 +5,7 @@ import * as canvassProcedures from "./canvass";
 import * as organizationsProcedures from "./organizations";
 import * as scriptProcedures from "./script";
 import * as segmentsProcedures from "./segments";
+import * as turfDraftsProcedures from "./turf-drafts";
 import * as turfsProcedures from "./turfs";
 import * as zoneGroupsProcedures from "./zone-groups";
 import * as zonesProcedures from "./zones";
@@ -59,11 +60,15 @@ export const router = {
     removeAllInGroup: zonesProcedures.removeAllInGroup,
   },
   turfs: {
-    getByUser: turfsProcedures.getByUser,
     getById: turfsProcedures.getById,
     getByCode: turfsProcedures.getByCode,
     listForOrg: turfsProcedures.listForOrg,
-    getByIdForOrg: turfsProcedures.getByIdForOrg,
+    getData: turfsProcedures.getData,
+    publish: turfsProcedures.publish,
+  },
+  turfDrafts: {
+    list: turfDraftsProcedures.list,
+    replaceAll: turfDraftsProcedures.replaceAll,
   },
   script: {
     list: scriptProcedures.list,

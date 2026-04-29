@@ -210,7 +210,12 @@ export const updateQuery = pub
 
 // Resolve the user's org slug from the auth context. The data service
 // uses it to namespace the persons/buildings tables.
-async function loadOrgSlug(context: { db: Db; user: { organizationId: string } }): Promise<string> {
+// Exported for use from sibling RPC modules (e.g. `turfs.publish`)
+// that need the same DuckLake-query plumbing.
+export async function loadOrgSlug(context: {
+  db: Db;
+  user: { organizationId: string };
+}): Promise<string> {
   const rows = await context.db
     .select({ slug: organizations.slug })
     .from(organizations)
@@ -234,7 +239,8 @@ const keyFilterSchema = z
 // Composes the segment WHERE clause with an optional key-set filter.
 // Empty `keys` short-circuits to `1=0` so the query returns no rows
 // rather than emitting invalid `IN ()` SQL.
-function applyKeyFilter(
+// Exported for sibling RPC modules.
+export function applyKeyFilter(
   base: { where: string; params: unknown[] },
   keyFilter: z.infer<typeof keyFilterSchema>,
 ): { where: string; params: unknown[] } {
@@ -400,7 +406,11 @@ export const queryBuildings = mut
     };
   });
 
-async function execute(sql: string, params: unknown[]): Promise<Array<Record<string, unknown>>> {
+// Exported for sibling RPC modules (turf publish path).
+export async function execute(
+  sql: string,
+  params: unknown[],
+): Promise<Array<Record<string, unknown>>> {
   const res = await fetch(`${import.meta.env.VITE_DATA_URL}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
