@@ -28,6 +28,10 @@ Canonical examples: `src/routes/turfs/index.tsx` (simple), `src/routes/segments/
 - `useSuspenseQuery` for queries the loader prefetched as essentials. `useQuery` for conditional queries (with `enabled`) and for queries that drive in-component dim/curtain UX during binding swaps (with `placeholderData: keepPreviousData` + `isPlaceholderData`).
 - Wrap the route's outer element with `animate-in fade-in duration-100` gated by `useFadeOnce(routePath)` — fades on first session boot, instant on subsequent navs.
 
+## Navigation between list and detail
+
+- A detail route's "back" button constructs the back URL from the route's own params, not from browser history. Example: cutter (`/campaigns/$campaignId/cut/$zoneId`) → `navigate({ to: "/campaigns", search: { campaignId } })`. Browser back breaks on direct loads, refreshes, and multi-step navs; constructing the URL from params always lands the user on the right list state.
+
 ## UI components
 
 - Generic UI components stay stateless and prop-driven; the route owns data fetching and derives the props.
