@@ -50,7 +50,11 @@ import {
   type KeyFilter,
 } from "~/lib/queries/campaigns";
 import { scriptsListQuery } from "~/lib/queries/scripts";
-import { type SegmentQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import {
+  type SegmentCriteria,
+  segmentDetailQuery,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -127,12 +131,12 @@ export const Route = createFileRoute("/campaigns/")({
       zoneGroup
         ? queryClient.fetchQuery(boundariesGeoJsonQuery(zoneGroup.keyGroup, zoneGroup.updatedAt))
         : Promise.resolve(),
-      segmentDetail?.query && keyFilter
-        ? queryClient.fetchQuery(campaignPointsQuery(segmentDetail.query, keyFilter))
+      segmentDetail?.criteria && keyFilter
+        ? queryClient.fetchQuery(campaignPointsQuery(segmentDetail.criteria, keyFilter))
         : Promise.resolve(),
-      segmentDetail?.query && keyFilter
+      segmentDetail?.criteria && keyFilter
         ? queryClient.fetchQuery(
-            campaignKeyCountsQuery(segmentDetail.query, keyFilter.keyGroup, keyFilter.keys),
+            campaignKeyCountsQuery(segmentDetail.criteria, keyFilter.keyGroup, keyFilter.keys),
           )
         : Promise.resolve(),
     ]);
@@ -222,18 +226,18 @@ function CampaignsIndex() {
   );
 
   const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
-    ...(segmentDetail?.query && keyFilter
-      ? campaignPointsQuery(segmentDetail.query, keyFilter)
-      : campaignPointsQuery({} as SegmentQuery, null)),
-    enabled: !!segmentDetail?.query && !!keyFilter,
+    ...(segmentDetail?.criteria && keyFilter
+      ? campaignPointsQuery(segmentDetail.criteria, keyFilter)
+      : campaignPointsQuery({} as SegmentCriteria, null)),
+    enabled: !!segmentDetail?.criteria && !!keyFilter,
     placeholderData: keepPreviousData,
   });
 
   const { data: keyCountsResult, isPlaceholderData: countsStale } = useQuery({
-    ...(segmentDetail?.query && keyFilter
-      ? campaignKeyCountsQuery(segmentDetail.query, keyFilter.keyGroup, keyFilter.keys)
-      : campaignKeyCountsQuery({} as SegmentQuery, "", [])),
-    enabled: !!segmentDetail?.query && !!keyFilter,
+    ...(segmentDetail?.criteria && keyFilter
+      ? campaignKeyCountsQuery(segmentDetail.criteria, keyFilter.keyGroup, keyFilter.keys)
+      : campaignKeyCountsQuery({} as SegmentCriteria, "", [])),
+    enabled: !!segmentDetail?.criteria && !!keyFilter,
     placeholderData: keepPreviousData,
   });
   const perKeyCounts = keyCountsResult?.counts ?? null;
@@ -403,7 +407,7 @@ function CampaignsIndex() {
           segmentId: input.segmentId,
         });
         zoneGroupId = zg.zoneGroupId;
-        void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+        void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
       }
       return client.campaigns.create({
         name: input.name,

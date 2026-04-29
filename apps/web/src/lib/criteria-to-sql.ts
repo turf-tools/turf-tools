@@ -1,7 +1,7 @@
-// Translates a segment Query (the filter DSL from `filters.ts`) into a
-// DuckDB-compatible (where, params) pair. Each endpoint that runs a
-// segment query (counts, points, counts-by-key) wraps its own SELECT
-// around `queryToWhere`'s output.
+// Translates segment Criteria (the filter DSL from `filters.ts`) into a
+// DuckDB-compatible (where, params) pair. Each endpoint that evaluates
+// criteria (counts, points, counts-by-key) wraps its own SELECT around
+// `criteriaToWhere`'s output.
 //
 // All user-supplied values flow through `params`, never through string
 // interpolation. Only field metadata from the catalog (column names,
@@ -9,13 +9,13 @@
 
 import {
   type AgeRangeFilter,
+  type Criteria,
   type EnumFilter,
   FILTERS,
-  type Query,
   type TextFilter,
 } from "./filters";
 
-export class QueryError extends Error {}
+export class CriteriaError extends Error {}
 
 // SQL expression for a catalog field. Top-level columns are bare
 // names; other_properties extracts use ->>, parenthesized to dodge
@@ -27,10 +27,10 @@ export function columnExprFor(fieldKey: string): string {
   return columnExpr(fieldKey, def.source);
 }
 
-export function queryToWhere(query: Query): { where: string; params: unknown[] } {
+export function criteriaToWhere(criteria: Criteria): { where: string; params: unknown[] } {
   const clauses: string[] = [];
   const params: unknown[] = [];
-  for (const f of query.filters) {
+  for (const f of criteria.filters) {
     let clause = "";
     if (f.kind === "enum") clause = enumClause(f, params);
     else if (f.kind === "age-range") clause = ageRangeClause(f, params);
@@ -48,13 +48,13 @@ function columnExpr(key: string, source: "column" | "other_properties"): string 
 
 function definitionFor(key: string) {
   const def = FILTERS.find((d) => d.key === key);
-  if (!def) throw new QueryError(`Unknown field: ${key}`);
+  if (!def) throw new CriteriaError(`Unknown field: ${key}`);
   return def;
 }
 
 function enumClause(f: EnumFilter, params: unknown[]): string {
   const def = definitionFor(f.key);
-  if (def.kind !== "enum") throw new QueryError(`Field ${f.key} is not an enum field`);
+  if (def.kind !== "enum") throw new CriteriaError(`Field ${f.key} is not an enum field`);
   if (f.values.length === 0) return "";
   const expr = columnExpr(f.key, def.source);
   const placeholders = f.values.map(() => "?").join(", ");
@@ -64,7 +64,7 @@ function enumClause(f: EnumFilter, params: unknown[]): string {
 
 function ageRangeClause(f: AgeRangeFilter, params: unknown[]): string {
   const def = definitionFor(f.key);
-  if (def.kind !== "age-range") throw new QueryError(`Field ${f.key} is not an age-range field`);
+  if (def.kind !== "age-range") throw new CriteriaError(`Field ${f.key} is not an age-range field`);
   if (f.min == null && f.max == null) return "";
   const expr = columnExpr(f.key, def.source);
   // SBOE date_of_birth lands as compact YYYYMMDD (e.g. "19670628").
@@ -86,7 +86,7 @@ function ageRangeClause(f: AgeRangeFilter, params: unknown[]): string {
 
 function textClause(f: TextFilter, params: unknown[]): string {
   const def = definitionFor(f.key);
-  if (def.kind !== "text") throw new QueryError(`Field ${f.key} is not a text field`);
+  if (def.kind !== "text") throw new CriteriaError(`Field ${f.key} is not a text field`);
   if (f.value.trim().length === 0) return "";
   const expr = columnExpr(f.key, def.source);
   if (def.op === "equals") {

@@ -7,9 +7,9 @@ import {
   zones,
 } from "@field-tools/db/schema";
 import { z } from "zod";
-import { type Query as QueryShape } from "../lib/filters";
+import { criteriaToWhere } from "../lib/criteria-to-sql";
+import { type Criteria } from "../lib/filters";
 import { boundaryKeyExprFor } from "../lib/key-groups";
-import { queryToWhere } from "../lib/query-to-sql";
 import { pub } from "./context";
 
 const zoneGroupSelect = {
@@ -206,7 +206,7 @@ export const clone = pub
 // The keys are scoped to the segment (not "every key in this
 // keyGroup") so the resulting polygon visually traces only where
 // canvassing will actually happen — see the `boundaryKeyExprFor`
-// usage in segments.queryCountsByKey for the same pattern.
+// usage in segments.countByKey for the same pattern.
 //
 // Snapshot semantics: the keys are recorded on the zone at creation
 // time. If the user later edits the segment, this zone's keys will
@@ -222,9 +222,9 @@ export const createWithDefaultZone = pub
     }),
   )
   .handler(async ({ context, input }) => {
-    // 1. Pull the segment's query JSON, scoped to org.
+    // 1. Pull the segment's criteria, scoped to org.
     const segmentRows = await context.db
-      .select({ query: segmentsTable.query })
+      .select({ criteria: segmentsTable.criteria })
       .from(segmentsTable)
       .where(
         and(
@@ -240,7 +240,7 @@ export const createWithDefaultZone = pub
     const orgSlug = await loadOrgSlug(context);
     const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
     const groupExpr = boundaryKeyExprFor(input.keyGroup);
-    const { where, params } = queryToWhere(segment.query as QueryShape);
+    const { where, params } = criteriaToWhere(segment.criteria as Criteria);
     const sql = `
       SELECT DISTINCT ${groupExpr} AS key
       FROM ${persons}

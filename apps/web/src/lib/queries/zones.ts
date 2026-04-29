@@ -3,7 +3,7 @@ import { client } from "~/rpc/client";
 
 export const zoneGroupsQuery = () =>
   queryOptions({
-    queryKey: ["zoneGroups"] as const,
+    queryKey: ["zone-groups"] as const,
     queryFn: () => client.zoneGroups.list(),
   });
 

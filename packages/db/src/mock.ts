@@ -129,7 +129,7 @@ async function mock() {
         segmentId: s.id,
         organizationId: ORG_ID,
         name: s.name,
-        query: { filters: [] },
+        criteria: { filters: [] },
         voterFileId: DEFAULT_VOTER_FILE_ID,
         voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
         doorCount: s.doorCount,

@@ -1,10 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { Query } from "~/lib/filters";
+import type { Criteria } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
-export type SegmentQuery = NonNullable<
+export type SegmentCriteria = NonNullable<
   Awaited<ReturnType<typeof client.segments.getById>>
->["query"];
+>["criteria"];
 
 export const segmentsListQuery = () =>
   queryOptions({
@@ -20,19 +20,19 @@ export const segmentDetailQuery = (segmentId: string) =>
 
 // Counts + points for the segments-editor preview pane. Key-determined:
 // same `effectiveKey` always yields the same result.
-export const queryPreviewQuery = (query: Query) =>
+export const segmentPreviewQuery = (criteria: Criteria) =>
   queryOptions({
-    queryKey: ["query-preview", JSON.stringify(query)] as const,
+    queryKey: ["segment-preview", JSON.stringify(criteria)] as const,
     queryFn: async () => {
       const [counts, pointsBuffer] = await Promise.all([
-        client.segments.queryCounts({ query }),
+        client.segments.count({ criteria }),
         (async () => {
-          const res = await fetch("/api/query-points", {
+          const res = await fetch("/api/segment-points", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query }),
+            body: JSON.stringify({ criteria }),
           });
-          if (!res.ok) throw new Error(`query-points failed: ${res.status} ${await res.text()}`);
+          if (!res.ok) throw new Error(`segment-points failed: ${res.status} ${await res.text()}`);
           return new Float32Array(await res.arrayBuffer());
         })(),
       ]);
@@ -41,21 +41,21 @@ export const queryPreviewQuery = (query: Query) =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-// Buildings inside a single zone, narrowed by a segment query. Used by the
-// turf cutter; lives here because it's a `client.segments.queryBuildings`
-// call. `segmentQuery` is typed as `SegmentQuery` (which is `unknown`),
-// so passing `undefined` is structurally allowed for disabled-state calls.
+// Buildings inside a single zone, narrowed by segment criteria. Used by
+// the turf cutter; lives here because it's a `client.segments.listBuildings`
+// call. `segmentCriteria` is `unknown`-typed at the type level, so passing
+// `undefined` is structurally allowed for disabled-state calls.
 export const cutterBuildingsQuery = (
   zoneId: string,
-  segmentQuery: SegmentQuery,
+  segmentCriteria: SegmentCriteria,
   keyFilter: { keyGroup: string; keys: string[] } | undefined,
 ) =>
   queryOptions({
     queryKey: [
       "cutter-buildings",
       zoneId,
-      segmentQuery ? JSON.stringify(segmentQuery) : null,
+      segmentCriteria ? JSON.stringify(segmentCriteria) : null,
     ] as const,
-    queryFn: () => client.segments.queryBuildings({ query: segmentQuery, keyFilter }),
+    queryFn: () => client.segments.listBuildings({ criteria: segmentCriteria, keyFilter }),
     staleTime: Number.POSITIVE_INFINITY,
   });
