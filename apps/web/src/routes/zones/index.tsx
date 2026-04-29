@@ -178,6 +178,17 @@ function ZonesIndex() {
   const createGroup = useDialogMutation({
     mutationFn: (input: { name: string; keyGroup: string }) => client.zoneGroups.create(input),
     onSuccess: (created) => {
+      // Optimistically inject the new group into the cache *before*
+      // flipping `activeGroupId`, so `activeGroup` resolves
+      // immediately on the next render. Without this, there's a
+      // window where `activeGroupId` points at a row not yet in the
+      // list — `activeGroup` falls back to `null`, `boundariesUrl`
+      // goes undefined, the boundaries Source unmounts, and the
+      // remount races with feature-state cleanup in a way that
+      // crashes MapLibre's render loop.
+      queryClient.setQueryData<typeof zoneGroups>(["zoneGroups"], (old) =>
+        old ? [...old, created] : [created],
+      );
       void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
       setActiveGroupId(created.zoneGroupId);
     },
@@ -564,43 +575,17 @@ function ZonesIndex() {
                     className="h-7 flex-1 px-2 text-sm"
                   />
                 ) : (
-                  <>
-                    <span
-                      className="flex-1 truncate text-sm select-none"
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        setRenameDraft(zone.name);
-                        setRenamingZoneId(zone.zoneId);
-                      }}
-                    >
-                      {zone.name}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Rename zone"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRenameDraft(zone.name);
-                        setRenamingZoneId(zone.zoneId);
-                      }}
-                      className="text-muted-foreground hover:text-foreground"
-                    >
-                      <Pencil className="size-3.5" />
-                    </button>
-                  </>
+                  <span
+                    className="flex-1 truncate text-sm select-none"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setRenameDraft(zone.name);
+                      setRenamingZoneId(zone.zoneId);
+                    }}
+                  >
+                    {zone.name}
+                  </span>
                 )}
-                <button
-                  type="button"
-                  aria-label="Delete zone"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (activeZoneId === zone.zoneId) setActiveZoneId(null);
-                    removeZoneMutation.mutate(zone.zoneId);
-                  }}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
                 {zoneOverlay ? (
                   <>
                     <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
@@ -618,6 +603,19 @@ function ZonesIndex() {
                     {zone.keys.length}
                   </Pill>
                 )}
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  className="-ml-[1px]"
+                  aria-label="Delete zone"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (activeZoneId === zone.zoneId) setActiveZoneId(null);
+                    removeZoneMutation.mutate(zone.zoneId);
+                  }}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
               </div>
             );
           })}

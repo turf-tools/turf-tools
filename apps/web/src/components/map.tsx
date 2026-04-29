@@ -1,7 +1,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { useAtomValue } from "jotai";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Layer,
   type MapMouseEvent,
@@ -98,11 +98,25 @@ type MapProps = {
   // renders whatever's loaded, and pan/zoom is purely a per-frame
   // matrix update on the GPU.
   points?: Float32Array;
+  // Optional per-point RGB color overlay (one byte triple per point,
+  // matched 1:1 with `points`). When provided, every dot uses its own
+  // color instead of the layer's default style color. Mismatched
+  // length is ignored by the layer.
+  pointColors?: Uint8Array | null;
+  // Optional per-point size scaling factor (one float per point).
+  // 1.0 = the zoom-driven base size; >1 grows the dot. Used by the
+  // cutter to flag high-door buildings.
+  pointSizes?: Float32Array | null;
   // Fires after pan/zoom settle (`moveend`) with the current viewport
   // bounds + zoom. Caller is responsible for any debouncing. Currently
   // unused by the points layer (which loads everything once); kept
   // around for callers that still want viewport awareness.
   onViewportChange?: (viewport: Viewport) => void;
+  // Extra controls to stack above the built-in "Show streets" toggle
+  // in the bottom-right corner. Single column, gap-2, full-width.
+  // Lets routes add their own toggles without each one re-inventing
+  // an absolute-positioned inset.
+  cornerControls?: ReactNode;
 };
 
 const DEFAULT_VIEW: Partial<ViewState> = {
@@ -149,7 +163,10 @@ export function Map({
   onBackgroundClick,
   loading,
   points,
+  pointColors,
+  pointSizes,
   onViewportChange,
+  cornerControls,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
   const [showLabels, setShowLabels] = useState(false);
@@ -177,6 +194,15 @@ export function Map({
   // would vanish on theme change.
   const prevColoredRef = useRef<ReadonlySet<string>>(new Set());
   const prevActiveRef = useRef<ReadonlySet<string>>(new Set());
+  // The two sets above track which keys we've written feature-state
+  // for on the *current* boundaries source. When the source remounts
+  // (URL change → keyed source remount), the new source has a fresh
+  // `SourceFeatureState`, so the old keys are stale and must not be
+  // queued for `removeFeatureState` against the new source.
+  useEffect(() => {
+    prevColoredRef.current = new Set();
+    prevActiveRef.current = new Set();
+  }, [boundariesUrl]);
   // True from the moment a `fitBounds` prop arrives until we've
   // actually applied it on the map. Combined with `loading` and
   // `mapReady` to drive the curtain: parents need fitBounds to land
@@ -413,9 +439,16 @@ export function Map({
       if (layers[layers.length - 1]?.id === "segment-points") return;
       map.moveLayer("segment-points");
     };
+    // `styledata` covers most reorder triggers; `idle` is the
+    // belt-and-suspenders hook — fires when the map has fully
+    // settled after any pending tile / source / style work, so any
+    // reorder that didn't surface as `styledata` still gets
+    // corrected once the map is quiet.
     map.on("styledata", ensure);
+    map.on("idle", ensure);
     return () => {
       map.off("styledata", ensure);
+      map.off("idle", ensure);
     };
   }, [mapReady]);
 
@@ -429,12 +462,23 @@ export function Map({
     pointsLayerRef.current?.setPoints(points);
   }, [points, mapReady]);
 
+  // Per-point overlays. Both run independent of `setPoints` — the
+  // layer re-derives the buffers automatically when points change,
+  // so a re-upload on every prop tick isn't required, only when the
+  // overlay itself shifts.
+  useEffect(() => {
+    pointsLayerRef.current?.setColors(pointColors);
+  }, [pointColors, mapReady]);
+  useEffect(() => {
+    pointsLayerRef.current?.setSizes(pointSizes);
+  }, [pointSizes, mapReady]);
+
   // Match the dot color to the current theme. Dark dots on light
   // basemap, light dots on dark basemap — high contrast both ways.
   // `mapReady` dep for the same reason as above.
   useEffect(() => {
     pointsLayerRef.current?.setStyle({
-      color: isDark ? "#e5e5e5" : "#0a0a0a",
+      color: isDark ? "#e5e5e5" : "#1a1a1a",
     });
   }, [isDark, mapReady]);
 
@@ -557,6 +601,14 @@ export function Map({
       >
         {boundariesUrl ? (
           <Source
+            // Force a fresh source whenever the URL changes — `setData` on
+            // the same source id otherwise reuses MapLibre's
+            // `SourceFeatureState`, and stale entries from the previous
+            // key group's keys can corrupt the deletion queue and crash
+            // the next `coalesceChanges` (`Object.keys` of an undefined
+            // `deletedStates[layer][feature]` slot). Remounting wipes
+            // feature-state cleanly.
+            key={boundariesUrl}
             id={BOUNDARIES_SOURCE_ID}
             type="geojson"
             data={boundariesUrl}
@@ -733,15 +785,24 @@ export function Map({
         ) : null}
       </MapLibreMap>
 
-      <label
+      {/* Bottom-right inset. Single rounded card with one row per
+          toggle; built-in "Show streets" is the first row, routes
+          add extra rows via `cornerControls` (which render below).
+          `divide-y` puts a separator between rows, so the
+          cornerControls labels just need padding/gap, not their
+          own border or background. */}
+      <div
         className={
-          "absolute right-3 bottom-3 flex items-center gap-3 rounded-md border border-border " +
-          "bg-background px-3 py-3 text-sm"
+          "absolute right-3 bottom-3 flex flex-col items-stretch " +
+          "rounded-md border border-border bg-background text-sm"
         }
       >
-        <Switch checked={showLabels} onCheckedChange={setShowLabels} />
-        <span>Show streets</span>
-      </label>
+        <label className="flex items-center gap-3 px-3 py-3">
+          <Switch checked={showLabels} onCheckedChange={setShowLabels} />
+          <span>Show streets</span>
+        </label>
+        {cornerControls}
+      </div>
 
       <div
         aria-hidden

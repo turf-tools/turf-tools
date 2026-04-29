@@ -1,17 +1,24 @@
 // Custom MapLibre layer that renders an array of geographic points as
 // anti-aliased dots via WebGL. Conforms to MapLibre's CustomLayerInterface.
 //
-// Input: a flat Float32Array of `[lng, lat, lng, lat, ...]` in degrees.
-// The vertex shader does the lng/lat → mercator projection on the GPU
-// so the CPU never touches per-point coords beyond the one-time decode.
+// Input: a flat Float32Array of `[lng, lat, lng, lat, ...]` in degrees,
+// plus two optional per-point overlays:
+//   - colors  (Uint8Array RGB triples, one per point)
+//   - sizes   (Float32Array scaling factors, one per point)
+// Both default to a uniform style — `style.color` for color, 1.0 for
+// size — and resize automatically when `setPoints` runs.
 //
 // Data flow:
-//   setPoints(buf)     → one VBO upload per data refresh.
-//   render(gl, args)   → one draw call (gl.POINTS) every frame; the
-//                        shader subtracts a per-frame camera origin
-//                        from each projected mercator coord and
-//                        applies an origin-shifted matrix (see the
-//                        "translation split" comment on `render`).
+//   setPoints(buf)  → one VBO upload per data refresh, plus reset of
+//                     the color / size buffers to their defaults so a
+//                     stale per-point overlay can't outlive its points.
+//   setColors(buf)  → one VBO upload; `null` reverts to style color.
+//   setSizes(buf)   → one VBO upload; `null` reverts to scale 1.0.
+//   render()        → one draw call (gl.POINTS) per frame; the shader
+//                     subtracts a per-frame camera origin from each
+//                     projected mercator coord and applies an
+//                     origin-shifted matrix (see the "translation
+//                     split" comment on `render`).
 //
 // The origin-split trick: at high zoom, MapLibre's `mainMatrix` has
 // translation values in the millions, and `mat * vec(small_mercator)`
@@ -32,6 +39,12 @@ precision highp float;
 
 // Per-vertex: lng, lat in degrees, straight from the server.
 in vec2 a_lnglat;
+// Per-vertex color (UNSIGNED_BYTE normalized to 0..1). Defaults to
+// the style color when no per-point colors are provided.
+in vec3 a_color;
+// Per-vertex size scaling factor. 1.0 = the zoom-driven base size;
+// >1 grows the dot, <1 shrinks it. Defaults to 1.0.
+in float a_size;
 
 // Origin-shifted projection matrix (see PointsLayer.render).
 uniform mat4 u_matrix;
@@ -44,6 +57,8 @@ uniform mat4 u_matrix;
 uniform vec2 u_originHi;
 uniform vec2 u_originLo;
 uniform float u_zoom;
+
+out vec3 v_color;
 
 const float PI = 3.14159265359;
 
@@ -69,32 +84,34 @@ void main() {
   vec2 relative = deltaHi - u_originLo;
   gl_Position = u_matrix * vec4(relative, 0.0, 1.0);
 
+  v_color = a_color;
+
   float t = clamp((u_zoom - Z_MIN) / (Z_MAX - Z_MIN), 0.0, 1.0);
-  gl_PointSize = PX_MIN * pow(PX_MAX / PX_MIN, t);
+  float baseSize = PX_MIN * pow(PX_MAX / PX_MIN, t);
+  gl_PointSize = baseSize * a_size;
 }
 `;
 
 const FRAGMENT_SHADER = `#version 300 es
 precision mediump float;
 
-uniform vec4 u_color;
+in vec3 v_color;
 out vec4 fragColor;
 
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   float r2 = dot(d, d);
   if (r2 > 0.25) discard;
-  float alpha = smoothstep(0.25, 0.20, r2) * u_color.a;
+  float alpha = smoothstep(0.25, 0.20, r2);
   // MapLibre's blendFunc is (ONE, ONE_MINUS_SRC_ALPHA) — premultiplied
   // alpha output. Multiply rgb by alpha here.
-  fragColor = vec4(u_color.rgb * alpha, alpha);
+  fragColor = vec4(v_color * alpha, alpha);
 }
 `;
 
 export type PointsLayerStyle = {
-  // CSS hex string ("#rrggbb"). Single solid color for every point in
-  // v1; variation by attribute is a follow-up — wire as another VBO
-  // and a varying.
+  // CSS hex string ("#rrggbb"). Used as the default per-point color
+  // when no `setColors` array has been provided.
   color: string;
 };
 
@@ -110,23 +127,39 @@ export class PointsLayer implements CustomLayerInterface {
   private map: MapLibreMap | null = null;
   private gl: WebGL2RenderingContext | null = null;
   private program: WebGLProgram | null = null;
-  private buffer: WebGLBuffer | null = null;
+
+  // Three parallel VBOs: positions, per-point colors, per-point
+  // sizes. Kept separate (not interleaved) so each can be re-uploaded
+  // independently — color refresh on turf-membership change is a hot
+  // path and shouldn't drag positions/sizes along with it.
+  private pointsBuffer: WebGLBuffer | null = null;
+  private colorBuffer: WebGLBuffer | null = null;
+  private sizeBuffer: WebGLBuffer | null = null;
   private pointCount = 0;
 
   // Cached attribute / uniform locations.
   private locA_lnglat = -1;
+  private locA_color = -1;
+  private locA_size = -1;
   private locU_matrix: WebGLUniformLocation | null = null;
   private locU_originHi: WebGLUniformLocation | null = null;
   private locU_originLo: WebGLUniformLocation | null = null;
   private locU_zoom: WebGLUniformLocation | null = null;
-  private locU_color: WebGLUniformLocation | null = null;
 
   // Reusable scratch buffer for the shifted matrix; one allocation
   // amortized over every frame.
   private readonly shiftedMatrix = new Float32Array(16);
 
-  // Pending state — applied during the next render once GL is up.
+  // Pending point data — applied during the next `onAdd` once GL is up.
   private pendingPoints: Float32Array | null = null;
+
+  // Latest user-provided overlays. `null` means "no per-point data,
+  // use the style/default." Held independent of GL state so we can
+  // re-derive the actual buffer contents whenever pointCount changes
+  // (setPoints) or the style does (setStyle).
+  private userColors: Uint8Array | null = null;
+  private userSizes: Float32Array | null = null;
+
   private style: PointsLayerStyle = DEFAULT_STYLE;
 
   constructor(opts: { id?: string } = {}) {
@@ -137,18 +170,30 @@ export class PointsLayer implements CustomLayerInterface {
     this.map = map;
     this.gl = gl as WebGL2RenderingContext;
     this.compileProgram();
-    this.buffer = this.gl.createBuffer();
+    this.pointsBuffer = this.gl.createBuffer();
+    this.colorBuffer = this.gl.createBuffer();
+    this.sizeBuffer = this.gl.createBuffer();
     if (this.pendingPoints) {
-      this.uploadBuffer(this.pendingPoints);
+      this.uploadPoints(this.pendingPoints);
       this.pendingPoints = null;
     }
+    // Color/size buffers always need *some* contents — the shader
+    // reads attributes from them every frame. uploadDerived* fills
+    // them with either the user-provided overlay (if length matches)
+    // or the default for the current pointCount.
+    this.uploadDerivedColors();
+    this.uploadDerivedSizes();
   }
 
   onRemove(_map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
     if (this.program) gl.deleteProgram(this.program);
-    if (this.buffer) gl.deleteBuffer(this.buffer);
+    if (this.pointsBuffer) gl.deleteBuffer(this.pointsBuffer);
+    if (this.colorBuffer) gl.deleteBuffer(this.colorBuffer);
+    if (this.sizeBuffer) gl.deleteBuffer(this.sizeBuffer);
     this.program = null;
-    this.buffer = null;
+    this.pointsBuffer = null;
+    this.colorBuffer = null;
+    this.sizeBuffer = null;
     this.gl = null;
     this.map = null;
   }
@@ -157,14 +202,25 @@ export class PointsLayer implements CustomLayerInterface {
     gl: WebGLRenderingContext | WebGL2RenderingContext,
     options: CustomRenderMethodInput,
   ): void {
-    if (!this.program || !this.buffer || this.pointCount === 0 || !this.map) return;
+    if (!this.program || !this.pointsBuffer || this.pointCount === 0 || !this.map) return;
     const gl2 = gl as WebGL2RenderingContext;
 
     gl2.useProgram(this.program);
 
-    gl2.bindBuffer(gl2.ARRAY_BUFFER, this.buffer);
+    gl2.bindBuffer(gl2.ARRAY_BUFFER, this.pointsBuffer);
     gl2.enableVertexAttribArray(this.locA_lnglat);
     gl2.vertexAttribPointer(this.locA_lnglat, 2, gl2.FLOAT, false, 0, 0);
+
+    gl2.bindBuffer(gl2.ARRAY_BUFFER, this.colorBuffer);
+    gl2.enableVertexAttribArray(this.locA_color);
+    // UNSIGNED_BYTE normalized → shader sees 0..1. Three components
+    // per vertex (RGB); alpha comes from the smoothstep antialias
+    // in the fragment shader.
+    gl2.vertexAttribPointer(this.locA_color, 3, gl2.UNSIGNED_BYTE, true, 0, 0);
+
+    gl2.bindBuffer(gl2.ARRAY_BUFFER, this.sizeBuffer);
+    gl2.enableVertexAttribArray(this.locA_size);
+    gl2.vertexAttribPointer(this.locA_size, 1, gl2.FLOAT, false, 0, 0);
 
     // Translation-split. `mainMatrix` projects mercator-[0,1] → clip,
     // and at high zoom its translation column is in the millions —
@@ -213,37 +269,124 @@ export class PointsLayer implements CustomLayerInterface {
     gl2.uniform2f(this.locU_originLo, oxLo, oyLo);
     gl2.uniform1f(this.locU_zoom, this.map.getZoom());
 
-    const [r, g, b, a] = parseColor(this.style.color);
-    gl2.uniform4f(this.locU_color, r, g, b, a);
-
     gl2.drawArrays(gl2.POINTS, 0, this.pointCount);
   }
 
   // Replace the entire point set. Cheap: one VBO upload. If the layer
   // hasn't been added to the map yet (onAdd hasn't run), we stash and
   // upload on add. `flat` is `[lng0, lat0, lng1, lat1, ...]`.
+  // Color and size buffers are also re-derived to match the new
+  // point count — a stale per-point overlay against a different
+  // point count would alias every dot to whatever bytes happened to
+  // line up.
   setPoints(flat: Float32Array | null | undefined): void {
     const data = flat ?? new Float32Array(0);
-    if (this.gl && this.buffer) {
-      this.uploadBuffer(data);
+    if (this.gl && this.pointsBuffer) {
+      this.uploadPoints(data);
+      this.uploadDerivedColors();
+      this.uploadDerivedSizes();
     } else {
       this.pendingPoints = data;
       this.pointCount = data.length / 2;
     }
+    this.nudgeOnTop();
+    this.map?.triggerRepaint();
+  }
+
+  // Per-point RGB overlay. `null` reverts to the uniform style color.
+  // Length must be `pointCount * 3`; mismatched arrays are ignored
+  // and the buffer falls back to the default — that way a caller
+  // who's about to follow up with a fresh `setPoints` doesn't crash
+  // mid-flight.
+  setColors(colors: Uint8Array | null | undefined): void {
+    this.userColors = colors ?? null;
+    this.uploadDerivedColors();
+    this.nudgeOnTop();
+    this.map?.triggerRepaint();
+  }
+
+  // Per-point size scaling. `null` reverts every dot to scale 1.0
+  // (the zoom-driven base size).
+  setSizes(sizes: Float32Array | null | undefined): void {
+    this.userSizes = sizes ?? null;
+    this.uploadDerivedSizes();
+    this.nudgeOnTop();
     this.map?.triggerRepaint();
   }
 
   setStyle(style: Partial<PointsLayerStyle>): void {
     this.style = { ...this.style, ...style };
+    // Style only matters for the *default* color buffer contents.
+    // If the caller has set per-point colors, leave them alone.
+    if (!this.userColors) this.uploadDerivedColors();
     this.map?.triggerRepaint();
   }
 
-  private uploadBuffer(flat: Float32Array): void {
+  private uploadPoints(flat: Float32Array): void {
     const gl = this.gl;
-    if (!gl || !this.buffer) return;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    if (!gl || !this.pointsBuffer) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.pointsBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, flat, gl.DYNAMIC_DRAW);
     this.pointCount = flat.length / 2;
+  }
+
+  // Fill the color VBO from either `userColors` (if its length
+  // matches) or the current style color repeated. No-op if GL or
+  // buffers aren't ready yet — onAdd will call this once they are.
+  private uploadDerivedColors(): void {
+    const gl = this.gl;
+    if (!gl || !this.colorBuffer) return;
+    const N = this.pointCount;
+    if (N === 0) return;
+    let data: Uint8Array;
+    if (this.userColors && this.userColors.length === N * 3) {
+      data = this.userColors;
+    } else {
+      const [r, g, b] = parseColor(this.style.color);
+      const ri = Math.round(r * 255);
+      const gi = Math.round(g * 255);
+      const bi = Math.round(b * 255);
+      data = new Uint8Array(N * 3);
+      for (let i = 0; i < N; i++) {
+        data[i * 3] = ri;
+        data[i * 3 + 1] = gi;
+        data[i * 3 + 2] = bi;
+      }
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  }
+
+  // Mirror of `uploadDerivedColors` for the size VBO. Default is
+  // 1.0 (scale untouched relative to the zoom-driven base size).
+  private uploadDerivedSizes(): void {
+    const gl = this.gl;
+    if (!gl || !this.sizeBuffer) return;
+    const N = this.pointCount;
+    if (N === 0) return;
+    let data: Float32Array;
+    if (this.userSizes && this.userSizes.length === N) {
+      data = this.userSizes;
+    } else {
+      data = new Float32Array(N).fill(1);
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.sizeBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  }
+
+  // Re-stack the layer to the top of the style if it isn't already.
+  // The Map component has its own listener that does this on
+  // `styledata` / `idle`, but those events don't fire reliably for
+  // every reorder trigger — calling here on every data upload is a
+  // cheap belt-and-suspenders so a buried-points race never
+  // outlives the next prop change. No-op when already on top.
+  private nudgeOnTop(): void {
+    if (!this.map) return;
+    if (!this.map.getLayer(this.id)) return;
+    const layers = this.map.getStyle().layers;
+    if (!layers || layers.length === 0) return;
+    if (layers[layers.length - 1]?.id === this.id) return;
+    this.map.moveLayer(this.id);
   }
 
   private compileProgram(): void {
@@ -262,11 +405,12 @@ export class PointsLayer implements CustomLayerInterface {
     this.program = program;
 
     this.locA_lnglat = gl.getAttribLocation(program, "a_lnglat");
+    this.locA_color = gl.getAttribLocation(program, "a_color");
+    this.locA_size = gl.getAttribLocation(program, "a_size");
     this.locU_matrix = gl.getUniformLocation(program, "u_matrix");
     this.locU_originHi = gl.getUniformLocation(program, "u_originHi");
     this.locU_originLo = gl.getUniformLocation(program, "u_originLo");
     this.locU_zoom = gl.getUniformLocation(program, "u_zoom");
-    this.locU_color = gl.getUniformLocation(program, "u_color");
   }
 }
 

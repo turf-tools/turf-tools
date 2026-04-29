@@ -19,7 +19,7 @@ import {
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { useTurf } from "@/lib/turf-data";
+import { formatAge, formatGender, formatParty, useTurf } from "@/lib/turf-data";
 
 export default function BuildingScreen() {
   const { turfId, buildingId } = useLocalSearchParams<{
@@ -225,7 +225,8 @@ function PersonRow({
             {toTitleCase(fullName)}
           </Text>
           <View className="flex-row items-center gap-1.5 mt-1">
-            <Pill>{formatAgeGender(person)}</Pill>
+            <Pill>{formatAge(person)}</Pill>
+            <Pill>{formatGender(person)}</Pill>
             <Pill>{formatParty(person)}</Pill>
             <View className="flex-1" />
             {note && <Pill icon={<Scroll size={18} color={iconColor} />} />}
@@ -244,19 +245,5 @@ function PersonRow({
 }
 
 function formatBuildingTitle(b: TurfDataBuilding): string {
-  const parts = [b.address.houseNumber, b.address.street].filter(Boolean);
-  return toTitleCase(parts.join(" ").trim()) || "Building";
-}
-
-function formatAgeGender(p: TurfDataPerson): string {
-  const age = p.age != null ? String(p.age) : "?";
-  const g = (p.gender ?? "").trim();
-  const initial = g ? g.charAt(0).toUpperCase() : "";
-  return `${age}${initial}`;
-}
-
-function formatParty(p: TurfDataPerson): string {
-  const party = (p.party ?? "").trim();
-  if (!party) return "?";
-  return party.charAt(0).toUpperCase();
+  return toTitleCase((b.address.street ?? "").trim()) || "Building";
 }
