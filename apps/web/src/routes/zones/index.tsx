@@ -865,11 +865,10 @@ function CreateZoneGroupDialog({
                     key={kg.value}
                     onClick={() => setKeyGroup(kg.value)}
                     disabled={pending}
-                    className={
-                      selected
-                        ? "rounded-md border border-foreground bg-foreground/10 px-2.5 py-1 text-sm disabled:opacity-50"
-                        : "rounded-md border border-border bg-background px-2.5 py-1 text-sm hover:border-muted-foreground disabled:opacity-50"
-                    }
+                    className={cn(
+                      "rounded-md border border-border px-2.5 py-1 text-sm disabled:opacity-50 active:translate-y-px",
+                      selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                    )}
                   >
                     {kg.label}
                   </button>
