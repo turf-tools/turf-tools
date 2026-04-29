@@ -172,8 +172,10 @@
   .font-mono {
     letter-spacing: 0px;
   }
-  html {
+  html,
+  body {
     @apply font-sans;
+    overscroll-behavior: none;
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {

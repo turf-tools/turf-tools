@@ -451,6 +451,7 @@ function CampaignsIndex() {
   });
 
   const [configOpen, setConfigOpen] = useState(false);
+  const [deleteTurfCount, setDeleteTurfCount] = useState(0);
 
   const bind = (patch: {
     segmentId?: string | null;
@@ -505,7 +506,20 @@ function CampaignsIndex() {
               <Copy />
               Duplicate
             </Button>
-            <Button variant="outline" onClick={deleteCampaign.open} disabled={!activeCampaign}>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!activeCampaignId) return;
+                const { count } = await queryClient.fetchQuery({
+                  queryKey: ["campaigns", "count-turfs", activeCampaignId],
+                  queryFn: () => client.turfs.countForCampaign({ campaignId: activeCampaignId }),
+                  staleTime: 0,
+                });
+                setDeleteTurfCount(count);
+                deleteCampaign.open();
+              }}
+              disabled={!activeCampaign}
+            >
               <Trash2 />
               Delete
             </Button>
@@ -590,6 +604,7 @@ function CampaignsIndex() {
         open={deleteCampaign.isOpen}
         onOpenChange={deleteCampaign.onOpenChange}
         campaignName={activeCampaign?.name ?? ""}
+        turfCount={deleteTurfCount}
         pending={deleteCampaign.isPending}
         error={deleteCampaign.error}
         onConfirm={() => {
@@ -692,6 +707,14 @@ function ZoneRow({
         style={{ backgroundColor: color }}
       />
       <span className="flex-1 truncate text-sm">{zone.name}</span>
+      {hasPublished ? (
+        <Pill
+          variant="number"
+          className="size-7 shrink-0 justify-center !px-0 [&_svg]:[stroke-width:2]"
+        >
+          <Send className="size-4 text-foreground" />
+        </Pill>
+      ) : null}
       {counts ? (
         <>
           <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
@@ -703,14 +726,6 @@ function ZoneRow({
             {counts.people.toLocaleString()}
           </Pill>
         </>
-      ) : null}
-      {hasPublished ? (
-        <Pill
-          variant="number"
-          className="size-7 shrink-0 justify-center !px-0 [&_svg]:[stroke-width:2]"
-        >
-          <Send className="size-4 text-foreground" />
-        </Pill>
       ) : null}
       <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
         <CircleDotDashed className="size-3.5 text-foreground" />
@@ -1006,6 +1021,7 @@ function DeleteDialog({
   open,
   onOpenChange,
   campaignName,
+  turfCount,
   pending,
   error,
   onConfirm,
@@ -1013,24 +1029,44 @@ function DeleteDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   campaignName: string;
+  turfCount: number;
   pending: boolean;
   error: string | null;
   onConfirm: () => void;
 }) {
+  const inUse = turfCount > 0;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Delete campaign?</DialogTitle>
+        {!inUse && <DialogTitle>Delete campaign?</DialogTitle>}
         <DialogDescription>
-          Permanently deletes <span className="font-medium text-foreground">{campaignName}</span>.
-          This can't be undone.
+          {inUse ? (
+            <>
+              Can't delete <span className="font-medium text-foreground">{campaignName}</span>{" "}
+              because it has <span className="font-bold text-foreground">{turfCount}</span>{" "}
+              published turf{turfCount === 1 ? "" : "s"}. Turfs can't be removed yet — clearing them
+              is a follow-up.
+            </>
+          ) : (
+            <>
+              Permanently deletes{" "}
+              <span className="font-medium text-foreground">{campaignName}</span>. This can't be
+              undone.
+            </>
+          )}
         </DialogDescription>
         <DialogError error={error} />
         <div className="mt-2 flex justify-end gap-2">
-          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-          <Button variant="destructive" onClick={onConfirm} loading={pending}>
-            Delete campaign
-          </Button>
+          {inUse ? (
+            <DialogClose render={<Button variant="outline" />}>Ok</DialogClose>
+          ) : (
+            <>
+              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+              <Button variant="destructive" onClick={onConfirm} loading={pending}>
+                Delete campaign
+              </Button>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>

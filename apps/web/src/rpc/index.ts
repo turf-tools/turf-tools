@@ -64,6 +64,7 @@ export const router = {
     getByCode: turfsProcedures.getByCode,
     listForOrg: turfsProcedures.listForOrg,
     getData: turfsProcedures.getData,
+    countForCampaign: turfsProcedures.countForCampaign,
     statsForCampaign: turfsProcedures.statsForCampaign,
     publish: turfsProcedures.publish,
   },

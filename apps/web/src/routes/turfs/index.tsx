@@ -70,8 +70,8 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
   const { data } = useSuspenseQuery(turfsListQuery(campaignId));
 
   return (
-    <Table>
-      <TableHeader>
+    <Table containerClassName="h-[calc(100vh-9.75rem)] overflow-y-auto">
+      <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
           <TableHead>Turf</TableHead>
           <TableHead>Code</TableHead>

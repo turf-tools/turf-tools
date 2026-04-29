@@ -103,6 +103,18 @@ export const listForOrg = pub
     return rows;
   });
 
+// Total published-turf count for a campaign. Used by the campaign delete
+// dialog to refuse deletion when turfs exist.
+export const countForCampaign = pub
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const rows = await context.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(turfs)
+      .where(eq(turfs.campaignId, input.campaignId));
+    return { count: rows[0]?.count ?? 0 };
+  });
+
 // Per-zone turf counts for a campaign — drafts (work-in-progress in the
 // cutter) and published (rows in `turfs`). Drives the campaign editor's
 // at-a-glance progress indicators.
