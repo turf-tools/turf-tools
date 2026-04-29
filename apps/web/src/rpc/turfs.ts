@@ -15,8 +15,8 @@ import type {
   TurfDataPerson,
 } from "@field-tools/db/schema";
 import { z } from "zod";
-import { type Query as QueryShape } from "../lib/filters";
-import { queryToWhere } from "../lib/query-to-sql";
+import { criteriaToWhere } from "../lib/criteria-to-sql";
+import { type Criteria } from "../lib/filters";
 import { mut, pub } from "./context";
 import { applyKeyFilter, execute, loadOrgSlug } from "./segments";
 
@@ -123,7 +123,7 @@ export const getData = pub
 // after publish — re-publishing a zone appends a new batch of turfs
 // (stale-tracking of older batches is a follow-up).
 //
-// Server-side computation: we run the segment query against
+// Server-side computation: we run the segment criteria against
 // `_persons_geocoded`, point-in-polygon-test each building's
 // centroid against each draft (first-match-wins so overlapping
 // polygons partition the buildings deterministically), then
@@ -170,15 +170,15 @@ export const publish = mut
     }
     const zone = zoneRow[0]!;
 
-    // 3. Resolve segment (need its query JSON) and zone group
-    // (need its keyGroup label for the boundary-key filter).
+    // 3. Resolve segment (need its criteria) and zone group (need its
+    // keyGroup label for the boundary-key filter).
     const segmentRow = await context.db
-      .select({ query: segments.query })
+      .select({ criteria: segments.criteria })
       .from(segments)
       .where(eq(segments.segmentId, segmentId));
     if (segmentRow.length === 0) throw new Error("Segment not found");
-    const segmentQuery = segmentRow[0]!.query as QueryShape | null;
-    if (!segmentQuery) throw new Error("Segment has no query defined");
+    const segmentCriteria = segmentRow[0]!.criteria as Criteria | null;
+    if (!segmentCriteria) throw new Error("Segment has no criteria defined");
 
     const zoneGroupRow = await context.db
       .select({ keyGroup: zoneGroups.keyGroup })
@@ -201,7 +201,7 @@ export const publish = mut
       .orderBy(asc(turfDrafts.sortOrder));
     if (drafts.length === 0) throw new Error("No drafts to publish");
 
-    // 5. Run the segment query against persons_geocoded joined
+    // 5. Run the segment criteria against persons_geocoded joined
     // with buildings_geocoded. Per-person fields stay on `p` (id,
     // name, unit, other_properties); canonical building values
     // (lat/lng + address) come from `b` so the blob matches what
@@ -211,7 +211,7 @@ export const publish = mut
     // date_of_birth, etc.) so adding new voter-file fields
     // upstream doesn't require a blob schema change here.
     const orgSlug = await loadOrgSlug(context);
-    const { where, params } = applyKeyFilter(queryToWhere(segmentQuery), {
+    const { where, params } = applyKeyFilter(criteriaToWhere(segmentCriteria), {
       keyGroup,
       keys: zone.keys,
     });

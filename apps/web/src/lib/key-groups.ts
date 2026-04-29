@@ -7,7 +7,7 @@
 // the boundary key is the voter-file value verbatim, no translation
 // required.
 
-import { columnExprFor } from "./query-to-sql";
+import { columnExprFor } from "./criteria-to-sql";
 
 type KeyGroupConfig = {
   // Persons-table field (a catalog entry in FILTERS).

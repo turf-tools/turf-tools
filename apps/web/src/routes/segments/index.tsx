@@ -27,6 +27,7 @@ import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import {
   type AgeRangeFilter,
+  type Criteria,
   definitionFor,
   emptyFilterFor,
   type EnumFilter,
@@ -34,10 +35,9 @@ import {
   type FilterDef,
   FILTERS,
   isActiveFilter,
-  type Query,
   type TextFilter,
 } from "~/lib/filters";
-import { queryPreviewQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { segmentDetailQuery, segmentPreviewQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -111,13 +111,13 @@ function SegmentsIndex() {
   // Read filters straight from the detail cache — no separate draft layer.
   // The optimistic mutation below writes to the same cache, so commits
   // reflect on the next render without a hydration step.
-  const filters = (activeSegmentDetail?.query as Query | undefined)?.filters ?? [];
+  const filters = (activeSegmentDetail?.criteria as Criteria | undefined)?.filters ?? [];
 
   // Preview keys on active filters only so adding/removing an empty filter
   // doesn't trigger a refetch. One query fetches counts and points in
   // parallel — `data` only updates when both resolve, so map and counts
   // can never disagree.
-  const effectiveQuery = useMemo<Query>(
+  const effectiveCriteria = useMemo<Criteria>(
     () => ({ filters: filters.filter(isActiveFilter) }),
     [filters],
   );
@@ -126,7 +126,7 @@ function SegmentsIndex() {
   // canonical signal for filter-commit transitions. Stays in-component
   // (not in the loader) so this UX is preserved.
   const { data: preview, isPlaceholderData: stale } = useQuery({
-    ...queryPreviewQuery(effectiveQuery),
+    ...segmentPreviewQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
@@ -136,20 +136,20 @@ function SegmentsIndex() {
   // Optimistic update: write into the ["segment", id] cache in onMutate,
   // snapshot for rollback, restore on error. The cache is the single
   // source of truth — `filters` above reads from it.
-  const updateQueryMutation = useMutation({
-    mutationFn: (input: { segmentId: string; query: Query }) =>
-      client.segments.updateQuery({ segmentId: input.segmentId, query: input.query }),
-    onMutate: async ({ segmentId, query }) => {
+  const updateCriteriaMutation = useMutation({
+    mutationFn: (input: { segmentId: string; criteria: Criteria }) =>
+      client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.criteria }),
+    onMutate: async ({ segmentId, criteria }) => {
       await queryClient.cancelQueries({ queryKey: ["segment", segmentId] });
       const previous = queryClient.getQueryData(["segment", segmentId]);
       queryClient.setQueryData(
         ["segment", segmentId],
-        (old: { query: unknown } | null | undefined) => (old ? { ...old, query } : old),
+        (old: { criteria: unknown } | null | undefined) => (old ? { ...old, criteria } : old),
       );
       return { previous };
     },
     onError: (e, { segmentId }, ctx) => {
-      console.error("segments.updateQuery failed", e);
+      console.error("segments.updateCriteria failed", e);
       if (ctx?.previous) queryClient.setQueryData(["segment", segmentId], ctx.previous);
     },
   });
@@ -188,7 +188,7 @@ function SegmentsIndex() {
 
   const commit = (nextFilters: Filter[]) => {
     if (!segmentId) return;
-    updateQueryMutation.mutate({ segmentId, query: { filters: nextFilters } });
+    updateCriteriaMutation.mutate({ segmentId, criteria: { filters: nextFilters } });
   };
   const updateFilter = (idx: number, next: Filter) =>
     commit(filters.map((f, i) => (i === idx ? next : f)));
@@ -239,7 +239,7 @@ function SegmentsIndex() {
               onClick={async () => {
                 if (!segmentId) return;
                 const { count } = await queryClient.fetchQuery({
-                  queryKey: ["segments", "countCampaigns", segmentId],
+                  queryKey: ["segments", "count-campaigns", segmentId],
                   queryFn: () => client.segments.countCampaigns({ segmentId }),
                   staleTime: 0,
                 });

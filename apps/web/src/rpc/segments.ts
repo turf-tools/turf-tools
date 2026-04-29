@@ -1,9 +1,9 @@
 import { and, asc, type Db, eq } from "@field-tools/db";
 import { campaigns, organizations, segments } from "@field-tools/db/schema";
 import { z } from "zod";
-import { type Query as QueryShape } from "../lib/filters";
+import { criteriaToWhere } from "../lib/criteria-to-sql";
+import { type Criteria } from "../lib/filters";
 import { boundaryKeyExprFor } from "../lib/key-groups";
-import { queryToWhere } from "../lib/query-to-sql";
 import { mut, pub } from "./context";
 
 const segmentSelect = {
@@ -17,8 +17,6 @@ const segmentSelect = {
 };
 
 // List segments in the current user's organization, oldest first.
-// Segments are now standalone — no campaign filter; campaigns reference
-// segments, not the other way around.
 export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
   const rows = await context.db
     .select(segmentSelect)
@@ -33,7 +31,7 @@ export const getById = pub
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
-      .select({ ...segmentSelect, query: segments.query })
+      .select({ ...segmentSelect, criteria: segments.criteria })
       .from(segments)
       .where(
         and(
@@ -44,8 +42,8 @@ export const getById = pub
     return rows[0] ?? null;
   });
 
-// Create an empty segment with the given name. Query starts empty —
-// editor populates it via subsequent updateQuery calls.
+// Create an empty segment with the given name. Criteria starts empty —
+// editor populates it via subsequent updateCriteria calls.
 export const create = pub
   .input(z.object({ name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
@@ -54,7 +52,7 @@ export const create = pub
       .values({
         organizationId: context.user.organizationId,
         name: input.name,
-        query: { filters: [] },
+        criteria: { filters: [] },
         createdBy: context.user.userId,
       })
       .returning();
@@ -88,7 +86,7 @@ export const rename = pub
   });
 
 // Clone a segment: creates a new segment with `newName` and copies the
-// source's query. Returns the new id.
+// source's criteria. Returns the new id.
 export const clone = pub
   .input(
     z.object({
@@ -113,7 +111,7 @@ export const clone = pub
       .values({
         organizationId: context.user.organizationId,
         name: input.newName,
-        query: src.query,
+        criteria: src.criteria,
         voterFileId: src.voterFileId,
         voterFileVersion: src.voterFileVersion,
         createdBy: context.user.userId,
@@ -154,9 +152,7 @@ export const remove = pub
     return { ok: true as const };
   });
 
-// Count how many campaigns currently reference a given segment. Editor
-// calls on demand (e.g. opening the delete dialog) so the answer is
-// fresh — matching the zoneGroups.countCampaigns pattern.
+// Count how many campaigns currently reference a given segment.
 export const countCampaigns = pub
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -178,14 +174,14 @@ export const countCampaigns = pub
     return { count: refs.length };
   });
 
-// Replace a segment's query JSON. Used by the segment editor's save flow.
-// The query shape is opaque at this layer — the editor and the data
+// Replace a segment's criteria. Used by the segment editor's save flow.
+// The criteria shape is opaque at this layer — the editor and the data
 // service interpret it; the web RPC just stores and returns it.
-export const updateQuery = pub
+export const updateCriteria = pub
   .input(
     z.object({
       segmentId: z.string().uuid(),
-      query: z.unknown(),
+      criteria: z.unknown(),
     }),
   )
   .handler(async ({ context, input }) => {
@@ -203,15 +199,13 @@ export const updateQuery = pub
     }
     await context.db
       .update(segments)
-      .set({ query: input.query as object, updatedAt: new Date() })
+      .set({ criteria: input.criteria as object, updatedAt: new Date() })
       .where(eq(segments.segmentId, input.segmentId));
     return { ok: true as const };
   });
 
 // Resolve the user's org slug from the auth context. The data service
 // uses it to namespace the persons/buildings tables.
-// Exported for use from sibling RPC modules (e.g. `turfs.publish`)
-// that need the same DuckLake-query plumbing.
 export async function loadOrgSlug(context: {
   db: Db;
   user: { organizationId: string };
@@ -225,10 +219,8 @@ export async function loadOrgSlug(context: {
   return slug;
 }
 
-// Optional spatial scope passed to the query procedures: clips
-// matches to people whose boundary-key falls in `keys`. Mirrors the
-// shape `/api/query-points` already accepts, so the same primitive
-// covers JSON aggregations and the binary points stream.
+// Optional spatial scope: clips matches to people whose boundary-key
+// falls in `keys`.
 const keyFilterSchema = z
   .object({
     keyGroup: z.string(),
@@ -236,10 +228,9 @@ const keyFilterSchema = z
   })
   .optional();
 
-// Composes the segment WHERE clause with an optional key-set filter.
+// Composes the criteria WHERE clause with an optional key-set filter.
 // Empty `keys` short-circuits to `1=0` so the query returns no rows
 // rather than emitting invalid `IN ()` SQL.
-// Exported for sibling RPC modules.
 export function applyKeyFilter(
   base: { where: string; params: unknown[] },
   keyFilter: z.infer<typeof keyFilterSchema>,
@@ -260,22 +251,21 @@ export function applyKeyFilter(
   };
 }
 
-// Live counts for an arbitrary query — person/door/building totals
-// plus a 100-row sample. Takes the query as an explicit argument
-// rather than looking it up from a saved segment, because the segment
-// editor wants live preview against the in-progress draft, not the
-// persisted snapshot.
+// Live counts for arbitrary criteria — person/door/building totals plus
+// a 100-row sample. Takes criteria as an explicit argument rather than
+// looking it up from a saved segment, because the segment editor wants
+// live preview against the in-progress draft, not the persisted
+// snapshot.
 //
-// `keyFilter` optionally clips the result to people whose boundary-
-// key falls in the supplied set. Used by the campaign editor when it
-// wants segment ∩ zone-group totals; segment editor leaves it
-// unset.
-export const queryCounts = mut
-  .input(z.object({ query: z.unknown(), keyFilter: keyFilterSchema }))
+// `keyFilter` optionally clips the result to people whose boundary-key
+// falls in the supplied set. Used by the campaign editor when it wants
+// segment ∩ zone-group totals; segment editor leaves it unset.
+export const count = mut
+  .input(z.object({ criteria: z.unknown(), keyFilter: keyFilterSchema }))
   .handler(async ({ context, input }) => {
     const orgSlug = await loadOrgSlug(context);
     const { where, params } = applyKeyFilter(
-      queryToWhere(input.query as QueryShape),
+      criteriaToWhere(input.criteria as Criteria),
       input.keyFilter,
     );
     const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
@@ -319,19 +309,18 @@ export const queryCounts = mut
     };
   });
 
-// Per-zone aggregation: count of people matching `query` grouped by
+// Per-zone aggregation: count of people matching `criteria` grouped by
 // the zone-key column corresponding to `keyGroup`. Used by the zone
 // editor's heatmap overlay and the campaign editor.
 //
 // `keyFilter` optionally clips the result to a subset of keys (e.g.
-// only the keys belonging to the campaign's zone group). Without it,
-// the query groups across every key the persons table contains.
-export const queryCountsByKey = mut
-  .input(z.object({ query: z.unknown(), keyGroup: z.string(), keyFilter: keyFilterSchema }))
+// only the keys belonging to the campaign's zone group).
+export const countByKey = mut
+  .input(z.object({ criteria: z.unknown(), keyGroup: z.string(), keyFilter: keyFilterSchema }))
   .handler(async ({ context, input }) => {
     const orgSlug = await loadOrgSlug(context);
     const { where, params } = applyKeyFilter(
-      queryToWhere(input.query as QueryShape),
+      criteriaToWhere(input.criteria as Criteria),
       input.keyFilter,
     );
     const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
@@ -355,33 +344,29 @@ export const queryCountsByKey = mut
     return { counts };
   });
 
-// Per-building aggregation: one row per building that contains at
-// least one matching person, with door + person counts and the
-// building's centroid. Used by the turf cutter to render buildings
-// scoped to segment ∩ zone, with enough detail (building id, per-
-// building doors/people) to compute "what's inside this drawn
-// polygon" client-side.
+// Per-building aggregation: one row per building that contains at least
+// one matching person, with door + person counts and the building's
+// centroid. Used by the turf cutter to render buildings scoped to
+// criteria ∩ zone, with enough detail to compute "what's inside this
+// drawn polygon" client-side.
 //
-// Returns JSON rather than the binary `/api/query-points` because
-// rows carry strings (UUIDs) and integers alongside floats — mixing
-// types in a binary frame would need length-prefixing and layout
-// metadata that JSON gives for free, and per-zone payloads stay
-// small enough that the wire-format efficiency doesn't matter.
-export const queryBuildings = mut
-  .input(z.object({ query: z.unknown(), keyFilter: keyFilterSchema }))
+// Returns JSON rather than binary because rows carry strings (UUIDs)
+// and integers alongside floats — mixing types in a binary frame would
+// need length-prefixing and layout metadata that JSON gives for free.
+export const listBuildings = mut
+  .input(z.object({ criteria: z.unknown(), keyFilter: keyFilterSchema }))
   .handler(async ({ context, input }) => {
     const orgSlug = await loadOrgSlug(context);
     const { where, params } = applyKeyFilter(
-      queryToWhere(input.query as QueryShape),
+      criteriaToWhere(input.criteria as Criteria),
       input.keyFilter,
     );
     const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
     const buildings = `ducklake.main.${orgSlug}_buildings_geocoded`;
-    // The segment WHERE + keyFilter is applied INSIDE a subquery so
+    // The criteria WHERE + keyFilter is applied INSIDE a subquery so
     // its unqualified column refs (e.g. `zip5`) only see persons.
-    // Without the subquery, columns that exist on both buildings and
-    // persons (zip5, address fields, etc.) would be ambiguous in the
-    // outer JOIN's WHERE.
+    // Without the subquery, columns that exist on both tables would be
+    // ambiguous in the outer JOIN's WHERE.
     const sql = `
       SELECT
         b.building_id              AS "buildingId",
@@ -421,9 +406,8 @@ export async function execute(
   return body.rows;
 }
 
-// Note: there's no `queryPoints` oRPC procedure — points come back as
-// raw binary, which oRPC's JSON envelope doesn't accommodate without
-// base64 (and the per-byte decode that imposes on the main thread).
-// The browser hits `POST /api/query-points` directly; that route
-// (apps/web/src/routes/api/query-points.ts) handles auth + org
-// scoping, builds the SQL, and proxies the binary response.
+// Note: there's no `points` oRPC procedure — points come back as raw
+// binary, which oRPC's JSON envelope doesn't accommodate without base64
+// (and the per-byte decode that imposes on the main thread). The
+// browser hits `POST /api/segment-points` directly; that route handles auth +
+// org scoping, builds the SQL, and proxies the binary response.

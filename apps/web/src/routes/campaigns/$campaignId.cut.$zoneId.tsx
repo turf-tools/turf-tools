@@ -86,10 +86,10 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   const { data: buildingsResult } = useQuery({
     ...cutterBuildingsQuery(
       zoneId,
-      segmentDetail?.query,
+      segmentDetail?.criteria,
       zoneGroup && zone ? { keyGroup: zoneGroup.keyGroup, keys: zone.keys } : undefined,
     ),
-    enabled: !!segmentDetail?.query && !!zone,
+    enabled: !!segmentDetail?.criteria && !!zone,
   });
   const buildings = buildingsResult?.buildings;
 

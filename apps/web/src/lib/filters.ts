@@ -32,7 +32,7 @@ export type TextFilter = {
 
 export type Filter = EnumFilter | AgeRangeFilter | TextFilter;
 
-export type Query = { filters: Filter[] };
+export type Criteria = { filters: Filter[] };
 
 // ---------------------------------------------------------------------------
 // Catalog of available filters

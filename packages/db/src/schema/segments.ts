@@ -2,17 +2,16 @@ import { integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-c
 import { organizations } from "./organizations";
 import { users } from "./users";
 
-// A segment is a targeting set defined by a query over the voter file —
+// A segment is a targeting set defined by criteria over the voter file —
 // e.g., "Swing Voters", "Base Voters", "Bushwick North". Standalone and
-// reusable across campaigns. Queries can compose by referencing other
-// segments, so a campaign-level "universe" can be built up from leaves.
+// reusable across campaigns.
 export const segments = pgTable("segments", {
   segmentId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()
     .references(() => organizations.organizationId),
   name: text().notNull(),
-  query: jsonb(),
+  criteria: jsonb(),
   voterFileId: text(),
   voterFileVersion: integer(),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),

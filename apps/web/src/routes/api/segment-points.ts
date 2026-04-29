@@ -1,24 +1,24 @@
 // Web → data proxy for points-binary queries.
 //
 // Builds the per-org SQL (buildings whose contained persons match the
-// segment filter) and forwards `{sql, params}` to the data service's
-// generic `POST /query` endpoint with `Accept: application/octet-stream`,
-// which causes the response to come back as raw Float32 bytes. The
-// browser receives the binary stream untouched.
+// criteria) and forwards `{sql, params}` to the data service's generic
+// `POST /query` endpoint with `Accept: application/octet-stream`, which
+// causes the response to come back as raw Float32 bytes. The browser
+// receives the binary stream untouched.
 //
 // Lives outside the oRPC handler because oRPC serializes responses as
 // JSON. Sending the bytes through oRPC would force base64 (~25% wire
-// overhead) plus an `atob` + per-byte loop on the browser main
-// thread. Direct binary over fetch + `arrayBuffer()` skips both —
-// zero JS-side decode work, the points go straight from network
-// buffer to GPU buffer.
+// overhead) plus an `atob` + per-byte loop on the browser main thread.
+// Direct binary over fetch + `arrayBuffer()` skips both — zero JS-side
+// decode work, the points go straight from network buffer to GPU
+// buffer.
 
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
 import { createFileRoute } from "@tanstack/react-router";
-import { type Query as QueryShape } from "../../lib/filters";
+import { criteriaToWhere } from "../../lib/criteria-to-sql";
+import { type Criteria } from "../../lib/filters";
 import { boundaryKeyExprFor } from "../../lib/key-groups";
-import { queryToWhere } from "../../lib/query-to-sql";
 import { loadUser } from "../../rpc/context";
 
 const corsHeaders = {
@@ -27,21 +27,21 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export const Route = createFileRoute("/api/query-points")({
+export const Route = createFileRoute("/api/segment-points")({
   server: {
     handlers: {
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
         const user = await loadUser(db, request);
         const body = (await request.json()) as {
-          query?: unknown;
+          criteria?: unknown;
           // Optional scope constraint: limits the result to people
           // whose boundary-key falls in the supplied set. Used by the
           // campaign editor to clip the points layer to the bound
           // zone group's zones (segment ∩ zone group).
           keyFilter?: { keyGroup: string; keys: string[] };
         };
-        const query = (body.query ?? { filters: [] }) as QueryShape;
+        const criteria = (body.criteria ?? { filters: [] }) as Criteria;
 
         const rows = await db
           .select({ slug: organizations.slug })
@@ -52,14 +52,14 @@ export const Route = createFileRoute("/api/query-points")({
           return new Response("Organization not found", { status: 404, headers: corsHeaders });
         }
 
-        // Buildings whose contained persons satisfy the filter. Empty
-        // filter → all buildings with at least one person.
-        const { where, params } = queryToWhere(query);
+        // Buildings whose contained persons satisfy the criteria.
+        // Empty criteria → all buildings with at least one person.
+        const { where, params } = criteriaToWhere(criteria);
         const persons = `ducklake.main.${slug}_persons_geocoded`;
         const buildings = `ducklake.main.${slug}_buildings_geocoded`;
 
-        // Compose the inner persons-WHERE: the segment filters plus,
-        // if a keyFilter is supplied, an additional `IN (...)` on the
+        // Compose the inner persons-WHERE: criteria plus, if a
+        // keyFilter is supplied, an additional `IN (...)` on the
         // boundary-key column. Empty `keys` short-circuits to "no
         // matches" — return zero buildings rather than letting an
         // empty IN-list become a SQL error.

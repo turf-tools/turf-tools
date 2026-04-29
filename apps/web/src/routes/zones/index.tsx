@@ -124,13 +124,13 @@ function ZonesIndex() {
   });
 
   // Key-determined: same query + keyGroup always yields the same result.
-  const overlayQuery = overlaySegmentDetail?.query ?? null;
-  const overlayQueryKey = overlayQuery ? JSON.stringify(overlayQuery) : null;
+  const overlayCriteria = overlaySegmentDetail?.criteria ?? null;
+  const overlayCriteriaKey = overlayCriteria ? JSON.stringify(overlayCriteria) : null;
   const { data: overlayCounts } = useQuery({
-    queryKey: ["countsByKey", overlayQueryKey, activeGroup?.keyGroup],
+    queryKey: ["counts-by-key", overlayCriteriaKey, activeGroup?.keyGroup],
     queryFn: () =>
-      client.segments.queryCountsByKey({
-        query: overlayQuery!,
+      client.segments.countByKey({
+        criteria: overlayCriteria!,
         keyGroup: activeGroup!.keyGroup,
       }),
     enabled:
@@ -169,7 +169,7 @@ function ZonesIndex() {
 
   const renameGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["zoneGroups"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["zone-groups"] }),
   });
 
   const createGroup = useDialogMutation({
@@ -180,7 +180,7 @@ function ZonesIndex() {
       queryClient.setQueryData<typeof zoneGroups>(["zoneGroups"], (old) =>
         old ? [...old, created] : [created],
       );
-      void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
       setActiveGroupId(created.zoneGroupId);
     },
   });
@@ -188,7 +188,7 @@ function ZonesIndex() {
   const cloneGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; newName: string }) => client.zoneGroups.clone(input),
     onSuccess: ({ zoneGroupId }) => {
-      void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
       setActiveGroupId(zoneGroupId);
     },
   });
@@ -203,7 +203,7 @@ function ZonesIndex() {
   const deleteGroup = useDialogMutation({
     mutationFn: (zoneGroupId: string) => client.zoneGroups.remove({ zoneGroupId }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["zoneGroups"] });
+      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
       // Loader picks the alphabetical-first survivor.
       setActiveGroupId(null);
       setActiveZoneId(null);
@@ -443,7 +443,7 @@ function ZonesIndex() {
                 if (!activeGroupId) return;
                 // Fetch before opening so the dialog has the count up front.
                 const { count } = await queryClient.fetchQuery({
-                  queryKey: ["zoneGroups", "countCampaigns", activeGroupId],
+                  queryKey: ["zone-groups", "count-campaigns", activeGroupId],
                   queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
                   staleTime: 0,
                 });
