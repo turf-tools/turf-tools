@@ -10,12 +10,14 @@ import { cleanCoords } from "@turf/clean-coords";
 import { union } from "@turf/union";
 import {
   ChevronDown,
+  CircleDotDashed,
   Copy,
   DoorClosed,
   List,
   Pencil,
   Plus,
   Scissors,
+  Send,
   Settings2,
   Trash2,
   UserRound,
@@ -55,6 +57,7 @@ import {
   segmentDetailQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -108,8 +111,11 @@ export const Route = createFileRoute("/campaigns/")({
       return;
     }
 
-    // Tier 1: active campaign detail.
-    const campaign = await queryClient.fetchQuery(campaignDetailQuery(idInUrl));
+    // Tier 1: active campaign detail + turf stats (used by the zones list).
+    const [campaign] = await Promise.all([
+      queryClient.fetchQuery(campaignDetailQuery(idInUrl)),
+      queryClient.fetchQuery(turfStatsForCampaignQuery(idInUrl)),
+    ]);
 
     // Tier 2: bound segment detail + zones, in parallel.
     const [segmentDetail, zones] = await Promise.all([
@@ -212,6 +218,11 @@ function CampaignsIndex() {
     ...zonesQuery(campaign?.zoneGroupId ?? ""),
     enabled: !!campaign?.zoneGroupId,
     placeholderData: keepPreviousData,
+  });
+
+  const { data: turfStats } = useQuery({
+    ...turfStatsForCampaignQuery(activeCampaignId ?? ""),
+    enabled: !!activeCampaignId,
   });
 
   const { data: boundaryFC, isPlaceholderData: boundaryStale } = useQuery({
@@ -513,6 +524,7 @@ function CampaignsIndex() {
               zones={zones ?? null}
               selectedZoneId={selectedZoneId}
               zoneCounts={zoneCounts}
+              turfStats={turfStats ?? null}
               onSelect={setSelectedZoneId}
               onCut={(zoneId) => {
                 if (!activeCampaignId) return;
@@ -604,16 +616,20 @@ function CampaignsIndex() {
   );
 }
 
+type TurfStats = Record<string, { drafts: number; published: number }>;
+
 function ZonesList({
   zones,
   selectedZoneId,
   zoneCounts,
+  turfStats,
   onSelect,
   onCut,
 }: {
   zones: Awaited<ReturnType<typeof client.zones.list>> | null;
   selectedZoneId: string | null;
   zoneCounts: Record<string, { doors: number; people: number }> | null;
+  turfStats: TurfStats | null;
   onSelect: (zoneId: string) => void;
   onCut: (zoneId: string) => void;
 }) {
@@ -626,6 +642,7 @@ function ZonesList({
           color={colorFor(idx)}
           selected={zone.zoneId === selectedZoneId}
           counts={zoneCounts?.[zone.zoneId] ?? null}
+          turfStats={turfStats?.[zone.zoneId] ?? null}
           onSelect={() => onSelect(zone.zoneId)}
           onCut={() => onCut(zone.zoneId)}
         />
@@ -639,6 +656,7 @@ function ZoneRow({
   color,
   selected,
   counts,
+  turfStats,
   onSelect,
   onCut,
 }: {
@@ -646,9 +664,12 @@ function ZoneRow({
   color: string;
   selected: boolean;
   counts: { doors: number; people: number } | null;
+  turfStats: { drafts: number; published: number } | null;
   onSelect: () => void;
   onCut: () => void;
 }) {
+  const turfCount = turfStats?.drafts ?? 0;
+  const hasPublished = (turfStats?.published ?? 0) > 0;
   return (
     <div
       role="button"
@@ -683,9 +704,17 @@ function ZoneRow({
           </Pill>
         </>
       ) : null}
-      {/* Placeholder pending per-zone cut state on the backend. */}
-      <Pill variant="text" className="!w-fit shrink-0">
-        Uncut
+      {hasPublished ? (
+        <Pill
+          variant="number"
+          className="size-7 shrink-0 justify-center !px-0 [&_svg]:[stroke-width:2]"
+        >
+          <Send className="size-4 text-foreground" />
+        </Pill>
+      ) : null}
+      <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
+        <CircleDotDashed className="size-3.5 text-foreground" />
+        {turfCount}
       </Pill>
       <Button
         size="sm"

@@ -1,4 +1,4 @@
-import { and, asc, eq } from "@field-tools/db";
+import { and, asc, eq, inArray, sql } from "@field-tools/db";
 import {
   campaigns,
   segments,
@@ -101,6 +101,32 @@ export const listForOrg = pub
       .where(where)
       .orderBy(asc(turfs.createdAt));
     return rows;
+  });
+
+// Per-zone turf counts for a campaign — drafts (work-in-progress in the
+// cutter) and published (rows in `turfs`). Drives the campaign editor's
+// at-a-glance progress indicators.
+export const statsForCampaign = pub
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const draftRows = await context.db
+      .select({ zoneId: turfDrafts.zoneId, count: sql<number>`count(*)::int` })
+      .from(turfDrafts)
+      .where(eq(turfDrafts.campaignId, input.campaignId))
+      .groupBy(turfDrafts.zoneId);
+    const turfRows = await context.db
+      .select({ zoneId: turfs.zoneId, count: sql<number>`count(*)::int` })
+      .from(turfs)
+      .where(eq(turfs.campaignId, input.campaignId))
+      .groupBy(turfs.zoneId);
+    const stats: Record<string, { drafts: number; published: number }> = {};
+    for (const r of draftRows) stats[r.zoneId] = { drafts: r.count, published: 0 };
+    for (const r of turfRows) {
+      const cur = stats[r.zoneId] ?? { drafts: 0, published: 0 };
+      cur.published = r.count;
+      stats[r.zoneId] = cur;
+    }
+    return stats;
   });
 
 // Fetch the buildings → doors → persons payload for a single turf.
@@ -348,66 +374,67 @@ export const publish = mut
       };
     });
 
-    // 9. Insert turfs + turf_data rows in a single transaction. The
-    // turfs row is created first so the `turf_data.turfId` FK
-    // resolves; both are written before the transaction commits so
-    // a crash mid-publish can't leave dangling metadata.
+    // 9. Insert turfs + turf_data rows in a single transaction with
+    // bulk inserts — collapses ~3 round trips per draft into ~3 total
+    // regardless of count. Pre-generate turfIds and turfCodes so each
+    // draft can be linked across both inserts without relying on
+    // RETURNING order.
+    const turfIds = turfPayloads.map(() => crypto.randomUUID());
+    const turfCodes = turfPayloads.map(() => genTurfCode());
     const created: Array<{ turfId: string; name: string; turfCode: string }> = [];
     await context.db.transaction(async (tx) => {
+      // Resolve any code collisions in bulk. 6-char Crockford base-32
+      // collisions are essentially nonexistent, so we cap at a small
+      // retry budget.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const collisions = await tx
+          .select({ turfCode: turfs.turfCode })
+          .from(turfs)
+          .where(inArray(turfs.turfCode, turfCodes));
+        if (collisions.length === 0) break;
+        const colliding = new Set(collisions.map((c) => c.turfCode));
+        for (let i = 0; i < turfCodes.length; i++) {
+          if (colliding.has(turfCodes[i]!)) turfCodes[i] = genTurfCode();
+        }
+        if (attempt === 9) {
+          throw new Error("Could not generate unique turf codes after 10 attempts");
+        }
+      }
+
+      const turfRows = turfPayloads.map((p, i) => ({
+        turfId: turfIds[i]!,
+        campaignId: input.campaignId,
+        segmentId,
+        zoneId: input.zoneId,
+        zoneGroupId,
+        scriptId,
+        name: p.draft.name ?? `Turf ${i + 1}`,
+        turfCode: turfCodes[i]!,
+        geometry: p.draft.geometry,
+        doorCount: p.doorCount,
+        personCount: p.personCount,
+        createdBy: context.user.userId,
+      }));
+      await tx.insert(turfs).values(turfRows);
+
+      const dataRows = turfPayloads.map((p, i) => ({
+        turfId: turfIds[i]!,
+        data: {
+          turfId: turfIds[i]!,
+          turfCode: turfCodes[i]!,
+          name: turfRows[i]!.name,
+          geometry: p.draft.geometry,
+          buildings: p.buildings,
+        } satisfies TurfData,
+      }));
+      await tx.insert(turfData).values(dataRows);
+
       for (let i = 0; i < turfPayloads.length; i++) {
-        const { draft, buildings, doorCount, personCount } = turfPayloads[i]!;
-        const name = draft.name ?? `Turf ${i + 1}`;
-
-        // Loop until we find a code not currently in `turfs.turfCode`.
-        // Visibility inside the same transaction means a code freshly
-        // used by an earlier iteration of this batch isn't reused.
-        // Cap at 10 attempts — collision at 6-char Crockford base-32
-        // is essentially nonexistent; hitting the cap means something
-        // else is wrong.
-        let turfCode = "";
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const candidate = genTurfCode();
-          const existing = await tx
-            .select({ turfId: turfs.turfId })
-            .from(turfs)
-            .where(eq(turfs.turfCode, candidate));
-          if (existing.length === 0) {
-            turfCode = candidate;
-            break;
-          }
-        }
-        if (!turfCode) {
-          throw new Error("Could not generate a unique turf code after 10 attempts");
-        }
-
-        const inserted = await tx
-          .insert(turfs)
-          .values({
-            campaignId: input.campaignId,
-            segmentId,
-            zoneId: input.zoneId,
-            zoneGroupId,
-            scriptId,
-            name,
-            turfCode,
-            geometry: draft.geometry,
-            doorCount,
-            personCount,
-            createdBy: context.user.userId,
-          })
-          .returning({ turfId: turfs.turfId });
-        const turfId = inserted[0]!.turfId;
-
-        const blob: TurfData = {
-          turfId,
-          turfCode,
-          name,
-          geometry: draft.geometry,
-          buildings,
-        };
-        await tx.insert(turfData).values({ turfId, data: blob });
-
-        created.push({ turfId, name, turfCode });
+        created.push({
+          turfId: turfIds[i]!,
+          name: turfRows[i]!.name,
+          turfCode: turfCodes[i]!,
+        });
       }
     });
 
