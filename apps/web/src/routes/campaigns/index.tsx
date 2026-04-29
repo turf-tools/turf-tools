@@ -539,7 +539,7 @@ function CampaignsIndex() {
           </Button>
           <Button variant="outline" onClick={createCampaign.open}>
             <Plus />
-            New
+            New campaign
           </Button>
           <Button variant="outline" onClick={renameCampaign.open} disabled={!activeCampaign}>
             <Pencil />
