@@ -5,7 +5,7 @@ import {
   ChevronDown,
   Copy,
   DoorClosed,
-  Hash,
+  Diamond,
   List,
   Pencil,
   Plus,
@@ -599,7 +599,7 @@ function ZonesIndex() {
                   </>
                 ) : (
                   <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                    <Hash className="size-3.5 text-foreground" />
+                    <Diamond className="size-3.5 text-foreground" />
                     {zone.keys.length}
                   </Pill>
                 )}

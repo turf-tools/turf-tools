@@ -1167,7 +1167,7 @@ function ConfigureDialog({
         <DialogTitle>Configure campaign</DialogTitle>
         <DialogDescription>
           A campaign combines a segment (people), a group of zones (geography), and a script
-          (quesitons). You can change the choices here.
+          (questions). You can change the choices here.
         </DialogDescription>
         <form
           onSubmit={(e) => {

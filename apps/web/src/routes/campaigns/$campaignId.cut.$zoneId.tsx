@@ -544,13 +544,20 @@ function CutterPage() {
         <DialogContent>
           <DialogTitle>Publish turfs?</DialogTitle>
           <DialogDescription>
-            Publishes {publishSummary.count} turf
-            {publishSummary.count === 1 ? "" : "s"} covering {publishSummary.doors.toLocaleString()}{" "}
+            This will publish{" "}
+            <span className="font-bold text-foreground">{publishSummary.count}</span> turf
+            {publishSummary.count === 1 ? "" : "s"} covering{" "}
+            <span className="font-bold text-foreground">
+              {publishSummary.doors.toLocaleString()}
+            </span>{" "}
             door
-            {publishSummary.doors === 1 ? "" : "s"} and {publishSummary.people.toLocaleString()}{" "}
+            {publishSummary.doors === 1 ? "" : "s"} and{" "}
+            <span className="font-bold text-foreground">
+              {publishSummary.people.toLocaleString()}
+            </span>{" "}
             person
-            {publishSummary.people === 1 ? "" : "s"}. Drafts are kept — you can keep editing and
-            republish; each publish creates a new batch.
+            {publishSummary.people === 1 ? "" : "s"}. You can keep editing after publishing. Every
+            time you publish it creates a new set of turf numbers that can be used for canvassing.
           </DialogDescription>
           {publishMutation.error ? (
             <div
@@ -565,6 +572,7 @@ function CutterPage() {
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button onClick={() => publishMutation.mutate()} loading={publishMutation.isPending}>
+              <Send />
               Publish
             </Button>
           </div>
