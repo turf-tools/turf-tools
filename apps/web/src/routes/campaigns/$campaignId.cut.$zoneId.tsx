@@ -326,7 +326,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   }, [selectedTurfId]);
 
   const onBack = () => {
-    void navigate({ to: "/campaigns" });
+    void navigate({ to: "/campaigns", search: { campaignId } });
   };
 
   // Map curtain holds until the heavy queries (boundaries + buildings)

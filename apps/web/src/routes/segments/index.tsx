@@ -596,7 +596,7 @@ function CountsPanel({
           stale ? "opacity-30" : null,
         )}
       >
-        <Stat label="Persons" value={disabled ? null : counts?.personCount} />
+        <Stat label="People" value={disabled ? null : counts?.personCount} />
         <Stat label="Doors" value={disabled ? null : counts?.doorCount} />
         <Stat label="Buildings" value={disabled ? null : counts?.buildingCount} />
       </div>
