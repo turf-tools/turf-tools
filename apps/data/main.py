@@ -1,7 +1,5 @@
 import array
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -15,24 +13,21 @@ logger = logging.getLogger("uvicorn")
 
 settings = get_settings()
 
-# Minimal HTTP surface. The person-loading / geocoding / Quickwit-indexing
-# pipelines are Hamilton DAGs, not HTTP endpoints. This service currently
-# only exposes health + a turf-blob fetch. New endpoints for the admin UI
-# (list_buildings / list_persons / zone-scoped cuts) will land here.
+# Read-side HTTP surface for the data service. Heavy work — voter-file
+# loading, geocoding, Quickwit indexing — runs as Hamilton DAGs via CLI
+# jobs. This service exposes health, a boundary-GeoJSON fetch, and a
+# generic `/query` endpoint that the web RPC layer calls into.
 app = FastAPI(title="Data Service")
 
-# Permissive CORS for dev — the web app (apps/web at :3000) fetches static
-# blobs (boundary GeoJSON, turf data) directly from this service. Native
-# and server-to-server callers aren't affected by CORS either way. Lock
-# this down via a settings-driven allow list when we deploy.
+# Permissive CORS for dev — the web app fetches boundary GeoJSON
+# directly from here and POSTs to `/query`. Lock down via a
+# settings-driven allow list before deploying.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
-
-LOCAL_TURFS_DIR = Path("local_turfs")
 
 
 @app.get("/healthcheck")
@@ -53,18 +48,6 @@ async def ducklake_status():
         "status": "ok",
         "tables": table_info,
     }
-
-
-@app.get("/turfs/{turf_id}/data")
-async def turfs_get_data(turf_id: str):
-    """Serve a turf data blob from local storage.
-
-    S3-backed storage will land alongside the new turf-writer endpoint.
-    """
-    path = LOCAL_TURFS_DIR / f"{turf_id}.json"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Turf data not found for turf_id={turf_id}")
-    return json.loads(path.read_text())
 
 
 @app.get("/key-groups/{key_group}/geojson")
@@ -119,32 +102,6 @@ async def key_group_geojson(key_group: str):
     )
 
 
-# ---------------------------------------------------------------------------
-# Generic SQL execute endpoint.
-#
-# The web layer owns the segment-query DSL and emits parameterised
-# DuckDB SQL. This endpoint is the only thing the service does at
-# request time: prepared-statement execute, JSON or binary out
-# depending on the caller's `Accept` header.
-#
-# - `Accept: application/json` (default) → `{rows: [{col: value, ...}]}`
-#   with STRUCT/ARRAY columns deserialised to nested dicts/lists. Used
-#   by the segment editor for counts, samples, per-zone aggregation,
-#   stats summaries — anything whose result is naturally JSON-shaped.
-#
-# - `Accept: application/octet-stream` → raw Float32 bytes in row-major
-#   order (col0row0, col1row0, col0row1, ...). Designed for SQL like
-#   `SELECT longitude, latitude FROM ...` that streams directly into a
-#   Float32Array on the browser, then into a GPU buffer with no
-#   per-byte decode work. Servers and browsers in practice are all
-#   little-endian, so we skip an explicit byteswap.
-#
-# Connections are opened ``read_only=True`` so a bug or misrouted call
-# physically cannot mutate the lake — the Hamilton ingestion DAGs are
-# the only writers, and they run as CLI jobs.
-# ---------------------------------------------------------------------------
-
-
 class _ExecuteRequest(BaseModel):
     sql: str
     params: list[Any] = []
@@ -152,6 +109,27 @@ class _ExecuteRequest(BaseModel):
 
 @app.post("/query")
 async def query(req: _ExecuteRequest, request: Request):
+    """Run a parameterised DuckDB query, return JSON or binary.
+
+    The web layer owns the segment-query DSL and emits the SQL passed
+    in here. Output format follows the caller's ``Accept`` header:
+
+    - ``application/json`` (default) → ``{rows: [{col: value, ...}]}``
+      with STRUCT/ARRAY columns deserialised to nested dicts/lists.
+      Used for counts, samples, per-zone aggregation — anything whose
+      result is naturally JSON-shaped.
+
+    - ``application/octet-stream`` → raw Float32 bytes in row-major
+      order (col0row0, col1row0, col0row1, ...). Designed for SQL like
+      ``SELECT longitude, latitude FROM ...`` that streams directly
+      into a Float32Array on the browser, then into a GPU buffer with
+      no per-byte decode work. Servers and browsers are all
+      little-endian in practice, so we skip an explicit byteswap.
+
+    Connections open ``read_only=True`` so a misrouted call can't
+    mutate the lake — Hamilton DAGs (run as CLI jobs) are the only
+    writers.
+    """
     binary = request.headers.get("accept", "").lower() == "application/octet-stream"
     conn = get_connection(settings, read_only=True)
     try:
