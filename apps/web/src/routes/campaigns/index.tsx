@@ -713,10 +713,8 @@ function KeyGroupRadio({ value, onChange }: { value: string; onChange: (v: strin
             key={kg.value}
             onClick={() => onChange(kg.value)}
             className={cn(
-              "rounded-md border px-2.5 py-1 text-sm",
-              selected
-                ? "border-foreground bg-foreground/10"
-                : "border-border bg-background hover:border-muted-foreground",
+              "rounded-md border border-border px-2.5 py-1 text-sm active:translate-y-px",
+              selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
             )}
           >
             {kg.label}
@@ -1133,7 +1131,7 @@ function ConfigField({
         <DropdownMenuTrigger
           className={cn(
             "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
-            "enabled:hover:border-muted-foreground",
+            "enabled:hover:bg-muted",
           )}
         >
           <span className="truncate">{current?.label ?? placeholder}</span>
