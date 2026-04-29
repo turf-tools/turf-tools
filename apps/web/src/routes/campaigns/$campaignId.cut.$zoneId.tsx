@@ -157,6 +157,10 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
       }>,
     ) => client.turfDrafts.replaceAll({ campaignId, zoneId, drafts: payload }),
     scope: { id: `turf-drafts-${campaignId}-${zoneId}` },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["turf-drafts", campaignId, zoneId] });
+      void queryClient.invalidateQueries({ queryKey: ["turf-stats", campaignId] });
+    },
   });
 
   const mutateDrafts = replaceAllDrafts.mutate;
@@ -236,6 +240,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
     onSuccess: () => {
       setPublishOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["turfs"] });
+      void queryClient.invalidateQueries({ queryKey: ["turf-stats", campaignId] });
     },
   });
 
