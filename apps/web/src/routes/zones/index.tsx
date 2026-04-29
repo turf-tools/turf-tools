@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  BrushCleaning,
+  Eraser,
   ChevronDown,
   Copy,
   DoorClosed,
@@ -498,7 +498,7 @@ function ZonesIndex() {
             Duplicate
           </Button>
           <Button variant="outline" onClick={clearZones.open}>
-            <BrushCleaning />
+            <Eraser />
             Clear
           </Button>
           <Button
