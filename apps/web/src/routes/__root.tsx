@@ -1,15 +1,13 @@
 /// <reference types="vite/client" />
 import type { ReactNode } from "react";
-import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Outlet, createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Provider as JotaiProvider } from "jotai";
 
 import { Shell } from "~/components/shell";
 import appCss from "~/styles.css?url";
 
-const queryClient = new QueryClient();
-
-export const Route = createRootRoute({
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
       {
@@ -29,6 +27,7 @@ export const Route = createRootRoute({
 });
 
 function RootComponent() {
+  const { queryClient } = Route.useRouteContext();
   return (
     <QueryClientProvider client={queryClient}>
       <JotaiProvider>
