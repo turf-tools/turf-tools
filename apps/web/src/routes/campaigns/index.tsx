@@ -463,6 +463,7 @@ function CampaignsIndex() {
   });
 
   const [configOpen, setConfigOpen] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
   // Snapshotted at click time so the dialog body keeps showing the
   // just-deleted name during its close animation, even after the URL
   // has reactively swapped to the fallback campaign.
@@ -475,6 +476,65 @@ function CampaignsIndex() {
   }) => {
     if (!activeCampaignId) return;
     updateCampaignMutation.mutate({ campaignId: activeCampaignId, ...patch });
+  };
+
+  // Loader-equivalent prefetch for a Configure save. Without it, the
+  // optimistic detail update flips the body's queries to keys that
+  // aren't in cache yet — `keepPreviousData` returns stale data with
+  // `isPlaceholderData=true`, which drops the `ready` curtain and
+  // shows white-through-opacity-0 while everything refetches.
+  // Prefetching here mirrors what the route loader would do for a
+  // navigation-driven binding swap, so the body never sees an
+  // unwarmed cache slot.
+  const saveConfigure = async (patch: {
+    segmentId: string | null;
+    zoneGroupId: string | null;
+    scriptId: string | null;
+  }) => {
+    if (!activeCampaignId) return;
+    setConfigSaving(true);
+    try {
+      const next = {
+        segmentId: patch.segmentId,
+        zoneGroupId: patch.zoneGroupId,
+        scriptId: patch.scriptId,
+      };
+      const nextZoneGroup = zoneGroups.find((g) => g.zoneGroupId === next.zoneGroupId) ?? null;
+      const [nextSegmentDetail, nextZones] = await Promise.all([
+        next.segmentId
+          ? queryClient.fetchQuery(segmentDetailQuery(next.segmentId))
+          : Promise.resolve(undefined),
+        next.zoneGroupId
+          ? queryClient.fetchQuery(zonesQuery(next.zoneGroupId))
+          : Promise.resolve(undefined),
+      ]);
+      const nextKeyFilter = deriveKeyFilter(nextZoneGroup, nextZones);
+      await Promise.all([
+        nextZoneGroup
+          ? queryClient.prefetchQuery(
+              boundariesGeoJsonQuery(nextZoneGroup.keyGroup, nextZoneGroup.updatedAt),
+            )
+          : Promise.resolve(),
+        nextSegmentDetail?.criteria && nextKeyFilter
+          ? queryClient.prefetchQuery(
+              campaignPointsQuery(nextSegmentDetail.criteria, nextKeyFilter),
+            )
+          : Promise.resolve(),
+        nextSegmentDetail?.criteria && nextKeyFilter
+          ? queryClient.prefetchQuery(
+              campaignKeyCountsQuery(
+                nextSegmentDetail.criteria,
+                nextKeyFilter.keyGroup,
+                nextKeyFilter.keys,
+              ),
+            )
+          : Promise.resolve(),
+      ]);
+      bind(patch);
+      setConfigOpen(false);
+    } finally {
+      setConfigSaving(false);
+    }
   };
 
   return (
@@ -637,10 +697,8 @@ function CampaignsIndex() {
         segmentOptions={segments.map((s) => ({ value: s.segmentId, label: s.name }))}
         zoneGroupOptions={zoneGroups.map((g) => ({ value: g.zoneGroupId, label: g.name }))}
         scriptOptions={scripts.map((s) => ({ value: s.scriptId, label: s.name }))}
-        onSubmit={(patch) => {
-          bind(patch);
-          setConfigOpen(false);
-        }}
+        pending={configSaving}
+        onSubmit={(patch) => void saveConfigure(patch)}
       />
     </>
   );
@@ -1103,6 +1161,7 @@ function ConfigureDialog({
   segmentOptions,
   zoneGroupOptions,
   scriptOptions,
+  pending,
   onSubmit,
 }: {
   open: boolean;
@@ -1113,6 +1172,7 @@ function ConfigureDialog({
   segmentOptions: ReadonlyArray<SelectOption>;
   zoneGroupOptions: ReadonlyArray<SelectOption>;
   scriptOptions: ReadonlyArray<SelectOption>;
+  pending: boolean;
   onSubmit: (patch: {
     segmentId: string | null;
     zoneGroupId: string | null;
@@ -1179,7 +1239,7 @@ function ConfigureDialog({
           />
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!dirty}>
+            <Button type="submit" disabled={!dirty || pending} loading={pending}>
               Save
             </Button>
           </div>
