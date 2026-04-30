@@ -399,6 +399,70 @@ function CampaignsIndex() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["campaigns"] }),
   });
 
+  // Mirror of the route loader's tier 2/3 prefetch for a target
+  // {campaignId, segmentId, zoneGroupId}. Used by every flow that
+  // wants the body to render against a new binding without dropping
+  // the `ready` curtain — configure save (in-place rebind) and
+  // create/clone (rebind under a new active id). zone-groups list is
+  // fetched too so the boundary lookup picks up groups created in
+  // the same flow (e.g. createWithDefaultZone).
+  const prefetchCampaignViewData = async (target: {
+    campaignId: string;
+    segmentId: string | null;
+    zoneGroupId: string | null;
+  }) => {
+    const zgs = await queryClient.fetchQuery(zoneGroupsQuery());
+    const nextZoneGroup = zgs.find((g) => g.zoneGroupId === target.zoneGroupId) ?? null;
+    const [nextSegmentDetail, nextZones] = await Promise.all([
+      target.segmentId
+        ? queryClient.fetchQuery(segmentDetailQuery(target.segmentId))
+        : Promise.resolve(undefined),
+      target.zoneGroupId
+        ? queryClient.fetchQuery(zonesQuery(target.zoneGroupId))
+        : Promise.resolve(undefined),
+    ]);
+    const nextKeyFilter = deriveKeyFilter(nextZoneGroup, nextZones);
+    await Promise.all([
+      queryClient.prefetchQuery(turfStatsForCampaignQuery(target.campaignId)),
+      nextZoneGroup
+        ? queryClient.prefetchQuery(
+            boundariesGeoJsonQuery(nextZoneGroup.keyGroup, nextZoneGroup.updatedAt),
+          )
+        : Promise.resolve(),
+      nextSegmentDetail?.criteria && nextKeyFilter
+        ? queryClient.prefetchQuery(campaignPointsQuery(nextSegmentDetail.criteria, nextKeyFilter))
+        : Promise.resolve(),
+      nextSegmentDetail?.criteria && nextKeyFilter
+        ? queryClient.prefetchQuery(
+            campaignKeyCountsQuery(
+              nextSegmentDetail.criteria,
+              nextKeyFilter.keyGroup,
+              nextKeyFilter.keys,
+            ),
+          )
+        : Promise.resolve(),
+    ]);
+  };
+
+  // Optimistic writes + view prefetch for a freshly created/cloned
+  // campaign. Run inside `mutationFn` so the dialog spinner stays up
+  // until the cache is fully warm; the subsequent navigate then sees
+  // an all-cache-hit loader.
+  const warmupCampaignCache = async (
+    created: Awaited<ReturnType<typeof client.campaigns.create>>,
+  ) => {
+    queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
+      ["campaigns"],
+      (old) => (old ? [...old, created] : [created]),
+    );
+    queryClient.setQueryData(["campaign", created.campaignId], created);
+    await prefetchCampaignViewData({
+      campaignId: created.campaignId,
+      segmentId: created.segmentId,
+      zoneGroupId: created.zoneGroupId,
+    });
+  };
+
   // The construct path chains zoneGroups.createWithDefaultZone +
   // campaigns.create. Wrapping in one mutation keeps the dialog's
   // pending/error UX coherent across both paths.
@@ -420,34 +484,28 @@ function CampaignsIndex() {
         zoneGroupId = zg.zoneGroupId;
         void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
       }
-      return client.campaigns.create({
+      const created = await client.campaigns.create({
         name: input.name,
         segmentId: input.segmentId,
         scriptId: input.scriptId,
         zoneGroupId,
       });
+      await warmupCampaignCache(created);
+      return created;
     },
     onSuccess: (created) => {
-      // Inject before navigating so the loader's URL-validates-against-list
-      // check sees the new campaign instead of redirecting back to the survivor.
-      queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
-        ["campaigns"],
-        (old) => (old ? [...old, created] : [created]),
-      );
-      queryClient.setQueryData(["campaign", created.campaignId], created);
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       setActiveCampaignId(created.campaignId);
     },
   });
 
   const cloneCampaign = useDialogMutation({
-    mutationFn: (input: { campaignId: string; newName: string }) => client.campaigns.clone(input),
+    mutationFn: async (input: { campaignId: string; newName: string }) => {
+      const created = await client.campaigns.clone(input);
+      await warmupCampaignCache(created);
+      return created;
+    },
     onSuccess: (created) => {
-      queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
-        ["campaigns"],
-        (old) => (old ? [...old, created] : [created]),
-      );
-      queryClient.setQueryData(["campaign", created.campaignId], created);
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       setActiveCampaignId(created.campaignId);
     },
@@ -478,14 +536,9 @@ function CampaignsIndex() {
     updateCampaignMutation.mutate({ campaignId: activeCampaignId, ...patch });
   };
 
-  // Loader-equivalent prefetch for a Configure save. Without it, the
-  // optimistic detail update flips the body's queries to keys that
-  // aren't in cache yet — `keepPreviousData` returns stale data with
-  // `isPlaceholderData=true`, which drops the `ready` curtain and
-  // shows white-through-opacity-0 while everything refetches.
-  // Prefetching here mirrors what the route loader would do for a
-  // navigation-driven binding swap, so the body never sees an
-  // unwarmed cache slot.
+  // Configure save: warm the cache against the new bindings before
+  // the optimistic detail update fires, so the body's queries cache-
+  // hit on the rebind and the `ready` curtain never drops.
   const saveConfigure = async (patch: {
     segmentId: string | null;
     zoneGroupId: string | null;
@@ -494,42 +547,11 @@ function CampaignsIndex() {
     if (!activeCampaignId) return;
     setConfigSaving(true);
     try {
-      const next = {
+      await prefetchCampaignViewData({
+        campaignId: activeCampaignId,
         segmentId: patch.segmentId,
         zoneGroupId: patch.zoneGroupId,
-        scriptId: patch.scriptId,
-      };
-      const nextZoneGroup = zoneGroups.find((g) => g.zoneGroupId === next.zoneGroupId) ?? null;
-      const [nextSegmentDetail, nextZones] = await Promise.all([
-        next.segmentId
-          ? queryClient.fetchQuery(segmentDetailQuery(next.segmentId))
-          : Promise.resolve(undefined),
-        next.zoneGroupId
-          ? queryClient.fetchQuery(zonesQuery(next.zoneGroupId))
-          : Promise.resolve(undefined),
-      ]);
-      const nextKeyFilter = deriveKeyFilter(nextZoneGroup, nextZones);
-      await Promise.all([
-        nextZoneGroup
-          ? queryClient.prefetchQuery(
-              boundariesGeoJsonQuery(nextZoneGroup.keyGroup, nextZoneGroup.updatedAt),
-            )
-          : Promise.resolve(),
-        nextSegmentDetail?.criteria && nextKeyFilter
-          ? queryClient.prefetchQuery(
-              campaignPointsQuery(nextSegmentDetail.criteria, nextKeyFilter),
-            )
-          : Promise.resolve(),
-        nextSegmentDetail?.criteria && nextKeyFilter
-          ? queryClient.prefetchQuery(
-              campaignKeyCountsQuery(
-                nextSegmentDetail.criteria,
-                nextKeyFilter.keyGroup,
-                nextKeyFilter.keys,
-              ),
-            )
-          : Promise.resolve(),
-      ]);
+      });
       bind(patch);
       setConfigOpen(false);
     } finally {
