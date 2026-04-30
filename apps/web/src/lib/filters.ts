@@ -1,16 +1,9 @@
-// Filterable fields for the segment query DSL. Single source of truth
+// Filterable fields for segment criteria. Single source of truth
 // for the editor UI (which renders inputs by `kind`) and the SQL
-// emitter in `query-to-sql.ts` (which resolves keys to columns or
+// emitter in `criteria-to-sql.ts` (which resolves keys to columns or
 // JSONB extracts).
-//
-// Two shapes live here:
-//   - `Filter`    — instance the user has placed in a query
-//   - `FilterDef` — definition of an available filter (catalog entry)
 
-// ---------------------------------------------------------------------------
 // In-query filter instances
-// ---------------------------------------------------------------------------
-
 export type EnumFilter = {
   kind: "enum";
   key: string;
@@ -34,14 +27,8 @@ export type Filter = EnumFilter | AgeRangeFilter | TextFilter;
 
 export type Criteria = { filters: Filter[] };
 
-// ---------------------------------------------------------------------------
-// Catalog of available filters
-// ---------------------------------------------------------------------------
-
-// `source` tells the SQL translator where the field lives:
-//   - "column"           — top-level column on `{org}_persons_geocoded`
-//   - "other_properties" — sub-key inside the `other_properties` JSONB
-//
+// Catalog of available filters. `source` tells the SQL translator where
+// the field lives (top level "column" or "other_properties").
 // `op` on text filters is fixed per-field: names use substring `contains`,
 // codes/zips use `equals`. If a field needs both, add it twice (one per op).
 export type FilterDef =
@@ -67,7 +54,7 @@ export type FilterDef =
     };
 
 export const FILTERS: ReadonlyArray<FilterDef> = [
-  // Top-level Person columns ------------------------------------------------
+  // Top-level Person columns
   {
     kind: "text",
     key: "first_name",
@@ -84,7 +71,7 @@ export const FILTERS: ReadonlyArray<FilterDef> = [
   },
   { kind: "text", key: "zip5", label: "ZIP", source: "column", op: "equals" },
 
-  // other_properties JSONB --------------------------------------------------
+  // other_properties JSONB
   {
     kind: "enum",
     key: "party",
@@ -154,10 +141,7 @@ export const FILTERS: ReadonlyArray<FilterDef> = [
   },
 ] as const;
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
-
 export function definitionFor(key: string): FilterDef | undefined {
   return FILTERS.find((d) => d.key === key);
 }
@@ -168,9 +152,8 @@ export function emptyFilterFor(def: FilterDef): Filter {
   return { kind: "text", key: def.key, value: "" };
 }
 
-// True if a filter materially constrains the result set. Mirrors the
-// no-op handling in `apps/data/src/query.py` — empty enum value lists,
-// empty text values, and unbounded age ranges all produce no SQL clause
+// True if a filter materially constrains the result set. Empty enum value
+// lists, empty text values, and unbounded age ranges all produce no SQL clause
 // and thus don't change counts. The editor uses this to skip stale-state
 // transitions when adding/removing inactive filters.
 export function isActiveFilter(f: Filter): boolean {
