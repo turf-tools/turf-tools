@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "jotai";
 import {
   Eraser,
   ChevronDown,
@@ -32,6 +33,7 @@ import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
+import { darkAtom } from "~/lib/atoms/theme";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
 import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
@@ -79,6 +81,7 @@ function ZonesIndex() {
   const navigate = useNavigate({ from: Route.fullPath });
   const { groupId: activeGroupId = null } = Route.useSearch();
   const shouldFade = useFadeOnce("/zones");
+  const isDark = useAtomValue(darkAtom);
 
   const setActiveGroupId = (id: string | null) => {
     void navigate({ search: { groupId: id ?? undefined } });
@@ -274,7 +277,7 @@ function ZonesIndex() {
       const out: Record<string, string> = {};
       for (const [key, c] of Object.entries(overlayCountsByKey)) {
         const t = max === 0 ? 0 : Math.sqrt(c.doors / max);
-        out[key] = interpolateRamp(t);
+        out[key] = interpolateRamp(t, isDark);
       }
       return out;
     }
@@ -284,7 +287,7 @@ function ZonesIndex() {
       for (const key of zone.keys) out[key] = color;
     });
     return out;
-  }, [zones, overlayCountsByKey]);
+  }, [zones, overlayCountsByKey, isDark]);
 
   // Keys with a thicker outline — every key in the selected zone.
   const activeKeys = useMemo(() => {
@@ -318,10 +321,10 @@ function ZonesIndex() {
     const colors: Record<string, string> = {};
     for (const [zoneId, count] of Object.entries(doors)) {
       const t = maxDoors === 0 ? 0 : Math.sqrt(count / maxDoors);
-      colors[zoneId] = interpolateRamp(t);
+      colors[zoneId] = interpolateRamp(t, isDark);
     }
     return { doors, people, colors };
-  }, [overlayCountsByKey, zones]);
+  }, [overlayCountsByKey, zones, isDark]);
 
   const handlePolygonClick = (key: string, opts: { shiftKey: boolean }) => {
     if (!zones) return;

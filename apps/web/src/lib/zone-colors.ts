@@ -17,5 +17,9 @@ export function colorFor(i: number): string {
 // Sequential ramp for the segment-counts overlay. Classic
 // ColorBrewer YlOrRd via d3-scale-chromatic — perceptually-uniform
 // warm ramp that reads unambiguously as "low → high" without
-// having to share hue family with the categorical above.
-export const interpolateRamp = interpolateYlOrRd;
+// having to share hue family with the categorical above. Inverted
+// in dark mode (dark red low → pale yellow high) so high values
+// stay the most visible end of the ramp on a dark basemap.
+export function interpolateRamp(t: number, isDark = false): string {
+  return interpolateYlOrRd(isDark ? 1 - t : t);
+}

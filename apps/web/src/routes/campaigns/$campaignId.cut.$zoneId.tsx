@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "jotai";
 import { ArrowLeft, Eraser, Send, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
+import { darkAtom } from "~/lib/atoms/theme";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -60,6 +62,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const shouldFade = useFadeOnce("/campaigns/cut");
+  const isDark = useAtomValue(darkAtom);
 
   const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
@@ -245,15 +248,17 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   });
 
   // Per-point colors. Each building gets the palette color of the first
-  // turf that contains it, or a near-black default. Recomputes on every
-  // cursor move when there's a drawing turf — bounded work (~600 buildings
-  // × handful of turfs × ~10 vertices), stays under a frame.
+  // turf that contains it, or a theme-matched default (near-black on
+  // light, near-white on dark — matches the segment view's dot color).
+  // Recomputes on every cursor move when there's a drawing turf —
+  // bounded work (~600 buildings × handful of turfs × ~10 vertices),
+  // stays under a frame.
   const pointColors = useMemo(() => {
     if (!buildings) return null;
     const colors = new Uint8Array(buildings.length * 3);
-    const DEFAULT_R = 26;
-    const DEFAULT_G = 26;
-    const DEFAULT_B = 26;
+    const DEFAULT_R = isDark ? 229 : 26;
+    const DEFAULT_G = isDark ? 229 : 26;
+    const DEFAULT_B = isDark ? 229 : 26;
     const polygons: Array<Array<[number, number]> | null> = turfs.map((t) => {
       if (t.mode === "editing") return t.vertices;
       if (t.vertices.length >= 2 && cursorLngLat) return [...t.vertices, cursorLngLat];
@@ -284,7 +289,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
       }
     }
     return colors;
-  }, [buildings, turfs, cursorLngLat]);
+  }, [buildings, turfs, cursorLngLat, isDark]);
 
   // Per-point sizes — sqrt-scaled relative to a fixed reference. Off
   // returns null so the layer falls back to scale 1 across the board.
