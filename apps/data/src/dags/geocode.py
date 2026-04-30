@@ -444,7 +444,7 @@ def geocoded_persons(
     - Lat/lon by rank-based interpolation along the matched blockface
       (voters sorted by house number within each blockface, placed at
       evenly-spaced fractions, clamped to [0.05, 0.95] to avoid
-      intersection-node stacking), then offset ~6m perpendicular to the
+      intersection-node stacking), then offset ~7m perpendicular to the
       segment onto the correct side of the street. We don't use TIGER's
       stated address range as the interpolation denominator — Census
       documents those ranges as *potential*, not actual, and the
@@ -585,8 +585,9 @@ def geocoded_persons(
           --   5. Project back to OGC:CRS84 (lng/lat axis order, matching
           --      how blockface geometry is stored).
           --
-          -- 6m chosen for NYC: streets are ~12-20m wide, so this places
-          -- buildings on roughly the actual building line on each side.
+          -- 7m chosen for NYC: NYC streets are ~12-20m wide, so this
+          -- places points roughly on the curb / near the building line,
+          -- giving visual separation between the two sides of a street.
           SELECT
               base.*,
               ST_Transform(ST_LineInterpolatePoint(bf_geom, frac), 'OGC:CRS84', 'EPSG:32618') AS pt_m,
@@ -612,9 +613,9 @@ def geocoded_persons(
                     -- direction" → (-dy, dx). For TIGER blockfaces this
                     -- matches the `side` field semantics (verified against
                     -- AD-65 building positions).
-                    6.0 * CASE WHEN bf_side = 'left' THEN -dy_m ELSE  dy_m END
+                    7.0 * CASE WHEN bf_side = 'left' THEN -dy_m ELSE  dy_m END
                           / sqrt(dx_m * dx_m + dy_m * dy_m),
-                    6.0 * CASE WHEN bf_side = 'left' THEN  dx_m ELSE -dx_m END
+                    7.0 * CASE WHEN bf_side = 'left' THEN  dx_m ELSE -dx_m END
                           / sqrt(dx_m * dx_m + dy_m * dy_m)
                   )
                 ELSE pt_m
