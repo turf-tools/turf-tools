@@ -15,6 +15,7 @@ Node dependency chain:
 """
 
 import json
+import time
 import urllib.request
 from pathlib import Path
 from zipfile import ZipFile
@@ -71,9 +72,14 @@ def _download_and_extract(url: str, zip_path: Path, extract_dir: Path) -> None:
 
     No-ops if the zip already exists on disk (i.e. a prior successful download).
     """
+    extract_dir.mkdir(parents=True, exist_ok=True)
     if not zip_path.exists():
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url) as resp, open(zip_path, "wb") as f:  # noqa: S310
+        # Census's Cloudflare edge rejects the default Python-urllib UA
+        # and caches the HTML rejection at the edge URL-keyed; the unique
+        # query param bypasses that cache. Census ignores unknown params.
+        fetch_url = f"{url}?_={int(time.time() * 1000)}"
+        req = urllib.request.Request(fetch_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp, open(zip_path, "wb") as f:  # noqa: S310
             f.write(resp.read())
 
     with ZipFile(zip_path) as zf:
