@@ -55,7 +55,7 @@ export const create = pub
         criteria: { filters: [] },
         createdBy: context.user.userId,
       })
-      .returning();
+      .returning({ ...segmentSelect, criteria: segments.criteria });
     return rows[0]!;
   });
 
@@ -86,7 +86,7 @@ export const rename = pub
   });
 
 // Clone a segment: creates a new segment with `newName` and copies the
-// source's criteria. Returns the new id.
+// source's criteria. Returns the full new row.
 export const clone = pub
   .input(
     z.object({
@@ -116,8 +116,8 @@ export const clone = pub
         voterFileVersion: src.voterFileVersion,
         createdBy: context.user.userId,
       })
-      .returning({ segmentId: segments.segmentId });
-    return { segmentId: inserted[0]!.segmentId };
+      .returning({ ...segmentSelect, criteria: segments.criteria });
+    return inserted[0]!;
   });
 
 // Delete a segment. Blocks if any campaign still references it — same

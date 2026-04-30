@@ -177,7 +177,7 @@ function ZonesIndex() {
     onSuccess: (created) => {
       // Inject before navigating so the loader's URL-validates-against-list
       // check sees the new group instead of redirecting back to the survivor.
-      queryClient.setQueryData<typeof zoneGroups>(["zoneGroups"], (old) =>
+      queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
         old ? [...old, created] : [created],
       );
       void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
@@ -187,9 +187,12 @@ function ZonesIndex() {
 
   const cloneGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; newName: string }) => client.zoneGroups.clone(input),
-    onSuccess: ({ zoneGroupId }) => {
+    onSuccess: (created) => {
+      queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
+        old ? [...old, created] : [created],
+      );
       void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      setActiveGroupId(zoneGroupId);
+      setActiveGroupId(created.zoneGroupId);
     },
   });
 
@@ -356,7 +359,10 @@ function ZonesIndex() {
     setActiveZoneId(owner?.zoneId ?? null);
   };
 
-  const [deleteCampaignCount, setDeleteCampaignCount] = useState(0);
+  // Snapshotted at click time so the dialog body keeps showing the
+  // just-deleted name during its close animation, even after the URL
+  // has reactively swapped to the fallback zone group.
+  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", campaignCount: 0 });
 
   // Click outside the map clears the active zone. Suppressed while any
   // modal/inline-rename is open and while a dropdown is open — dropdowns
@@ -451,7 +457,7 @@ function ZonesIndex() {
                   queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
                   staleTime: 0,
                 });
-                setDeleteCampaignCount(count);
+                setDeleteSnapshot({ name: activeGroup?.name ?? "", campaignCount: count });
                 deleteGroup.open();
               }}
               disabled={!activeGroup}
@@ -725,8 +731,8 @@ function ZonesIndex() {
       <DeleteDialog
         open={deleteGroup.isOpen}
         onOpenChange={deleteGroup.onOpenChange}
-        groupName={activeGroup?.name ?? ""}
-        campaignCount={deleteCampaignCount}
+        groupName={deleteSnapshot.name}
+        campaignCount={deleteSnapshot.campaignCount}
         pending={deleteGroup.isPending}
         error={deleteGroup.error}
         onConfirm={() => {

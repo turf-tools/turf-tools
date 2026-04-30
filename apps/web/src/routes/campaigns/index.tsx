@@ -428,6 +428,13 @@ function CampaignsIndex() {
       });
     },
     onSuccess: (created) => {
+      // Inject before navigating so the loader's URL-validates-against-list
+      // check sees the new campaign instead of redirecting back to the survivor.
+      queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
+        ["campaigns"],
+        (old) => (old ? [...old, created] : [created]),
+      );
+      queryClient.setQueryData(["campaign", created.campaignId], created);
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       setActiveCampaignId(created.campaignId);
     },
@@ -435,9 +442,14 @@ function CampaignsIndex() {
 
   const cloneCampaign = useDialogMutation({
     mutationFn: (input: { campaignId: string; newName: string }) => client.campaigns.clone(input),
-    onSuccess: ({ campaignId }) => {
+    onSuccess: (created) => {
+      queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
+        ["campaigns"],
+        (old) => (old ? [...old, created] : [created]),
+      );
+      queryClient.setQueryData(["campaign", created.campaignId], created);
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      setActiveCampaignId(campaignId);
+      setActiveCampaignId(created.campaignId);
     },
   });
 
@@ -451,7 +463,10 @@ function CampaignsIndex() {
   });
 
   const [configOpen, setConfigOpen] = useState(false);
-  const [deleteTurfCount, setDeleteTurfCount] = useState(0);
+  // Snapshotted at click time so the dialog body keeps showing the
+  // just-deleted name during its close animation, even after the URL
+  // has reactively swapped to the fallback campaign.
+  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", turfCount: 0 });
 
   const bind = (patch: {
     segmentId?: string | null;
@@ -515,7 +530,7 @@ function CampaignsIndex() {
                   queryFn: () => client.turfs.countForCampaign({ campaignId: activeCampaignId }),
                   staleTime: 0,
                 });
-                setDeleteTurfCount(count);
+                setDeleteSnapshot({ name: activeCampaign?.name ?? "", turfCount: count });
                 deleteCampaign.open();
               }}
               disabled={!activeCampaign}
@@ -603,8 +618,8 @@ function CampaignsIndex() {
       <DeleteDialog
         open={deleteCampaign.isOpen}
         onOpenChange={deleteCampaign.onOpenChange}
-        campaignName={activeCampaign?.name ?? ""}
-        turfCount={deleteTurfCount}
+        campaignName={deleteSnapshot.name}
+        turfCount={deleteSnapshot.turfCount}
         pending={deleteCampaign.isPending}
         error={deleteCampaign.error}
         onConfirm={() => {

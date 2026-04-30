@@ -147,7 +147,7 @@ export const remove = pub
   });
 
 // Clone a zone group: creates a new group with `newName` and copies every
-// zone from the source. Same key group as the source. Returns the new id.
+// zone from the source. Same key group as the source. Returns the full new row.
 export const clone = pub
   .input(
     z.object({
@@ -176,8 +176,8 @@ export const clone = pub
         keyGroup: src.keyGroup,
         createdBy: context.user.userId,
       })
-      .returning({ zoneGroupId: zoneGroups.zoneGroupId });
-    const newId = inserted[0]!.zoneGroupId;
+      .returning(zoneGroupSelect);
+    const created = inserted[0]!;
 
     const sourceZones = await context.db
       .select()
@@ -186,7 +186,7 @@ export const clone = pub
     if (sourceZones.length > 0) {
       await context.db.insert(zones).values(
         sourceZones.map((z) => ({
-          zoneGroupId: newId,
+          zoneGroupId: created.zoneGroupId,
           name: z.name,
           keys: z.keys,
           createdBy: context.user.userId,
@@ -194,7 +194,7 @@ export const clone = pub
       );
     }
 
-    return { zoneGroupId: newId };
+    return created;
   });
 
 // One-shot "skip the zones editor and just give me a zone group with
