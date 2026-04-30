@@ -1,6 +1,5 @@
 // Formatters shared across the admin UI. Keep date output compact so it
-// fits cleanly inside a Pill (MM/DD/YY — matches the tight, data-dense
-// style in the reference tables).
+// fits cleanly inside a Pill (MM/DD/YY).
 export function formatDate(value: Date | string | null | undefined) {
   if (!value) return "—";
   const d = value instanceof Date ? value : new Date(value);
