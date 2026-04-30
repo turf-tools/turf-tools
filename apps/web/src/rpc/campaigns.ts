@@ -65,7 +65,7 @@ export const create = pub
         scriptId: input.scriptId ?? null,
         createdBy: context.user.userId,
       })
-      .returning();
+      .returning(campaignSelect);
     return rows[0]!;
   });
 
@@ -128,7 +128,7 @@ export const update = pub
   });
 
 // Clone a campaign: copies name + all FKs into a new row with the
-// supplied `newName`. Returns the new id.
+// supplied `newName`. Returns the full new row.
 export const clone = pub
   .input(
     z.object({
@@ -160,8 +160,8 @@ export const clone = pub
         scriptId: src.scriptId,
         createdBy: context.user.userId,
       })
-      .returning({ campaignId: campaigns.campaignId });
-    return { campaignId: inserted[0]!.campaignId };
+      .returning(campaignSelect);
+    return inserted[0]!;
   });
 
 // Delete a campaign. (No turf-reference check yet — turfs.create

@@ -162,6 +162,13 @@ function SegmentsIndex() {
   const createSegment = useDialogMutation({
     mutationFn: (input: { name: string }) => client.segments.create(input),
     onSuccess: (created) => {
+      // Inject before navigating so the loader's URL-validates-against-list
+      // check sees the new segment instead of redirecting back to the survivor.
+      queryClient.setQueryData<Awaited<ReturnType<typeof client.segments.list>>>(
+        ["segments"],
+        (old) => (old ? [...old, created] : [created]),
+      );
+      queryClient.setQueryData(["segment", created.segmentId], created);
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
       setActiveSegmentId(created.segmentId);
     },
@@ -169,9 +176,14 @@ function SegmentsIndex() {
 
   const cloneSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; newName: string }) => client.segments.clone(input),
-    onSuccess: ({ segmentId: cloneId }) => {
+    onSuccess: (created) => {
+      queryClient.setQueryData<Awaited<ReturnType<typeof client.segments.list>>>(
+        ["segments"],
+        (old) => (old ? [...old, created] : [created]),
+      );
+      queryClient.setQueryData(["segment", created.segmentId], created);
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
-      setActiveSegmentId(cloneId);
+      setActiveSegmentId(created.segmentId);
     },
   });
 
@@ -184,7 +196,10 @@ function SegmentsIndex() {
     },
   });
 
-  const [deleteCampaignCount, setDeleteCampaignCount] = useState(0);
+  // Snapshotted at click time so the dialog body keeps showing the
+  // just-deleted name during its close animation, even after the URL
+  // has reactively swapped to the fallback segment.
+  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", campaignCount: 0 });
 
   const commit = (nextFilters: Filter[]) => {
     if (!segmentId) return;
@@ -243,7 +258,7 @@ function SegmentsIndex() {
                   queryFn: () => client.segments.countCampaigns({ segmentId }),
                   staleTime: 0,
                 });
-                setDeleteCampaignCount(count);
+                setDeleteSnapshot({ name: activeSegment?.name ?? "", campaignCount: count });
                 deleteSegment.open();
               }}
               disabled={!activeSegment}
@@ -323,8 +338,8 @@ function SegmentsIndex() {
       <DeleteDialog
         open={deleteSegment.isOpen}
         onOpenChange={deleteSegment.onOpenChange}
-        segmentName={activeSegment?.name ?? ""}
-        campaignCount={deleteCampaignCount}
+        segmentName={deleteSnapshot.name}
+        campaignCount={deleteSnapshot.campaignCount}
         pending={deleteSegment.isPending}
         error={deleteSegment.error}
         onConfirm={() => {
