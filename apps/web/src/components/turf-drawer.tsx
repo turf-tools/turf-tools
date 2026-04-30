@@ -502,10 +502,12 @@ export function TurfDrawer({
       cursorRef.current = inside ? [x, y] : null;
       // Fire cursor lng/lat to the parent so it can include the
       // implicit closing segment when computing live counts for
-      // the drawing turf. Skipped entirely when the consumer
-      // didn't ask for it — keeps the no-callback path free of
-      // an extra unproject + setState per move.
-      if (onCursorChange) {
+      // the drawing turf. Gated on there *being* a drawing turf —
+      // closed turfs don't depend on the cursor, so for them this
+      // would just trigger expensive parent-side recomputes
+      // (point-in-polygon over every building) on every hover.
+      const hasDrawing = turfs.some((t) => t.mode === "drawing");
+      if (onCursorChange && hasDrawing) {
         if (inside) {
           const { lng, lat } = map.unproject([x, y]);
           onCursorChange([lng, lat]);
