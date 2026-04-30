@@ -1,5 +1,7 @@
+import { useAtomValue } from "jotai";
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import { type MapMouseEvent, useMap } from "react-map-gl/maplibre";
+import { darkAtom } from "~/lib/atoms/theme";
 import { pointInPolygon } from "~/lib/geometry";
 import { colorFor } from "~/lib/zone-colors";
 
@@ -54,13 +56,16 @@ const SNAP_RADIUS = 12;
 // clicking its first vertex.
 const DRAG_THRESHOLD = 3;
 
-// Custom delete cursor — small red ✕ centered on the hotspot,
-// shown when alt is held over a vertex that's safe to remove.
-// Built-in `not-allowed` reads as "you can't do this"; this reads
-// as "this will delete," which is the actual semantic. Inline SVG
-// data URL avoids shipping an asset.
-const DELETE_CURSOR =
-  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><line x1='5' y1='5' x2='15' y2='15' stroke='black' stroke-width='2.5' stroke-linecap='round'/><line x1='15' y1='5' x2='5' y2='15' stroke='black' stroke-width='2.5' stroke-linecap='round'/></svg>\") 10 10, not-allowed";
+// Custom delete cursor — small ✕ centered on the hotspot, shown
+// when alt is held over a vertex that's safe to remove. Built-in
+// `not-allowed` reads as "you can't do this"; this reads as "this
+// will delete," which is the actual semantic. Inline SVG data URL
+// avoids shipping an asset. Stroke color flips for dark mode so the
+// glyph stays readable on a dark basemap.
+const deleteCursor = (isDark: boolean) => {
+  const stroke = isDark ? "white" : "black";
+  return `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><line x1='5' y1='5' x2='15' y2='15' stroke='${stroke}' stroke-width='2.5' stroke-linecap='round'/><line x1='15' y1='5' x2='5' y2='15' stroke='${stroke}' stroke-width='2.5' stroke-linecap='round'/></svg>") 10 10, not-allowed`;
+};
 
 type Props = {
   turfs: Turf[];
@@ -89,6 +94,7 @@ export function TurfDrawer({
   onCursorChange,
   onCommit,
 }: Props) {
+  const isDark = useAtomValue(darkAtom);
   // Mirror `turfs` for commit-time reads from drag-end handlers, where
   // the latest state isn't available inline.
   const turfsPropRef = useRef(turfs);
@@ -576,7 +582,7 @@ export function TurfDrawer({
                 const wouldDelete =
                   altDown && (turf.mode === "drawing" || turf.vertices.length > 3);
                 const cursor = wouldDelete
-                  ? DELETE_CURSOR
+                  ? deleteCursor(isDark)
                   : isFresh
                     ? "crosshair"
                     : canClose && j === 0
