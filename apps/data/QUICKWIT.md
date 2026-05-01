@@ -12,7 +12,7 @@ Quickwit binary used for testing:
 
 We want the data app to:
 
-- take a voter-file `TableRef` produced by the Hamilton graphs
+- take a persons `TableRef` produced by the Hamilton graphs
 - index it on the dedicated large build machine
 - avoid writing a giant temporary NDJSON file to disk
 - append to an already-created Quickwit index
@@ -66,14 +66,14 @@ The Quickwit DAG follows the same Hamilton style as the other graphs.
 
 Current nodes:
 
-- `quickwit_source_voter_data`
+- `quickwit_source_persons`
 - `quickwit_document_count`
 - `quickwit_local_ingest_result`
 - `quickwit_build_manifest_stub`
 
 Input:
 
-- `voter_file_table_ref: TableRef`
+- `persons_table_ref: TableRef`
 
 The DAG assumes the target Quickwit index already exists.
 

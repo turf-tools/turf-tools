@@ -1,13 +1,12 @@
 import { integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { campaigns } from "./campaigns";
 import { surveyQuestions } from "./surveys";
 import { users } from "./users";
 
+// A script is a sequence of survey questions presented to canvassers at
+// the door. Standalone and reusable across campaigns; each campaign
+// references one script.
 export const scripts = pgTable("scripts", {
   scriptId: uuid().defaultRandom().primaryKey(),
-  campaignId: uuid()
-    .notNull()
-    .references(() => campaigns.campaignId),
   name: text().notNull(),
   createdBy: uuid()
     .notNull()

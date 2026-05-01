@@ -21,15 +21,20 @@ geo_local_data/
 # TIGER shapefile cache
 tiger_cache/
 
-# Local turf data blobs (written by data:mock-turf)
-local_turfs/
-
-# Large fixture files (keep only ED-level subsets in git)
-fixtures/*-ad-[0-9]*.parquet
+# Large fixture files: only commit the ED-level subsets and the 10k NYC
+# sample. Larger samples (50k, 1M, full statewide) are regeneratable via
+# `scripts/sample_voter_file.py`.
+fixtures/*.parquet
 !fixtures/*-ed-*.parquet
+!fixtures/*-10k-sample.parquet
 
 # Quickwit local data
 qwdata/
 
 # Old stuff
 old/**
+
+# Local-only one-off scripts (samplers, fixture generators, ad-hoc
+# diagnostics). Not part of the production pipeline; kept out of git
+# so the commit story stays clean.
+scripts/

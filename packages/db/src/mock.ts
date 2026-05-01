@@ -3,10 +3,11 @@ import { db } from "./index";
 import { campaigns } from "./schema/campaigns";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptQuestions } from "./schema/scripts";
+import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
-import { turfs } from "./schema/turfs";
-import { universes } from "./schema/universes";
 import { users } from "./schema/users";
+import { zoneGroups } from "./schema/zone-groups";
+import { zones } from "./schema/zones";
 
 // Deterministic ids so this script is idempotent and other services (e.g. the
 // data service's mock script) can reference them without a lookup. Shaped as
@@ -17,10 +18,19 @@ const USER_ID = "00000000-0000-4000-8000-000000000001";
 const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000002";
 const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
 const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
-const UNIVERSE_ID = "00000000-0000-4000-8000-000000000005";
-const TURF_ID = "00000000-0000-4000-8000-000000000006";
+const SEGMENT_ID = "00000000-0000-4000-8000-000000000005";
 
-const DATA_SERVICE_URL = process.env.DATA_SERVICE_PUBLIC_URL ?? "http://localhost:8000";
+// Extra campaigns + segments for exercising the admin UI.
+const PETITIONING_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000007";
+const PERSUASION_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000008";
+const SWING_SEGMENT_ID = "00000000-0000-4000-8000-000000000009";
+const BASE_SEGMENT_ID = "00000000-0000-4000-8000-00000000000a";
+const TURNOUT_SEGMENT_ID = "00000000-0000-4000-8000-00000000000b";
+const NYC_EDS_GROUP_ID = "00000000-0000-4000-8000-00000000000f";
+const NYC_ZIPS_GROUP_ID = "00000000-0000-4000-8000-000000000010";
+const MANHATTAN_ZONE_ID = "00000000-0000-4000-8000-00000000000c";
+const BROOKLYN_ZONE_ID = "00000000-0000-4000-8000-00000000000d";
+const QUEENS_ZONE_ID = "00000000-0000-4000-8000-00000000000e";
 
 const DEFAULT_VOTER_FILE_ID = "nys_boe";
 const DEFAULT_VOTER_FILE_VERSION = 1;
@@ -34,6 +44,9 @@ const SURVEY_RESPONSE_OPTIONS: Array<{ id: string; text: string }> = [
 ];
 
 async function mock() {
+  // Insert order matters: campaigns now FK to scripts/segments/zone groups,
+  // so those must exist first.
+
   const existingOrg = await db
     .select()
     .from(organizations)
@@ -41,9 +54,10 @@ async function mock() {
   if (existingOrg.length === 0) {
     await db.insert(organizations).values({
       organizationId: ORG_ID,
+      slug: "default",
       name: "Default Organization",
     });
-    console.log("Created default organization");
+    console.log("Created organization");
   }
 
   const existingUser = await db.select().from(users).where(eq(users.userId, USER_ID));
@@ -56,21 +70,7 @@ async function mock() {
       lastName: "User",
       role: "admin",
     });
-    console.log("Created default user");
-  }
-
-  const existingCampaign = await db
-    .select()
-    .from(campaigns)
-    .where(eq(campaigns.campaignId, CAMPAIGN_ID));
-  if (existingCampaign.length === 0) {
-    await db.insert(campaigns).values({
-      campaignId: CAMPAIGN_ID,
-      organizationId: ORG_ID,
-      name: "Default Campaign",
-      createdBy: USER_ID,
-    });
-    console.log("Created default campaign");
+    console.log("Created user");
   }
 
   const existingQuestion = await db
@@ -93,14 +93,13 @@ async function mock() {
         createdBy: USER_ID,
       })),
     );
-    console.log("Created default survey question and response options");
+    console.log("Created survey question and response options");
   }
 
   const existingScript = await db.select().from(scripts).where(eq(scripts.scriptId, SCRIPT_ID));
   if (existingScript.length === 0) {
     await db.insert(scripts).values({
       scriptId: SCRIPT_ID,
-      campaignId: CAMPAIGN_ID,
       name: "Default Script",
       createdBy: USER_ID,
     });
@@ -109,40 +108,118 @@ async function mock() {
       surveyQuestionId: SURVEY_QUESTION_ID,
       order: 0,
     });
-    console.log("Created default script");
+    console.log("Created script");
   }
 
-  const existingUniverse = await db
-    .select()
-    .from(universes)
-    .where(eq(universes.universeId, UNIVERSE_ID));
-  if (existingUniverse.length === 0) {
-    await db.insert(universes).values({
-      universeId: UNIVERSE_ID,
-      campaignId: CAMPAIGN_ID,
-      organizationId: ORG_ID,
-      name: "Default Universe",
-      voterFileId: DEFAULT_VOTER_FILE_ID,
-      voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
-      createdBy: USER_ID,
-    });
-    console.log("Created default universe");
+  const segmentSeeds: Array<{
+    id: string;
+    name: string;
+    doorCount?: number;
+    personCount?: number;
+  }> = [
+    { id: SEGMENT_ID, name: "Default Segment" },
+    { id: SWING_SEGMENT_ID, name: "Base", doorCount: 1247, personCount: 2980 },
+    { id: BASE_SEGMENT_ID, name: "Swing", doorCount: 856, personCount: 1920 },
+    { id: TURNOUT_SEGMENT_ID, name: "Growth", doorCount: 3456, personCount: 7890 },
+  ];
+  for (const s of segmentSeeds) {
+    const existing = await db.select().from(segments).where(eq(segments.segmentId, s.id));
+    if (existing.length === 0) {
+      await db.insert(segments).values({
+        segmentId: s.id,
+        organizationId: ORG_ID,
+        name: s.name,
+        criteria: { filters: [] },
+        voterFileId: DEFAULT_VOTER_FILE_ID,
+        voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
+        doorCount: s.doorCount,
+        personCount: s.personCount,
+        createdBy: USER_ID,
+      });
+      console.log(`Created segment ${s.name}`);
+    }
   }
 
-  const existingTurf = await db.select().from(turfs).where(eq(turfs.turfId, TURF_ID));
-  if (existingTurf.length === 0) {
-    await db.insert(turfs).values({
-      turfId: TURF_ID,
-      campaignId: CAMPAIGN_ID,
-      universeId: UNIVERSE_ID,
+  const zoneGroupSeeds: Array<{ id: string; name: string; keyGroup: string }> = [
+    { id: NYC_EDS_GROUP_ID, name: "NYC EDs", keyGroup: "nyc_eds" },
+    { id: NYC_ZIPS_GROUP_ID, name: "NYC ZIPs", keyGroup: "nyc_zips" },
+  ];
+  for (const g of zoneGroupSeeds) {
+    const existing = await db.select().from(zoneGroups).where(eq(zoneGroups.zoneGroupId, g.id));
+    if (existing.length === 0) {
+      await db.insert(zoneGroups).values({
+        zoneGroupId: g.id,
+        organizationId: ORG_ID,
+        name: g.name,
+        keyGroup: g.keyGroup,
+        createdBy: USER_ID,
+      });
+      console.log(`Created zone group ${g.name}`);
+    }
+  }
+
+  const zoneSeeds: Array<{ id: string; name: string }> = [
+    { id: MANHATTAN_ZONE_ID, name: "Manhattan" },
+    { id: BROOKLYN_ZONE_ID, name: "Brooklyn" },
+    { id: QUEENS_ZONE_ID, name: "Queens" },
+  ];
+  for (const z of zoneSeeds) {
+    const existing = await db.select().from(zones).where(eq(zones.zoneId, z.id));
+    if (existing.length === 0) {
+      await db.insert(zones).values({
+        zoneId: z.id,
+        zoneGroupId: NYC_EDS_GROUP_ID,
+        name: z.name,
+        keys: [],
+        createdBy: USER_ID,
+      });
+      console.log(`Created zone ${z.name}`);
+    }
+  }
+
+  const campaignSeeds: Array<{
+    id: string;
+    name: string;
+    segmentId: string | null;
+    zoneGroupId: string | null;
+    scriptId: string | null;
+  }> = [
+    {
+      id: CAMPAIGN_ID,
+      name: "Default Campaign",
+      segmentId: SEGMENT_ID,
+      zoneGroupId: NYC_EDS_GROUP_ID,
       scriptId: SCRIPT_ID,
-      name: "Default Turf",
-      listCode: "121121",
-      dataUrl: `${DATA_SERVICE_URL}/turfs/${TURF_ID}/data`,
-      assignedTo: USER_ID,
-      createdBy: USER_ID,
-    });
-    console.log("Created default turf");
+    },
+    {
+      id: PETITIONING_CAMPAIGN_ID,
+      name: "Petitioning",
+      segmentId: BASE_SEGMENT_ID,
+      zoneGroupId: NYC_EDS_GROUP_ID,
+      scriptId: SCRIPT_ID,
+    },
+    {
+      id: PERSUASION_CAMPAIGN_ID,
+      name: "Persuasion",
+      segmentId: TURNOUT_SEGMENT_ID,
+      zoneGroupId: NYC_EDS_GROUP_ID,
+      scriptId: SCRIPT_ID,
+    },
+  ];
+  for (const c of campaignSeeds) {
+    const existing = await db.select().from(campaigns).where(eq(campaigns.campaignId, c.id));
+    if (existing.length === 0) {
+      await db.insert(campaigns).values({
+        campaignId: c.id,
+        organizationId: ORG_ID,
+        name: c.name,
+        segmentId: c.segmentId,
+        zoneGroupId: c.zoneGroupId,
+        scriptId: c.scriptId,
+        createdBy: USER_ID,
+      });
+      console.log(`Created campaign ${c.name}`);
+    }
   }
 
   console.log("Mock data in database.");

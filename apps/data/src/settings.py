@@ -30,12 +30,6 @@ class UserDataStorageConfig(S3StorageConfig):
     model_config = {"env_prefix": "USER_DATA_STORAGE_"}
 
 
-class TurfsStorageConfig(S3StorageConfig):
-    """Object storage for turf cut outputs."""
-
-    model_config = {"env_prefix": "TURFS_STORAGE_"}
-
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -53,13 +47,14 @@ class Settings(BaseSettings):
 
     geo_ducklake_metadata_postgres_url: str | None = Field(
         default=None,
-        description="PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file.",
+        description=(
+            "PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file."
+        ),
     )
 
     ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)
     geo_ducklake_storage: GeoDucklakeStorageConfig = Field(default_factory=GeoDucklakeStorageConfig)
     user_data_storage: UserDataStorageConfig = Field(default_factory=UserDataStorageConfig)
-    turfs_storage: TurfsStorageConfig = Field(default_factory=TurfsStorageConfig)
 
     # TIGER download settings
     tiger_year: str = Field(
@@ -71,7 +66,11 @@ class Settings(BaseSettings):
         description="State FIPS code for TIGER data (e.g. 36 for New York).",
     )
     tiger_county_fips: list[str] = Field(
-        default=["061"],
+        # All five NYC counties: New York (Manhattan), Bronx, Kings (Brooklyn),
+        # Queens, Richmond (Staten Island). Matches the
+        # `nys-voters-2026-03-08-10k-sample` seed fixture so geocoding has
+        # TIGER coverage for every borough out of the box.
+        default=["061", "005", "047", "081", "085"],
         description="County FIPS codes within the state (e.g. 061 for New York County/Manhattan).",
     )
     tiger_data_dir: str = Field(

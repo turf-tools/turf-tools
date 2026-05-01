@@ -17,7 +17,6 @@ EQUIVALENT_TOKEN_GROUPS: list[list[str]] = [
     ["nw", "northwest"],
     ["se", "southeast"],
     ["sw", "southwest"],
-
     # Street types
     ["st", "street"],
     ["ave", "avenue", "av"],
@@ -48,14 +47,12 @@ EQUIVALENT_TOKEN_GROUPS: list[list[str]] = [
     ["park"],
     ["gardens", "gdns"],
     ["heights", "hts"],
-
     # Building/unit types
     ["apt", "apartment"],
     ["unit"],
     ["ste", "suite"],
     ["fl", "floor"],
     ["bldg", "building"],
-
     # Ordinal numbers (important for numbered streets like "42nd St")
     ["1st", "first"],
     ["2nd", "second"],

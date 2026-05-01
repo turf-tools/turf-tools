@@ -21,25 +21,31 @@ Each node performs its work via the DuckDB relational API against the DuckLake c
 
 Downstream nodes accept these table references as inputs and use them to locate the data in DuckLake for subsequent operations. No dataframes or relations are passed between nodes. The `TableRef` dataclass is defined in `models.py`.
 
+## Naming: voter vs person
+
+The input to Graph 1 is a literal **voter file** (a parquet dump from a state BOE). The downstream canonical schema is **Person** (`src/models.py`). We keep "voter_file" in the input-side names (`voter_file_url`, `voter_file_loader.py`, `{slug}_voters_raw`) because that's literally what's being loaded. Everything after validation — tables, node names, docs — uses "person" because those rows conform to the Person schema regardless of where they came from.
+
+The per-organization table namespace is `{organization_slug}_...`, where `organization_slug` is the URL/SQL-safe identifier stored alongside `organizationId` in the `organizations` table (see `packages/db/src/schema/organizations.ts`).
+
 ## Three-Graph Architecture
 
-There are three Hamilton graphs in this package. All three share a **single DuckDB connection** that has two DuckLake catalogs attached (`ducklake` for voter data, `geo_ducklake` for TIGER geo reference data). The connection is created by `db.get_connection()`.
+There are three Hamilton graphs in this package. All three share a **single DuckDB connection** that has two DuckLake catalogs attached (`ducklake` for person data, `geo_ducklake` for TIGER geo reference data). The connection is created by `db.get_connection()`.
 
 ### Graph 1 — `src/dags/voter_file_loader.py`
 
-Loads and normalises a client voter file into `ducklake`.
+Loads a voter file and normalises it into Person-shaped rows in `ducklake`.
 
 ```
-raw_voter_data → transformed_voter_data → validated_voter_data
+raw_voter_data → transformed_persons → validated_persons
 ```
 
-Output: `ducklake.main.{client}_voters` conforming to the `Person` schema.
+Output: `ducklake.main.{organization_slug}_persons` conforming to the `Person` schema. The raw voter-file contents are preserved in `{organization_slug}_voters_raw` for debugging / re-derivation.
 
 ### Graph 2 — `src/dags/tiger.py`
 
 Downloads US Census TIGER/Line shapefiles and builds a normalised blockface
-table in `geo_ducklake`. This data is reusable across multiple client voter
-files — run once per state/county/year combination.
+table in `geo_ducklake`. This data is reusable across multiple voter files —
+run once per state/county/year combination.
 
 ```
 tiger_addrfeat_raw ──┐
@@ -59,24 +65,24 @@ abbreviated and full-form street type tokens (e.g. `st` / `street`,
 
 ### Graph 3 — `src/dags/geocode.py`
 
-Matches voter addresses against TIGER blockfaces and interpolates lat/lon
+Matches person addresses against TIGER blockfaces and interpolates lat/lon
 coordinates along the matched edge geometry. Writes results to `ducklake`.
 
 ```
-validated_voter_data → decomposed_voter_addresses → candidate_blockfaces
-                                                          │
-blockface_final ──────────────────────────────────────────┘
-                                                          │
-                                                   scored_matches
-                                                          │
-                                                     best_match
-                                                          │
-                                                  geocoded_voters
-                                                          │
-                                                geocoding_summary
+validated_persons → decomposed_persons → candidate_blockfaces
+                                               │
+blockface_final ──────────────────────────────┘
+                                               │
+                                        scored_matches
+                                               │
+                                          best_match
+                                               │
+                                       persons_geocoded
+                                               │
+                                       geocoding_summary
 ```
 
-The cross-catalog join between `ducklake.main.{client}_voters_decomposed` and
+The cross-catalog join between `ducklake.main.{organization_slug}_persons_decomposed` and
 `geo_ducklake.tiger.blockface` runs on the single shared connection — no data
 is copied between catalogs.
 
@@ -90,19 +96,19 @@ Coordinate interpolation: `ST_LineInterpolatePoint(geom, fraction)` where
 
 Output tables (all in `ducklake.main.*`):
 
-- `{client}_voters_decomposed` — parsed house numbers and street tokens
-- `{client}_voters_candidates` — all matching voter–blockface pairs
-- `{client}_voters_scored` — pairs with match scores
-- `{client}_voters_best_match` — top-ranked blockface per voter
-- `{client}_voters_geocoded` — final lat/lon (NULL for unmatched voters)
-- `{client}_geocoding_summary` — match rate diagnostics
+- `{organization_slug}_persons_decomposed` — parsed house numbers and street tokens
+- `{organization_slug}_persons_candidates` — all matching person–blockface pairs
+- `{organization_slug}_persons_scored` — pairs with match scores
+- `{organization_slug}_persons_best_match` — top-ranked blockface per person
+- `{organization_slug}_persons_geocoded` — final lat/lon (NULL for unmatched)
+- `{organization_slug}_geocoding_summary` — match rate diagnostics
 
 ## Incremental Processing
 
 All nodes use `CREATE TABLE IF NOT EXISTS` followed by incremental inserts
 keyed on a natural identifier (e.g. `external_id`, `blockface_id`,
 `(state_fips, county_fips)`). Re-running a graph after adding new counties or
-new voter rows will only process the new data. Hamilton's own caching layer
+new person rows will only process the new data. Hamilton's own caching layer
 handles node-level skipping.
 
 The exception is `geocoding_summary`, which always overwrites since it is a
