@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { client } from "~/rpc/client";
-import type { SegmentCriteria } from "./segments";
+import { fetchBuildingsPoints, fetchPersonsCountByKey, type SegmentCriteria } from "./segments";
 
 export type KeyFilter = { keyGroup: string; keys: string[] };
 
@@ -28,15 +28,7 @@ export const campaignPointsQuery = (
       JSON.stringify(segmentCriteria),
       keyFilter ? JSON.stringify(keyFilter) : null,
     ] as const,
-    queryFn: async (): Promise<Float32Array> => {
-      const res = await fetch("/api/segment-points", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ criteria: segmentCriteria, keyFilter }),
-      });
-      if (!res.ok) throw new Error(`segment-points failed: ${res.status} ${await res.text()}`);
-      return new Float32Array(await res.arrayBuffer());
-    },
+    queryFn: () => fetchBuildingsPoints({ criteria: segmentCriteria, keyFilter }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -48,7 +40,7 @@ export const campaignKeyCountsQuery = (
   queryOptions({
     queryKey: ["campaign-key-counts", JSON.stringify(segmentCriteria), keyGroup, keys] as const,
     queryFn: () =>
-      client.segments.countByKey({
+      fetchPersonsCountByKey({
         criteria: segmentCriteria,
         keyGroup,
         keyFilter: { keyGroup, keys },

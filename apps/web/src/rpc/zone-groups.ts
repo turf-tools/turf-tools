@@ -1,15 +1,7 @@
-import { and, asc, type Db, eq } from "@field-tools/db";
-import {
-  campaigns,
-  organizations,
-  segments as segmentsTable,
-  zoneGroups,
-  zones,
-} from "@field-tools/db/schema";
+import { and, asc, eq } from "@field-tools/db";
+import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
-import { criteriaToWhere } from "../lib/criteria-to-sql";
-import { type Criteria } from "../lib/filters";
-import { boundaryKeyExprFor } from "../lib/key-groups";
+import { fetchPersonsCountByKey } from "../lib/queries/segments";
 import { pub } from "./context";
 
 const zoneGroupSelect = {
@@ -235,22 +227,15 @@ export const createWithDefaultZone = pub
     const segment = segmentRows[0];
     if (!segment) throw new Error("Segment not found");
 
-    // 2. Run a DISTINCT-keys query against DuckLake and collect the
-    // results into the zone's `keys` array.
-    const orgSlug = await loadOrgSlug(context);
-    const persons = `ducklake.main.${orgSlug}_persons_geocoded`;
-    const groupExpr = boundaryKeyExprFor(input.keyGroup);
-    const { where, params } = criteriaToWhere(segment.criteria as Criteria);
-    const sql = `
-      SELECT DISTINCT ${groupExpr} AS key
-      FROM ${persons}
-      ${where}
-    `;
-    const rows = await execute(sql, params);
-    const keys = rows
-      .map((r) => r.key as string | null)
-      .filter((k): k is string => typeof k === "string" && k.length > 0)
-      .sort();
+    // 2. Resolve the segment's distinct key values via the data
+    // app's per-key counts endpoint — we only care about which keys
+    // appear, not the counts. The auto-zone covers every key the
+    // segment produces in this key group.
+    const result = await fetchPersonsCountByKey({
+      criteria: segment.criteria,
+      keyGroup: input.keyGroup,
+    });
+    const keys = Object.keys(result.counts).sort();
 
     // 3. Insert zone group + zone in one transaction so a partial
     // failure can't leave a zone-less group behind.
@@ -278,26 +263,3 @@ export const createWithDefaultZone = pub
 
     return created;
   });
-
-// Local copies of segments.ts's helpers — small enough that
-// duplicating beats lifting them into a shared module right now.
-async function loadOrgSlug(context: { db: Db; user: { organizationId: string } }): Promise<string> {
-  const rows = await context.db
-    .select({ slug: organizations.slug })
-    .from(organizations)
-    .where(eq(organizations.organizationId, context.user.organizationId));
-  const slug = rows[0]?.slug;
-  if (!slug) throw new Error("Organization not found");
-  return slug;
-}
-
-async function execute(sql: string, params: unknown[]): Promise<Array<Record<string, unknown>>> {
-  const res = await fetch(`${import.meta.env.VITE_DATA_URL}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ sql, params }),
-  });
-  if (!res.ok) throw new Error(`/query failed: ${res.status} ${await res.text()}`);
-  const body = (await res.json()) as { rows: Array<Record<string, unknown>> };
-  return body.rows;
-}
