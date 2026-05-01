@@ -35,7 +35,11 @@ import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { darkAtom } from "~/lib/atoms/theme";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
-import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import {
+  fetchPersonsCountByKey,
+  segmentDetailQuery,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -132,7 +136,7 @@ function ZonesIndex() {
   const { data: overlayCounts } = useQuery({
     queryKey: ["counts-by-key", overlayCriteriaKey, activeGroup?.keyGroup],
     queryFn: () =>
-      client.segments.countByKey({
+      fetchPersonsCountByKey({
         criteria: overlayCriteria!,
         keyGroup: activeGroup!.keyGroup,
       }),

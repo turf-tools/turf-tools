@@ -36,9 +36,6 @@ export const router = {
     remove: segmentsProcedures.remove,
     countCampaigns: segmentsProcedures.countCampaigns,
     updateCriteria: segmentsProcedures.updateCriteria,
-    count: segmentsProcedures.count,
-    countByKey: segmentsProcedures.countByKey,
-    listBuildings: segmentsProcedures.listBuildings,
   },
   zoneGroups: {
     list: zoneGroupsProcedures.list,
