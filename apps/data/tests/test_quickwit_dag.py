@@ -9,11 +9,13 @@ slowing down the default test suite.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
+import socket
 import subprocess
 import textwrap
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -23,9 +25,20 @@ from hamilton import driver
 
 from src.dags import quickwit, voter_file_loader
 
-VOTER_FILE_URL = "https://zohran-data-backups.nyc3.digitaloceanspaces.com/ny-voters-2026-03-08.parquet"
-QUICKWIT_BINARY_PATH = Path(__file__).resolve().parents[3] / "quickwit-v0.8.2" / "quickwit"
-QUICKWIT_INDEX_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "quickwit" / "voter_file.yaml"
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
+
+
+def _find_quickwit_binary() -> Path | None:
+    """Prefer a repo-local v0.8.2 binary; fall back to whatever's on PATH."""
+    local = Path(__file__).resolve().parents[3] / "quickwit-v0.8.2" / "quickwit"
+    if local.exists():
+        return local
+    on_path = shutil.which("quickwit")
+    return Path(on_path) if on_path else None
+
+
+QUICKWIT_BINARY_PATH = _find_quickwit_binary()
+QUICKWIT_INDEX_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "quickwit" / "persons.yaml"
 
 BASE_TRANSFORMATION_QUERY = """
 SELECT
@@ -76,6 +89,17 @@ def _http_json(method: str, url: str, body: str | None = None, content_type: str
         raise RuntimeError(f"HTTP request failed: {exc}") from exc
 
 
+def _pick_free_port() -> int:
+    """Ask the OS for a free TCP port. Used to keep the test's Quickwit
+    off port 7280 (the dev server's port) — otherwise `pnpm dev:search`
+    and the test race for the same listener and the test silently ends
+    up POSTing to the dev metastore.
+    """
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def _wait_for_server(endpoint: str, timeout: float = 30.0) -> None:
     deadline = time.time() + timeout
     last_error: Exception | None = None
@@ -91,7 +115,7 @@ def _wait_for_server(endpoint: str, timeout: float = 30.0) -> None:
 
 
 @contextmanager
-def _running_quickwit(binary_path: Path, config_path: Path) -> subprocess.Popen[str]:
+def _running_quickwit(binary_path: Path, config_path: Path, endpoint: str) -> subprocess.Popen[str]:
     process = subprocess.Popen(  # noqa: S603
         [str(binary_path), "run", "--config", str(config_path)],
         stdout=subprocess.PIPE,
@@ -99,7 +123,7 @@ def _running_quickwit(binary_path: Path, config_path: Path) -> subprocess.Popen[
         text=True,
     )
     try:
-        _wait_for_server("http://127.0.0.1:7280")
+        _wait_for_server(endpoint)
         yield process
     finally:
         if process.poll() is None:
@@ -111,7 +135,7 @@ def _running_quickwit(binary_path: Path, config_path: Path) -> subprocess.Popen[
                 process.wait(timeout=5)
 
 
-def _write_quickwit_runtime(tmp_path: Path, index_id: str) -> tuple[Path, Path]:
+def _write_quickwit_runtime(tmp_path: Path, index_id: str, port: int) -> tuple[Path, Path]:
     data_dir = tmp_path / "qwdata"
     data_dir.mkdir(parents=True, exist_ok=True)
     config_path = tmp_path / "quickwit.yaml"
@@ -121,7 +145,7 @@ def _write_quickwit_runtime(tmp_path: Path, index_id: str) -> tuple[Path, Path]:
             version: 0.7
             listen_address: 127.0.0.1
             rest:
-              listen_port: 7280
+              listen_port: {port}
             data_dir: {data_dir}
             """
         ).strip()
@@ -131,7 +155,7 @@ def _write_quickwit_runtime(tmp_path: Path, index_id: str) -> tuple[Path, Path]:
 
     index_config_path = tmp_path / "index.yaml"
     index_config_path.write_text(
-        QUICKWIT_INDEX_TEMPLATE_PATH.read_text(encoding="utf-8").replace("index_id: voter-file", f"index_id: {index_id}"),
+        QUICKWIT_INDEX_TEMPLATE_PATH.read_text(encoding="utf-8").replace("index_id: persons", f"index_id: {index_id}"),
         encoding="utf-8",
     )
     return config_path, index_config_path
@@ -164,40 +188,44 @@ def _build_transformation_query(limit: int | None = None) -> str:
 def _run_quickwit_benchmark(
     dual_conn,
     tmp_path: Path,
-    client_name: str,
+    organization_slug: str,
     row_limit: int | None,
     batch_size: int,
 ) -> dict:
-    if not QUICKWIT_BINARY_PATH.exists():
-        raise RuntimeError(f"Quickwit binary not found at {QUICKWIT_BINARY_PATH}")
+    if QUICKWIT_BINARY_PATH is None or not QUICKWIT_BINARY_PATH.exists():
+        raise RuntimeError(
+            "Quickwit binary not found. Install from https://install.quickwit.io "
+            "or drop the v0.8.2 tarball at <repo>/quickwit-v0.8.2/."
+        )
 
-    index_id = f"{client_name}-index"
-    config_path, index_config_path = _write_quickwit_runtime(tmp_path, index_id)
-    endpoint = "http://127.0.0.1:7280"
+    index_id = f"{organization_slug}-index"
+    port = _pick_free_port()
+    config_path, index_config_path = _write_quickwit_runtime(tmp_path, index_id, port)
+    endpoint = f"http://127.0.0.1:{port}"
 
-    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path):
+    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path, endpoint):
         _create_index(endpoint, index_config_path)
 
     loader_driver = driver.Builder().with_modules(voter_file_loader).build()
     loader_start = time.perf_counter()
     loader_result = loader_driver.execute(
-        final_vars=["validated_voter_data"],
+        final_vars=["validated_persons"],
         inputs={
             "voter_file_url": VOTER_FILE_URL,
-            "client_name": client_name,
+            "organization_slug": organization_slug,
             "transformation_query": _build_transformation_query(row_limit),
             "conn": dual_conn,
         },
     )
     loader_elapsed = time.perf_counter() - loader_start
-    validated_voter_data = loader_result["validated_voter_data"]
+    validated_persons = loader_result["validated_persons"]
 
     quickwit_driver = driver.Builder().with_modules(quickwit).build()
     ingest_start = time.perf_counter()
     ingest_result = quickwit_driver.execute(
         final_vars=["quickwit_build_manifest_stub"],
         inputs={
-            "voter_file_table_ref": validated_voter_data,
+            "persons_table_ref": validated_persons,
             "quickwit_binary_path": str(QUICKWIT_BINARY_PATH),
             "quickwit_config_path": str(config_path),
             "quickwit_index_id": index_id,
@@ -207,11 +235,11 @@ def _run_quickwit_benchmark(
     )["quickwit_build_manifest_stub"]
     ingest_elapsed = time.perf_counter() - ingest_start
 
-    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path):
+    with _running_quickwit(QUICKWIT_BINARY_PATH, config_path, endpoint):
         describe_body = _describe_index(endpoint, index_id)
 
     return {
-        "client_name": client_name,
+        "organization_slug": organization_slug,
         "row_limit": row_limit,
         "batch_size": batch_size,
         "loader_elapsed_seconds": loader_elapsed,
@@ -227,7 +255,7 @@ class TestQuickwitGraph:
         result = _run_quickwit_benchmark(
             dual_conn=dual_conn,
             tmp_path=tmp_path,
-            client_name="quickwit_test_sample",
+            organization_slug="quickwit_test_sample",
             row_limit=1_000,
             batch_size=500,
         )
@@ -247,7 +275,7 @@ def test_quickwit_benchmark_100k(dual_conn, tmp_path):
     result = _run_quickwit_benchmark(
         dual_conn=dual_conn,
         tmp_path=tmp_path,
-        client_name="quickwit_benchmark_100k",
+        organization_slug="quickwit_benchmark_100k",
         row_limit=100_000,
         batch_size=25_000,
     )
@@ -271,7 +299,7 @@ def test_quickwit_benchmark_full_file(dual_conn, tmp_path):
     result = _run_quickwit_benchmark(
         dual_conn=dual_conn,
         tmp_path=tmp_path,
-        client_name="quickwit_benchmark_full",
+        organization_slug="quickwit_benchmark_full",
         row_limit=None,
         batch_size=100_000,
     )
@@ -296,7 +324,7 @@ def test_quickwit_benchmark_full_file_batch_sizes(dual_conn, tmp_path, batch_siz
     result = _run_quickwit_benchmark(
         dual_conn=dual_conn,
         tmp_path=tmp_path,
-        client_name=f"quickwit_full_{batch_size}",
+        organization_slug=f"quickwit_full_{batch_size}",
         row_limit=None,
         batch_size=batch_size,
     )
@@ -322,7 +350,7 @@ def test_quickwit_benchmark_2m_batch_sizes(dual_conn, tmp_path, batch_size):
     result = _run_quickwit_benchmark(
         dual_conn=dual_conn,
         tmp_path=tmp_path,
-        client_name=f"quickwit_benchmark_2m_{batch_size}",
+        organization_slug=f"quickwit_benchmark_2m_{batch_size}",
         row_limit=2_000_000,
         batch_size=batch_size,
     )

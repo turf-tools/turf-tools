@@ -26,3 +26,8 @@ dist-ssr
 # AI agent worktrees
 .claude/worktrees/
 docs/plans
+
+# Per-user Claude Code state (personal settings + runtime locks).
+# Shared `.claude/settings.json` and similar can still be committed.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

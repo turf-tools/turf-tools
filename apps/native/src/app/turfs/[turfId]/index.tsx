@@ -104,10 +104,10 @@ export default function TurfListScreen() {
     Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   }, []);
 
-  const listTitle = meta?.listCode ? `List ${meta.listCode}` : "Turf";
+  const turfTitle = meta?.turfCode ? `Turf ${meta.turfCode}` : "Turf";
 
   useScreenNav({
-    title: listTitle,
+    title: turfTitle,
     showBack: false,
     bottomButtons: ["search", "list", "next", "mic"],
     onBottomPress: (action) => {
@@ -283,6 +283,8 @@ function BuildingRow({
 }
 
 function formatBuildingAddress(b: TurfDataBuilding): string {
-  const parts = [b.address.houseNumber, b.address.street].filter(Boolean);
-  return parts.join(" ").trim() || "Unknown address";
+  // The data pipeline produces `street` as the canonical full
+  // address line ("123 MAIN ST"); house number isn't tracked
+  // separately on the blob.
+  return (b.address.street ?? "").trim() || "Unknown address";
 }

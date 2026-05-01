@@ -1,24 +1,26 @@
 """Tests for the three Hamilton graphs: voter_file_loader, tiger, geocode.
 
-Graph 1 (voter_file_loader) is tested against the real NY voter file on object
-storage, filtered to Manhattan (county_code = '31', ~1.17M voters).
+Runs against a deterministic NYC-wide sample of the full NY voter file
+(2,000 rows per borough × 5 boroughs = 10,000 rows), stored at
+``fixtures/nys-voters-2026-03-08-10k-sample.parquet``. Regenerate with
+``scripts/sample_voter_file.py`` if the source upstream changes.
 
-Graph 2 (tiger) downloads TIGER data for a single county (New York County
-/ Manhattan, FIPS 061) into a temp directory. The download is cached at the
-pytest-session level so subsequent test runs reuse the local files.
+The tests in this file filter the sample to Manhattan (county_code='31')
+via the transformation query's WHERE clause and match against Manhattan
+TIGER. Cross-borough coverage lives in ``test_boroughs.py``.
 
-Graph 3 (geocode) wires all three graphs together end-to-end: load all
-Manhattan voters, build Manhattan blockfaces, geocode, assert match rate.
+Graph 2 (tiger) downloads TIGER data for New York County (Manhattan, FIPS
+061) into a pytest session tmpdir — cached for the session.
 """
 
-import tempfile
+from pathlib import Path
 
 import pytest
 from hamilton import driver
 
-from src.dags import geocode, tiger, voter_file_loader
+from src.dags import aggregate, geocode, tiger, voter_file_loader
 
-VOTER_FILE_URL = "https://zohran-data-backups.nyc3.digitaloceanspaces.com/ny-voters-2026-03-08.parquet"
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
 
 # Manhattan TIGER params — single county (New York County, FIPS 061)
 TEST_STATE_FIPS = "36"
@@ -82,7 +84,7 @@ class TestVoterFileLoader:
         """raw_voter_data should create a table in ducklake and return a TableRef."""
         ref = voter_file_loader.raw_voter_data(
             voter_file_url=VOTER_FILE_URL,
-            client_name="test",
+            organization_slug="test",
             conn=dual_conn,
         )
         assert ref.catalog == "ducklake"
@@ -90,17 +92,17 @@ class TestVoterFileLoader:
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
-    def test_transformation_produces_canvas_target_schema(self, dual_conn):
-        """transformed_voter_data should produce the Person columns."""
+    def test_transformation_produces_person_schema(self, dual_conn):
+        """transformed_persons should produce the Person columns."""
         raw_ref = voter_file_loader.raw_voter_data(
             voter_file_url=VOTER_FILE_URL,
-            client_name="test",
+            organization_slug="test",
             conn=dual_conn,
         )
-        transformed_ref = voter_file_loader.transformed_voter_data(
+        transformed_ref = voter_file_loader.transformed_persons(
             raw_voter_data=raw_ref,
             transformation_query=TRANSFORMATION_QUERY,
-            client_name="test",
+            organization_slug="test",
             conn=dual_conn,
         )
         rel = dual_conn.table(transformed_ref.fqn)
@@ -110,21 +112,21 @@ class TestVoterFileLoader:
         assert "zip5" in cols
         assert "first_name" in cols
 
-    def test_validated_voter_data_passes(self, dual_conn):
-        """validated_voter_data should return the same TableRef when schema is correct."""
+    def test_validated_persons_passes(self, dual_conn):
+        """validated_persons should return the same TableRef when schema is correct."""
         raw_ref = voter_file_loader.raw_voter_data(
             voter_file_url=VOTER_FILE_URL,
-            client_name="test",
+            organization_slug="test",
             conn=dual_conn,
         )
-        transformed_ref = voter_file_loader.transformed_voter_data(
+        transformed_ref = voter_file_loader.transformed_persons(
             raw_voter_data=raw_ref,
             transformation_query=TRANSFORMATION_QUERY,
-            client_name="test",
+            organization_slug="test",
             conn=dual_conn,
         )
-        validated_ref = voter_file_loader.validated_voter_data(
-            transformed_voter_data=transformed_ref,
+        validated_ref = voter_file_loader.validated_persons(
+            transformed_persons=transformed_ref,
             conn=dual_conn,
         )
         assert validated_ref.fqn == transformed_ref.fqn
@@ -133,15 +135,15 @@ class TestVoterFileLoader:
         """Hamilton driver should execute the full voter_file_loader graph."""
         dr = driver.Builder().with_modules(voter_file_loader).build()
         result = dr.execute(
-            final_vars=["validated_voter_data"],
+            final_vars=["validated_persons"],
             inputs={
                 "voter_file_url": VOTER_FILE_URL,
-                "client_name": "test_driver",
+                "organization_slug": "test_driver",
                 "transformation_query": TRANSFORMATION_QUERY,
                 "conn": dual_conn,
             },
         )
-        ref = result["validated_voter_data"]
+        ref = result["validated_persons"]
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
@@ -358,25 +360,25 @@ class TestTigerGraph:
 class TestGeocodeGraph:
     """End-to-end tests wiring all three graphs together.
 
-    These are the slowest tests: they load Manhattan voter data from object
+    These are the slowest tests: they load Manhattan persons from object
     storage AND download TIGER shapefiles. They're placed last so earlier
     failures surface quickly.
     """
 
     @pytest.fixture()
-    def validated_voters(self, dual_conn):
-        """Run Graph 1 and return validated_voter_data TableRef."""
+    def validated_persons(self, dual_conn):
+        """Run Graph 1 and return validated_persons TableRef."""
         dr = driver.Builder().with_modules(voter_file_loader).build()
         result = dr.execute(
-            final_vars=["validated_voter_data"],
+            final_vars=["validated_persons"],
             inputs={
                 "voter_file_url": VOTER_FILE_URL,
-                "client_name": "geocode_test",
+                "organization_slug": "geocode_test",
                 "transformation_query": TRANSFORMATION_QUERY,
                 "conn": dual_conn,
             },
         )
-        return result["validated_voter_data"]
+        return result["validated_persons"]
 
     @pytest.fixture()
     def blockfaces(self, dual_conn, tiger_cache_dir):
@@ -394,50 +396,56 @@ class TestGeocodeGraph:
         )
         return result["blockface_final"]
 
-    def test_decomposed_voter_addresses(self, dual_conn, validated_voters):
-        """decomposed_voter_addresses should parse house numbers and tokens."""
-        ref = geocode.decomposed_voter_addresses(
-            validated_voter_data=validated_voters,
-            client_name="geocode_test",
+    @pytest.fixture()
+    def address_tokens(self, dual_conn):
+        """Populate the address-token equivalence table (idempotent)."""
+        return tiger.address_token_table(conn=dual_conn)
+
+    def test_decomposed_persons(self, dual_conn, validated_persons):
+        """decomposed_persons should parse house numbers and tokens."""
+        ref = geocode.decomposed_persons(
+            validated_persons=validated_persons,
+            organization_slug="geocode_test",
             conn=dual_conn,
         )
-        assert ref.table == "geocode_test_voters_decomposed"
+        assert ref.table == "geocode_test_persons_decomposed"
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
         cols = set(dual_conn.table(ref.fqn).columns)
         assert "house_number" in cols
         assert "street_name_tokens" in cols
         assert "number_type" in cols
-        # All number_type values should be odd or even (voters have parseable house nums)
+        # All number_type values should be odd or even (persons have parseable house nums)
         bad = dual_conn.execute(f"SELECT count(*) FROM {ref.fqn} WHERE number_type NOT IN ('odd','even')").fetchone()[0]
         assert bad == 0
 
-    def test_candidate_blockfaces(self, dual_conn, validated_voters, blockfaces):
-        """candidate_blockfaces should produce voter–blockface pairs."""
-        decomposed_ref = geocode.decomposed_voter_addresses(
-            validated_voter_data=validated_voters,
-            client_name="geocode_test",
+    def test_candidate_blockfaces(self, dual_conn, validated_persons, blockfaces):
+        """candidate_blockfaces should produce person–blockface pairs."""
+        decomposed_ref = geocode.decomposed_persons(
+            validated_persons=validated_persons,
+            organization_slug="geocode_test",
             conn=dual_conn,
         )
         ref = geocode.candidate_blockfaces(
-            decomposed_voter_addresses=decomposed_ref,
+            decomposed_persons=decomposed_ref,
             blockface_final=blockfaces,
-            client_name="geocode_test",
+            organization_slug="geocode_test",
             conn=dual_conn,
         )
-        assert ref.table == "geocode_test_voters_candidates"
+        assert ref.table == "geocode_test_persons_candidates"
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
-    def test_geocoded_voters_match_rate(self, dual_conn, validated_voters, blockfaces):
+    def test_persons_geocoded_match_rate(self, dual_conn, validated_persons, blockfaces, address_tokens):
         """Full geocode pipeline should achieve a reasonable match rate for Manhattan."""
         dr = driver.Builder().with_modules(geocode).build()
         result = dr.execute(
             final_vars=["geocoding_summary"],
             inputs={
-                "validated_voter_data": validated_voters,
+                "validated_persons": validated_persons,
                 "blockface_final": blockfaces,
-                "client_name": "geocode_test",
+                "address_token_table": address_tokens,
+                "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
         )
@@ -447,45 +455,167 @@ class TestGeocodeGraph:
         print(f"\nGeocoding summary: {matched}/{total} matched ({match_pct}%)")
         assert total > 0
         assert matched > 0
-        # Expect at least 50% match rate for Manhattan voters against Manhattan TIGER
+        # Expect at least 50% match rate for Manhattan against Manhattan TIGER
         assert match_pct >= 50.0
 
-    def test_geocoded_voters_have_valid_coordinates(self, dual_conn, validated_voters, blockfaces):
-        """Matched voters should have plausible NYC lat/lon coordinates."""
+    def test_persons_geocoded_have_valid_coordinates(self, dual_conn, validated_persons, blockfaces, address_tokens):
+        """Every row in persons_geocoded should have plausible NYC lat/lon
+        coordinates — the table now contains only matched persons (INNER
+        JOIN), so any bad coords would be a real bug."""
         dr = driver.Builder().with_modules(geocode).build()
         dr.execute(
-            final_vars=["geocoded_voters"],
+            final_vars=["persons_geocoded"],
             inputs={
-                "validated_voter_data": validated_voters,
+                "validated_persons": validated_persons,
                 "blockface_final": blockfaces,
-                "client_name": "geocode_test",
+                "address_token_table": address_tokens,
+                "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
         )
-        geocoded_fqn = f"ducklake.main.geocode_test_voters_geocoded"
-        # Matched rows should have non-null coordinates in NYC bounding box
+        geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
         bad_coords = dual_conn.execute(f"""
             SELECT count(*) FROM {geocoded_fqn}
-            WHERE match_type != 'none'
-              AND (
-                latitude  IS NULL OR longitude IS NULL
-                OR latitude  NOT BETWEEN 40.4  AND 41.0
-                OR longitude NOT BETWEEN -74.3 AND -73.7
-              )
+            WHERE latitude  IS NULL OR longitude IS NULL
+               OR latitude  NOT BETWEEN 40.4  AND 41.0
+               OR longitude NOT BETWEEN -74.3 AND -73.7
         """).fetchone()[0]
         assert bad_coords == 0
 
-    def test_geocoded_voters_idempotent(self, dual_conn, validated_voters, blockfaces):
-        """Running geocode twice should not duplicate rows in geocoded_voters."""
+    def test_persons_geocoded_idempotent(self, dual_conn, validated_persons, blockfaces, address_tokens):
+        """Running persons_geocoded twice should produce the same row count.
+
+        The function now drops and recreates on every run rather than
+        appending — schema changes are routine while the canonical persons
+        table is still being shaped — so "idempotent" here means "stable
+        final state," not "incremental no-op."
+        """
         inputs = {
-            "validated_voter_data": validated_voters,
+            "validated_persons": validated_persons,
             "blockface_final": blockfaces,
-            "client_name": "geocode_test",
+            "address_token_table": address_tokens,
+            "organization_slug": "geocode_test",
             "conn": dual_conn,
         }
         dr = driver.Builder().with_modules(geocode).build()
-        dr.execute(final_vars=["geocoded_voters"], inputs=inputs)
-        count1 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_voters_geocoded").fetchone()[0]
-        dr.execute(final_vars=["geocoded_voters"], inputs=inputs)
-        count2 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_voters_geocoded").fetchone()[0]
+        dr.execute(final_vars=["persons_geocoded"], inputs=inputs)
+        count1 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_persons_geocoded").fetchone()[0]
+        dr.execute(final_vars=["persons_geocoded"], inputs=inputs)
+        count2 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_persons_geocoded").fetchone()[0]
         assert count1 == count2
+
+    def test_persons_geocoded_structural_invariants(self, dual_conn, validated_persons, blockfaces, address_tokens):
+        """Two invariants that should always hold for persons_geocoded:
+        - One row per matched person (no duplicates from joins to upstream
+          tables that have stale or duplicated keys).
+        - Row count never exceeds the source `validated_persons` count
+          (persons_geocoded is a subset — matched persons only).
+        """
+        dr = driver.Builder().with_modules(geocode).build()
+        dr.execute(
+            final_vars=["persons_geocoded"],
+            inputs={
+                "validated_persons": validated_persons,
+                "blockface_final": blockfaces,
+                "address_token_table": address_tokens,
+                "organization_slug": "geocode_test",
+                "conn": dual_conn,
+            },
+        )
+        geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
+        validated_count = dual_conn.execute(f"SELECT count(*) FROM {validated_persons.fqn}").fetchone()[0]
+        total, distinct = dual_conn.execute(f"""
+            SELECT count(*), count(DISTINCT external_id) FROM {geocoded_fqn}
+        """).fetchone()
+
+        assert total == distinct, (
+            f"persons_geocoded has {total} rows but only {distinct} distinct "
+            f"external_ids — duplicate rows from a join multiplication."
+        )
+        assert total <= validated_count, (
+            f"persons_geocoded has {total} rows but validated_persons only "
+            f"has {validated_count} — geocoded should be a subset."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Graph 4 — aggregate (buildings_geocoded, doors_geocoded)
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateGraph:
+    """Building/door aggregation downstream of the geocode pipeline."""
+
+    @pytest.fixture()
+    def persons_geocoded(self, dual_conn, tiger_cache_dir):
+        """Run the full voter_file_loader → tiger → geocode pipeline so the
+        aggregate tests have a populated `persons_geocoded` to consume."""
+        dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode).build()
+        result = dr.execute(
+            final_vars=["persons_geocoded"],
+            inputs={
+                "voter_file_url": VOTER_FILE_URL,
+                "organization_slug": "agg_test",
+                "transformation_query": TRANSFORMATION_QUERY,
+                "tiger_year": TEST_TIGER_YEAR,
+                "tiger_state_fips": TEST_STATE_FIPS,
+                "tiger_county_fips": TEST_COUNTY_FIPS,
+                "tiger_data_dir": tiger_cache_dir,
+                "conn": dual_conn,
+            },
+        )
+        return result["persons_geocoded"]
+
+    def test_buildings_geocoded_shape(self, dual_conn, persons_geocoded):
+        """buildings_geocoded should produce one row per distinct building_id
+        with sane counts and lat/lng inside NYC."""
+        ref = aggregate.buildings_geocoded(
+            persons_geocoded=persons_geocoded,
+            organization_slug="agg_test",
+            conn=dual_conn,
+        )
+        assert ref.table == "agg_test_buildings_geocoded"
+        row = dual_conn.execute(f"""
+            SELECT
+                count(*),
+                count(DISTINCT building_id),
+                sum(person_count),
+                count(*) FILTER (WHERE latitude BETWEEN 40.4 AND 41.0
+                                       AND longitude BETWEEN -74.3 AND -73.7)
+            FROM {ref.fqn}
+        """).fetchone()
+        building_count, distinct_buildings, total_persons, in_nyc = row
+        assert building_count > 0
+        assert building_count == distinct_buildings
+        # Every person in persons_geocoded should be counted exactly once.
+        person_total = dual_conn.execute(f"SELECT count(*) FROM {persons_geocoded.fqn}").fetchone()[0]
+        assert total_persons == person_total
+        # All buildings should land in the NYC envelope: every contributing
+        # person has coordinates (persons_geocoded is matched-only).
+        assert in_nyc == building_count
+
+    def test_doors_geocoded_shape(self, dual_conn, persons_geocoded):
+        """doors_geocoded should produce one row per distinct door_id, with
+        each door's building_id pointing at a real building."""
+        building_ref = aggregate.buildings_geocoded(
+            persons_geocoded=persons_geocoded,
+            organization_slug="agg_test",
+            conn=dual_conn,
+        )
+        door_ref = aggregate.doors_geocoded(
+            persons_geocoded=persons_geocoded,
+            organization_slug="agg_test",
+            conn=dual_conn,
+        )
+        assert door_ref.table == "agg_test_doors_geocoded"
+        # Doors >= buildings (multi-unit buildings have multiple doors).
+        building_count = dual_conn.execute(f"SELECT count(*) FROM {building_ref.fqn}").fetchone()[0]
+        door_count = dual_conn.execute(f"SELECT count(*) FROM {door_ref.fqn}").fetchone()[0]
+        assert door_count >= building_count
+        # Every door's building_id should reference an existing building.
+        orphan_doors = dual_conn.execute(f"""
+            SELECT count(*) FROM {door_ref.fqn} d
+            LEFT JOIN {building_ref.fqn} b ON b.building_id = d.building_id
+            WHERE b.building_id IS NULL
+        """).fetchone()[0]
+        assert orphan_doors == 0

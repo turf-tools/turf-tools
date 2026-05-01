@@ -1,44 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { Button } from "~/components/ui/button";
-import { MoonStar, Sun } from "lucide-react";
-import { client } from "../rpc/client";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// `/` is a pure redirect to `/overview` so the sidebar's Overview tab is the
+// single source of truth for the landing page (and its active indicator
+// doesn't need a special-case exact match).
 export const Route = createFileRoute("/")({
-  component: Home,
+  beforeLoad: () => {
+    throw redirect({ to: "/overview" });
+  },
 });
-
-function Home() {
-  const [dark, setDark] = useState(false);
-  const { data, isLoading } = useQuery({
-    queryKey: ["healthcheck"],
-    queryFn: () => client.healthcheck(),
-  });
-
-  const toggleDark = () => {
-    document.documentElement.classList.toggle("dark");
-    setDark((d) => !d);
-  };
-
-  return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="text-center">
-        <h1 className="mb-8 text-4xl font-bold italic">Field Tools</h1>
-        <p className="text-md text-muted-foreground">
-          RPC status: <span className="font-mono">{isLoading ? "loading..." : data?.status}</span>
-        </p>
-        <p className="mb-8 text-md text-muted-foreground">
-          DB status: <span className="font-mono">{isLoading ? "loading..." : data?.db}</span>
-        </p>
-        <div className="flex gap-3 justify-center">
-          <Button>Button</Button>
-          <Button variant="outline">Button</Button>
-          <Button variant="outline" size="icon" onClick={toggleDark}>
-            {dark ? <Sun /> : <MoonStar />}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
