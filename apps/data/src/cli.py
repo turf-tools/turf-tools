@@ -94,7 +94,7 @@ def seed_boundaries() -> None:
         "tiger_state_fips": settings.tiger_state_fips,
         "tiger_county_fips": settings.tiger_county_fips,
         "tiger_data_dir": settings.tiger_data_dir,
-        "geocoded_persons": persons_ref,
+        "persons_geocoded": persons_ref,
         "conn": conn,
     }
 
@@ -158,7 +158,7 @@ def seed_persons() -> None:
     dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate).build()
     result = dr.execute(
         final_vars=[
-            "geocoded_persons",
+            "persons_geocoded",
             "geocoding_summary",
             "buildings_geocoded",
             "doors_geocoded",
@@ -177,7 +177,7 @@ def seed_persons() -> None:
         },
     )
 
-    geocoded_ref = result["geocoded_persons"]
+    geocoded_ref = result["persons_geocoded"]
     summary_ref = result["geocoding_summary"]
     buildings_ref = result["buildings_geocoded"]
     doors_ref = result["doors_geocoded"]

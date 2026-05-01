@@ -142,7 +142,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
 
     # `address_token_table` is populated upstream of blockface_final by
     # the tiger DAG; we need a TableRef to feed the geocode driver
-    # (geocoded_persons depends on it for the post-hoc quality filter).
+    # (persons_geocoded depends on it for the post-hoc quality filter).
     address_tokens = tiger.address_token_table(conn=dual_conn)
 
     # Graph 3 — geocode
@@ -166,7 +166,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
     # Match rate threshold
     assert match_pct >= min_match_pct, f"{borough}: match rate {match_pct}% is below minimum {min_match_pct}%"
 
-    # geocoded_persons now contains only matched rows (INNER JOIN), so any
+    # persons_geocoded now contains only matched rows (INNER JOIN), so any
     # NULL or out-of-bounds coordinate is a real bug.
     geocoded_fqn = f"ducklake.main.{borough}_persons_geocoded"
     bad_coords = dual_conn.execute(f"""
