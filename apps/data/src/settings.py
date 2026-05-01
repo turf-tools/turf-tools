@@ -35,9 +35,27 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env"}
 
-    dev_voterfile_url: str = Field(
-        default="",
-        description="URL to fetch the voter file from (parquet format assumed).",
+    voter_file_url: str = Field(
+        default="https://zohran-data-backups.nyc3.digitaloceanspaces.com/ny-voters-2026-03-08.parquet",
+        description=(
+            "Public URL where the source voter file (parquet) can be downloaded. "
+            "Used by the seed CLI to tell first-time users where to grab the "
+            "fixture from when one isn't present locally."
+        ),
+    )
+
+    voter_file_fixture: str = Field(
+        default="ny-voters-2026-03-08-nyc.parquet",
+        description=(
+            "Filename of the voter file fixture inside `fixtures_dir` that "
+            "`seed-persons` reads from. Override to point at a smaller sample "
+            "during development."
+        ),
+    )
+
+    fixtures_dir: str = Field(
+        default="fixtures",
+        description=("Directory (relative to apps/data) holding voter file fixtures."),
     )
 
     ducklake_metadata_postgres_url: str | None = Field(
@@ -68,7 +86,7 @@ class Settings(BaseSettings):
     tiger_county_fips: list[str] = Field(
         # All five NYC counties: New York (Manhattan), Bronx, Kings (Brooklyn),
         # Queens, Richmond (Staten Island). Matches the
-        # `nys-voters-2026-03-08-10k-sample` seed fixture so geocoding has
+        # `ny-voters-2026-03-08-10k-sample` seed fixture so geocoding has
         # TIGER coverage for every borough out of the box.
         default=["061", "005", "047", "081", "085"],
         description="County FIPS codes within the state (e.g. 061 for New York County/Manhattan).",
