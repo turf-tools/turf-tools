@@ -18,7 +18,7 @@ Node dependency chain:
                                                      │
                                                 best_match
                                                      │
-                                             geocoded_persons
+                                             persons_geocoded
                                                      │
                                              geocoding_summary
 """
@@ -416,7 +416,7 @@ def best_match(
 # ---------------------------------------------------------------------------
 
 
-def geocoded_persons(
+def persons_geocoded(
     best_match: TableRef,
     validated_persons: TableRef,
     decomposed_persons: TableRef,
@@ -707,13 +707,13 @@ def geocoded_persons(
 
 
 def geocoding_summary(
-    geocoded_persons: TableRef,
+    persons_geocoded: TableRef,
     validated_persons: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Match-rate diagnostics: total comes from validated_persons (the
-    universal "all persons" table), matched comes from geocoded_persons
+    universal "all persons" table), matched comes from persons_geocoded
     (only contains successfully-matched persons since the canonical-record
     refactor). Difference = unmatched.
 
@@ -722,7 +722,7 @@ def geocoding_summary(
     """
     table_suffix = "geocoding_summary"
     fqn = _person_fqn(organization_slug, table_suffix)
-    geocoded_fqn = geocoded_persons.fqn
+    geocoded_fqn = persons_geocoded.fqn
     persons_fqn = validated_persons.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")

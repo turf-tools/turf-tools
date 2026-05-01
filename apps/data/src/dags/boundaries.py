@@ -94,7 +94,7 @@ def boundary_from_geojson(
 
 
 def boundary_from_blocks(
-    geocoded_persons: TableRef,
+    persons_geocoded: TableRef,
     tiger_tabblock_raw: TableRef,
     key_group: str,
     key_expression: str,
@@ -141,7 +141,7 @@ def boundary_from_blocks(
     """
     _ensure_schema(conn)
     fqn = f"{GEO_CATALOG}.{BOUNDARIES_SCHEMA}.{key_group}"
-    persons_fqn = geocoded_persons.fqn
+    persons_fqn = persons_geocoded.fqn
     tabblock_fqn = tiger_tabblock_raw.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")

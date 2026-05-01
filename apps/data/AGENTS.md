@@ -77,7 +77,7 @@ blockface_final ─────────────────────�
                                                │
                                           best_match
                                                │
-                                       geocoded_persons
+                                       persons_geocoded
                                                │
                                        geocoding_summary
 ```

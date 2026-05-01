@@ -10,7 +10,7 @@ A building is one physical structure (`address_line_1 + zip5`). A door is
 one unit within a building (`address_line_1 + address_line_2 + zip5`).
 Single-family homes have one door per building. lat/lng is the centroid of
 contained persons — they share an address, so coordinates match within
-float noise. `geocoded_persons` only contains successfully-matched rows
+float noise. `persons_geocoded` only contains successfully-matched rows
 (see `geocode.py`), so every person here has coordinates and a stable
 building/door key.
 """
@@ -32,11 +32,11 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 
 def buildings_geocoded(
-    geocoded_persons: TableRef,
+    persons_geocoded: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """One row per distinct `building_id`, derived from `geocoded_persons`.
+    """One row per distinct `building_id`, derived from `persons_geocoded`.
 
     Columns:
         building_id, address_line_1, city, state, zip5, latitude, longitude,
@@ -47,7 +47,7 @@ def buildings_geocoded(
     """
     table_suffix = "buildings_geocoded"
     fqn = _person_fqn(organization_slug, table_suffix)
-    persons_fqn = geocoded_persons.fqn
+    persons_fqn = persons_geocoded.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
@@ -79,11 +79,11 @@ def buildings_geocoded(
 
 
 def doors_geocoded(
-    geocoded_persons: TableRef,
+    persons_geocoded: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """One row per distinct `door_id`, derived from `geocoded_persons`.
+    """One row per distinct `door_id`, derived from `persons_geocoded`.
 
     Columns:
         door_id, building_id, address_line_2, latitude, longitude, person_count
@@ -97,7 +97,7 @@ def doors_geocoded(
     """
     table_suffix = "doors_geocoded"
     fqn = _person_fqn(organization_slug, table_suffix)
-    persons_fqn = geocoded_persons.fqn
+    persons_fqn = persons_geocoded.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
