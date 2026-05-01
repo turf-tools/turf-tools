@@ -27,7 +27,7 @@ from hamilton import driver
 
 from src.dags import geocode, tiger, voter_file_loader
 
-VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-10k-sample.parquet")
 TIGER_CACHE = str(Path(__file__).parent.parent / "tiger_cache")
 
 # (borough_name, boe_county_code, tiger_fips, min_expected_match_pct)

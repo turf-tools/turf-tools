@@ -25,7 +25,7 @@ from hamilton import driver
 
 from src.dags import quickwit, voter_file_loader
 
-VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-10k-sample.parquet")
 
 
 def _find_quickwit_binary() -> Path | None:

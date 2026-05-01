@@ -2,7 +2,7 @@
 
 Runs against a deterministic NYC-wide sample of the full NY voter file
 (2,000 rows per borough × 5 boroughs = 10,000 rows), stored at
-``fixtures/nys-voters-2026-03-08-10k-sample.parquet``. Regenerate with
+``fixtures/ny-voters-2026-03-08-10k-sample.parquet``. Regenerate with
 ``scripts/sample_voter_file.py`` if the source upstream changes.
 
 The tests in this file filter the sample to Manhattan (county_code='31')
@@ -20,7 +20,7 @@ from hamilton import driver
 
 from src.dags import aggregate, geocode, tiger, voter_file_loader
 
-VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "nys-voters-2026-03-08-10k-sample.parquet")
+VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-10k-sample.parquet")
 
 # Manhattan TIGER params — single county (New York County, FIPS 061)
 TEST_STATE_FIPS = "36"

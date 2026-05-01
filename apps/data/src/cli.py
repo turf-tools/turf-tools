@@ -40,7 +40,8 @@ def update_visualizations() -> None:
 # ---------------------------------------------------------------------------
 
 
-_FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
+def _fixtures_dir(settings) -> Path:  # noqa: ANN001 — settings is a Settings instance
+    return Path(__file__).resolve().parent.parent / settings.fixtures_dir
 
 
 def seed_boundaries() -> None:
@@ -126,12 +127,16 @@ def seed_boundaries() -> None:
 # packages/db/src/mock.ts so the web app's RPC layer can resolve voter
 # data for the seeded organization.
 _DEFAULT_ORG_SLUG = "default"
-_DEFAULT_VOTER_FIXTURE = _FIXTURES_DIR / "nys-voters-2026-03-08-nyc.parquet"
 
 
 def seed_persons() -> None:
-    """Run voter_file_loader → tiger → geocode → aggregate against the NYC
-    sample fixture.
+    """Run voter_file_loader → tiger → geocode → aggregate against the
+    voter file fixture configured in settings.
+
+    Fixture path is `{fixtures_dir}/{voter_file_fixture}` (defaults
+    `apps/data/fixtures/ny-voters-2026-03-08-nyc.parquet`). If it
+    isn't present, prints a download hint and exits — fixtures aren't
+    checked into the repo because they're large.
 
     Final outputs (under ``ducklake.main``):
     - ``{org}_persons_geocoded`` — canonical "person record": Person fields
@@ -148,11 +153,13 @@ def seed_persons() -> None:
     settings = get_settings()
     conn = get_connection(settings)
 
-    if not _DEFAULT_VOTER_FIXTURE.exists():
-        print(f"Voter fixture not found: {_DEFAULT_VOTER_FIXTURE}")
+    fixture_path = _fixtures_dir(settings) / settings.voter_file_fixture
+    if not fixture_path.exists():
+        print(f"Voter file fixture not found at {fixture_path}.")
+        print(f"Download from {settings.voter_file_url} and place it at that path.")
         return
 
-    print(f"Seeding persons from {_DEFAULT_VOTER_FIXTURE} (org={_DEFAULT_ORG_SLUG})…")
+    print(f"Seeding persons from {fixture_path} (org={_DEFAULT_ORG_SLUG})…")
     print(f"  TIGER counties: {settings.tiger_county_fips} (cache: {settings.tiger_data_dir})")
 
     dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate).build()
@@ -164,7 +171,7 @@ def seed_persons() -> None:
             "doors_geocoded",
         ],
         inputs={
-            "voter_file_url": str(_DEFAULT_VOTER_FIXTURE),
+            "voter_file_url": str(fixture_path),
             "organization_slug": _DEFAULT_ORG_SLUG,
             # Curated transformation: passes all rows in the fixture (no
             # county filter) since the fixture is already NYC-only.

@@ -32,17 +32,28 @@ apps/
 
 packages/
   db/        Drizzle schema + PGlite/Postgres client
-  utils/     Shared utilities (not yet used)
 ```
 
 We leverage a two database design to get the best of both where needed:
 
-- **Postgres** (via Drizzle/PGlite) — operational data: users, campaigns, universes, turfs, canvass results
-- **DuckLake** (via DuckDB) — analytical columnar data: voter files, buildings, doors, universe members
+- **Postgres** (via Drizzle/PGlite) — operational data: users, campaigns, segments, zone groups, turfs, canvass results
+- **DuckLake** (via DuckDB) — analytical columnar data: voter files, persons, buildings, doors
+
+## Voter file fixture
+
+The mock data pipeline ingests a real NYS voter file. It isn't checked into the repo (it's large), so before the first `pnpm mock` you need to download it and place it in `apps/data/fixtures/`. The default fixture name and source URL are configurable via `apps/data/.env` (see `apps/data/.env.example` for the keys).
+
+If `pnpm mock` runs without the fixture, the CLI prints the URL to download from and exits cleanly.
 
 ## Development
 
-Start all services (web, native, data, search) by calling:
+To run the voter file ingestion and build all necessary data inputs (assumes the fixture above is in place), run:
+
+```bash
+pnpm mock
+```
+
+Then start all services (web, native, data, search) by calling:
 
 ```bash
 pnpm dev
@@ -55,7 +66,7 @@ This starts:
 - `data` — FastAPI data service (including DuckDB/DuckLake) (port 8000)
 - `search` — Quickwit search engine (port 7280)
 
-The first time you run `dev`, the web server automatically pushes the Postgres schema to PGlite. To populate both sides with mock data for development (seeded database plus voter file + geocoding + Quickwit index + sample turf data), run `pnpm mock` once everything is up.
+The first time you run `dev`, the web server automatically pushes the Postgres schema to PGlite.
 
 You can also start individual services with the following commands:
 
@@ -68,26 +79,6 @@ pnpm dev:ios
 ```
 
 The `dev:ios` command is required to build and connect to the native app for iOS, but once it's been built, if you just run `dev:native` it should automatically bundle and connect to the latest version.
-
-## Importing data
-
-The following steps demo basic functionality for importing data. With `pnpm dev` running:
-
-```bash
-# Import a voter file fixture
-curl -X POST http://localhost:8000/voter-file/import \
-  -H "Content-Type: application/json" \
-  -d '{"file_path": "fixtures/nys-voters-2026-03-08-ad-65-ed-39.parquet"}'
-
-# Geocode building addresses
-curl -X POST http://localhost:8000/buildings/geocode
-
-# Index into Quickwit for search
-curl -X POST http://localhost:8000/persons/index
-
-# Search
-curl "http://localhost:8000/persons/search?q=last_name:SMITH"
-```
 
 ## Testing
 
@@ -105,27 +96,15 @@ And run the type checks and linters with:
 pnpm check
 ```
 
-### Integration test
-
-The integration test runs the data pipeline (import, geocode, index, search) against running services. Run these three commands to wipe all local data, start all services, and then run a pipeline test.
-
-```bash
-pnpm clear
-pnpm dev
-pnpm test:integration
-```
-
 ## Database commands
 
 These subcommands help manage data lifecycle during testing:
 
 ```bash
-pnpm db:setup    # push schema (runs automatically with dev:web)
 pnpm db:push     # push drizzle schema to PGlite
 pnpm db:mock     # populate Postgres with sample data
-pnpm data:mock   # populate DuckLake + Quickwit with sample data and turf
-pnpm mock        # both of the above
+pnpm data:mock   # ingest voter file → persons → geocoded → buildings/doors, plus boundary polygons
 pnpm db:clear    # wipe PGlite data
-pnpm data:clear  # wipe DuckLake + Quickwit + local turf blobs
-pnpm clear       # wipe everything (PGlite + DuckLake + Quickwit + turf blobs)
+pnpm data:clear  # wipe DuckLake + local turf blobs
+pnpm clear       # wipe everything (PGlite + DuckLake + turf blobs)
 ```
