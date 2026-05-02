@@ -21,6 +21,12 @@ Each node performs its work via the DuckDB relational API against the DuckLake c
 
 Downstream nodes accept these table references as inputs and use them to locate the data in DuckLake for subsequent operations. No dataframes or relations are passed between nodes. The `TableRef` dataclass is defined in `models.py`.
 
+## Naming: DAG nodes
+
+Every DAG node has a noun name describing the data it represents. The function name matches the table suffix when a table is materialized — `persons_decomposed` produces `{slug}_persons_decomposed`, `voters_raw` produces `{slug}_voters_raw`, etc. Within a family, names are noun-first with a stage qualifier: `persons_transformed`, `persons_validated`, `persons_decomposed`, `persons_candidates`, `persons_scored`, `persons_best_match`, `persons_geocoded`.
+
+Some nodes (e.g. `persons_validated`) don't write a new table — they pass through the `TableRef` they received after running checks. That's an implementation detail; consumers still get a noun-named `TableRef` like every other node and don't need to know whether a fresh table was materialized.
+
 ## Naming: voter vs person
 
 The input to Graph 1 is a literal **voter file** (a parquet dump from a state BOE). The downstream canonical schema is **Person** (`src/models.py`). We keep "voter_file" in the input-side names (`voter_file_url`, `voter_file_loader.py`, `{slug}_voters_raw`) because that's literally what's being loaded. Everything after validation — tables, node names, docs — uses "person" because those rows conform to the Person schema regardless of where they came from.
@@ -36,10 +42,10 @@ There are three Hamilton graphs in this package. All three share a **single Duck
 Loads a voter file and normalises it into Person-shaped rows in `ducklake`.
 
 ```
-raw_voter_data → transformed_persons → validated_persons
+voters_raw → persons_transformed → persons_validated
 ```
 
-Output: `ducklake.main.{organization_slug}_persons` conforming to the `Person` schema. The raw voter-file contents are preserved in `{organization_slug}_voters_raw` for debugging / re-derivation.
+Output: `ducklake.main.{organization_slug}_persons_transformed` conforming to the `Person` schema. The raw voter-file contents are preserved in `{organization_slug}_voters_raw` for debugging / re-derivation.
 
 ### Graph 2 — `src/dags/tiger.py`
 
@@ -51,12 +57,12 @@ run once per state/county/year combination.
 tiger_addrfeat_raw ──┐
                       ├─► blockface_unpivoted → blockface_normalized → blockface_final
 tiger_edges_raw ─────┘
-address_token_table ──────────────────────────────────────────────► blockface_final
+address_tokens ──────────────────────────────────────────────► blockface_final
 ```
 
 Key inputs: `tiger_year`, `tiger_state_fips`, `tiger_county_fips`, `tiger_data_dir`.
 
-Output: `geo_ducklake.tiger.blockface` — one row per street side with normalised
+Output: `geo_ducklake.tiger.blockface_final` — one row per street side with normalised
 house number ranges, parity, expanded street name tokens, node IDs, and geometry.
 
 Token expansion uses `src/address_tokens.py` (`EQUIVALENT_TOKEN_GROUPS`) to ensure
@@ -69,21 +75,33 @@ Matches person addresses against TIGER blockfaces and interpolates lat/lon
 coordinates along the matched edge geometry. Writes results to `ducklake`.
 
 ```
-validated_persons → decomposed_persons → candidate_blockfaces
+persons_validated → persons_decomposed → persons_candidates
                                                │
 blockface_final ──────────────────────────────┘
                                                │
-                                        scored_matches
+                                        persons_scored
                                                │
-                                          best_match
+                                          persons_best_match
                                                │
-                                       persons_geocoded
+                  ┌────────────────────────────┼────────────────────────────┐
+                  │                            │                            │
+          interpolated_coords        canonical_addresses                    │
+                                               │                            │
+                                        quality_matches  ◄── address_tokens │
+                  │                            │                            │
+                  └──────────► persons_geocoded ◄────────── persons_validated
                                                │
                                        geocoding_summary
 ```
 
+The three peers off `persons_best_match` each own one orthogonal aspect
+of geocoding (coords / canonical street / quality gate) with narrow
+output schemas keyed on `external_id`. A future OSM-based refiner can
+return the same shapes and slot in alongside or replace any of them
+without touching downstream consumers.
+
 The cross-catalog join between `ducklake.main.{organization_slug}_persons_decomposed` and
-`geo_ducklake.tiger.blockface` runs on the single shared connection — no data
+`geo_ducklake.tiger.blockface_final` runs on the single shared connection — no data
 is copied between catalogs.
 
 Match scoring: token overlap count + numeric token bonus (extra weight when a
@@ -100,7 +118,10 @@ Output tables (all in `ducklake.main.*`):
 - `{organization_slug}_persons_candidates` — all matching person–blockface pairs
 - `{organization_slug}_persons_scored` — pairs with match scores
 - `{organization_slug}_persons_best_match` — top-ranked blockface per person
-- `{organization_slug}_persons_geocoded` — final lat/lon (NULL for unmatched)
+- `{organization_slug}_interpolated_coords` — `(external_id, latitude, longitude)`
+- `{organization_slug}_canonical_addresses` — `(external_id, address_line_1, matched_tokens)`
+- `{organization_slug}_quality_matches` — `(external_id)` set passing the token-overlap gate
+- `{organization_slug}_persons_geocoded` — final canonical record; matched + quality-passing rows only
 - `{organization_slug}_geocoding_summary` — match rate diagnostics
 
 ## Incremental Processing
