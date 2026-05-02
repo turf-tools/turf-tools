@@ -258,6 +258,28 @@ function ZonesIndex() {
   const [renamingZoneId, setRenamingZoneId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
+  // Delete / Backspace removes the active zone (mirrors the trash button).
+  // Skipped while typing in any text input so the rename flow isn't hijacked.
+  useEffect(() => {
+    if (!activeZoneId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      const id = activeZoneId;
+      setActiveZoneId(null);
+      removeZoneMutation.mutate(id);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [activeZoneId, removeZoneMutation]);
+
   const commitRename = (zoneId: string, currentName: string) => {
     const next = renameDraft.trim();
     setRenamingZoneId(null);
