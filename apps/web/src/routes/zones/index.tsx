@@ -227,8 +227,12 @@ function ZonesIndex() {
 
   const renameZoneMutation = useMutation({
     mutationFn: (input: { zoneId: string; name: string }) => client.zones.rename(input),
-    onMutate: async ({ zoneId, name }) => {
-      await queryClient.cancelQueries({ queryKey: ["zones", activeGroupId] });
+    onMutate: ({ zoneId, name }) => {
+      // Sync so the cache update lands before React re-renders after
+      // commitRename clears renamingZoneId — otherwise the span briefly
+      // shows the old cached name. Fire-and-forget cancellation: it
+      // initiates synchronously, only the resolution is async.
+      void queryClient.cancelQueries({ queryKey: ["zones", activeGroupId] });
       const previous = queryClient.getQueryData<typeof zones>(["zones", activeGroupId]);
       queryClient.setQueryData<typeof zones>(["zones", activeGroupId], (old) =>
         old?.map((z) => (z.zoneId === zoneId ? { ...z, name } : z)),
