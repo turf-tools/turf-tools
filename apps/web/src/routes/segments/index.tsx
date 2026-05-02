@@ -772,7 +772,7 @@ function AgeRangeFilterEditor({
   return (
     <div className="flex items-center gap-2 text-sm">
       <span className="text-muted-foreground">Between</span>
-      <input
+      <Input
         type="number"
         min={0}
         max={120}
@@ -780,11 +780,11 @@ function AgeRangeFilterEditor({
         onChange={(e) => setLocalMin(e.target.value)}
         onBlur={commit}
         onKeyDown={onKeyDown}
-        className="w-16 rounded-md border border-border bg-background px-2 py-1"
+        className="h-7 w-16 px-2"
         placeholder="min"
       />
       <span className="text-muted-foreground">and</span>
-      <input
+      <Input
         type="number"
         min={0}
         max={120}
@@ -792,7 +792,7 @@ function AgeRangeFilterEditor({
         onChange={(e) => setLocalMax(e.target.value)}
         onBlur={commit}
         onKeyDown={onKeyDown}
-        className="w-16 rounded-md border border-border bg-background px-2 py-1"
+        className="h-7 w-16 px-2"
         placeholder="max"
       />
       <span className="text-muted-foreground">years</span>
