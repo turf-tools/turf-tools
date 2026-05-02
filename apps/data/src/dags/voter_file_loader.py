@@ -1,9 +1,9 @@
 """Hamilton graph for loading and transforming voter files into DuckLake.
 
 The input is a literal voter file (parquet dump from a state BOE). The output
-is `{organization_slug}_persons` — Person-shaped rows that downstream DAGs
-consume. Naming reflects that split: inputs stay "voter file", outputs are
-"persons".
+is `{organization_slug}_persons_transformed` — Person-shaped rows that
+downstream DAGs consume. Naming reflects that split: inputs stay "voter
+file", outputs are "person".
 """
 
 import duckdb
@@ -17,7 +17,7 @@ SCHEMA = "main"
 _EXPECTED_COLUMNS = set(Person.model_fields.keys())
 
 
-def raw_voter_data(
+def voters_raw(
     voter_file_url: str,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
@@ -32,8 +32,8 @@ def raw_voter_data(
     return TableRef(catalog=CATALOG, schema=SCHEMA, table=table_name, version=version)
 
 
-def transformed_persons(
-    raw_voter_data: TableRef,
+def persons_transformed(
+    voters_raw: TableRef,
     transformation_query: str,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
@@ -43,8 +43,8 @@ def transformed_persons(
 
     The transformation_query should reference the raw table as ``raw``.
     """
-    table_name = f"{organization_slug}_persons"
-    raw = conn.table(raw_voter_data.fqn).set_alias("raw")
+    table_name = f"{organization_slug}_persons_transformed"
+    raw = conn.table(voters_raw.fqn).set_alias("raw")
     raw.query(
         "raw",
         f"CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.{table_name} AS {transformation_query}",
@@ -53,8 +53,8 @@ def transformed_persons(
     return TableRef(catalog=CATALOG, schema=SCHEMA, table=table_name, version=version)
 
 
-def validated_persons(
-    transformed_persons: TableRef,
+def persons_validated(
+    persons_transformed: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Validate that the persons table matches the Person schema.
@@ -63,7 +63,7 @@ def validated_persons(
     a sample of rows can be successfully parsed by the Pydantic model.
     Returns the same TableRef if validation passes; raises on failure.
     """
-    rel = conn.table(transformed_persons.fqn)
+    rel = conn.table(persons_transformed.fqn)
     actual_columns = set(rel.columns)
 
     missing = _EXPECTED_COLUMNS - actual_columns
@@ -87,4 +87,4 @@ def validated_persons(
             msg = f"Row {i} failed Person validation: {e}"
             raise ValueError(msg) from e
 
-    return transformed_persons
+    return persons_transformed

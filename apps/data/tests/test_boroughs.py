@@ -111,7 +111,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
     # Graph 1 — load voter file into persons
     dr1 = driver.Builder().with_modules(voter_file_loader).build()
     r1 = dr1.execute(
-        final_vars=["validated_persons"],
+        final_vars=["persons_validated"],
         inputs={
             "voter_file_url": VOTER_FILE_URL,
             "organization_slug": borough,
@@ -119,7 +119,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
             "conn": dual_conn,
         },
     )
-    validated = r1["validated_persons"]
+    validated = r1["persons_validated"]
     person_count = dual_conn.table(validated.fqn).aggregate("count(*)").fetchone()[0]
     assert person_count > 0, f"No persons loaded for {borough}"
 
@@ -140,19 +140,19 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
     bf_count = dual_conn.table(blockfaces.fqn).aggregate("count(*)").fetchone()[0]
     assert bf_count > 0, f"No blockfaces loaded for {borough}"
 
-    # `address_token_table` is populated upstream of blockface_final by
+    # `address_tokens` is populated upstream of blockface_final by
     # the tiger DAG; we need a TableRef to feed the geocode driver
     # (persons_geocoded depends on it for the post-hoc quality filter).
-    address_tokens = tiger.address_token_table(conn=dual_conn)
+    address_tokens = tiger.address_tokens(conn=dual_conn)
 
     # Graph 3 — geocode
     dr3 = driver.Builder().with_modules(geocode).build()
     r3 = dr3.execute(
         final_vars=["geocoding_summary"],
         inputs={
-            "validated_persons": validated,
+            "persons_validated": validated,
             "blockface_final": blockfaces,
-            "address_token_table": address_tokens,
+            "address_tokens": address_tokens,
             "organization_slug": borough,
             "conn": dual_conn,
         },
