@@ -330,6 +330,26 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [selectedTurfId]);
 
+  // Delete / Backspace removes the selected turf (mirrors the trash button).
+  // Skipped while typing in any text input.
+  useEffect(() => {
+    if (!selectedTurfId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      removeTurf(selectedTurfId);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedTurfId]);
+
   const onBack = () => {
     void navigate({ to: "/campaigns", search: { campaignId } });
   };
