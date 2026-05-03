@@ -1,12 +1,16 @@
 import array
+import json
 import logging
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from src.abstract_tables import resolve
 from src.db import get_connection
+from src.dsl.compile import boundary_key_expr_for, to_where
+from src.dsl.criteria import Criteria, KeyFilter
 from src.settings import get_settings
 
 logger = logging.getLogger("uvicorn")
@@ -15,12 +19,10 @@ settings = get_settings()
 
 # Read-side HTTP surface for the data service. Heavy work — voter-file
 # loading, geocoding, Quickwit indexing — runs as Hamilton DAGs via CLI
-# jobs. This service exposes health, a boundary-GeoJSON fetch, and a
-# generic `/query` endpoint that the web RPC layer calls into.
+# jobs. This service exposes health and endpoints for data queries.
 app = FastAPI(title="Data Service")
 
-# Permissive CORS for dev — the web app fetches boundary GeoJSON
-# directly from here and POSTs to `/query`. Lock down via a
+# Permissive CORS for dev. Lock down via a
 # settings-driven allow list before deploying.
 app.add_middleware(
     CORSMiddleware,
@@ -102,46 +104,364 @@ async def key_group_geojson(key_group: str):
     )
 
 
-class _ExecuteRequest(BaseModel):
-    sql: str
-    params: list[Any] = []
+class _PersonsCountRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    keyFilter: KeyFilter | None = None  # noqa: N815  -- camelCase matches wire format from web
+    orgSlug: str  # noqa: N815
 
 
-@app.post("/query")
-async def query(req: _ExecuteRequest, request: Request):
-    """Run a parameterised DuckDB query, return JSON or binary.
+@app.post("/persons/count")
+async def persons_count(req: _PersonsCountRequest):
+    """Persons-level summary counts plus a 100-row sample.
 
-    The web layer owns the segment-query DSL and emits the SQL passed
-    in here. Output format follows the caller's ``Accept`` header:
+    Response shape:
+    ``{personCount, doorCount, buildingCount, samplePeople: [...]}``
+    where each ``samplePeople`` entry is a snake_case keyed person row.
 
-    - ``application/json`` (default) → ``{rows: [{col: value, ...}]}``
-      with STRUCT/ARRAY columns deserialised to nested dicts/lists.
-      Used for counts, samples, per-zone aggregation — anything whose
-      result is naturally JSON-shaped.
-
-    - ``application/octet-stream`` → raw Float32 bytes in row-major
-      order (col0row0, col1row0, col0row1, ...). Designed for SQL like
-      ``SELECT longitude, latitude FROM ...`` that streams directly
-      into a Float32Array on the browser, then into a GPU buffer with
-      no per-byte decode work. Servers and browsers are all
-      little-endian in practice, so we skip an explicit byteswap.
-
-    Connections open ``read_only=True`` so a misrouted call can't
-    mutate the lake — Hamilton DAGs (run as CLI jobs) are the only
-    writers.
+    Lives here (vs in web RPC) so web never touches DuckLake schema or
+    SQL — web sends a criteria object, data does the rest.
     """
-    binary = request.headers.get("accept", "").lower() == "application/octet-stream"
+    where, params = to_where(req.criteria, req.keyFilter)
+    # CTE materialised once so the WHERE evaluates a single time even
+    # though three subqueries reference it.
+    sql = resolve(
+        f"""
+        WITH filtered AS MATERIALIZED (SELECT * FROM {{persons_geocoded}} {where})
+        SELECT
+            (SELECT count(*) FROM filtered) AS "personCount",
+            (SELECT count(DISTINCT door_id) FROM filtered) AS "doorCount",
+            (SELECT count(DISTINCT building_id) FROM filtered) AS "buildingCount",
+            (
+                SELECT array_agg({{
+                    'external_id': external_id,
+                    'first_name': first_name,
+                    'last_name': last_name,
+                    'address_line_1': address_line_1,
+                    'address_line_2': address_line_2,
+                    'city': city,
+                    'state': state,
+                    'zip5': zip5,
+                    'latitude': latitude,
+                    'longitude': longitude
+                }})
+                FROM (SELECT * FROM filtered LIMIT 100)
+            ) AS "samplePeople"
+        """,
+        slug=req.orgSlug,
+    )
     conn = get_connection(settings, read_only=True)
     try:
-        cursor = conn.execute(req.sql, req.params)
-        if binary:
-            arr = array.array("f")
-            for row in cursor.fetchall():
-                for v in row:
-                    arr.append(v)
-            return Response(content=arr.tobytes(), media_type="application/octet-stream")
-        cols = [desc[0] for desc in cursor.description]
+        row = conn.execute(sql, params).fetchone()
+    finally:
+        conn.close()
+    cols = ["personCount", "doorCount", "buildingCount", "samplePeople"]
+    out = dict(zip(cols, row, strict=True))
+    # array_agg over an empty input returns NULL; flatten to [].
+    out["samplePeople"] = out["samplePeople"] or []
+    return out
+
+
+class _PersonsCountByKeyRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    keyFilter: KeyFilter | None = None  # noqa: N815
+    keyGroup: str  # noqa: N815
+    orgSlug: str  # noqa: N815
+
+
+@app.post("/persons/count-by-key")
+async def persons_count_by_key(req: _PersonsCountByKeyRequest):
+    """Per-key (per ED, per ZIP, …) aggregation of doors + people for a
+    given criteria + optional spatial scope.
+
+    Drives the zone editor's heatmap overlay and the campaign editor's
+    boundary tinting. Response shape:
+    ``{counts: {<key>: {doors, people}, ...}}``.
+    """
+    where, params = to_where(req.criteria, req.keyFilter)
+    group_expr = boundary_key_expr_for(req.keyGroup)
+    sql = resolve(
+        f"""
+        SELECT
+            {group_expr} AS key,
+            count(DISTINCT door_id) AS doors,
+            count(*) AS people
+        FROM {{persons_geocoded}}
+        {where}
+        GROUP BY {group_expr}
+        """,
+        slug=req.orgSlug,
+    )
+    conn = get_connection(settings, read_only=True)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    counts: dict[str, dict[str, int]] = {}
+    for key, doors, people in rows:
+        if key is None:
+            continue
+        counts[key] = {"doors": int(doors), "people": int(people)}
+    return {"counts": counts}
+
+
+class _BuildingsListRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    keyFilter: KeyFilter | None = None  # noqa: N815
+    orgSlug: str  # noqa: N815
+
+
+@app.post("/buildings/list")
+async def buildings_list(req: _BuildingsListRequest):
+    """One row per building containing at least one matching person,
+    with door + person counts and the building's centroid.
+
+    The persons-side WHERE lives in a subquery so its unqualified
+    column references (e.g. `zip5`) only see persons — without the
+    subquery, columns shared between persons and buildings would be
+    ambiguous in the outer JOIN.
+
+    Used by the turf cutter to render buildings scoped to criteria ∩
+    zone, with enough detail to compute "what's inside this drawn
+    polygon" client-side.
+    """
+    where, params = to_where(req.criteria, req.keyFilter)
+    sql = resolve(
+        f"""
+        SELECT
+            b.building_id              AS "buildingId",
+            b.longitude,
+            b.latitude,
+            count(DISTINCT fp.door_id) AS "doorCount",
+            count(*)                   AS "personCount"
+        FROM {{buildings_geocoded}} b
+        JOIN (SELECT * FROM {{persons_geocoded}} {where}) fp
+            ON fp.building_id = b.building_id
+        GROUP BY b.building_id, b.longitude, b.latitude
+        """,
+        slug=req.orgSlug,
+    )
+    conn = get_connection(settings, read_only=True)
+    try:
+        cursor = conn.execute(sql, params)
+        cols = [d[0] for d in cursor.description]
         rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
     finally:
         conn.close()
-    return {"rows": rows}
+    return {"buildings": rows}
+
+
+class _BuildingsPointsRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    keyFilter: KeyFilter | None = None  # noqa: N815
+    orgSlug: str  # noqa: N815
+
+
+@app.post("/buildings/points")
+async def buildings_points(req: _BuildingsPointsRequest):
+    """Binary lng/lat pairs (Float32, row-major) for buildings whose
+    contained persons match the criteria.
+
+    The persons-side WHERE goes through a `WHERE building_id IN (SELECT
+    DISTINCT building_id FROM persons ...)` subquery so unqualified
+    column refs only see persons. Empty criteria → all buildings with
+    at least one matched person.
+
+    Designed for direct upload into a GPU buffer on the browser — no
+    JSON envelope, no per-byte decode work.
+    """
+    where, params = to_where(req.criteria, req.keyFilter)
+    sql = resolve(
+        f"""
+        SELECT longitude, latitude
+        FROM {{buildings_geocoded}}
+        WHERE building_id IN (
+          SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
+        )
+        """,
+        slug=req.orgSlug,
+    )
+    conn = get_connection(settings, read_only=True)
+    try:
+        cursor = conn.execute(sql, params)
+        arr = array.array("f")
+        for lng, lat in cursor.fetchall():
+            arr.append(lng)
+            arr.append(lat)
+    finally:
+        conn.close()
+    return Response(content=arr.tobytes(), media_type="application/octet-stream")
+
+
+class _TurfDraftInput(BaseModel):
+    name: str | None
+    sortOrder: int  # noqa: N815
+    geometry: dict[str, Any]
+
+
+class _TurfsBuildRequest(BaseModel):
+    drafts: list[_TurfDraftInput]
+    criteria: Criteria = Criteria()
+    keyFilter: KeyFilter | None = None  # noqa: N815
+    orgSlug: str  # noqa: N815
+
+
+@app.post("/turfs/build")
+async def turfs_build(req: _TurfsBuildRequest):
+    """Spatial-join publish step — builds the structured per-turf
+    payload web inserts into Postgres.
+
+    For each input draft polygon, returns a `buildings → doors →
+    persons` tree of every matched-person whose building's centroid
+    falls inside that polygon (first-match-wins on overlaps, ordered
+    by `sortOrder`). Per-turf door + person counts are pre-aggregated.
+    Buildings outside every polygon are dropped.
+
+    Heavy work — single SQL pass over filtered persons + spatial join
+    against the polygon set, then in-memory grouping. Lives here
+    because it needs to scale to large publishes (autocut, batch
+    operations) and benefit from job-runner orchestration when those
+    arrive.
+    """
+    if not req.drafts:
+        return {"turfs": []}
+
+    where_sql, where_params = to_where(req.criteria, req.keyFilter)
+
+    # Polygons CTE built from the request — one row per draft, indexed
+    # by position so we can echo back results in the same order.
+    polygon_rows = ", ".join(f"({i}, ST_GeomFromGeoJSON(?))" for i in range(len(req.drafts)))
+    polygon_params = [json.dumps(d.geometry) for d in req.drafts]
+
+    sql = resolve(
+        f"""
+        WITH polygons(idx, geom) AS (VALUES {polygon_rows}),
+        filtered_persons AS (
+            SELECT * FROM {{persons_geocoded}} {where_sql}
+        )
+        SELECT
+            assignment.polygon_idx,
+            p.external_id,
+            p.first_name,
+            p.last_name,
+            p.address_line_2 AS unit,
+            p.other_properties,
+            p.building_id,
+            p.door_id,
+            b.latitude,
+            b.longitude,
+            b.address_line_1 AS street,
+            b.city,
+            b.state,
+            b.zip5 AS zip
+        FROM filtered_persons p
+        JOIN {{buildings_geocoded}} b ON b.building_id = p.building_id
+        JOIN LATERAL (
+            SELECT MIN(po.idx) AS polygon_idx
+            FROM polygons po
+            WHERE ST_Contains(po.geom, ST_Point(b.longitude, b.latitude))
+        ) assignment ON assignment.polygon_idx IS NOT NULL
+        """,
+        slug=req.orgSlug,
+    )
+
+    conn = get_connection(settings, read_only=True)
+    try:
+        rows = conn.execute(sql, polygon_params + where_params).fetchall()
+    finally:
+        conn.close()
+
+    # Group rows: polygon_idx → building_id → door_id → [persons].
+    # Building canonical fields (lat/lng, address) repeat across every
+    # row sharing a building_id; first occurrence wins.
+    per_polygon: list[dict[str, Any]] = [
+        {"buildings": {}} for _ in req.drafts
+    ]
+    for row in rows:
+        (
+            polygon_idx,
+            external_id,
+            first_name,
+            last_name,
+            unit,
+            other_properties,
+            building_id,
+            door_id,
+            latitude,
+            longitude,
+            street,
+            city,
+            state,
+            zip_,
+        ) = row
+
+        bucket = per_polygon[polygon_idx]
+        building = bucket["buildings"].get(building_id)
+        if building is None:
+            building = {
+                "buildingId": building_id,
+                "latitude": latitude,
+                "longitude": longitude,
+                "address": {"street": street, "city": city, "state": state, "zip": zip_},
+                "doors": {},
+            }
+            bucket["buildings"][building_id] = building
+
+        door = building["doors"].get(door_id)
+        if door is None:
+            door = {"doorId": door_id, "unit": unit, "persons": []}
+            building["doors"][door_id] = door
+
+        # `other_properties` arrives as either a JSON string or a
+        # parsed dict depending on column shape — coerce to dict.
+        other_props = (
+            json.loads(other_properties)
+            if isinstance(other_properties, str)
+            else other_properties or {}
+        )
+
+        door["persons"].append(
+            {
+                "personId": external_id,
+                "firstName": first_name,
+                "lastName": last_name,
+                "otherProperties": other_props,
+            }
+        )
+
+    # Materialize the per-turf payloads in input order, flattening the
+    # building/door dicts to lists. Empty polygons (no matched
+    # buildings) come through with `buildings: []`.
+    out_turfs: list[dict[str, Any]] = []
+    for draft, bucket in zip(req.drafts, per_polygon, strict=True):
+        buildings_out = []
+        door_count = 0
+        person_count = 0
+        for b in bucket["buildings"].values():
+            doors_out = []
+            for d in b["doors"].values():
+                doors_out.append(d)
+                door_count += 1
+                person_count += len(d["persons"])
+            buildings_out.append(
+                {
+                    "buildingId": b["buildingId"],
+                    "latitude": b["latitude"],
+                    "longitude": b["longitude"],
+                    "address": b["address"],
+                    "doors": doors_out,
+                }
+            )
+        out_turfs.append(
+            {
+                "name": draft.name,
+                "sortOrder": draft.sortOrder,
+                "geometry": draft.geometry,
+                "doorCount": door_count,
+                "personCount": person_count,
+                "buildings": buildings_out,
+            }
+        )
+
+    return {"turfs": out_turfs}
+
+

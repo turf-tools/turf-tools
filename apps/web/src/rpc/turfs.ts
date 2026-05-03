@@ -8,17 +8,12 @@ import {
   zoneGroups,
   zones,
 } from "@field-tools/db/schema";
-import type {
-  TurfData,
-  TurfDataBuilding,
-  TurfDataDoor,
-  TurfDataPerson,
-} from "@field-tools/db/schema";
+import type { TurfData, TurfDataBuilding } from "@field-tools/db/schema";
 import { z } from "zod";
-import { criteriaToWhere } from "../lib/criteria-to-sql";
+import { dataPostJson } from "~/lib/data-proxy";
 import { type Criteria } from "../lib/filters";
 import { mut, pub } from "./context";
-import { applyKeyFilter, execute, loadOrgSlug } from "./segments";
+import { loadOrgSlug } from "./segments";
 
 // Shared select shape for turf list/detail responses. The
 // buildings/doors/persons payload lives in `turf_data` and is
@@ -239,154 +234,47 @@ export const publish = mut
       .orderBy(asc(turfDrafts.sortOrder));
     if (drafts.length === 0) throw new Error("No drafts to publish");
 
-    // 5. Run the segment criteria against persons_geocoded joined
-    // with buildings_geocoded. Per-person fields stay on `p` (id,
-    // name, unit, other_properties); canonical building values
-    // (lat/lng + address) come from `b` so the blob matches what
-    // the rest of the pipeline considers canonical for that
-    // building. `other_properties` passes through verbatim — the
-    // native app unpacks the keys it needs (party, gender,
-    // date_of_birth, etc.) so adding new voter-file fields
-    // upstream doesn't require a blob schema change here.
+    // 5. Hand off the spatial join to the data app. Web sends the
+    // drafts + criteria + keyFilter; data does the filtered persons
+    // ∩ buildings ∩ polygons join and returns each draft's
+    // structured `buildings → doors → persons` payload plus
+    // pre-aggregated counts.
     const orgSlug = await loadOrgSlug(context);
-    const { where, params } = applyKeyFilter(criteriaToWhere(segmentCriteria), {
-      keyGroup,
-      keys: zone.keys,
+    const built = await dataPostJson<{
+      turfs: Array<{
+        name: string | null;
+        sortOrder: number;
+        geometry: { type: "Polygon"; coordinates: number[][][] };
+        doorCount: number;
+        personCount: number;
+        buildings: TurfDataBuilding[];
+      }>;
+    }>("/turfs/build", {
+      drafts: drafts.map((d) => ({
+        name: d.name,
+        sortOrder: d.sortOrder,
+        geometry: d.geometry,
+      })),
+      criteria: segmentCriteria,
+      keyFilter: { keyGroup, keys: zone.keys },
+      orgSlug,
     });
-    const personsTable = `ducklake.main.${orgSlug}_persons_geocoded`;
-    const buildingsTable = `ducklake.main.${orgSlug}_buildings_geocoded`;
-    const sql = `
-      SELECT
-        p.external_id            AS external_id,
-        p.first_name             AS first_name,
-        p.last_name              AS last_name,
-        p.address_line_2         AS unit,
-        p.other_properties       AS other_properties,
-        p.building_id            AS building_id,
-        p.door_id                AS door_id,
-        b.latitude               AS latitude,
-        b.longitude              AS longitude,
-        b.address_line_1         AS street,
-        b.city                   AS city,
-        b.state                  AS state,
-        b.zip5                   AS zip5
-      FROM (SELECT * FROM ${personsTable} ${where}) p
-      JOIN ${buildingsTable} b ON b.building_id = p.building_id
-    `;
-    const personRows = (await execute(sql, params)) as Array<{
-      external_id: string;
-      first_name: string | null;
-      last_name: string | null;
-      unit: string | null;
-      // DuckDB returns JSON columns as strings over the data app's
-      // `/query` HTTP endpoint; we parse once per row below.
-      other_properties: string | Record<string, string | null> | null;
-      building_id: string;
-      door_id: string;
-      latitude: number | null;
-      longitude: number | null;
-      street: string | null;
-      city: string | null;
-      state: string | null;
-      zip5: string | null;
-    }>;
 
-    // 6. Group persons by building / door. Building fields are
-    // canonical from `_buildings_geocoded`, repeated on every row
-    // sharing a building_id — we just take the first occurrence.
-    type BuildingAcc = {
-      buildingId: string;
-      latitude: number | null;
-      longitude: number | null;
-      address: TurfDataBuilding["address"];
-      doors: Map<string, { unit: string | null; persons: TurfDataPerson[] }>;
-    };
-    const buildingAcc = new Map<string, BuildingAcc>();
-    for (const r of personRows) {
-      let b = buildingAcc.get(r.building_id);
-      if (!b) {
-        b = {
-          buildingId: r.building_id,
-          latitude: r.latitude,
-          longitude: r.longitude,
-          address: {
-            street: r.street,
-            city: r.city,
-            state: r.state,
-            zip: r.zip5,
-          },
-          doors: new Map(),
-        };
-        buildingAcc.set(r.building_id, b);
-      }
-      let d = b.doors.get(r.door_id);
-      if (!d) {
-        d = { unit: r.unit, persons: [] };
-        b.doors.set(r.door_id, d);
-      }
-      d.persons.push({
-        personId: r.external_id,
-        firstName: r.first_name,
-        lastName: r.last_name,
-        otherProperties:
-          typeof r.other_properties === "string"
-            ? (JSON.parse(r.other_properties) as Record<string, string | null>)
-            : (r.other_properties ?? {}),
-      });
-    }
-
-    // 7. Assign each building to the first draft polygon that
-    // contains its centroid. Buildings outside every polygon are
-    // dropped from the publish (they're in the segment ∩ zone but
-    // not in any cut). First-match-wins so an overlap doesn't
-    // double-count buildings across turfs.
-    const draftBuckets = drafts.map(() => new Set<string>());
-    for (const b of buildingAcc.values()) {
-      if (b.latitude == null || b.longitude == null) continue;
-      const point: [number, number] = [b.longitude, b.latitude];
-      for (let i = 0; i < drafts.length; i++) {
-        const ring = drafts[i]!.geometry.coordinates[0];
-        if (!ring) continue;
-        if (pointInRing(point, ring)) {
-          draftBuckets[i]!.add(b.buildingId);
-          break;
-        }
-      }
-    }
-
-    // 8. Materialize the per-turf TurfData blobs and a parallel
-    // counts array so the insert step has everything it needs.
+    // 6. Pair each returned turf with the corresponding draft (same
+    // input order). Drafts that produced no matched buildings still
+    // get a turf row with empty `buildings` — they're a valid (if
+    // empty) cut.
     const turfPayloads = drafts.map((draft, i) => {
-      const buildingIds = draftBuckets[i]!;
-      const buildings: TurfDataBuilding[] = [];
-      let doorCount = 0;
-      let personCount = 0;
-      for (const id of buildingIds) {
-        const b = buildingAcc.get(id);
-        if (!b) continue;
-        const doors: TurfDataDoor[] = [];
-        for (const [doorId, d] of b.doors) {
-          doors.push({ doorId, unit: d.unit, persons: d.persons });
-          doorCount += 1;
-          personCount += d.persons.length;
-        }
-        buildings.push({
-          buildingId: b.buildingId,
-          latitude: b.latitude,
-          longitude: b.longitude,
-          address: b.address,
-          doors,
-        });
-      }
+      const t = built.turfs[i]!;
       return {
         draft,
-        buildings,
-        doorCount,
-        personCount,
+        buildings: t.buildings,
+        doorCount: t.doorCount,
+        personCount: t.personCount,
       };
     });
 
-    // 9. Insert turfs + turf_data rows in a single transaction with
+    // 7. Insert turfs + turf_data rows in a single transaction with
     // bulk inserts — collapses ~3 round trips per draft into ~3 total
     // regardless of count. Pre-generate turfIds and turfCodes so each
     // draft can be linked across both inserts without relying on
@@ -459,28 +347,6 @@ export const publish = mut
       },
     };
   });
-
-// Standard ray-casting point-in-polygon test on a closed ring (per
-// GeoJSON, the first and last points are equal). The duplicate
-// doesn't affect the result — we iterate edges, and the edge from
-// the last unique vertex back to the first is included naturally
-// either way.
-function pointInRing(point: [number, number], ring: number[][]): boolean {
-  const [x, y] = point;
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const a = ring[i]!;
-    const b = ring[j]!;
-    const xi = a[0]!;
-    const yi = a[1]!;
-    const xj = b[0]!;
-    const yj = b[1]!;
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
 
 // 8-digit numeric — chosen for phone/voice transmission ergonomics:
 // a lead reading a code to a canvasser only has to recite digits
