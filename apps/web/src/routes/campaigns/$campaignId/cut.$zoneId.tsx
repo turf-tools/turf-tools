@@ -351,7 +351,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   }, [selectedTurfId]);
 
   const onBack = () => {
-    void navigate({ to: "/campaigns", search: { campaignId } });
+    void navigate({ to: "/campaigns/$campaignId", params: { campaignId } });
   };
 
   // Map curtain holds until the heavy queries (boundaries + buildings)
@@ -391,7 +391,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-4 h-[calc(100vh-9.75rem)]">
+      <div className="grid grid-cols-4 gap-4 h-[calc(100vh-9rem)]">
         <div className="col-span-1 min-h-0">
           <TurfList
             turfs={turfRows}

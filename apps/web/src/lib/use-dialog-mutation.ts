@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 // Bundles a dialog's open flag with a TanStack mutation. Removes the
 // per-dialog boilerplate of pairing `useState(false)` with `useMutation`,
@@ -13,6 +13,13 @@ import { useState } from "react";
 //
 // Closing the dialog (cancel, esc, click-outside, or success) clears any
 // stale error so it doesn't survive into the next open.
+//
+// Both `opts.onSuccess` (always-runs cache work, etc.) and the per-call
+// `mutate(input, { onSuccess })` callback are awaited before the dialog
+// closes. This is what makes a `navigate(...)` inside either hook safe —
+// the URL has settled by the time the modal goes away. Per-call hooks
+// are the right home for things that depend on click-time state (e.g.
+// "delete then go to the previous neighbor I computed at click time").
 export function useDialogMutation<TInput, TOutput>(opts: {
   mutationFn: (input: TInput) => Promise<TOutput>;
   onSuccess?: (data: TOutput, input: TInput) => void | Promise<void>;
@@ -21,17 +28,31 @@ export function useDialogMutation<TInput, TOutput>(opts: {
   const [isOpen, setIsOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: opts.mutationFn,
-    // Await onSuccess so callers can defer the close until any post-success
-    // navigation/route transition has settled. Without this, a `void
-    // navigate(...)` inside onSuccess can leave the modal closed but the
-    // URL still on the previous id for a frame, briefly rendering the old
-    // entity. Visible under CPU pressure (e.g. screen share).
-    onSuccess: async (data, input) => {
-      await opts.onSuccess?.(data, input);
-      setIsOpen(false);
-    },
+    onSuccess: opts.onSuccess,
     onError: opts.onError,
   });
+
+  // Wrap mutate so the per-call onSuccess (if any) runs and is awaited
+  // before the dialog closes. Order on success:
+  //   1. mutationFn resolves
+  //   2. opts.onSuccess (global) runs and is awaited by TanStack Query
+  //   3. per-call onSuccess (this wrapper) runs and is awaited
+  //   4. setIsOpen(false)
+  type PerCallOptions = Parameters<typeof mutation.mutate>[1];
+  const mutate = useCallback(
+    (input: TInput, options?: PerCallOptions) => {
+      return mutation.mutate(input, {
+        ...options,
+        onSuccess: async (...args) => {
+          // Promise.resolve coerces both Promise and non-Promise return
+          // values from the caller's onSuccess to something awaitable.
+          await Promise.resolve(options?.onSuccess?.(...args));
+          setIsOpen(false);
+        },
+      });
+    },
+    [mutation],
+  );
 
   return {
     isOpen,
@@ -44,7 +65,7 @@ export function useDialogMutation<TInput, TOutput>(opts: {
       mutation.reset();
       setIsOpen(next);
     },
-    mutate: mutation.mutate,
+    mutate,
     isPending: mutation.isPending,
     error: mutation.error?.message ?? null,
     reset: mutation.reset,

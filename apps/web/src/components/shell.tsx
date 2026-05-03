@@ -13,7 +13,7 @@ type ShellProps = {
   children?: ReactNode;
 };
 
-const EXPANDED_WIDTH = "w-48";
+const EXPANDED_WIDTH = "w-40";
 const COLLAPSED_WIDTH = "w-12";
 
 export function Shell({ children }: ShellProps) {
@@ -34,7 +34,7 @@ export function Shell({ children }: ShellProps) {
         >
           <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
         </aside>
-        <main className="flex-1 px-8 pt-5 pb-8">{children}</main>
+        <main className="flex-1 px-8 pt-4 pb-8">{children}</main>
       </div>
     </div>
   );
