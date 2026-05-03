@@ -183,9 +183,8 @@ function CampaignsIndex() {
   const { campaignId: activeCampaignId = null } = Route.useSearch();
   const shouldFade = useFadeOnce("/campaigns");
 
-  const setActiveCampaignId = (id: string | null) => {
-    void navigate({ search: { campaignId: id ?? undefined } });
-  };
+  const setActiveCampaignId = (id: string | null) =>
+    navigate({ search: { campaignId: id ?? undefined } });
 
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
@@ -493,9 +492,9 @@ function CampaignsIndex() {
       await warmupCampaignCache(created);
       return created;
     },
-    onSuccess: (created) => {
+    onSuccess: async (created) => {
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      setActiveCampaignId(created.campaignId);
+      await setActiveCampaignId(created.campaignId);
     },
   });
 
@@ -505,18 +504,18 @@ function CampaignsIndex() {
       await warmupCampaignCache(created);
       return created;
     },
-    onSuccess: (created) => {
+    onSuccess: async (created) => {
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      setActiveCampaignId(created.campaignId);
+      await setActiveCampaignId(created.campaignId);
     },
   });
 
   const deleteCampaign = useDialogMutation({
     mutationFn: (campaignId: string) => client.campaigns.remove({ campaignId }),
-    onSuccess: () => {
+    onSuccess: async () => {
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       // Loader picks the alphabetical-first survivor.
-      setActiveCampaignId(null);
+      await setActiveCampaignId(null);
     },
   });
 

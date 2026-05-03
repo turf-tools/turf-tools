@@ -15,14 +15,19 @@ import { useState } from "react";
 // stale error so it doesn't survive into the next open.
 export function useDialogMutation<TInput, TOutput>(opts: {
   mutationFn: (input: TInput) => Promise<TOutput>;
-  onSuccess?: (data: TOutput, input: TInput) => void;
+  onSuccess?: (data: TOutput, input: TInput) => void | Promise<void>;
   onError?: (error: Error, input: TInput) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: opts.mutationFn,
-    onSuccess: (data, input) => {
-      opts.onSuccess?.(data, input);
+    // Await onSuccess so callers can defer the close until any post-success
+    // navigation/route transition has settled. Without this, a `void
+    // navigate(...)` inside onSuccess can leave the modal closed but the
+    // URL still on the previous id for a frame, briefly rendering the old
+    // entity. Visible under CPU pressure (e.g. screen share).
+    onSuccess: async (data, input) => {
+      await opts.onSuccess?.(data, input);
       setIsOpen(false);
     },
     onError: opts.onError,
