@@ -35,11 +35,7 @@ import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { darkAtom } from "~/lib/atoms/theme";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
-import {
-  fetchPersonsCountByKey,
-  segmentDetailQuery,
-  segmentsListQuery,
-} from "~/lib/queries/segments";
+import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -136,9 +132,10 @@ function ZonesIndex() {
   const { data: overlayCounts } = useQuery({
     queryKey: ["counts-by-key", overlayCriteriaKey, activeGroup?.keyGroup],
     queryFn: () =>
-      fetchPersonsCountByKey({
+      client.segments.countByKey({
         criteria: overlayCriteria!,
         keyGroup: activeGroup!.keyGroup,
+        keyFilter: null,
       }),
     enabled:
       showSegmentCounts &&
@@ -600,7 +597,7 @@ function ZonesIndex() {
               className="h-full"
               boundariesUrl={
                 activeGroup
-                  ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+                  ? `/api/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
                   : undefined
               }
               coloringByKey={coloringByKey}
