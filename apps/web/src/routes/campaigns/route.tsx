@@ -146,19 +146,12 @@ function CampaignsLayout() {
     ]);
   };
 
-  const warmupCampaignCache = async (
-    created: Awaited<ReturnType<typeof client.campaigns.create>>,
-  ) => {
+  const seedCampaignCache = (created: Awaited<ReturnType<typeof client.campaigns.create>>) => {
     queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
       ["campaigns"],
       (old) => (old ? [...old, created] : [created]),
     );
     queryClient.setQueryData(["campaign", created.campaignId], created);
-    await prefetchCampaignViewData({
-      campaignId: created.campaignId,
-      segmentId: created.segmentId,
-      zoneGroupId: created.zoneGroupId,
-    });
   };
 
   const renameCampaign = useDialogMutation({
@@ -192,7 +185,7 @@ function CampaignsLayout() {
         scriptId: input.scriptId,
         zoneGroupId,
       });
-      await warmupCampaignCache(created);
+      seedCampaignCache(created);
       return created;
     },
     onSuccess: (created) => {
@@ -204,7 +197,7 @@ function CampaignsLayout() {
   const cloneCampaign = useDialogMutation({
     mutationFn: async (input: { campaignId: string; newName: string }) => {
       const created = await client.campaigns.clone(input);
-      await warmupCampaignCache(created);
+      seedCampaignCache(created);
       return created;
     },
     onSuccess: (created) => {
