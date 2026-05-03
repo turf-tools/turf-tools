@@ -11,7 +11,7 @@ Node dependency chain:
     tiger_addrfeat_raw ──┐
                           ├─► blockface_unpivoted ─► blockface_normalized ─► blockface_final
     tiger_edges_raw ─────┘
-    address_token_table ─────────────────────────────────────────────────► blockface_final
+    address_tokens ─────────────────────────────────────────────────► blockface_final
 """
 
 import json
@@ -53,7 +53,7 @@ def _tokenise(col: str) -> str:
 def _fqn(table: str) -> str:
     """Return the fully qualified name (fqn) for a TIGER table.
 
-    Example: ``geo_ducklake.tiger.blockface`` instead of just ``blockface``.
+    Example: ``geo_ducklake.tiger.blockface_final`` instead of just ``blockface_final``.
     """
     return f"{GEO_CATALOG}.{TIGER_SCHEMA}.{table}"
 
@@ -345,7 +345,7 @@ def tiger_tabblock_raw(
 # ---------------------------------------------------------------------------
 
 
-def address_token_table(conn: duckdb.DuckDBPyConnection) -> TableRef:
+def address_tokens(conn: duckdb.DuckDBPyConnection) -> TableRef:
     """Populate the static address token equivalency table in geo DuckLake.
 
     Each row is an array of tokens that should be treated as interchangeable
@@ -611,7 +611,7 @@ def blockface_normalized(
 
 def blockface_final(
     blockface_normalized: TableRef,
-    address_token_table: TableRef,
+    address_tokens: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Produce the query-ready blockface table with expanded street name tokens.
@@ -624,10 +624,10 @@ def blockface_final(
     This is the stable table that Graph 3 (geocode) reads directly.
     Incremental: skips blockface_ids already present.
     """
-    table = "blockface"
+    table = "blockface_final"
     fqn = _fqn(table)
     norm_fqn = blockface_normalized.fqn
-    tokens_fqn = address_token_table.fqn
+    tokens_fqn = address_tokens.fqn
 
     _ensure_schema(conn)
     conn.execute(f"""
