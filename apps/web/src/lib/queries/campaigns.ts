@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { client } from "~/rpc/client";
-import { fetchBuildingsPoints, fetchPersonsCountByKey, type SegmentCriteria } from "./segments";
+import { fetchSegmentPoints, type SegmentCriteria } from "./segments";
 
 export type KeyFilter = { keyGroup: string; keys: string[] };
 
@@ -28,7 +28,7 @@ export const campaignPointsQuery = (
       JSON.stringify(segmentCriteria),
       keyFilter ? JSON.stringify(keyFilter) : null,
     ] as const,
-    queryFn: () => fetchBuildingsPoints({ criteria: segmentCriteria, keyFilter }),
+    queryFn: () => fetchSegmentPoints({ criteria: segmentCriteria, keyFilter }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -40,7 +40,7 @@ export const campaignKeyCountsQuery = (
   queryOptions({
     queryKey: ["campaign-key-counts", JSON.stringify(segmentCriteria), keyGroup, keys] as const,
     queryFn: () =>
-      fetchPersonsCountByKey({
+      client.segments.countByKey({
         criteria: segmentCriteria,
         keyGroup,
         keyFilter: { keyGroup, keys },

@@ -1,7 +1,43 @@
 import { and, asc, type Db, eq } from "@field-tools/db";
 import { campaigns, organizations, segments } from "@field-tools/db/schema";
 import { z } from "zod";
+import { dataPostJson } from "~/lib/data-proxy";
 import { pub } from "./context";
+
+// Wire shapes returned by the data service. Kept here (next to the
+// handlers that produce them) rather than at the query layer so the
+// types travel with the RPC schema.
+type PersonsCount = {
+  personCount: number;
+  doorCount: number;
+  buildingCount: number;
+  samplePeople: Array<{
+    external_id: string;
+    first_name: string | null;
+    last_name: string | null;
+    address_line_1: string | null;
+    address_line_2: string | null;
+    city: string | null;
+    state: string | null;
+    zip5: string | null;
+    latitude: number;
+    longitude: number;
+  }>;
+};
+
+type PersonsCountByKey = { counts: Record<string, { doors: number; people: number }> };
+
+type BuildingsList = {
+  buildings: Array<{
+    buildingId: string;
+    longitude: number;
+    latitude: number;
+    doorCount: number;
+    personCount: number;
+  }>;
+};
+
+const keyFilterSchema = z.object({ keyGroup: z.string(), keys: z.array(z.string()) }).nullish();
 
 const segmentSelect = {
   segmentId: segments.segmentId,
@@ -215,3 +251,55 @@ export async function loadOrgSlug(context: {
   if (!slug) throw new Error("Organization not found");
   return slug;
 }
+
+// Total / per-door / per-building counts + sample people for a criteria.
+// Used by the segment editor's preview pane. No keyFilter — the segment
+// editor has no zone scoping.
+export const count = pub
+  .input(z.object({ criteria: z.unknown() }))
+  .handler(async ({ context, input }): Promise<PersonsCount> => {
+    const orgSlug = await loadOrgSlug(context);
+    return dataPostJson<PersonsCount>("/persons/count", {
+      criteria: input.criteria,
+      orgSlug,
+    });
+  });
+
+// Per-key counts for the campaign editor's heatmap overlay. `keyGroup`
+// drives the GROUP BY column; `keyFilter` (optional) restricts the
+// result set to a subset of keys (e.g. only the campaign's zone-group keys).
+export const countByKey = pub
+  .input(
+    z.object({
+      criteria: z.unknown(),
+      keyGroup: z.string(),
+      keyFilter: keyFilterSchema,
+    }),
+  )
+  .handler(async ({ context, input }): Promise<PersonsCountByKey> => {
+    const orgSlug = await loadOrgSlug(context);
+    return dataPostJson<PersonsCountByKey>("/persons/count-by-key", {
+      criteria: input.criteria,
+      keyGroup: input.keyGroup,
+      keyFilter: input.keyFilter,
+      orgSlug,
+    });
+  });
+
+// Per-building rollups for the turf cutter — one row per building that
+// contains at least one matching person.
+export const listBuildings = pub
+  .input(
+    z.object({
+      criteria: z.unknown(),
+      keyFilter: keyFilterSchema,
+    }),
+  )
+  .handler(async ({ context, input }): Promise<BuildingsList> => {
+    const orgSlug = await loadOrgSlug(context);
+    return dataPostJson<BuildingsList>("/buildings/list", {
+      criteria: input.criteria,
+      keyFilter: input.keyFilter,
+      orgSlug,
+    });
+  });

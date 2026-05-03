@@ -10,6 +10,7 @@ import {
 } from "@field-tools/db/schema";
 import type { TurfData, TurfDataBuilding } from "@field-tools/db/schema";
 import { z } from "zod";
+import { dataPostJson } from "~/lib/data-proxy";
 import { type Criteria } from "../lib/filters";
 import { mut, pub } from "./context";
 import { loadOrgSlug } from "./segments";
@@ -239,24 +240,7 @@ export const publish = mut
     // structured `buildings → doors → persons` payload plus
     // pre-aggregated counts.
     const orgSlug = await loadOrgSlug(context);
-    const buildRes = await fetch(`${import.meta.env.VITE_DATA_URL}/turfs/build`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        drafts: drafts.map((d) => ({
-          name: d.name,
-          sortOrder: d.sortOrder,
-          geometry: d.geometry,
-        })),
-        criteria: segmentCriteria,
-        keyFilter: { keyGroup, keys: zone.keys },
-        orgSlug,
-      }),
-    });
-    if (!buildRes.ok) {
-      throw new Error(`turfs/build failed: ${buildRes.status} ${await buildRes.text()}`);
-    }
-    const built = (await buildRes.json()) as {
+    const built = await dataPostJson<{
       turfs: Array<{
         name: string | null;
         sortOrder: number;
@@ -265,7 +249,16 @@ export const publish = mut
         personCount: number;
         buildings: TurfDataBuilding[];
       }>;
-    };
+    }>("/turfs/build", {
+      drafts: drafts.map((d) => ({
+        name: d.name,
+        sortOrder: d.sortOrder,
+        geometry: d.geometry,
+      })),
+      criteria: segmentCriteria,
+      keyFilter: { keyGroup, keys: zone.keys },
+      orgSlug,
+    });
 
     // 6. Pair each returned turf with the corresponding draft (same
     // input order). Drafts that produced no matched buildings still

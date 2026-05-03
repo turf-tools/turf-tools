@@ -1,7 +1,8 @@
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
-import { fetchPersonsCountByKey } from "../lib/queries/segments";
+import { dataPostJson } from "~/lib/data-proxy";
+import { loadOrgSlug } from "./segments";
 import { pub } from "./context";
 
 const zoneGroupSelect = {
@@ -231,9 +232,14 @@ export const createWithDefaultZone = pub
     // app's per-key counts endpoint — we only care about which keys
     // appear, not the counts. The auto-zone covers every key the
     // segment produces in this key group.
-    const result = await fetchPersonsCountByKey({
+    const orgSlug = await loadOrgSlug(context);
+    const result = await dataPostJson<{
+      counts: Record<string, { doors: number; people: number }>;
+    }>("/persons/count-by-key", {
       criteria: segment.criteria,
       keyGroup: input.keyGroup,
+      keyFilter: null,
+      orgSlug,
     });
     const keys = Object.keys(result.counts).sort();
 
