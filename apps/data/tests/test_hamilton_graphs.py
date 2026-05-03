@@ -81,8 +81,8 @@ def tiger_cache_dir(tmp_path_factory):
 
 class TestVoterFileLoader:
     def test_raw_voter_data_loads(self, dual_conn):
-        """raw_voter_data should create a table in ducklake and return a TableRef."""
-        ref = voter_file_loader.raw_voter_data(
+        """voters_raw should create a table in ducklake and return a TableRef."""
+        ref = voter_file_loader.voters_raw(
             voter_file_url=VOTER_FILE_URL,
             organization_slug="test",
             conn=dual_conn,
@@ -93,14 +93,14 @@ class TestVoterFileLoader:
         assert count > 0
 
     def test_transformation_produces_person_schema(self, dual_conn):
-        """transformed_persons should produce the Person columns."""
-        raw_ref = voter_file_loader.raw_voter_data(
+        """persons should produce the Person columns."""
+        raw_ref = voter_file_loader.voters_raw(
             voter_file_url=VOTER_FILE_URL,
             organization_slug="test",
             conn=dual_conn,
         )
-        transformed_ref = voter_file_loader.transformed_persons(
-            raw_voter_data=raw_ref,
+        transformed_ref = voter_file_loader.persons_transformed(
+            voters_raw=raw_ref,
             transformation_query=TRANSFORMATION_QUERY,
             organization_slug="test",
             conn=dual_conn,
@@ -113,20 +113,20 @@ class TestVoterFileLoader:
         assert "first_name" in cols
 
     def test_validated_persons_passes(self, dual_conn):
-        """validated_persons should return the same TableRef when schema is correct."""
-        raw_ref = voter_file_loader.raw_voter_data(
+        """persons_validated should return the same TableRef when schema is correct."""
+        raw_ref = voter_file_loader.voters_raw(
             voter_file_url=VOTER_FILE_URL,
             organization_slug="test",
             conn=dual_conn,
         )
-        transformed_ref = voter_file_loader.transformed_persons(
-            raw_voter_data=raw_ref,
+        transformed_ref = voter_file_loader.persons_transformed(
+            voters_raw=raw_ref,
             transformation_query=TRANSFORMATION_QUERY,
             organization_slug="test",
             conn=dual_conn,
         )
-        validated_ref = voter_file_loader.validated_persons(
-            transformed_persons=transformed_ref,
+        validated_ref = voter_file_loader.persons_validated(
+            persons_transformed=transformed_ref,
             conn=dual_conn,
         )
         assert validated_ref.fqn == transformed_ref.fqn
@@ -135,7 +135,7 @@ class TestVoterFileLoader:
         """Hamilton driver should execute the full voter_file_loader graph."""
         dr = driver.Builder().with_modules(voter_file_loader).build()
         result = dr.execute(
-            final_vars=["validated_persons"],
+            final_vars=["persons_validated"],
             inputs={
                 "voter_file_url": VOTER_FILE_URL,
                 "organization_slug": "test_driver",
@@ -143,7 +143,7 @@ class TestVoterFileLoader:
                 "conn": dual_conn,
             },
         )
-        ref = result["validated_persons"]
+        ref = result["persons_validated"]
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
@@ -155,8 +155,8 @@ class TestVoterFileLoader:
 
 class TestTigerGraph:
     def test_address_token_table(self, dual_conn):
-        """address_token_table should populate the equivalency groups table."""
-        ref = tiger.address_token_table(conn=dual_conn)
+        """address_tokens should populate the equivalency groups table."""
+        ref = tiger.address_tokens(conn=dual_conn)
         assert ref.catalog == "geo_ducklake"
         assert ref.table == "address_tokens"
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
@@ -165,9 +165,9 @@ class TestTigerGraph:
         assert count == len(EQUIVALENT_TOKEN_GROUPS)
 
     def test_address_token_table_idempotent(self, dual_conn):
-        """Running address_token_table twice should not duplicate rows."""
-        tiger.address_token_table(conn=dual_conn)
-        ref = tiger.address_token_table(conn=dual_conn)
+        """Running address_tokens twice should not duplicate rows."""
+        tiger.address_tokens(conn=dual_conn)
+        ref = tiger.address_tokens(conn=dual_conn)
         from src.address_tokens import EQUIVALENT_TOKEN_GROUPS
 
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
@@ -323,13 +323,13 @@ class TestTigerGraph:
             blockface_unpivoted=unpivoted_ref,
             conn=dual_conn,
         )
-        token_ref = tiger.address_token_table(conn=dual_conn)
+        token_ref = tiger.address_tokens(conn=dual_conn)
         ref = tiger.blockface_final(
             blockface_normalized=normalized_ref,
-            address_token_table=token_ref,
+            address_tokens=token_ref,
             conn=dual_conn,
         )
-        assert ref.table == "blockface"
+        assert ref.table == "blockface_final"
         final_count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         norm_count = dual_conn.table(normalized_ref.fqn).aggregate("count(*)").fetchone()[0]
         assert final_count == norm_count
@@ -366,11 +366,11 @@ class TestGeocodeGraph:
     """
 
     @pytest.fixture()
-    def validated_persons(self, dual_conn):
-        """Run Graph 1 and return validated_persons TableRef."""
+    def persons_validated(self, dual_conn):
+        """Run Graph 1 and return persons_validated TableRef."""
         dr = driver.Builder().with_modules(voter_file_loader).build()
         result = dr.execute(
-            final_vars=["validated_persons"],
+            final_vars=["persons_validated"],
             inputs={
                 "voter_file_url": VOTER_FILE_URL,
                 "organization_slug": "geocode_test",
@@ -378,7 +378,7 @@ class TestGeocodeGraph:
                 "conn": dual_conn,
             },
         )
-        return result["validated_persons"]
+        return result["persons_validated"]
 
     @pytest.fixture()
     def blockfaces(self, dual_conn, tiger_cache_dir):
@@ -399,12 +399,12 @@ class TestGeocodeGraph:
     @pytest.fixture()
     def address_tokens(self, dual_conn):
         """Populate the address-token equivalence table (idempotent)."""
-        return tiger.address_token_table(conn=dual_conn)
+        return tiger.address_tokens(conn=dual_conn)
 
-    def test_decomposed_persons(self, dual_conn, validated_persons):
-        """decomposed_persons should parse house numbers and tokens."""
-        ref = geocode.decomposed_persons(
-            validated_persons=validated_persons,
+    def test_decomposed_persons(self, dual_conn, persons_validated):
+        """persons_decomposed should parse house numbers and tokens."""
+        ref = geocode.persons_decomposed(
+            persons_validated=persons_validated,
             organization_slug="geocode_test",
             conn=dual_conn,
         )
@@ -419,15 +419,15 @@ class TestGeocodeGraph:
         bad = dual_conn.execute(f"SELECT count(*) FROM {ref.fqn} WHERE number_type NOT IN ('odd','even')").fetchone()[0]
         assert bad == 0
 
-    def test_candidate_blockfaces(self, dual_conn, validated_persons, blockfaces):
-        """candidate_blockfaces should produce person–blockface pairs."""
-        decomposed_ref = geocode.decomposed_persons(
-            validated_persons=validated_persons,
+    def test_candidate_blockfaces(self, dual_conn, persons_validated, blockfaces):
+        """persons_candidates should produce person–blockface pairs."""
+        decomposed_ref = geocode.persons_decomposed(
+            persons_validated=persons_validated,
             organization_slug="geocode_test",
             conn=dual_conn,
         )
-        ref = geocode.candidate_blockfaces(
-            decomposed_persons=decomposed_ref,
+        ref = geocode.persons_candidates(
+            persons_decomposed=decomposed_ref,
             blockface_final=blockfaces,
             organization_slug="geocode_test",
             conn=dual_conn,
@@ -436,15 +436,15 @@ class TestGeocodeGraph:
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
-    def test_persons_geocoded_match_rate(self, dual_conn, validated_persons, blockfaces, address_tokens):
+    def test_persons_geocoded_match_rate(self, dual_conn, persons_validated, blockfaces, address_tokens):
         """Full geocode pipeline should achieve a reasonable match rate for Manhattan."""
         dr = driver.Builder().with_modules(geocode).build()
         result = dr.execute(
             final_vars=["geocoding_summary"],
             inputs={
-                "validated_persons": validated_persons,
+                "persons_validated": persons_validated,
                 "blockface_final": blockfaces,
-                "address_token_table": address_tokens,
+                "address_tokens": address_tokens,
                 "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
@@ -458,7 +458,7 @@ class TestGeocodeGraph:
         # Expect at least 50% match rate for Manhattan against Manhattan TIGER
         assert match_pct >= 50.0
 
-    def test_persons_geocoded_have_valid_coordinates(self, dual_conn, validated_persons, blockfaces, address_tokens):
+    def test_persons_geocoded_have_valid_coordinates(self, dual_conn, persons_validated, blockfaces, address_tokens):
         """Every row in persons_geocoded should have plausible NYC lat/lon
         coordinates — the table now contains only matched persons (INNER
         JOIN), so any bad coords would be a real bug."""
@@ -466,9 +466,9 @@ class TestGeocodeGraph:
         dr.execute(
             final_vars=["persons_geocoded"],
             inputs={
-                "validated_persons": validated_persons,
+                "persons_validated": persons_validated,
                 "blockface_final": blockfaces,
-                "address_token_table": address_tokens,
+                "address_tokens": address_tokens,
                 "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
@@ -482,7 +482,7 @@ class TestGeocodeGraph:
         """).fetchone()[0]
         assert bad_coords == 0
 
-    def test_persons_geocoded_idempotent(self, dual_conn, validated_persons, blockfaces, address_tokens):
+    def test_persons_geocoded_idempotent(self, dual_conn, persons_validated, blockfaces, address_tokens):
         """Running persons_geocoded twice should produce the same row count.
 
         The function now drops and recreates on every run rather than
@@ -491,9 +491,9 @@ class TestGeocodeGraph:
         final state," not "incremental no-op."
         """
         inputs = {
-            "validated_persons": validated_persons,
+            "persons_validated": persons_validated,
             "blockface_final": blockfaces,
-            "address_token_table": address_tokens,
+            "address_tokens": address_tokens,
             "organization_slug": "geocode_test",
             "conn": dual_conn,
         }
@@ -504,26 +504,26 @@ class TestGeocodeGraph:
         count2 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_persons_geocoded").fetchone()[0]
         assert count1 == count2
 
-    def test_persons_geocoded_structural_invariants(self, dual_conn, validated_persons, blockfaces, address_tokens):
+    def test_persons_geocoded_structural_invariants(self, dual_conn, persons_validated, blockfaces, address_tokens):
         """Two invariants that should always hold for persons_geocoded:
         - One row per matched person (no duplicates from joins to upstream
           tables that have stale or duplicated keys).
-        - Row count never exceeds the source `validated_persons` count
+        - Row count never exceeds the source `persons_validated` count
           (persons_geocoded is a subset — matched persons only).
         """
         dr = driver.Builder().with_modules(geocode).build()
         dr.execute(
             final_vars=["persons_geocoded"],
             inputs={
-                "validated_persons": validated_persons,
+                "persons_validated": persons_validated,
                 "blockface_final": blockfaces,
-                "address_token_table": address_tokens,
+                "address_tokens": address_tokens,
                 "organization_slug": "geocode_test",
                 "conn": dual_conn,
             },
         )
         geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
-        validated_count = dual_conn.execute(f"SELECT count(*) FROM {validated_persons.fqn}").fetchone()[0]
+        validated_count = dual_conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()[0]
         total, distinct = dual_conn.execute(f"""
             SELECT count(*), count(DISTINCT external_id) FROM {geocoded_fqn}
         """).fetchone()
@@ -533,7 +533,7 @@ class TestGeocodeGraph:
             f"external_ids — duplicate rows from a join multiplication."
         )
         assert total <= validated_count, (
-            f"persons_geocoded has {total} rows but validated_persons only "
+            f"persons_geocoded has {total} rows but persons_validated only "
             f"has {validated_count} — geocoded should be a subset."
         )
 
