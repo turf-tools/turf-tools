@@ -135,6 +135,7 @@ function ZonesIndex() {
       client.segments.countByKey({
         criteria: overlayCriteria!,
         keyGroup: activeGroup!.keyGroup,
+        keyFilter: null,
       }),
     enabled:
       showSegmentCounts &&
@@ -622,7 +623,7 @@ function ZonesIndex() {
               className="h-full"
               boundariesUrl={
                 activeGroup
-                  ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+                  ? `/api/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
                   : undefined
               }
               coloringByKey={coloringByKey}

@@ -19,32 +19,44 @@ export const segmentDetailQuery = (segmentId: string) =>
   });
 
 // Counts + points for the segments-editor preview pane. Key-determined:
-// same `effectiveKey` always yields the same result.
+// same criteria always yields the same result.
 export const segmentPreviewQuery = (criteria: Criteria) =>
   queryOptions({
     queryKey: ["segment-preview", JSON.stringify(criteria)] as const,
     queryFn: async () => {
       const [counts, pointsBuffer] = await Promise.all([
         client.segments.count({ criteria }),
-        (async () => {
-          const res = await fetch("/api/segment-points", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ criteria }),
-          });
-          if (!res.ok) throw new Error(`segment-points failed: ${res.status} ${await res.text()}`);
-          return new Float32Array(await res.arrayBuffer());
-        })(),
+        fetchSegmentPoints({ criteria }),
       ]);
       return { counts, pointsBuffer };
     },
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-// Buildings inside a single zone, narrowed by segment criteria. Used by
-// the turf cutter; lives here because it's a `client.segments.listBuildings`
-// call. `segmentCriteria` is `unknown`-typed at the type level, so passing
-// `undefined` is structurally allowed for disabled-state calls.
+// Binary lng/lat pairs — uploaded directly into a GPU buffer, so the
+// response stays as raw bytes the whole way through (no JSON envelope,
+// no per-byte JS decode). Lives outside oRPC for that reason; auth /
+// org are enforced by the /api proxy on the web edge.
+export async function fetchSegmentPoints(input: {
+  criteria: unknown;
+  keyFilter?: { keyGroup: string; keys: string[] } | null;
+}): Promise<Float32Array> {
+  const res = await fetch("/api/segment-points", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      criteria: input.criteria,
+      keyFilter: input.keyFilter,
+    }),
+  });
+  if (!res.ok) throw new Error(`segment-points failed: ${res.status} ${await res.text()}`);
+  return new Float32Array(await res.arrayBuffer());
+}
+
+// Buildings inside a single zone, narrowed by segment criteria. Used
+// by the turf cutter. `segmentCriteria` is `unknown`-typed at the type
+// level, so passing `undefined` is structurally allowed for
+// disabled-state calls.
 export const cutterBuildingsQuery = (
   zoneId: string,
   segmentCriteria: SegmentCriteria,
@@ -56,6 +68,10 @@ export const cutterBuildingsQuery = (
       zoneId,
       segmentCriteria ? JSON.stringify(segmentCriteria) : null,
     ] as const,
-    queryFn: () => client.segments.listBuildings({ criteria: segmentCriteria, keyFilter }),
+    queryFn: () =>
+      client.segments.listBuildings({
+        criteria: segmentCriteria,
+        keyFilter,
+      }),
     staleTime: Number.POSITIVE_INFINITY,
   });
