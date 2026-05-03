@@ -4,10 +4,8 @@ import { zoneGroupsQuery } from "~/lib/queries/zones";
 export const Route = createFileRoute("/zones/")({
   loader: async ({ context: { queryClient } }) => {
     const groups = await queryClient.fetchQuery(zoneGroupsQuery());
-    // Most-recently-modified is the default.
-    const fallback = [...groups].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    )[0];
+    // Alphabetically first is the default — matches the list-column order.
+    const fallback = [...groups].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (fallback) {
       throw redirect({
         to: "/zones/$zoneGroupId",

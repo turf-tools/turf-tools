@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { Copy, Eraser, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -18,10 +18,8 @@ import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
-function sortByUpdatedAt<T extends { updatedAt: string | Date }>(items: ReadonlyArray<T>): T[] {
-  return [...items].sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
+function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export const Route = createFileRoute("/zones")({
@@ -37,12 +35,11 @@ function ZonesLayout() {
   const shouldFade = useFadeOnce("/zones");
 
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
-  const sortedZoneGroups = sortByUpdatedAt(zoneGroups);
+  const sortedZoneGroups = sortByName(zoneGroups);
   const activeGroup = zoneGroups.find((g) => g.zoneGroupId === activeGroupId) ?? null;
 
-  const goToGroup = (id: string) => {
-    void navigate({ to: "/zones/$zoneGroupId", params: { zoneGroupId: id } });
-  };
+  const goToGroup = (id: string) =>
+    navigate({ to: "/zones/$zoneGroupId", params: { zoneGroupId: id } });
 
   const renameGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
@@ -52,12 +49,16 @@ function ZonesLayout() {
   const createGroup = useDialogMutation({
     mutationFn: (input: { name: string; keyGroup: string }) => client.zoneGroups.create(input),
     onSuccess: (created) => {
-      // Inject before navigating so the loader sees the new group.
+      // Inject and navigate synchronously (no await between) so React
+      // batches both updates into one render — otherwise the new row
+      // appears in the list for a frame as unselected before the URL
+      // catches up. Loader sees the cache injection because it runs in
+      // the same microtask wave.
       queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
         old ? [...old, created] : [created],
       );
       void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      goToGroup(created.zoneGroupId);
+      return goToGroup(created.zoneGroupId);
     },
   });
 
@@ -68,7 +69,7 @@ function ZonesLayout() {
         old ? [...old, created] : [created],
       );
       void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      goToGroup(created.zoneGroupId);
+      return goToGroup(created.zoneGroupId);
     },
   });
 
@@ -98,41 +99,14 @@ function ZonesLayout() {
     // was the only group.
     const fallback = sortedZoneGroups[idx - 1] ?? sortedZoneGroups[idx + 1] ?? null;
     deleteGroup.mutate(activeGroupId, {
-      onSuccess: () => {
+      onSuccess: async () => {
         if (fallback) {
-          goToGroup(fallback.zoneGroupId);
+          await goToGroup(fallback.zoneGroupId);
         } else {
-          void navigate({ to: "/zones" });
+          await navigate({ to: "/zones" });
         }
       },
     });
-  };
-
-  // Inline rename in the list column (dbl-click a row name).
-  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
-
-  const inlineRenameGroup = useMutation({
-    mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
-    onMutate: ({ zoneGroupId, name }) => {
-      void queryClient.cancelQueries({ queryKey: ["zone-groups"] });
-      const previous = queryClient.getQueryData<typeof zoneGroups>(["zone-groups"]);
-      queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
-        old?.map((g) => (g.zoneGroupId === zoneGroupId ? { ...g, name } : g)),
-      );
-      return { previous };
-    },
-    onError: (e, _v, ctx) => {
-      console.error("zoneGroups.rename failed", e);
-      if (ctx?.previous) queryClient.setQueryData(["zone-groups"], ctx.previous);
-    },
-  });
-
-  const commitInlineRename = (groupId: string, currentName: string) => {
-    const next = renameDraft.trim();
-    setRenamingGroupId(null);
-    if (next.length === 0 || next === currentName) return;
-    inlineRenameGroup.mutate({ zoneGroupId: groupId, name: next });
   };
 
   return (
@@ -144,87 +118,67 @@ function ZonesLayout() {
         )}
       >
         {/* Secondary sidebar — full-height compact list */}
-        <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border">
-          <div className="px-2 pt-5 pb-1">
-            <button
-              type="button"
-              onClick={createGroup.open}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm",
-                "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-            >
-              <Plus className="size-3.5" />
-              <span>New zone group</span>
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto pb-2">
+        <aside className="flex w-60 shrink-0 flex-col overflow-hidden border-r border-border">
+          <div className="flex-1 overflow-y-auto pb-2 pt-5">
             {sortedZoneGroups.map((g) => {
               const isActive = g.zoneGroupId === activeGroupId;
-              const isRenaming = renamingGroupId === g.zoneGroupId;
               return (
                 <div
                   key={g.zoneGroupId}
                   role="button"
                   tabIndex={0}
                   onClick={() => {
-                    if (isRenaming) return;
-                    if (!isActive) goToGroup(g.zoneGroupId);
+                    if (!isActive) void goToGroup(g.zoneGroupId);
                   }}
                   onKeyDown={(e) => {
-                    if (isRenaming) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      goToGroup(g.zoneGroupId);
+                      void goToGroup(g.zoneGroupId);
                     }
                   }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    // Single-click already navigated to this group; the
+                    // rename dialog reads currentName from activeGroup.
+                    if (!isActive) void goToGroup(g.zoneGroupId);
+                    renameGroup.open();
+                  }}
                   className={cn(
-                    "mx-2 my-0.5 flex cursor-pointer items-center rounded-md px-3 py-1.5 text-sm select-none",
+                    "mx-2 my-0.5 flex cursor-pointer items-center rounded-md px-3 py-1 text-sm select-none",
                     isActive
                       ? "bg-foreground/10 text-foreground"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >
-                  {isRenaming ? (
-                    <Input
-                      autoFocus
-                      value={renameDraft}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setRenameDraft(e.target.value)}
-                      onBlur={() => commitInlineRename(g.zoneGroupId, g.name)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          commitInlineRename(g.zoneGroupId, g.name);
-                        } else if (e.key === "Escape") {
-                          e.preventDefault();
-                          setRenamingGroupId(null);
-                        }
-                      }}
-                      className="h-6 flex-1 px-2 text-sm"
-                    />
-                  ) : (
-                    <span
-                      className="flex-1 truncate"
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        setRenameDraft(g.name);
-                        setRenamingGroupId(g.zoneGroupId);
-                      }}
-                    >
-                      {g.name}
-                    </span>
-                  )}
+                  <span className="flex-1 truncate">{g.name}</span>
                 </div>
               );
             })}
+            <div className="px-2 pb-1">
+              <button
+                type="button"
+                onClick={createGroup.open}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm",
+                  "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Plus className="size-3.5" />
+                <span>New zone group</span>
+              </button>
+            </div>
           </div>
         </aside>
 
         {/* Editor column: h1 + actions + Outlet */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden px-8 pt-5 pb-8">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden px-5 pt-5 pb-5">
           <div className="mb-4 flex h-8 items-center justify-between">
-            <h1 className="text-xl font-extrabold tracking-wide italic">Zone Editor</h1>
+            <div className="flex items-baseline gap-3">
+              <h1 className="text-xl font-extrabold tracking-wide italic">Zone Editor</h1>
+              <span className="text-sm text-muted-foreground italic">
+                {activeGroup?.name ?? ""}
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={renameGroup.open} disabled={!activeGroup}>
                 <Pencil />

@@ -373,9 +373,7 @@ async def turfs_build(req: _TurfsBuildRequest):
     # Group rows: polygon_idx → building_id → door_id → [persons].
     # Building canonical fields (lat/lng, address) repeat across every
     # row sharing a building_id; first occurrence wins.
-    per_polygon: list[dict[str, Any]] = [
-        {"buildings": {}} for _ in req.drafts
-    ]
+    per_polygon: list[dict[str, Any]] = [{"buildings": {}} for _ in req.drafts]
     for row in rows:
         (
             polygon_idx,
@@ -413,11 +411,7 @@ async def turfs_build(req: _TurfsBuildRequest):
 
         # `other_properties` arrives as either a JSON string or a
         # parsed dict depending on column shape — coerce to dict.
-        other_props = (
-            json.loads(other_properties)
-            if isinstance(other_properties, str)
-            else other_properties or {}
-        )
+        other_props = json.loads(other_properties) if isinstance(other_properties, str) else other_properties or {}
 
         door["persons"].append(
             {
@@ -463,5 +457,3 @@ async def turfs_build(req: _TurfsBuildRequest):
         )
 
     return {"turfs": out_turfs}
-
-
