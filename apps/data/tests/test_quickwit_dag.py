@@ -209,7 +209,7 @@ def _run_quickwit_benchmark(
     loader_driver = driver.Builder().with_modules(voter_file_loader).build()
     loader_start = time.perf_counter()
     loader_result = loader_driver.execute(
-        final_vars=["validated_persons"],
+        final_vars=["persons_validated"],
         inputs={
             "voter_file_url": VOTER_FILE_URL,
             "organization_slug": organization_slug,
@@ -218,14 +218,14 @@ def _run_quickwit_benchmark(
         },
     )
     loader_elapsed = time.perf_counter() - loader_start
-    validated_persons = loader_result["validated_persons"]
+    persons_validated = loader_result["persons_validated"]
 
     quickwit_driver = driver.Builder().with_modules(quickwit).build()
     ingest_start = time.perf_counter()
     ingest_result = quickwit_driver.execute(
         final_vars=["quickwit_build_manifest_stub"],
         inputs={
-            "persons_table_ref": validated_persons,
+            "persons_table_ref": persons_validated,
             "quickwit_binary_path": str(QUICKWIT_BINARY_PATH),
             "quickwit_config_path": str(config_path),
             "quickwit_index_id": index_id,

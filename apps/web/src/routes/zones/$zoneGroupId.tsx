@@ -425,7 +425,7 @@ function ZoneGroupEditor() {
           className="h-full"
           boundariesUrl={
             activeGroup
-              ? `${import.meta.env.VITE_DATA_URL}/key-groups/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+              ? `/api/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
               : undefined
           }
           coloringByKey={coloringByKey}
