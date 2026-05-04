@@ -18,6 +18,7 @@ import { segmentsListQuery } from "~/lib/queries/segments";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
+import { useHotkey } from "~/lib/use-hotkey";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -102,6 +103,24 @@ function SegmentsLayout() {
       },
     });
   };
+
+  useHotkey({
+    key: ["Delete", "Backspace"],
+    mod: true,
+    enabled: !!activeSegmentId,
+    onMatch: () => {
+      if (!activeSegmentId) return;
+      void (async () => {
+        const { count } = await queryClient.fetchQuery({
+          queryKey: ["segments", "count-campaigns", activeSegmentId],
+          queryFn: () => client.segments.countCampaigns({ segmentId: activeSegmentId }),
+          staleTime: 0,
+        });
+        setDeleteSnapshot({ name: activeSegment?.name ?? "", campaignCount: count });
+        deleteSegment.open();
+      })();
+    },
+  });
 
   return (
     <>

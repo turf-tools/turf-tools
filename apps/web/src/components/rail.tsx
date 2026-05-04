@@ -25,6 +25,10 @@ function RailItem({
     <div
       role="button"
       tabIndex={0}
+      // Skip the focus side-effect of mousedown so click doesn't leave a
+      // focus ring after a dialog returns focus here. Tab navigation is
+      // unaffected.
+      onMouseDown={(e) => e.preventDefault()}
       onClick={() => {
         if (!active) onSelect();
       }}

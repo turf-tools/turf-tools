@@ -43,6 +43,7 @@ import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
+import { useHotkey } from "~/lib/use-hotkey";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -261,6 +262,26 @@ function CampaignsLayout() {
       },
     });
   };
+
+  // Disabled in the cutter so Mod-Delete there isn't claimed by the
+  // campaign-delete shortcut (the cutter has its own Delete behavior).
+  useHotkey({
+    key: ["Delete", "Backspace"],
+    mod: true,
+    enabled: !!activeCampaignId && !isCut,
+    onMatch: () => {
+      if (!activeCampaignId) return;
+      void (async () => {
+        const { count } = await queryClient.fetchQuery({
+          queryKey: ["campaigns", "count-turfs", activeCampaignId],
+          queryFn: () => client.turfs.countForCampaign({ campaignId: activeCampaignId }),
+          staleTime: 0,
+        });
+        setDeleteSnapshot({ name: activeCampaign?.name ?? "", turfCount: count });
+        deleteCampaign.open();
+      })();
+    },
+  });
 
   const saveConfigure = async (patch: {
     segmentId: string | null;

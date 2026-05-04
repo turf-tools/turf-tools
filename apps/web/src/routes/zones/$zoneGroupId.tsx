@@ -152,10 +152,13 @@ function ZoneGroupEditor() {
 
   // Delete / Backspace removes the active zone (mirrors the trash button).
   // Skipped while typing in any text input so the rename flow isn't hijacked.
+  // Mod-Delete escalates to the route-level zone-group delete and is
+  // skipped here.
   useEffect(() => {
     if (!activeZoneId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.metaKey || e.ctrlKey) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
