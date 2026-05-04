@@ -153,7 +153,15 @@ function CampaignsLayout() {
 
   const renameCampaign = useDialogMutation({
     mutationFn: (input: { campaignId: string; name: string }) => client.campaigns.rename(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["campaigns"] }),
+    onSuccess: (_data, input) => {
+      queryClient.setQueryData<typeof campaigns>(
+        ["campaigns"],
+        (old) =>
+          old?.map((c) => (c.campaignId === input.campaignId ? { ...c, name: input.name } : c)) ??
+          old,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+    },
   });
 
   // Wrapping zoneGroups.createWithDefaultZone + campaigns.create in one

@@ -47,7 +47,15 @@ function SegmentsLayout() {
 
   const renameSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; name: string }) => client.segments.rename(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["segments"] }),
+    onSuccess: (_data, input) => {
+      queryClient.setQueryData<typeof segments>(
+        ["segments"],
+        (old) =>
+          old?.map((s) => (s.segmentId === input.segmentId ? { ...s, name: input.name } : s)) ??
+          old,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["segments"] });
+    },
   });
 
   const createSegment = useDialogMutation({
