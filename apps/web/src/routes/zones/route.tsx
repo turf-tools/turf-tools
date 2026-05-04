@@ -19,6 +19,7 @@ import { zoneGroupsQuery } from "~/lib/queries/zones";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
+import { useHotkey } from "~/lib/use-hotkey";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -112,6 +113,26 @@ function ZonesLayout() {
       },
     });
   };
+
+  // Mod-Delete / Mod-Backspace escalates from "delete one zone" (the inner
+  // editor's plain-Delete handler) to "delete the whole zone group".
+  useHotkey({
+    key: ["Delete", "Backspace"],
+    mod: true,
+    enabled: !!activeGroupId,
+    onMatch: () => {
+      if (!activeGroupId) return;
+      void (async () => {
+        const { count } = await queryClient.fetchQuery({
+          queryKey: ["zone-groups", "count-campaigns", activeGroupId],
+          queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
+          staleTime: 0,
+        });
+        setDeleteSnapshot({ name: activeGroup?.name ?? "", campaignCount: count });
+        deleteGroup.open();
+      })();
+    },
+  });
 
   return (
     <>

@@ -332,11 +332,14 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   }, [selectedTurfId]);
 
   // Delete / Backspace removes the selected turf (mirrors the trash button).
-  // Skipped while typing in any text input.
+  // Skipped while typing in any text input. Modifier-held variants are
+  // ignored so Mod-Delete on this screen is a no-op rather than a turf
+  // remove (no escalation target exists in the cutter).
   useEffect(() => {
     if (!selectedTurfId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.metaKey || e.ctrlKey) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
