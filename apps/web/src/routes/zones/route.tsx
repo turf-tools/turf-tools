@@ -48,7 +48,15 @@ function ZonesLayout() {
 
   const renameGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["zone-groups"] }),
+    onSuccess: (_data, input) => {
+      queryClient.setQueryData<typeof zoneGroups>(
+        ["zone-groups"],
+        (old) =>
+          old?.map((g) => (g.zoneGroupId === input.zoneGroupId ? { ...g, name: input.name } : g)) ??
+          old,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
+    },
   });
 
   const createGroup = useDialogMutation({
