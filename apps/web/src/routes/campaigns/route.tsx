@@ -39,6 +39,7 @@ import { scriptsListQuery } from "~/lib/queries/scripts";
 import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -683,6 +684,7 @@ function DeleteDialog({
   onConfirm: () => void;
 }) {
   const inUse = turfCount > 0;
+  useConfirmHotkey({ open: open && !inUse, disabled: pending, onConfirm });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
