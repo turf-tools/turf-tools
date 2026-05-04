@@ -30,11 +30,9 @@ export const campaignPointsQuery = (
     ] as const,
     queryFn: () => fetchSegmentPoints({ criteria: segmentCriteria, keyFilter }),
     staleTime: Number.POSITIVE_INFINITY,
-    // Release inactive points buffers immediately. Each big campaign is
-    // ~5MB of Float32Array backing memory; accumulating multiple in
-    // cache triggers V8 GC pauses (200-700ms) on later navigations.
-    // Trade-off: revisiting a campaign refetches points (predictable
-    // loading curtain) instead of risking an unexplained freeze.
+    // Releases the multi-MB Float32Array buffer the moment the query
+    // goes inactive — accumulating multiple in cache triggers V8 GC
+    // pauses on subsequent navigations.
     gcTime: 0,
   });
 
