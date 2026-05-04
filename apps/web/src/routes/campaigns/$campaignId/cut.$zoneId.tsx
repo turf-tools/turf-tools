@@ -13,6 +13,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
+import { EditorHeader } from "~/components/editor-header";
 import { Map } from "~/components/map";
 import { Switch } from "~/components/switch";
 import { TurfDrawer, type Turf } from "~/components/turf-drawer";
@@ -331,11 +332,14 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   }, [selectedTurfId]);
 
   // Delete / Backspace removes the selected turf (mirrors the trash button).
-  // Skipped while typing in any text input.
+  // Skipped while typing in any text input. Modifier-held variants are
+  // ignored so Mod-Delete on this screen is a no-op rather than a turf
+  // remove (no escalation target exists in the cutter).
   useEffect(() => {
     if (!selectedTurfId) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (e.metaKey || e.ctrlKey) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
@@ -351,7 +355,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   }, [selectedTurfId]);
 
   const onBack = () => {
-    void navigate({ to: "/campaigns", search: { campaignId } });
+    void navigate({ to: "/campaigns/$campaignId", params: { campaignId } });
   };
 
   // Map curtain holds until the heavy queries (boundaries + buildings)
@@ -362,36 +366,29 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
 
   return (
     <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <div className="flex items-center gap-3">
+      <EditorHeader
+        title="Turf Cutter"
+        subtitle={zone?.name}
+        leading={
           <Button variant="outline" size="icon" onClick={onBack} aria-label="Back to campaign">
             <ArrowLeft />
           </Button>
-          <div className="flex items-baseline gap-3">
-            <h1 className="text-xl font-extrabold tracking-wide italic">Turf Cutter</h1>
-            <span className="text-sm text-muted-foreground italic">{zone?.name ?? ""}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" disabled>
-            <Sparkles />
-            Autocut
-          </Button>
-          <Button
-            variant="outline"
-            disabled={turfs.length === 0}
-            onClick={() => setClearOpen(true)}
-          >
-            <Eraser />
-            Clear
-          </Button>
-          <Button disabled={publishSummary.count === 0} onClick={() => setPublishOpen(true)}>
-            <Send />
-            Publish
-          </Button>
-        </div>
-      </div>
-      <div className="grid grid-cols-4 gap-4 h-[calc(100vh-9.75rem)]">
+        }
+      >
+        <Button variant="outline" disabled>
+          <Sparkles />
+          Autocut
+        </Button>
+        <Button variant="outline" disabled={turfs.length === 0} onClick={() => setClearOpen(true)}>
+          <Eraser />
+          Clear
+        </Button>
+        <Button disabled={publishSummary.count === 0} onClick={() => setPublishOpen(true)}>
+          <Send />
+          Publish
+        </Button>
+      </EditorHeader>
+      <div className="grid grid-cols-4 gap-4 h-[calc(100vh-9rem)]">
         <div className="col-span-1 min-h-0">
           <TurfList
             turfs={turfRows}

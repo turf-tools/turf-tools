@@ -309,12 +309,12 @@ export function Map({
     };
   }, [selectedZoneId, zonePerimeters, isDark, mapReady]);
 
-  // Switch to pointer only while the cursor is over a clickable polygon;
-  // otherwise let MapLibre keep its default pan/grab cursor. Listening to
-  // layer-scoped enter/leave events is more reliable than `interactive-
-  // LayerIds` + a static cursor prop, which renders pointer everywhere
-  // the editor is active.
+  // Pointer over clickable polygons, grab everywhere else. Query
+  // features on every mousemove (with mouseout as a backstop) so cursor
+  // state self-corrects each frame — fast cursor exits and source
+  // remounts can otherwise leave the cursor stuck.
   useEffect(() => {
+    if (!mapReady) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
     const layers: string[] = [];
@@ -324,17 +324,24 @@ export function Map({
       setHoveringPolygon(false);
       return;
     }
-    const onEnter = () => setHoveringPolygon(true);
-    const onLeave = () => setHoveringPolygon(false);
-    for (const layer of layers) {
-      map.on("mouseenter", layer, onEnter);
-      map.on("mouseleave", layer, onLeave);
-    }
-    return () => {
-      for (const layer of layers) {
-        map.off("mouseenter", layer, onEnter);
-        map.off("mouseleave", layer, onLeave);
+    const onMove = (e: MapMouseEvent) => {
+      // Filter to layers that actually exist on the style — avoids
+      // MapLibre warnings when boundaries/perimeters haven't mounted
+      // yet (e.g., during source swap).
+      const present = layers.filter((l) => map.getLayer(l));
+      if (present.length === 0) {
+        setHoveringPolygon(false);
+        return;
       }
+      const features = map.queryRenderedFeatures(e.point, { layers: present });
+      setHoveringPolygon(features.length > 0);
+    };
+    const onOut = () => setHoveringPolygon(false);
+    map.on("mousemove", onMove);
+    map.on("mouseout", onOut);
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onOut);
     };
   }, [onPolygonClick, onZoneClick, mapReady]);
 
@@ -808,8 +815,12 @@ export function Map({
         aria-hidden
         className={cn(
           "pointer-events-none absolute inset-0 z-30 bg-background",
-          "transition-opacity duration-150",
-          !mapReady || pendingFit || loading ? "opacity-100" : "opacity-0",
+          // Show instantly when activating so a binding swap can never
+          // leave the canvas partially visible during a fade-in;
+          // transition only when retreating, so the reveal is smooth.
+          !mapReady || pendingFit || loading
+            ? "opacity-100"
+            : "opacity-0 transition-opacity duration-150",
         )}
       />
     </div>

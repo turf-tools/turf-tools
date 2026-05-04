@@ -30,6 +30,10 @@ export const campaignPointsQuery = (
     ] as const,
     queryFn: () => fetchSegmentPoints({ criteria: segmentCriteria, keyFilter }),
     staleTime: Number.POSITIVE_INFINITY,
+    // Releases the multi-MB Float32Array buffer the moment the query
+    // goes inactive — accumulating multiple in cache triggers V8 GC
+    // pauses on subsequent navigations.
+    gcTime: 0,
   });
 
 export const campaignKeyCountsQuery = (

@@ -211,16 +211,29 @@ export class PointsLayer implements CustomLayerInterface {
     gl2.enableVertexAttribArray(this.locA_lnglat);
     gl2.vertexAttribPointer(this.locA_lnglat, 2, gl2.FLOAT, false, 0, 0);
 
-    gl2.bindBuffer(gl2.ARRAY_BUFFER, this.colorBuffer);
-    gl2.enableVertexAttribArray(this.locA_color);
-    // UNSIGNED_BYTE normalized → shader sees 0..1. Three components
-    // per vertex (RGB); alpha comes from the smoothstep antialias
-    // in the fragment shader.
-    gl2.vertexAttribPointer(this.locA_color, 3, gl2.UNSIGNED_BYTE, true, 0, 0);
+    // Per-point color attribute when an overlay is active; otherwise
+    // disable the array and feed the shader a constant style color via
+    // vertexAttrib4f. Skips the per-point color buffer's allocation +
+    // JS-side fill + GPU upload entirely when there's no overlay.
+    if (this.userColors && this.userColors.length === this.pointCount * 3) {
+      gl2.bindBuffer(gl2.ARRAY_BUFFER, this.colorBuffer);
+      gl2.enableVertexAttribArray(this.locA_color);
+      gl2.vertexAttribPointer(this.locA_color, 3, gl2.UNSIGNED_BYTE, true, 0, 0);
+    } else {
+      gl2.disableVertexAttribArray(this.locA_color);
+      const [r, g, b] = parseColor(this.style.color);
+      gl2.vertexAttrib4f(this.locA_color, r, g, b, 1.0);
+    }
 
-    gl2.bindBuffer(gl2.ARRAY_BUFFER, this.sizeBuffer);
-    gl2.enableVertexAttribArray(this.locA_size);
-    gl2.vertexAttribPointer(this.locA_size, 1, gl2.FLOAT, false, 0, 0);
+    // Same constant-vs-buffer split for the per-point size scale.
+    if (this.userSizes && this.userSizes.length === this.pointCount) {
+      gl2.bindBuffer(gl2.ARRAY_BUFFER, this.sizeBuffer);
+      gl2.enableVertexAttribArray(this.locA_size);
+      gl2.vertexAttribPointer(this.locA_size, 1, gl2.FLOAT, false, 0, 0);
+    } else {
+      gl2.disableVertexAttribArray(this.locA_size);
+      gl2.vertexAttrib1f(this.locA_size, 1.0);
+    }
 
     // Translation-split. `mainMatrix` projects mercator-[0,1] → clip,
     // and at high zoom its translation column is in the millions —
@@ -272,19 +285,17 @@ export class PointsLayer implements CustomLayerInterface {
     gl2.drawArrays(gl2.POINTS, 0, this.pointCount);
   }
 
-  // Replace the entire point set. Cheap: one VBO upload. If the layer
-  // hasn't been added to the map yet (onAdd hasn't run), we stash and
-  // upload on add. `flat` is `[lng0, lat0, lng1, lat1, ...]`.
-  // Color and size buffers are also re-derived to match the new
-  // point count — a stale per-point overlay against a different
-  // point count would alias every dot to whatever bytes happened to
-  // line up.
+  // Replace the entire point set. One VBO upload for positions; the
+  // color/size buffers only get touched when a per-point overlay is
+  // active (otherwise render() supplies a constant attribute value).
+  // `flat` is `[lng0, lat0, lng1, lat1, ...]`. If the layer hasn't been
+  // added to the map yet (onAdd hasn't run), we stash and upload on add.
   setPoints(flat: Float32Array | null | undefined): void {
     const data = flat ?? new Float32Array(0);
     if (this.gl && this.pointsBuffer) {
       this.uploadPoints(data);
-      this.uploadDerivedColors();
-      this.uploadDerivedSizes();
+      if (this.userColors) this.uploadDerivedColors();
+      if (this.userSizes) this.uploadDerivedSizes();
     } else {
       this.pendingPoints = data;
       this.pointCount = data.length / 2;
@@ -316,9 +327,8 @@ export class PointsLayer implements CustomLayerInterface {
 
   setStyle(style: Partial<PointsLayerStyle>): void {
     this.style = { ...this.style, ...style };
-    // Style only matters for the *default* color buffer contents.
-    // If the caller has set per-point colors, leave them alone.
-    if (!this.userColors) this.uploadDerivedColors();
+    // The style color is sampled in render() via vertexAttrib4f when
+    // no per-point overlay is active, so a repaint is enough.
     this.map?.triggerRepaint();
   }
 
@@ -330,48 +340,27 @@ export class PointsLayer implements CustomLayerInterface {
     this.pointCount = flat.length / 2;
   }
 
-  // Fill the color VBO from either `userColors` (if its length
-  // matches) or the current style color repeated. No-op if GL or
-  // buffers aren't ready yet — onAdd will call this once they are.
+  // Upload the user-provided color overlay to the color VBO. No-op
+  // when `userColors` is null — render() feeds the shader a constant
+  // color via vertexAttrib4f instead. Mismatched lengths are skipped
+  // so a caller about to follow up with a fresh `setPoints` doesn't
+  // crash mid-flight.
   private uploadDerivedColors(): void {
     const gl = this.gl;
-    if (!gl || !this.colorBuffer) return;
-    const N = this.pointCount;
-    if (N === 0) return;
-    let data: Uint8Array;
-    if (this.userColors && this.userColors.length === N * 3) {
-      data = this.userColors;
-    } else {
-      const [r, g, b] = parseColor(this.style.color);
-      const ri = Math.round(r * 255);
-      const gi = Math.round(g * 255);
-      const bi = Math.round(b * 255);
-      data = new Uint8Array(N * 3);
-      for (let i = 0; i < N; i++) {
-        data[i * 3] = ri;
-        data[i * 3 + 1] = gi;
-        data[i * 3 + 2] = bi;
-      }
-    }
+    if (!gl || !this.colorBuffer || !this.userColors) return;
+    if (this.userColors.length !== this.pointCount * 3) return;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.userColors, gl.DYNAMIC_DRAW);
   }
 
-  // Mirror of `uploadDerivedColors` for the size VBO. Default is
-  // 1.0 (scale untouched relative to the zoom-driven base size).
+  // Mirror for the size VBO. No-op when `userSizes` is null — render()
+  // uses vertexAttrib1f(1.0) directly.
   private uploadDerivedSizes(): void {
     const gl = this.gl;
-    if (!gl || !this.sizeBuffer) return;
-    const N = this.pointCount;
-    if (N === 0) return;
-    let data: Float32Array;
-    if (this.userSizes && this.userSizes.length === N) {
-      data = this.userSizes;
-    } else {
-      data = new Float32Array(N).fill(1);
-    }
+    if (!gl || !this.sizeBuffer || !this.userSizes) return;
+    if (this.userSizes.length !== this.pointCount) return;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.sizeBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, this.userSizes, gl.DYNAMIC_DRAW);
   }
 
   // Re-stack the layer to the top of the style if it isn't already.

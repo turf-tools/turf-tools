@@ -47,7 +47,7 @@ type SidebarProps = {
 // rather than sliding as the container shrinks around them.
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
-    <nav className="flex h-full flex-col gap-6 px-2 pt-4 pb-4">
+    <nav className="flex h-full flex-col gap-6 px-2 pt-3.5 pb-4">
       <NavGroup items={PRIMARY} collapsed={collapsed} className="border-b border-border pb-2" />
       <div className="flex-1" />
       <NavGroup items={SECONDARY} collapsed={collapsed} className="border-y border-border py-2" />
@@ -57,7 +57,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         className={cn(
           "flex h-9 items-center gap-3",
           "rounded-md px-2",
-          "text-sm text-muted-foreground",
+          "text-sm text-foreground",
           "hover:bg-muted hover:text-foreground",
         )}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -98,6 +98,10 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   return (
     <Link
       to={item.to}
+      // Skip the focus side-effect of mousedown so click doesn't leave
+      // a focus ring after a dialog returns focus here. Tab navigation
+      // is unaffected.
+      onMouseDown={(e) => e.preventDefault()}
       className={cn(
         "flex h-9 items-center gap-3",
         "rounded-md px-2",

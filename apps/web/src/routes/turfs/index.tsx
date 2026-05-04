@@ -2,7 +2,9 @@ import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DoorClosed, Megaphone, UserRound } from "lucide-react";
 import { Suspense } from "react";
+import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
+import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDate } from "~/lib/format";
@@ -47,9 +49,8 @@ function TurfsIndex() {
   const campaignOptions = campaigns?.map((c) => ({ value: c.campaignId, label: c.name })) ?? [];
 
   return (
-    <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Turfs</h1>
+    <Page className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+      <EditorHeader title="Turfs">
         <Filter
           icon={<Megaphone className="size-3.5" />}
           label={campaignLabel}
@@ -58,11 +59,11 @@ function TurfsIndex() {
           allLabel="All campaigns"
           onChange={onCampaignIdChange}
         />
-      </div>
+      </EditorHeader>
       <Suspense fallback={null}>
         <TurfsTable campaignId={campaignId} />
       </Suspense>
-    </div>
+    </Page>
   );
 }
 
@@ -70,7 +71,7 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
   const { data } = useSuspenseQuery(turfsListQuery(campaignId));
 
   return (
-    <Table containerClassName="h-[calc(100vh-9.75rem)] overflow-y-auto">
+    <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
           <TableHead>Turf</TableHead>
