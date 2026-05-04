@@ -54,9 +54,8 @@ function SegmentsLayout() {
       // Inject and navigate synchronously so React batches both updates
       // into one render — otherwise the new row appears unselected for a
       // frame before the URL catches up.
-      queryClient.setQueryData<Awaited<ReturnType<typeof client.segments.list>>>(
-        ["segments"],
-        (old) => (old ? [...old, created] : [created]),
+      queryClient.setQueryData<typeof segments>(["segments"], (old) =>
+        old ? [...old, created] : [created],
       );
       queryClient.setQueryData(["segment", created.segmentId], created);
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
@@ -67,9 +66,8 @@ function SegmentsLayout() {
   const cloneSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; newName: string }) => client.segments.clone(input),
     onSuccess: (created) => {
-      queryClient.setQueryData<Awaited<ReturnType<typeof client.segments.list>>>(
-        ["segments"],
-        (old) => (old ? [...old, created] : [created]),
+      queryClient.setQueryData<typeof segments>(["segments"], (old) =>
+        old ? [...old, created] : [created],
       );
       queryClient.setQueryData(["segment", created.segmentId], created);
       void queryClient.invalidateQueries({ queryKey: ["segments"] });

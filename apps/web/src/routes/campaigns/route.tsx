@@ -149,14 +149,6 @@ function CampaignsLayout() {
     ]);
   };
 
-  const seedCampaignCache = (created: Awaited<ReturnType<typeof client.campaigns.create>>) => {
-    queryClient.setQueryData<Awaited<ReturnType<typeof client.campaigns.list>>>(
-      ["campaigns"],
-      (old) => (old ? [...old, created] : [created]),
-    );
-    queryClient.setQueryData(["campaign", created.campaignId], created);
-  };
-
   const renameCampaign = useDialogMutation({
     mutationFn: (input: { campaignId: string; name: string }) => client.campaigns.rename(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["campaigns"] }),
@@ -182,28 +174,30 @@ function CampaignsLayout() {
         zoneGroupId = zg.zoneGroupId;
         void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
       }
-      const created = await client.campaigns.create({
+      return client.campaigns.create({
         name: input.name,
         segmentId: input.segmentId,
         scriptId: input.scriptId,
         zoneGroupId,
       });
-      seedCampaignCache(created);
-      return created;
     },
     onSuccess: (created) => {
+      queryClient.setQueryData<typeof campaigns>(["campaigns"], (old) =>
+        old ? [...old, created] : [created],
+      );
+      queryClient.setQueryData(["campaign", created.campaignId], created);
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       return goToCampaign(created.campaignId);
     },
   });
 
   const cloneCampaign = useDialogMutation({
-    mutationFn: async (input: { campaignId: string; newName: string }) => {
-      const created = await client.campaigns.clone(input);
-      seedCampaignCache(created);
-      return created;
-    },
+    mutationFn: (input: { campaignId: string; newName: string }) => client.campaigns.clone(input),
     onSuccess: (created) => {
+      queryClient.setQueryData<typeof campaigns>(["campaigns"], (old) =>
+        old ? [...old, created] : [created],
+      );
+      queryClient.setQueryData(["campaign", created.campaignId], created);
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       return goToCampaign(created.campaignId);
     },
