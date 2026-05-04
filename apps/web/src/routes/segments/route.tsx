@@ -15,6 +15,7 @@ import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { Rail } from "~/components/rail";
 import { segmentsListQuery } from "~/lib/queries/segments";
+import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
@@ -402,6 +403,7 @@ function DeleteDialog({
   onConfirm: () => void;
 }) {
   const inUse = campaignCount > 0;
+  useConfirmHotkey({ open: open && !inUse, disabled: pending, onConfirm });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
