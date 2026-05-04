@@ -31,6 +31,10 @@ export const segmentPreviewQuery = (criteria: Criteria) =>
       return { counts, pointsBuffer };
     },
     staleTime: Number.POSITIVE_INFINITY,
+    // Releases the multi-MB Float32Array buffer the moment the query
+    // goes inactive — accumulating multiple in cache triggers V8 GC
+    // pauses on subsequent navigations.
+    gcTime: 0,
   });
 
 // Binary lng/lat pairs — uploaded directly into a GPU buffer, so the

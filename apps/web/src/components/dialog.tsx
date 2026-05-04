@@ -55,6 +55,29 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
       />
       <DialogPrimitive.Popup
         ref={popupRef}
+        tabIndex={-1}
+        // Focus an input if present so the user can start typing;
+        // otherwise focus the popup itself (outline-none so no ring).
+        // The Enter handler below makes the keyless popup still
+        // dismissable without auto-focusing a button — keyboard-opened
+        // dialogs would otherwise show a :focus-visible ring on Cancel.
+        initialFocus={() =>
+          popupRef.current?.querySelector<HTMLElement>("input, textarea") ?? popupRef.current
+        }
+        // Default Enter clicks the first DialogClose (Cancel/Ok), so
+        // confirm dialogs are still keyboard-dismissable. Skipped when
+        // focus is in an input or tabbed-to button — those handle
+        // Enter themselves.
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+          if (e.target !== e.currentTarget) return;
+          const close = popupRef.current?.querySelector<HTMLButtonElement>("[data-dialog-close]");
+          if (close) {
+            e.preventDefault();
+            close.click();
+          }
+        }}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
           "w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-[0_0_20px_rgba(0,0,0,0.2)]",
@@ -91,7 +114,9 @@ function DialogDescription({ className, ...props }: DialogPrimitive.Description.
 }
 
 function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
-  return <DialogPrimitive.Close {...props} />;
+  // `data-dialog-close` lets DialogContent's Enter handler find this
+  // button as the popup's default-action target.
+  return <DialogPrimitive.Close {...props} data-dialog-close="" />;
 }
 
 export { Dialog, DialogTrigger, DialogContent, DialogTitle, DialogDescription, DialogClose };
