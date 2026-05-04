@@ -98,6 +98,10 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   return (
     <Link
       to={item.to}
+      // Skip the focus side-effect of mousedown so click doesn't leave
+      // a focus ring after a dialog returns focus here. Tab navigation
+      // is unaffected.
+      onMouseDown={(e) => e.preventDefault()}
       className={cn(
         "flex h-9 items-center gap-3",
         "rounded-md px-2",
