@@ -6,7 +6,7 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import { ChevronDown, Copy, Pencil, Plus, Settings2, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, Pencil, Settings2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -23,7 +23,10 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
+import { EditorHeader } from "~/components/editor-header";
+import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { Rail } from "~/components/rail";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
@@ -291,113 +294,65 @@ function CampaignsLayout() {
     <>
       <div
         className={cn(
-          "-mx-8 -mt-5 -mb-8 flex h-[calc(100vh-3.5rem)]",
+          "flex h-[calc(100vh-3.5rem)]",
           shouldFade && "animate-in fade-in duration-100",
         )}
       >
-        {/* Secondary sidebar — full-height compact list */}
-        <aside className="flex w-60 shrink-0 flex-col overflow-hidden border-r border-border">
-          <div className="flex-1 overflow-y-auto pb-2 pt-5">
-            {sortedCampaigns.map((c) => {
-              const isActive = c.campaignId === activeCampaignId;
-              return (
-                <div
-                  key={c.campaignId}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    if (!isActive) void goToCampaign(c.campaignId);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      void goToCampaign(c.campaignId);
-                    }
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    if (!isActive) void goToCampaign(c.campaignId);
-                    renameCampaign.open();
-                  }}
-                  className={cn(
-                    "mx-2 my-0.5 flex cursor-pointer items-center rounded-md px-3 py-1 text-sm select-none",
-                    isActive
-                      ? "bg-foreground/10 text-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <span className="flex-1 truncate">{c.name}</span>
-                </div>
-              );
-            })}
-            <div className="px-2 pb-1">
-              <button
-                type="button"
-                onClick={createCampaign.open}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm",
-                  "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Plus className="size-3.5" />
-                <span>New campaign</span>
-              </button>
-            </div>
-          </div>
-        </aside>
+        <Rail>
+          {sortedCampaigns.map((c) => (
+            <Rail.Item
+              key={c.campaignId}
+              label={c.name}
+              active={c.campaignId === activeCampaignId}
+              onSelect={() => void goToCampaign(c.campaignId)}
+              onRename={renameCampaign.open}
+            />
+          ))}
+          <Rail.New label="New campaign" onClick={createCampaign.open} />
+        </Rail>
 
-        {/* Editor column: header (only outside cutter) + Outlet */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden px-5 pt-5 pb-5">
+        <EditorPage>
           {!isCut ? (
-            <div className="mb-4 flex h-8 items-center justify-between">
-              <div className="flex items-baseline gap-3">
-                <h1 className="text-xl font-extrabold tracking-wide italic">Campaign Editor</h1>
-                <span className="text-sm text-muted-foreground italic">
-                  {activeCampaign?.name ?? ""}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setConfigOpen(true)}
-                  disabled={!activeCampaign}
-                >
-                  <Settings2 />
-                  Configure
-                </Button>
-                <Button variant="outline" onClick={renameCampaign.open} disabled={!activeCampaign}>
-                  <Pencil />
-                  Rename
-                </Button>
-                <Button variant="outline" onClick={cloneCampaign.open} disabled={!activeCampaign}>
-                  <Copy />
-                  Duplicate
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    if (!activeCampaignId) return;
-                    const { count } = await queryClient.fetchQuery({
-                      queryKey: ["campaigns", "count-turfs", activeCampaignId],
-                      queryFn: () =>
-                        client.turfs.countForCampaign({ campaignId: activeCampaignId }),
-                      staleTime: 0,
-                    });
-                    setDeleteSnapshot({ name: activeCampaign?.name ?? "", turfCount: count });
-                    deleteCampaign.open();
-                  }}
-                  disabled={!activeCampaign}
-                >
-                  <Trash2 />
-                  Delete
-                </Button>
-              </div>
-            </div>
+            <EditorHeader title="Campaign Editor" subtitle={activeCampaign?.name}>
+              <Button
+                variant="outline"
+                onClick={() => setConfigOpen(true)}
+                disabled={!activeCampaign}
+              >
+                <Settings2 />
+                Configure
+              </Button>
+              <Button variant="outline" onClick={renameCampaign.open} disabled={!activeCampaign}>
+                <Pencil />
+                Rename
+              </Button>
+              <Button variant="outline" onClick={cloneCampaign.open} disabled={!activeCampaign}>
+                <Copy />
+                Duplicate
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  if (!activeCampaignId) return;
+                  const { count } = await queryClient.fetchQuery({
+                    queryKey: ["campaigns", "count-turfs", activeCampaignId],
+                    queryFn: () => client.turfs.countForCampaign({ campaignId: activeCampaignId }),
+                    staleTime: 0,
+                  });
+                  setDeleteSnapshot({ name: activeCampaign?.name ?? "", turfCount: count });
+                  deleteCampaign.open();
+                }}
+                disabled={!activeCampaign}
+              >
+                <Trash2 />
+                Delete
+              </Button>
+            </EditorHeader>
           ) : null}
           <div className="min-h-0 flex-1">
             <Outlet />
           </div>
-        </div>
+        </EditorPage>
       </div>
 
       <CreateCampaignDialog

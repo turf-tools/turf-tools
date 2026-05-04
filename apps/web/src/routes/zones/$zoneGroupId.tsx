@@ -408,7 +408,7 @@ function ZoneGroupEditor() {
               })
             }
             className={cn(
-              "flex items-center justify-between gap-2",
+              "flex h-[46px] items-center justify-between gap-2",
               "rounded-md border border-border bg-card px-3 py-2 text-left",
               "text-muted-foreground hover:border-muted-foreground hover:text-foreground",
             )}

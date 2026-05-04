@@ -1,6 +1,6 @@
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -10,7 +10,10 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
+import { EditorHeader } from "~/components/editor-header";
+import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { Rail } from "~/components/rail";
 import { segmentsListQuery } from "~/lib/queries/segments";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -105,102 +108,55 @@ function SegmentsLayout() {
     <>
       <div
         className={cn(
-          "-mx-8 -mt-5 -mb-8 flex h-[calc(100vh-3.5rem)]",
+          "flex h-[calc(100vh-3.5rem)]",
           shouldFade && "animate-in fade-in duration-100",
         )}
       >
-        {/* Secondary sidebar — full-height compact list */}
-        <aside className="flex w-60 shrink-0 flex-col overflow-hidden border-r border-border">
-          <div className="flex-1 overflow-y-auto pb-2 pt-5">
-            {sortedSegments.map((s) => {
-              const isActive = s.segmentId === activeSegmentId;
-              return (
-                <div
-                  key={s.segmentId}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    if (!isActive) void goToSegment(s.segmentId);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      void goToSegment(s.segmentId);
-                    }
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    if (!isActive) void goToSegment(s.segmentId);
-                    renameSegment.open();
-                  }}
-                  className={cn(
-                    "mx-2 my-0.5 flex cursor-pointer items-center rounded-md px-3 py-1 text-sm select-none",
-                    isActive
-                      ? "bg-foreground/10 text-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <span className="flex-1 truncate">{s.name}</span>
-                </div>
-              );
-            })}
-            <div className="px-2 pb-1">
-              <button
-                type="button"
-                onClick={createSegment.open}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm",
-                  "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Plus className="size-3.5" />
-                <span>New segment</span>
-              </button>
-            </div>
-          </div>
-        </aside>
+        <Rail>
+          {sortedSegments.map((s) => (
+            <Rail.Item
+              key={s.segmentId}
+              label={s.name}
+              active={s.segmentId === activeSegmentId}
+              onSelect={() => void goToSegment(s.segmentId)}
+              onRename={renameSegment.open}
+            />
+          ))}
+          <Rail.New label="New segment" onClick={createSegment.open} />
+        </Rail>
 
-        {/* Editor column: h1 + actions + Outlet */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden px-5 pt-5 pb-5">
-          <div className="mb-4 flex h-8 items-center justify-between">
-            <div className="flex items-baseline gap-3">
-              <h1 className="text-xl font-extrabold tracking-wide italic">Segment Editor</h1>
-              <span className="text-sm text-muted-foreground italic">
-                {activeSegment?.name ?? ""}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
-                <Pencil />
-                Rename
-              </Button>
-              <Button variant="outline" onClick={cloneSegment.open} disabled={!activeSegment}>
-                <Copy />
-                Duplicate
-              </Button>
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  if (!activeSegmentId) return;
-                  const { count } = await queryClient.fetchQuery({
-                    queryKey: ["segments", "count-campaigns", activeSegmentId],
-                    queryFn: () => client.segments.countCampaigns({ segmentId: activeSegmentId }),
-                    staleTime: 0,
-                  });
-                  setDeleteSnapshot({ name: activeSegment?.name ?? "", campaignCount: count });
-                  deleteSegment.open();
-                }}
-                disabled={!activeSegment}
-              >
-                <Trash2 />
-                Delete
-              </Button>
-            </div>
-          </div>
+        <EditorPage>
+          <EditorHeader title="Segment Editor" subtitle={activeSegment?.name}>
+            <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
+              <Pencil />
+              Rename
+            </Button>
+            <Button variant="outline" onClick={cloneSegment.open} disabled={!activeSegment}>
+              <Copy />
+              Duplicate
+            </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!activeSegmentId) return;
+                const { count } = await queryClient.fetchQuery({
+                  queryKey: ["segments", "count-campaigns", activeSegmentId],
+                  queryFn: () => client.segments.countCampaigns({ segmentId: activeSegmentId }),
+                  staleTime: 0,
+                });
+                setDeleteSnapshot({ name: activeSegment?.name ?? "", campaignCount: count });
+                deleteSegment.open();
+              }}
+              disabled={!activeSegment}
+            >
+              <Trash2 />
+              Delete
+            </Button>
+          </EditorHeader>
           <div className="min-h-0 flex-1">
             <Outlet />
           </div>
-        </div>
+        </EditorPage>
       </div>
 
       <CreateSegmentDialog

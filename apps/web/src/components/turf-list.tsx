@@ -47,11 +47,9 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
       <div className="flex h-full flex-col gap-2 overflow-y-auto">
         <div
           className={cn(
-            // h-11 matches a turf row's natural height (icon-sm
-            // trash button is size-7, plus py-2 either side =
-            // 44px). Keeps the placeholder visually anchored
-            // where a row would appear.
-            "flex h-11 items-center rounded-md border border-border bg-card",
+            // Pinned to match a populated row's natural height so the
+            // placeholder sits in the same slot.
+            "flex h-[46px] items-center rounded-md border border-border bg-card",
             "py-2 pr-2 pl-3 text-sm",
           )}
         >
@@ -77,12 +75,7 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
               }
             }}
             className={cn(
-              // h-11 holds the row at the same height whether or not
-              // the door/people pills are present. Without it, rows
-              // shrink during the brief window between drafts hydration
-              // and `turfCounts` arriving (buildings query still in
-              // flight), then snap taller — visible as a flicker.
-              "flex h-11 items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+              "flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
               selected ? "border-foreground" : "border-border hover:border-muted-foreground",
             )}
           >

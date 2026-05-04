@@ -1,6 +1,6 @@
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Eraser, Pencil, Plus, Trash2 } from "lucide-react";
+import { Copy, Eraser, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -10,7 +10,10 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
+import { EditorHeader } from "~/components/editor-header";
+import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { Rail } from "~/components/rail";
 import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
 import { zoneGroupsQuery } from "~/lib/queries/zones";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -113,108 +116,59 @@ function ZonesLayout() {
     <>
       <div
         className={cn(
-          "-mx-8 -mt-5 -mb-8 flex h-[calc(100vh-3.5rem)]",
+          "flex h-[calc(100vh-3.5rem)]",
           shouldFade && "animate-in fade-in duration-100",
         )}
       >
-        {/* Secondary sidebar — full-height compact list */}
-        <aside className="flex w-60 shrink-0 flex-col overflow-hidden border-r border-border">
-          <div className="flex-1 overflow-y-auto pb-2 pt-5">
-            {sortedZoneGroups.map((g) => {
-              const isActive = g.zoneGroupId === activeGroupId;
-              return (
-                <div
-                  key={g.zoneGroupId}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    if (!isActive) void goToGroup(g.zoneGroupId);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      void goToGroup(g.zoneGroupId);
-                    }
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    // Single-click already navigated to this group; the
-                    // rename dialog reads currentName from activeGroup.
-                    if (!isActive) void goToGroup(g.zoneGroupId);
-                    renameGroup.open();
-                  }}
-                  className={cn(
-                    "mx-2 my-0.5 flex cursor-pointer items-center rounded-md px-3 py-1 text-sm select-none",
-                    isActive
-                      ? "bg-foreground/10 text-foreground"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <span className="flex-1 truncate">{g.name}</span>
-                </div>
-              );
-            })}
-            <div className="px-2 pb-1">
-              <button
-                type="button"
-                onClick={createGroup.open}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm",
-                  "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Plus className="size-3.5" />
-                <span>New zone group</span>
-              </button>
-            </div>
-          </div>
-        </aside>
+        <Rail>
+          {sortedZoneGroups.map((g) => (
+            <Rail.Item
+              key={g.zoneGroupId}
+              label={g.name}
+              active={g.zoneGroupId === activeGroupId}
+              onSelect={() => void goToGroup(g.zoneGroupId)}
+              onRename={renameGroup.open}
+            />
+          ))}
+          <Rail.New label="New zone group" onClick={createGroup.open} />
+        </Rail>
 
-        {/* Editor column: h1 + actions + Outlet */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden px-5 pt-5 pb-5">
-          <div className="mb-4 flex h-8 items-center justify-between">
-            <div className="flex items-baseline gap-3">
-              <h1 className="text-xl font-extrabold tracking-wide italic">Zone Editor</h1>
-              <span className="text-sm text-muted-foreground italic">
-                {activeGroup?.name ?? ""}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={renameGroup.open} disabled={!activeGroup}>
-                <Pencil />
-                Rename
-              </Button>
-              <Button variant="outline" onClick={cloneGroup.open} disabled={!activeGroup}>
-                <Copy />
-                Duplicate
-              </Button>
-              <Button variant="outline" onClick={clearZones.open} disabled={!activeGroup}>
-                <Eraser />
-                Clear
-              </Button>
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  if (!activeGroupId) return;
-                  const { count } = await queryClient.fetchQuery({
-                    queryKey: ["zone-groups", "count-campaigns", activeGroupId],
-                    queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
-                    staleTime: 0,
-                  });
-                  setDeleteSnapshot({ name: activeGroup?.name ?? "", campaignCount: count });
-                  deleteGroup.open();
-                }}
-                disabled={!activeGroup}
-              >
-                <Trash2 />
-                Delete
-              </Button>
-            </div>
-          </div>
+        <EditorPage>
+          <EditorHeader title="Zone Editor" subtitle={activeGroup?.name}>
+            <Button variant="outline" onClick={renameGroup.open} disabled={!activeGroup}>
+              <Pencil />
+              Rename
+            </Button>
+            <Button variant="outline" onClick={cloneGroup.open} disabled={!activeGroup}>
+              <Copy />
+              Duplicate
+            </Button>
+            <Button variant="outline" onClick={clearZones.open} disabled={!activeGroup}>
+              <Eraser />
+              Clear
+            </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (!activeGroupId) return;
+                const { count } = await queryClient.fetchQuery({
+                  queryKey: ["zone-groups", "count-campaigns", activeGroupId],
+                  queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
+                  staleTime: 0,
+                });
+                setDeleteSnapshot({ name: activeGroup?.name ?? "", campaignCount: count });
+                deleteGroup.open();
+              }}
+              disabled={!activeGroup}
+            >
+              <Trash2 />
+              Delete
+            </Button>
+          </EditorHeader>
           <div className="min-h-0 flex-1">
             <Outlet />
           </div>
-        </div>
+        </EditorPage>
       </div>
 
       <CreateZoneGroupDialog
