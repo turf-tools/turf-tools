@@ -59,13 +59,12 @@ async def healthcheck():
 
 @app.get("/ducklake/status")
 async def ducklake_status():
-    conn = get_connection(settings)
+    conn = get_connection(settings, read_only=True)
     tables = conn.execute("SHOW TABLES").fetchall()
     table_info = {}
     for (table_name,) in tables:
         columns = conn.execute(f"DESCRIBE {table_name}").fetchall()
         table_info[table_name] = [{"name": col[0], "type": col[1]} for col in columns]
-    conn.close()
     return {
         "status": "ok",
         "tables": table_info,
@@ -84,35 +83,32 @@ async def key_group_geojson(key_group: str):
     only changes when an admin re-seeds them. When that happens, append a
     bumped `?v=` query param at the call site to bust browser caches.
     """
-    conn = get_connection(settings)
+    conn = get_connection(settings, read_only=True)
+    # Validate the table exists before querying — keeps the error message
+    # friendlier than a generic SQL failure.
+    fqn = f"geo_ducklake.boundaries.{key_group}"
     try:
-        # Validate the table exists before querying — keeps the error message
-        # friendlier than a generic SQL failure.
-        fqn = f"geo_ducklake.boundaries.{key_group}"
-        try:
-            conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
-        except Exception as e:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No boundary table for key_group={key_group}. Run `uv run seed-boundaries`.",
-            ) from e
+        conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
+    except Exception as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No boundary table for key_group={key_group}. Run `uv run seed-boundaries`.",
+        ) from e
 
-        # Build the FeatureCollection in DuckDB to avoid pulling raw geometry
-        # into Python and re-serializing.
-        rows = conn.execute(f"""
-            SELECT json_object(
-                'type', 'FeatureCollection',
-                'features', json_group_array(json_object(
-                    'type', 'Feature',
-                    'properties', json_object('key', key, 'name', name),
-                    'geometry', ST_AsGeoJSON(geom)::JSON
-                ))
-            )
-            FROM {fqn}
-        """).fetchone()
-        body = rows[0] if rows else '{"type":"FeatureCollection","features":[]}'
-    finally:
-        conn.close()
+    # Build the FeatureCollection in DuckDB to avoid pulling raw geometry
+    # into Python and re-serializing.
+    rows = conn.execute(f"""
+        SELECT json_object(
+            'type', 'FeatureCollection',
+            'features', json_group_array(json_object(
+                'type', 'Feature',
+                'properties', json_object('key', key, 'name', name),
+                'geometry', ST_AsGeoJSON(geom)::JSON
+            ))
+        )
+        FROM {fqn}
+    """).fetchone()
+    body = rows[0] if rows else '{"type":"FeatureCollection","features":[]}'
 
     return Response(
         content=body,
