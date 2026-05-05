@@ -11,18 +11,6 @@ type PersonsCount = {
   personCount: number;
   doorCount: number;
   buildingCount: number;
-  samplePeople: Array<{
-    external_id: string;
-    first_name: string | null;
-    last_name: string | null;
-    address_line_1: string | null;
-    address_line_2: string | null;
-    city: string | null;
-    state: string | null;
-    zip5: string | null;
-    latitude: number;
-    longitude: number;
-  }>;
 };
 
 type PersonsCountByKey = { counts: Record<string, { doors: number; people: number }> };

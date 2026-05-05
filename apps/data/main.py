@@ -1,6 +1,7 @@
 import array
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Response
@@ -17,10 +18,29 @@ logger = logging.getLogger("uvicorn")
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Warm the shared connection's buffer pool so the first user request
+    # doesn't pay cold S3 round-trips for Parquet footers + page reads.
+    try:
+        conn = get_connection(settings, read_only=True)
+        tables = conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_catalog = 'ducklake' AND table_name LIKE '%_persons_geocoded'"
+        ).fetchall()
+        for (table,) in tables:
+            conn.execute(f'SELECT count(DISTINCT door_id), count(DISTINCT building_id) FROM "{table}"').fetchone()
+        logger.info("Warmup completed")
+    except Exception:
+        logger.exception("Warmup failed; continuing")
+    yield
+
+
 # Read-side HTTP surface for the data service. Heavy work — voter-file
 # loading, geocoding, Quickwit indexing — runs as Hamilton DAGs via CLI
 # jobs. This service exposes health and endpoints for data queries.
-app = FastAPI(title="Data Service")
+app = FastAPI(title="Data Service", lifespan=lifespan)
 
 # Permissive CORS for dev. Lock down via a
 # settings-driven allow list before deploying.
@@ -112,50 +132,37 @@ class _PersonsCountRequest(BaseModel):
 
 @app.post("/persons/count")
 async def persons_count(req: _PersonsCountRequest):
-    """Persons-level summary counts plus a 100-row sample.
+    """Persons-level summary counts.
 
-    Response shape:
-    ``{personCount, doorCount, buildingCount, samplePeople: [...]}``
-    where each ``samplePeople`` entry is a snake_case keyed person row.
+    Response shape: ``{personCount, doorCount, buildingCount}``.
 
-    Lives here (vs in web RPC) so web never touches DuckLake schema or
-    SQL — web sends a criteria object, data does the rest.
+    Aggregates only — no row-level data. DuckDB's column pruning means
+    we only read `door_id`, `building_id`, and the columns referenced by
+    the WHERE clause; orders of magnitude less I/O than materialising
+    every column. A separate sample endpoint can be added when a stats
+    view needs row-level previews.
     """
     where, params = to_where(req.criteria, req.keyFilter)
     # CTE materialised once so the WHERE evaluates a single time even
     # though three subqueries reference it.
     sql = resolve(
         f"""
-        WITH filtered AS MATERIALIZED (SELECT * FROM {{persons_geocoded}} {where})
         SELECT
-            (SELECT count(*) FROM filtered) AS "personCount",
-            (SELECT count(DISTINCT door_id) FROM filtered) AS "doorCount",
-            (SELECT count(DISTINCT building_id) FROM filtered) AS "buildingCount",
-            (
-                SELECT array_agg({{
-                    'external_id': external_id,
-                    'first_name': first_name,
-                    'last_name': last_name,
-                    'address_line_1': address_line_1,
-                    'address_line_2': address_line_2,
-                    'city': city,
-                    'state': state,
-                    'zip5': zip5,
-                    'latitude': latitude,
-                    'longitude': longitude
-                }})
-                FROM (SELECT * FROM filtered LIMIT 100)
-            ) AS "samplePeople"
+            count(*) AS "personCount",
+            count(DISTINCT door_id) AS "doorCount",
+            count(DISTINCT building_id) AS "buildingCount"
+        FROM {{persons_geocoded}}
+        {where}
         """,
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
     row = conn.execute(sql, params).fetchone()
-    cols = ["personCount", "doorCount", "buildingCount", "samplePeople"]
-    out = dict(zip(cols, row, strict=True))
-    # array_agg over an empty input returns NULL; flatten to [].
-    out["samplePeople"] = out["samplePeople"] or []
-    return out
+    return {
+        "personCount": row[0],
+        "doorCount": row[1],
+        "buildingCount": row[2],
+    }
 
 
 class _PersonsCountByKeyRequest(BaseModel):
@@ -228,7 +235,9 @@ async def buildings_list(req: _BuildingsListRequest):
             count(DISTINCT fp.door_id) AS "doorCount",
             count(*)                   AS "personCount"
         FROM {{buildings_geocoded}} b
-        JOIN (SELECT * FROM {{persons_geocoded}} {where}) fp
+        JOIN (
+            SELECT building_id, door_id FROM {{persons_geocoded}} {where}
+        ) fp
             ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
