@@ -202,6 +202,9 @@ importers:
       '@tanstack/react-router':
         specifier: ^1
         version: 1.168.7(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/react-router-with-query':
+        specifier: ^1.130.17
+        version: 1.130.17(@tanstack/react-query@5.96.1)(@tanstack/react-router@1.168.7)(@tanstack/router-core@1.168.6)(react-dom@19.2.4)(react@19.2.4)
       '@tanstack/react-start':
         specifier: ^1
         version: 1.167.12(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4)
@@ -4698,6 +4701,23 @@ packages:
       react: 19.2.4
     dev: false
 
+  /@tanstack/react-router-with-query@1.130.17(@tanstack/react-query@5.96.1)(@tanstack/react-router@1.168.7)(@tanstack/router-core@1.168.6)(react-dom@19.2.4)(react@19.2.4):
+    resolution: {integrity: sha512-TNaSocW20KuPwUojEm130DLWTr9M5hsSzxiu4QqS2jNCnrGLuDrwMHyP+6fq13lG3YuU4u9O1qajxfJIGomZCg==}
+    engines: {node: '>=12'}
+    peerDependencies:
+      '@tanstack/react-query': '>=5.49.2'
+      '@tanstack/react-router': '>=1.43.2'
+      '@tanstack/router-core': '>=1.114.7'
+      react: '>=18.0.0 || >=19.0.0'
+      react-dom: '>=18.0.0 || >=19.0.0'
+    dependencies:
+      '@tanstack/react-query': 5.96.1(react@19.2.4)
+      '@tanstack/react-router': 1.168.7(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-core': 1.168.6
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+    dev: false
+
   /@tanstack/react-router@1.168.7(react-dom@19.2.4)(react@19.2.4):
     resolution: {integrity: sha512-fW/HvQja4PQeu9lsoyh+pXpZ0UXezbpQkkJvCuH6tHAaW3jvPkjh14lfadrNNiY+pXT7WiMTB3afGhTCC78PDQ==}
     engines: {node: '>=20.19'}
@@ -5150,7 +5170,7 @@ packages:
   /@types/mssql@9.1.11(@azure/core-client@1.10.1):
     resolution: {integrity: sha512-vcujgrDbDezCxNDO4KY6gjwduLYOKfrexpRUwhoysRvcXZ3+IgZ/PMYFDgh8c3cQIxZ6skAwYo+H6ibMrBWPjQ==}
     dependencies:
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
       tarn: 3.0.2
       tedious: 19.2.1(@azure/core-client@1.10.1)
     transitivePeerDependencies:
@@ -5188,7 +5208,7 @@ packages:
   /@types/readable-stream@4.0.23:
     resolution: {integrity: sha512-wwXrtQvbMHxCbBgjHaMGEmImFTQxxpfMOR/ZoQnXxB1woqkUbdLGFDgauo00Py9IudiaqSeiBiulSV9i6XIPig==}
     dependencies:
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
 
   /@types/stack-utils@2.0.3:
     resolution: {integrity: sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw==}
@@ -11642,7 +11662,7 @@ packages:
       '@azure/identity': 4.13.1
       '@azure/keyvault-keys': 4.10.0(@azure/core-client@1.10.1)
       '@js-joda/core': 5.7.0
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
       bl: 6.1.6
       iconv-lite: 0.6.3
       js-md4: 0.3.2
@@ -11660,7 +11680,7 @@ packages:
       '@azure/identity': 4.13.1
       '@azure/keyvault-keys': 4.10.0(@azure/core-client@1.10.1)
       '@js-joda/core': 5.7.0
-      '@types/node': 22.19.15
+      '@types/node': 25.5.0
       bl: 6.1.6
       iconv-lite: 0.7.2
       js-md4: 0.3.2
@@ -12115,6 +12135,7 @@ packages:
 
   /uuid@8.3.2:
     resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   /validate-npm-package-name@5.0.1:

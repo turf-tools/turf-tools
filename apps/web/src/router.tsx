@@ -1,8 +1,14 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
+import { routerWithQueryClient } from "@tanstack/react-router-with-query";
 import { routeTree } from "./routeTree.gen";
 
 // Per-request QueryClient so SSR doesn't bleed cache between users.
+// `routerWithQueryClient` wraps the router so loader-prefetched query
+// state is dehydrated on the server and hydrated on the client; without
+// it, useSuspenseQuery on the client finds nothing in cache and falls
+// back to its Suspense boundary, mismatching server-rendered HTML and
+// triggering React error #418 (the "white flash" on first page load).
 export function getRouter() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -25,7 +31,7 @@ export function getRouter() {
     defaultPreload: "intent",
   });
 
-  return router;
+  return routerWithQueryClient(router, queryClient);
 }
 
 declare module "@tanstack/react-router" {
