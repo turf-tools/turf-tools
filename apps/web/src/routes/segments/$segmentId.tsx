@@ -133,7 +133,6 @@ function CountsPanel({
         personCount: number;
         doorCount: number;
         buildingCount: number;
-        samplePeople: Array<Record<string, unknown>>;
       }
     | undefined;
   stale: boolean;

@@ -64,16 +64,12 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     # Production paths use S3 storage; the SECRET tells DuckDB to walk
     # the AWS credential chain (env vars → shared config → EC2 instance
     # metadata) so we don't have to wire access keys explicitly.
-    using_s3 = bool(settings.ducklake_metadata_postgres_url) or bool(
-        settings.geo_ducklake_metadata_postgres_url
-    )
+    using_s3 = bool(settings.ducklake_metadata_postgres_url) or bool(settings.geo_ducklake_metadata_postgres_url)
     if using_s3:
         conn.install_extension("httpfs")
         conn.load_extension("httpfs")
         region = os.environ.get("AWS_REGION", "us-east-1")
-        conn.execute(
-            f"CREATE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}')"
-        )
+        conn.execute(f"CREATE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}')")
 
     # Buffer pool sizing — DuckDB's default `memory_limit` is conservative
     # on Linux. With the cached connection living for the lifetime of the
