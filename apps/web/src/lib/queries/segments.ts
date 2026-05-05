@@ -71,6 +71,7 @@ export const cutterBuildingsQuery = (
       "cutter-buildings",
       zoneId,
       segmentCriteria ? JSON.stringify(segmentCriteria) : null,
+      keyFilter ? JSON.stringify(keyFilter) : null,
     ] as const,
     queryFn: () =>
       client.segments.listBuildings({
