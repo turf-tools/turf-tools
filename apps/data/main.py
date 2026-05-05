@@ -150,10 +150,7 @@ async def persons_count(req: _PersonsCountRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    try:
-        row = conn.execute(sql, params).fetchone()
-    finally:
-        conn.close()
+    row = conn.execute(sql, params).fetchone()
     cols = ["personCount", "doorCount", "buildingCount", "samplePeople"]
     out = dict(zip(cols, row, strict=True))
     # array_agg over an empty input returns NULL; flatten to [].
@@ -192,10 +189,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
     for key, doors, people in rows:
         if key is None:
@@ -241,12 +235,9 @@ async def buildings_list(req: _BuildingsListRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    try:
-        cursor = conn.execute(sql, params)
-        cols = [d[0] for d in cursor.description]
-        rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
-    finally:
-        conn.close()
+    cursor = conn.execute(sql, params)
+    cols = [d[0] for d in cursor.description]
+    rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
     return {"buildings": rows}
 
 
@@ -281,14 +272,11 @@ async def buildings_points(req: _BuildingsPointsRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    try:
-        cursor = conn.execute(sql, params)
-        arr = array.array("f")
-        for lng, lat in cursor.fetchall():
-            arr.append(lng)
-            arr.append(lat)
-    finally:
-        conn.close()
+    cursor = conn.execute(sql, params)
+    arr = array.array("f")
+    for lng, lat in cursor.fetchall():
+        arr.append(lng)
+        arr.append(lat)
     return Response(content=arr.tobytes(), media_type="application/octet-stream")
 
 
@@ -365,10 +353,7 @@ async def turfs_build(req: _TurfsBuildRequest):
     )
 
     conn = get_connection(settings, read_only=True)
-    try:
-        rows = conn.execute(sql, polygon_params + where_params).fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(sql, polygon_params + where_params).fetchall()
 
     # Group rows: polygon_idx → building_id → door_id → [persons].
     # Building canonical fields (lat/lng, address) repeat across every
