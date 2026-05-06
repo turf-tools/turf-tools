@@ -327,7 +327,7 @@ function ZoneGroupEditor() {
                 }
               }}
               className={cn(
-                "flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+                "flex h-11 items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
                 isActive ? "border-foreground" : "border-border hover:border-muted-foreground",
               )}
             >
@@ -411,7 +411,7 @@ function ZoneGroupEditor() {
               })
             }
             className={cn(
-              "flex h-[46px] items-center justify-between gap-2",
+              "flex h-11 items-center justify-between gap-2",
               "rounded-md border border-border bg-card px-3 py-2 text-left",
               "text-muted-foreground hover:border-muted-foreground hover:text-foreground",
             )}
