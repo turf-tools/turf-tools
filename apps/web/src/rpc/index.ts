@@ -10,6 +10,8 @@ import * as turfsProcedures from "./turfs";
 import * as zoneGroupsProcedures from "./zone-groups";
 import * as zonesProcedures from "./zones";
 
+// TODO - don't export each procedure individually - you can export entire subrouters
+// Each subrouter should extend a single base (either admin or native)
 export const router = {
   healthcheck: pub.input(z.object({}).optional()).handler(async ({ context }) => {
     await context.db.execute("SELECT 1 as ok");
