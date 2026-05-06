@@ -161,6 +161,7 @@ export const getData = pub
 // centroid against each draft (first-match-wins so overlapping
 // polygons partition the buildings deterministically), then
 // assemble the per-turf blob.
+//
 export const publish = mut
   .input(
     z.object({
@@ -213,12 +214,24 @@ export const publish = mut
     const segmentCriteria = segmentRow[0]!.criteria as Criteria | null;
     if (!segmentCriteria) throw new Error("Segment has no criteria defined");
 
+    // TODO - delete prior 3 steps - just pass:
+    // campaign_id, zone_id
+    // These can be fetches from the database for the remaining queries:
+    // - keyGroup and keys from zoneGroups/zones
+    // - criteria from segments from campaigns
+
     const zoneGroupRow = await context.db
       .select({ keyGroup: zoneGroups.keyGroup })
       .from(zoneGroups)
       .where(eq(zoneGroups.zoneGroupId, zoneGroupId));
     if (zoneGroupRow.length === 0) throw new Error("Zone group not found");
     const keyGroup = zoneGroupRow[0]!.keyGroup;
+
+    // TODO - move fetching of drafts to DuckDB attach from the database
+    // Don't pass drafts over HTTP
+
+    // TODO - don't allow overlap precedence
+    // Error should be thrown on the DuckDB side if geometries are overlapping
 
     // 4. Fetch drafts. Sort by `sortOrder` so the user's intent
     // (numbering, overlap precedence) is preserved.
@@ -259,6 +272,8 @@ export const publish = mut
       keyFilter: { keyGroup, keys: zone.keys },
       orgSlug,
     });
+
+    // TODO - delete all steps below. Data app handles full insert.
 
     // 6. Pair each returned turf with the corresponding draft (same
     // input order). Drafts that produced no matched buildings still
@@ -347,6 +362,8 @@ export const publish = mut
       },
     };
   });
+
+// TODO - migrate this to a PGSQL function that runs on the database as a default
 
 // 8-digit numeric — chosen for phone/voice transmission ergonomics:
 // a lead reading a code to a canvasser only has to recite digits

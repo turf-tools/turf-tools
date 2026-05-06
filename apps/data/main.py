@@ -325,6 +325,10 @@ async def turfs_build(req: _TurfsBuildRequest):
     polygon_rows = ", ".join(f"({i}, ST_GeomFromGeoJSON(?))" for i in range(len(req.drafts)))
     polygon_params = [json.dumps(d.geometry) for d in req.drafts]
 
+    # TODO - bring all JSON construction into DuckDB
+    # CTE should go with polygons, with filtered_persons, with turfs, and then insert
+    # The turfs directly into the attached postgres
+    # Turf ID generation should migrate to a database default function
     sql = resolve(
         f"""
         WITH polygons(idx, geom) AS (VALUES {polygon_rows}),
