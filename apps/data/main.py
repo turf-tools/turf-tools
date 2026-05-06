@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.db import get_connection
+from src.duckdb import get_connection
 from src.dsl.compile import boundary_key_expr_for, to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.settings import get_settings

@@ -5,7 +5,7 @@ from pathlib import Path
 from hamilton import driver
 
 from src.dags import aggregate, boundaries, geocode, quickwit, tiger, voter_file_loader
-from src.db import get_connection
+from src.duckdb import get_connection
 from src.models import TableRef
 from src.settings import get_settings
 from src.transformations import nys_sboe_transformation_query
