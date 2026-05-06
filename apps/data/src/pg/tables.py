@@ -220,6 +220,16 @@ class Jobs(Table, tablename="jobs"):
         db_column_name=None,
         secret=False,
     )
+    concurrency_key = Text(
+        default="",
+        null=True,
+        primary_key=False,
+        unique=False,
+        index=False,
+        index_method=IndexMethod.btree,
+        db_column_name=None,
+        secret=False,
+    )
 
 
 class Segments(Table, tablename="segments"):
@@ -1269,7 +1279,7 @@ class TurfData(Table, tablename="turf_data"):
 
 """
 WARNING: Unable to parse the following indexes:
-CREATE UNIQUE INDEX script_questions_pkey ON public.script_questions USING btree (script_id, survey_question_id);
 CREATE UNIQUE INDEX job_messages_pkey ON public.job_messages USING btree (job_id, message_id);
 CREATE INDEX turf_drafts_scope_idx ON public.turf_drafts USING btree (campaign_id, zone_id);
+CREATE UNIQUE INDEX script_questions_pkey ON public.script_questions USING btree (script_id, survey_question_id);
 """

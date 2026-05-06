@@ -34,6 +34,7 @@ export const jobs = pgTable("jobs", {
   payload: jsonb().notNull(),
   failureReason: text(),
   result: jsonb(),
+  concurrencyKey: text(),
   lockedByWorkerId: text(),
 });
 
