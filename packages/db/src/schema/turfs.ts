@@ -27,6 +27,9 @@ export const turfs = pgTable("turfs", {
     .notNull()
     .references(() => scripts.scriptId),
   name: text().notNull(),
+  // TODO - add a status column to turf
+  // Make the unique constraint on `turf_code` a partial unique index given an active status
+  // Drop the global unique constraint
   turfCode: text().unique(),
   geometry: jsonb().$type<GeoJsonPolygon>(),
   doorCount: integer(),
