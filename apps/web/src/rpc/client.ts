@@ -12,6 +12,8 @@ const getClient = createIsomorphicFn()
   .server(() =>
     createRouterClient(router, {
       context: async () => {
+        // TODO - don't create a new Request object on every call
+        // The context should have the relevant facts of the request (auth, etc.) pre-extracted
         const request = new Request("http://localhost", {
           headers: getRequestHeaders(),
         });

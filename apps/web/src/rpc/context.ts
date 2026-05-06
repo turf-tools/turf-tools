@@ -30,6 +30,11 @@ export async function loadUser(db: Db, _request?: Request): Promise<User> {
   return user;
 }
 
+// TODO - create separate base for admin vs. app
+// Will have separate auth contexts
+// Each RPC sub-procedure should extend one or the other
+// Export two types from ORPC overall, an admin client type and a native client type
+
 // Base procedure with context — all procedures build on this
 export const base = os.$context<ORPCContext>();
 
