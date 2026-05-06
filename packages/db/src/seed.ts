@@ -17,5 +17,11 @@ export async function seedReferenceData(database: Db = defaultDb) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await seedReferenceData();
+  try {
+    await seedReferenceData();
+    process.exit(0);
+  } catch (error) {
+    console.error(error);
+    process.exit(1);
+  }
 }
