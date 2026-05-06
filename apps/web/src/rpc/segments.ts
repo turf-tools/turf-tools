@@ -15,6 +15,18 @@ type PersonsCount = {
 
 type PersonsCountByKey = { counts: Record<string, { doors: number; people: number }> };
 
+type PersonsSample = {
+  persons: Array<{
+    firstName: string | null;
+    lastName: string | null;
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    zip5: string | null;
+  }>;
+};
+
 type BuildingsList = {
   buildings: Array<{
     buildingId: string;
@@ -250,6 +262,18 @@ export const count = pub
     return dataPostJson<PersonsCount>("/persons/count", {
       criteria: input.criteria,
       orgSlug,
+    });
+  });
+
+// Row-level sample for the segment editor's list view. Capped server-side.
+export const sample = pub
+  .input(z.object({ criteria: z.unknown(), limit: z.number().int().positive().optional() }))
+  .handler(async ({ context, input }): Promise<PersonsSample> => {
+    const orgSlug = await loadOrgSlug(context);
+    return dataPostJson<PersonsSample>("/persons/sample", {
+      criteria: input.criteria,
+      orgSlug,
+      limit: input.limit ?? 100,
     });
   });
 

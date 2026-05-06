@@ -37,6 +37,16 @@ export const segmentPreviewQuery = (criteria: Criteria) =>
     gcTime: 0,
   });
 
+// Row-level sample for the segment editor's list view. Independent of
+// the points fetch so the map view doesn't pull row data and the list
+// view doesn't pull points.
+export const segmentSampleQuery = (criteria: Criteria) =>
+  queryOptions({
+    queryKey: ["segment-sample", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.sample({ criteria }),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
 // Binary lng/lat pairs — uploaded directly into a GPU buffer, so the
 // response stays as raw bytes the whole way through (no JSON envelope,
 // no per-byte JS decode). Lives outside oRPC for that reason; auth /

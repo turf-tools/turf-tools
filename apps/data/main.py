@@ -172,8 +172,7 @@ async def persons_count(req: _PersonsCountRequest):
     Aggregates only — no row-level data. DuckDB's column pruning means
     we only read `door_id`, `building_id`, and the columns referenced by
     the WHERE clause; orders of magnitude less I/O than materialising
-    every column. A separate sample endpoint can be added when a stats
-    view needs row-level previews.
+    every column. Row-level previews live at ``/persons/sample``.
     """
     where, params = to_where(req.criteria, req.keyFilter)
     # CTE materialised once so the WHERE evaluates a single time even
@@ -197,6 +196,61 @@ async def persons_count(req: _PersonsCountRequest):
         "personCount": row[0],
         "doorCount": row[1],
         "buildingCount": row[2],
+    }
+
+
+class _PersonsSampleRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    keyFilter: KeyFilter | None = None  # noqa: N815
+    orgSlug: str  # noqa: N815
+    limit: int = 100
+
+
+@app.post("/persons/sample")
+async def persons_sample(req: _PersonsSampleRequest):
+    """Row-level sample of people matching the criteria.
+
+    Response shape: ``{persons: [{firstName, lastName, addressLine1,
+    addressLine2, city, state, zip5}, ...]}``. Used by the segment
+    editor's list-view preview. Capped at ``limit`` (default 100).
+    """
+    where, params = to_where(req.criteria, req.keyFilter)
+    limit = max(1, min(req.limit, 500))
+    # Random sample so the preview doesn't keep showing the same physical-order
+    # rows as filters change. Sample sits outside the filter subquery so the
+    # WHERE applies first, then we draw N rows from the matched set.
+    sql = resolve(
+        f"""
+        SELECT * FROM (
+            SELECT
+                first_name,
+                last_name,
+                address_line_1,
+                address_line_2,
+                city,
+                state,
+                zip5
+            FROM {{persons_geocoded}}
+            {where}
+        ) USING SAMPLE {limit} ROWS
+        """,
+        slug=req.orgSlug,
+    )
+    conn = get_connection(settings, read_only=True)
+    rows = conn.execute(sql, params).fetchall()
+    return {
+        "persons": [
+            {
+                "firstName": r[0],
+                "lastName": r[1],
+                "addressLine1": r[2],
+                "addressLine2": r[3],
+                "city": r[4],
+                "state": r[5],
+                "zip5": r[6],
+            }
+            for r in rows
+        ]
     }
 
 
