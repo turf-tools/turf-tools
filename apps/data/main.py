@@ -1,7 +1,8 @@
 import array
+import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Response
@@ -12,11 +13,24 @@ from src.abstract_tables import resolve
 from src.duckdb import get_connection
 from src.dsl.compile import boundary_key_expr_for, to_where
 from src.dsl.criteria import Criteria, KeyFilter
+from src.duckdb import get_connection
+from src.job_runner import JobManager
 from src.settings import get_settings
 
 logger = logging.getLogger("uvicorn")
 
 settings = get_settings()
+
+
+def _log_background_task_failure(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.exception("Job manager stopped unexpectedly", exc_info=exc)
 
 
 @asynccontextmanager
@@ -34,7 +48,16 @@ async def lifespan(app: FastAPI):
         logger.info("Warmup completed")
     except Exception:
         logger.exception("Warmup failed; continuing")
-    yield
+
+    job_manager_task = asyncio.create_task(JobManager().run_forever(), name="job-manager")
+    job_manager_task.add_done_callback(_log_background_task_failure)
+
+    try:
+        yield
+    finally:
+        job_manager_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await job_manager_task
 
 
 # Read-side HTTP surface for the data service. Heavy work — voter-file
