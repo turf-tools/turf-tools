@@ -5,6 +5,8 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
+import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AgeRangeFilter,
   type Criteria,
@@ -17,7 +19,12 @@ import {
   isActiveFilter,
   type TextFilter,
 } from "~/lib/filters";
-import { segmentDetailQuery, segmentPreviewQuery, segmentsListQuery } from "~/lib/queries/segments";
+import {
+  segmentDetailQuery,
+  segmentPreviewQuery,
+  segmentSampleQuery,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -92,6 +99,8 @@ function SegmentEditor() {
   const usedKeys = new Set(filters.map((f) => f.key));
   const availableDefs = FILTERS.filter((d) => !usedKeys.has(d.key));
 
+  const [view, setView] = useState<"map" | "list">("map");
+
   return (
     <div className="grid grid-cols-3 gap-4 h-full">
       <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
@@ -111,15 +120,82 @@ function SegmentEditor() {
           </>
         ) : null}
       </div>
-      <div className="col-span-2 flex h-full flex-col gap-3">
-        <div className={cn("flex-1 transition-opacity", stale ? "opacity-70" : null)}>
-          {/* Map curtain stays up until the first preview lands; after
-              that `preview` stays defined via keepPreviousData, so
-              filter-change transitions use the dim wrapper instead. */}
-          <Map className="h-full" points={pointsBuffer} loading={!preview} />
+      <div className="col-span-2 flex h-full min-h-0 flex-col gap-3">
+        <div className="relative flex-1 min-h-0">
+          <div className={cn("h-full min-h-0 transition-opacity", stale ? "opacity-70" : null)}>
+            {view === "map" ? (
+              <Map className="h-full" points={pointsBuffer} loading={!preview} />
+            ) : (
+              <SamplePanel criteria={effectiveCriteria} />
+            )}
+          </div>
+          <div className="absolute left-3 bottom-3 z-50 rounded-lg border border-border bg-background">
+            <ToggleGroup
+              value={[view]}
+              onValueChange={(values) => {
+                const next = values[0];
+                if (next === "map" || next === "list") setView(next);
+              }}
+            >
+              <ToggleGroupItem value="map">Map</ToggleGroupItem>
+              <ToggleGroupItem value="list">List</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         </div>
         <CountsPanel counts={counts} stale={stale} />
       </div>
+    </div>
+  );
+}
+
+function SamplePanel({ criteria }: { criteria: Criteria }) {
+  const { data, isLoading } = useQuery({
+    ...segmentSampleQuery(criteria),
+    placeholderData: keepPreviousData,
+  });
+  const persons = data?.persons ?? [];
+  return (
+    <div className="h-full overflow-y-auto rounded-lg border border-border bg-card px-4 pb-2 pt-1">
+      <Table className="table-fixed">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Address</TableHead>
+            <TableHead>City</TableHead>
+            <TableHead className="w-16">State</TableHead>
+            <TableHead className="w-20">Zip</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading && persons.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-muted-foreground">
+                Loading sample…
+              </TableCell>
+            </TableRow>
+          ) : persons.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-muted-foreground">
+                No people match this segment.
+              </TableCell>
+            </TableRow>
+          ) : (
+            persons.map((p, idx) => (
+              <TableRow key={idx}>
+                <TableCell className="truncate px-2">
+                  {[p.firstName, p.lastName].filter(Boolean).join(" ") || "—"}
+                </TableCell>
+                <TableCell className="truncate px-2">
+                  {[p.addressLine1, p.addressLine2].filter(Boolean).join(", ") || "—"}
+                </TableCell>
+                <TableCell className="truncate px-2">{p.city ?? "—"}</TableCell>
+                <TableCell className="truncate px-2">{p.state ?? "—"}</TableCell>
+                <TableCell className="truncate px-2">{p.zip5 ?? "—"}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
     </div>
   );
 }
