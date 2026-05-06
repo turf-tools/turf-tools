@@ -75,7 +75,7 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
               }
             }}
             className={cn(
-              "flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+              "h-11 flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
               selected ? "border-foreground" : "border-border hover:border-muted-foreground",
             )}
           >
@@ -86,7 +86,7 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
             />
             <span className="flex-1 truncate text-sm">Turf {idx + 1}</span>
             {turf.counts ? (
-              <>
+              <div className="flex shrink-0 items-center gap-2">
                 <Pill
                   variant="number"
                   className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
@@ -101,7 +101,7 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
                   <UserRound className="size-3.5 text-foreground" />
                   {turf.counts.people.toLocaleString()}
                 </Pill>
-              </>
+              </div>
             ) : null}
             <Button
               size="icon-sm"
