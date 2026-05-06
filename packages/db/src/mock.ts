@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "./index";
+import { seedReferenceData } from "./seed";
 import { campaigns } from "./schema/campaigns";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptQuestions } from "./schema/scripts";
@@ -46,6 +47,8 @@ const SURVEY_RESPONSE_OPTIONS: Array<{ id: string; text: string }> = [
 async function mock() {
   // Insert order matters: campaigns now FK to scripts/segments/zone groups,
   // so those must exist first.
+
+  await seedReferenceData();
 
   const existingOrg = await db
     .select()
