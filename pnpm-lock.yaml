@@ -12,9 +12,6 @@ importers:
 
   .:
     devDependencies:
-      '@electric-sql/pglite-socket':
-        specifier: ^0.1.5
-        version: 0.1.5(@electric-sql/pglite@0.4.5)
       concurrently:
         specifier: ^9.2.1
         version: 9.2.1
@@ -1589,25 +1586,12 @@ packages:
     dependencies:
       '@types/hammerjs': 2.0.46
 
-  /@electric-sql/pglite-socket@0.1.5(@electric-sql/pglite@0.4.5):
-    resolution: {integrity: sha512-/RAye+3EPKfO9nY4tljzxXmkT7yIpFDm0L3F+c28b+Z6uxPOjy/Zz/QEHYHXcrfuUC88/a9S72EO0+3E0j97wQ==}
-    hasBin: true
-    peerDependencies:
-      '@electric-sql/pglite': 0.4.5
-    dependencies:
-      '@electric-sql/pglite': 0.4.5
-    dev: true
-
   /@electric-sql/pglite@0.4.2:
     resolution: {integrity: sha512-1GUUl/MZpy5QWgWisD3Epho3GkJrZ1MzVgQpo2pifQWUs96F9rXKZxeVLPhkwFYck34CH/kQ8lis6wX9ifn3kg==}
 
   /@electric-sql/pglite@0.4.4:
     resolution: {integrity: sha512-g/6CWAJ4XOkObWCWAQ2IReZD8VvsDy3poRHSKvpRR2F96F8WJ3HVbjpso3gN7l0q6QPPgvxSSpl/qo5k8a7mkQ==}
     dev: false
-
-  /@electric-sql/pglite@0.4.5:
-    resolution: {integrity: sha512-aGG2zGEyZzGWKy8P+9ZoNUV0jxt1+hgbeTf+bVAYyxVZZLXg3/9aFlfLxb08AYZVAfAkQlQIysmWjhc5hwDG8g==}
-    dev: true
 
   /@emnapi/core@1.9.1:
     resolution: {integrity: sha512-mukuNALVsoix/w1BJwFzwXBN/dHeejQtuVzcDsfOEsdpCumXb/E9j8w11h5S54tT1xhifGfbbSm/ICrObRb3KA==}
