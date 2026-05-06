@@ -385,7 +385,7 @@ function ZoneRow({
         }
       }}
       className={cn(
-        "flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+        "flex h-11 items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
         selected ? "border-foreground" : "border-border hover:border-muted-foreground",
       )}
     >
