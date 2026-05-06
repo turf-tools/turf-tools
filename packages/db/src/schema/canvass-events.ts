@@ -9,11 +9,14 @@ import { users } from "./users";
 // Exactly one of (personId, doorId, buildingId) is set per event, identifying
 // the target entity level.
 
+// TODO - migrate from sequence as primaryKey to (turfId, sequence) as primary key
+// Already matches access pattern
+// Sequence will still be unique across turfs, but this will make it possible to partition / clean up later
 export const canvassEvents = pgTable(
   "canvass_events",
   {
     sequence: bigserial({ mode: "number" }).primaryKey(),
-    eventId: text(),
+    eventId: text(), // TODO - call this clientEventId
     turfId: uuid()
       .notNull()
       .references(() => turfs.turfId),
