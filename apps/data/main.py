@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.duckdb import get_connection
 from src.dsl.compile import boundary_key_expr_for, to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import get_connection
@@ -177,6 +176,8 @@ async def persons_count(req: _PersonsCountRequest):
     )
     conn = get_connection(settings, read_only=True)
     row = conn.execute(sql, params).fetchone()
+    if row is None:
+        raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
     return {
         "personCount": row[0],
         "doorCount": row[1],
