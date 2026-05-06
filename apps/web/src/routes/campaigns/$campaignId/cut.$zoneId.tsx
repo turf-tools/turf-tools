@@ -388,8 +388,8 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
           Publish
         </Button>
       </EditorHeader>
-      <div className="grid grid-cols-4 gap-4 h-[calc(100vh-9rem)]">
-        <div className="col-span-1 min-h-0">
+      <div className="flex gap-4 h-[calc(100vh-9rem)]">
+        <div className="w-68 shrink-0 min-h-0">
           <TurfList
             turfs={turfRows}
             selectedTurfId={selectedTurfId}
@@ -398,7 +398,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
             emptyMessage="Click the map to draw a turf"
           />
         </div>
-        <div ref={mapAreaRef} className="col-span-3 relative h-full">
+        <div ref={mapAreaRef} className="flex-1 relative h-full">
           <MapProvider>
             <Map
               className="h-full"
