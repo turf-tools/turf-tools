@@ -1,8 +1,8 @@
 """Compile criteria DSL → DuckDB WHERE fragment + params.
 
 Used by the typed query endpoints (`/persons/count`, `/persons/by-key`,
-`/buildings/count`, `/buildings/points`) and by `/turfs/build` to assemble
-the persons-side filter portion of their SQL.
+`/buildings/count`, `/buildings/points`) and by turf publish jobs to
+assemble the persons-side filter portion of their SQL.
 
 User values flow through `params` (DuckDB `?` bind), never through
 string interpolation. Field metadata from the catalog (column names,
