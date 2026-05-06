@@ -1,3 +1,6 @@
+// TODO - add file level delineation for server only-ness (data-proxy.server.ts) or lib/server dir
+// Maybe move to rpc/lib or routes/lib
+
 // Server-only helpers for talking to the data service. The data service
 // is internal — never reachable from the browser. Every public endpoint
 // (oRPC handler or /api proxy route) funnels through here, so the URL,
