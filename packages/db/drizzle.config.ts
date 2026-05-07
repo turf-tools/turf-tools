@@ -1,25 +1,17 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "drizzle-kit";
 
-const pkgDir = path.dirname(fileURLToPath(import.meta.url));
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is required for drizzle-kit. In dev, run via `pnpm db:push` / `pnpm db:studio` after `pnpm dev` (which exports DATABASE_URL).",
+  );
+}
 
-export default process.env.DATABASE_URL
-  ? defineConfig({
-      out: "./migrations",
-      schema: "./src/schema/index.ts",
-      casing: "snake_case",
-      dialect: "postgresql",
-      dbCredentials: {
-        url: process.env.DATABASE_URL,
-      },
-    })
-  : defineConfig({
-      schema: "./src/schema/index.ts",
-      casing: "snake_case",
-      dialect: "postgresql",
-      driver: "pglite",
-      dbCredentials: {
-        url: path.join(pkgDir, "local_db"),
-      },
-    });
+export default defineConfig({
+  out: "./migrations",
+  schema: "./src/schema/index.ts",
+  casing: "snake_case",
+  dialect: "postgresql",
+  dbCredentials: {
+    url: process.env.DATABASE_URL,
+  },
+});

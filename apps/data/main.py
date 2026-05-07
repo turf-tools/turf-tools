@@ -48,6 +48,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Warmup failed; continuing")
 
+    # Create the asyncpg pool eagerly so a misconfigured DATABASE_URL
+    # fails startup loudly instead of silently breaking the first job poll.
+    from src.postgres import close_pool, get_pool
+
+    await get_pool()
+
     job_manager_task = asyncio.create_task(JobManager().run_forever(), name="job-manager")
     job_manager_task.add_done_callback(_log_background_task_failure)
 
@@ -57,6 +63,7 @@ async def lifespan(app: FastAPI):
         job_manager_task.cancel()
         with suppress(asyncio.CancelledError):
             await job_manager_task
+        await close_pool()
 
 
 # Read-side HTTP surface for the data service. Heavy work — voter-file

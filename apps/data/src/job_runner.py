@@ -157,7 +157,7 @@ class JobManager:
             raise ValueError("max_concurrent_jobs must be at least 1")
 
         self.registry = registry
-        self.store = store or PiccoloJobStore()
+        self.store = store or PostgresJobStore()
         self.worker_id = worker_id or f"data-job-runner-{uuid.uuid4()}"
         self.max_concurrent_jobs = max_concurrent_jobs
         self.poll_interval_seconds = poll_interval_seconds
@@ -232,8 +232,8 @@ class JobManager:
         await self.store.complete_job(job_id=claimed_job.job_id, result=_jsonable(result))
 
 
-class PiccoloJobStore:
-    """Postgres-backed job store using Piccolo's configured engine."""
+class PostgresJobStore:
+    """Postgres-backed job store using the shared asyncpg pool."""
 
     async def claim_jobs(
         self,
@@ -242,29 +242,31 @@ class PiccoloJobStore:
         tasks: Iterable[str],
         limit: int,
     ) -> list[ClaimedJob]:
+        from src.postgres import fetch
+
         task_list = list(tasks)
         if not task_list:
             return []
 
-        rows = await self._run(
+        rows = await fetch(
             """
             WITH locked AS (
                 SELECT j.job_id, j.task, j.payload, j.concurrency_key
                 FROM jobs j
-                WHERE j.status = {}
-                  AND j.task = ANY({}::text[])
+                WHERE j.status = $1
+                  AND j.task = ANY($2::text[])
                   AND (
                     j.concurrency_key IS NULL
                     OR NOT EXISTS (
                         SELECT 1
                         FROM jobs active
-                        WHERE active.status = {}
+                        WHERE active.status = $3
                           AND active.concurrency_key = j.concurrency_key
                     )
                   )
                 ORDER BY j.job_id
                 FOR UPDATE SKIP LOCKED
-                LIMIT {}
+                LIMIT $4
             ),
             eligible AS (
                 SELECT job_id
@@ -278,10 +280,10 @@ class PiccoloJobStore:
                     FROM locked
                 ) ranked
                 WHERE concurrency_rank = 1
-                LIMIT {}
+                LIMIT $5
             )
             UPDATE jobs
-            SET status = {}, locked_by_worker_id = {}
+            SET status = $6, locked_by_worker_id = $7
             WHERE job_id IN (SELECT job_id FROM eligible)
             RETURNING job_id, task, payload, concurrency_key
             """,
@@ -305,11 +307,13 @@ class PiccoloJobStore:
         ]
 
     async def complete_job(self, *, job_id: uuid.UUID, result: Any) -> None:
-        await self._run(
+        from src.postgres import execute
+
+        await execute(
             """
             UPDATE jobs
-            SET status = {}, result = {}::jsonb, failure_reason = NULL, locked_by_worker_id = NULL
-            WHERE job_id = {}
+            SET status = $1, result = $2::jsonb, failure_reason = NULL, locked_by_worker_id = NULL
+            WHERE job_id = $3
             """,
             COMPLETED,
             json.dumps(_jsonable(result)),
@@ -317,11 +321,13 @@ class PiccoloJobStore:
         )
 
     async def fail_job(self, *, job_id: uuid.UUID, failure_reason: str) -> None:
-        await self._run(
+        from src.postgres import execute
+
+        await execute(
             """
             UPDATE jobs
-            SET status = {}, failure_reason = {}, locked_by_worker_id = NULL
-            WHERE job_id = {}
+            SET status = $1, failure_reason = $2, locked_by_worker_id = NULL
+            WHERE job_id = $3
             """,
             PERMANENTLY_FAILED,
             failure_reason,
@@ -329,23 +335,16 @@ class PiccoloJobStore:
         )
 
     async def write_message(self, *, job_id: uuid.UUID, payload: Mapping[str, Any]) -> None:
-        await self._run(
+        from src.postgres import execute
+
+        await execute(
             """
             INSERT INTO job_messages (job_id, payload)
-            VALUES ({}, {}::json)
+            VALUES ($1, $2::json)
             """,
             job_id,
             json.dumps(_jsonable(payload)),
         )
-
-    async def _run(self, template: str, *args: Any) -> Any:
-        from piccolo.engine import engine_finder
-        from piccolo.querystring import QueryString
-
-        engine = engine_finder()
-        if engine is None:
-            raise RuntimeError("Piccolo engine is not configured.")
-        return await engine.run_querystring(QueryString(template, *args))
 
 
 def _infer_payload_model(func: JobFunc) -> PayloadModel:
@@ -377,9 +376,10 @@ def _accepts_context(func: JobFunc) -> bool:
             inspect.Parameter.VAR_POSITIONAL,
         )
     ]
-    return any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in positional_params) or len(
-        positional_params
-    ) >= 2
+    return (
+        any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in positional_params)
+        or len(positional_params) >= 2
+    )
 
 
 def _jsonable(value: Any) -> Any:
