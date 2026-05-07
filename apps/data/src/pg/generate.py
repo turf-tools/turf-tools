@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 import black
 from piccolo.apps.schema.commands.generate import get_output_schema
 
-
 OUTPUT_PATH = Path(__file__).with_name("tables.py")
 
 

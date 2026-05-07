@@ -1,13 +1,5 @@
-from piccolo.columns.base import OnDelete
-from piccolo.columns.base import OnUpdate
-from piccolo.columns.column_types import ForeignKey
-from piccolo.columns.column_types import Integer
-from piccolo.columns.column_types import JSON
-from piccolo.columns.column_types import JSONB
-from piccolo.columns.column_types import Serial
-from piccolo.columns.column_types import Text
-from piccolo.columns.column_types import Timestamptz
-from piccolo.columns.column_types import UUID
+from piccolo.columns.base import OnDelete, OnUpdate
+from piccolo.columns.column_types import JSON, JSONB, UUID, ForeignKey, Integer, Serial, Text, Timestamptz
 from piccolo.columns.defaults.timestamptz import TimestamptzNow
 from piccolo.columns.defaults.uuid import UUID4
 from piccolo.columns.indexes import IndexMethod
