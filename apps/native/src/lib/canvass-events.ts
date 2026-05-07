@@ -17,7 +17,7 @@ import { client } from "@/rpc/client";
 
 type CanvassEvent = {
   sequence: number;
-  eventId: string | null;
+  clientEventId: string | null;
   turfId: string;
   userId: string;
   personId: string | null;
@@ -108,7 +108,7 @@ function createCollection_(turfId: string) {
       },
       // Cast needed: pnpm peer-dep isolation creates incompatible QueryClient types
       queryClient: queryClient as never,
-      getKey: (event) => event.eventId!,
+      getKey: (event) => event.clientEventId!,
       refetchInterval: (): number | false => {
         const val = getDefaultStore().get(syncIntervalAtom);
         if (typeof val !== "number") return 30_000;
@@ -130,7 +130,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       text: payload.text,
       canvassedAt: payload.canvassedAt,
       inputType: "mobile",
-      eventId: event.eventId ?? undefined,
+      clientEventId: event.clientEventId ?? undefined,
     });
   } else if (event.personId) {
     await client.canvass.appendPersonResult({
@@ -144,7 +144,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
         surveyResponseOptionId: string;
       },
       inputType: "mobile",
-      eventId: event.eventId ?? undefined,
+      clientEventId: event.clientEventId ?? undefined,
     });
   } else if (event.doorId) {
     await client.canvass.appendDoorResult({
@@ -152,7 +152,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       doorId: event.doorId,
       outcome: (payload as unknown as { outcome: string }).outcome as "address_not_found",
       inputType: "mobile",
-      eventId: event.eventId ?? undefined,
+      clientEventId: event.clientEventId ?? undefined,
     });
   } else if (event.buildingId) {
     await client.canvass.appendBuildingResult({
@@ -160,7 +160,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       buildingId: event.buildingId,
       outcome: (payload as unknown as { outcome: string }).outcome as "inaccessible",
       inputType: "mobile",
-      eventId: event.eventId ?? undefined,
+      clientEventId: event.clientEventId ?? undefined,
     });
   }
 }
@@ -189,7 +189,7 @@ function createTurfContext(turfId: string): TurfContext {
         // Placeholder values — server assigns sequence, userId comes from auth
         sequence: 0,
         userId: "",
-        eventId: crypto.randomUUID(),
+        clientEventId: crypto.randomUUID(),
         turfId,
         personId: params.personId ?? null,
         doorId: params.doorId ?? null,
