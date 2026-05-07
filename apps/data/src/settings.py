@@ -70,6 +70,10 @@ class Settings(BaseSettings):
         ),
     )
 
+    database_url: str = Field(
+        description="PostgreSQL connection URL for operational data shared with the web app.",
+    )
+
     ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)
     geo_ducklake_storage: GeoDucklakeStorageConfig = Field(default_factory=GeoDucklakeStorageConfig)
     user_data_storage: UserDataStorageConfig = Field(default_factory=UserDataStorageConfig)
