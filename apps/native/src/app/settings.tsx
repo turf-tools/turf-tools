@@ -18,7 +18,7 @@ import { Button } from "@/components/button";
 import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { SYNC_OPTIONS, syncIntervalAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
-import { pullCanvassEvents } from "@/lib/canvass-events";
+import { clearPullCache, pullCanvassEvents } from "@/lib/canvass-events";
 import { queryClient } from "@/lib/query-client";
 
 export default function SettingsScreen() {
@@ -81,6 +81,7 @@ export default function SettingsScreen() {
           onPress: async () => {
             await AsyncStorage.clear();
             queryClient.clear();
+            clearPullCache();
             router.dismissAll();
             router.replace("/");
           },

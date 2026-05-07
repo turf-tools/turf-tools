@@ -227,6 +227,14 @@ export async function openTurf(turfId: string) {
   await (collection as unknown as { preload: () => Promise<void> }).preload();
 }
 
+// Wipe the in-memory pull cache for every turf. AsyncStorage.clear() and
+// queryClient.clear() can't reach this module-level Map, so the Settings
+// "Reset app state" hook needs to call this explicitly — otherwise stale
+// cursor + events leak through into the next session-within-runtime.
+export function clearPullCache() {
+  pullCache.clear();
+}
+
 // Pull latest from server (used by "Sync now" button). Assumes the user is
 // in a turf, so the collection already has active observers — refetchQueries
 // triggers queryFn through those observers and resolves when the fetch
