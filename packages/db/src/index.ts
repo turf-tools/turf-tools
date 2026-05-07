@@ -1,10 +1,6 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { PgAsyncDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { PGlite } from "@electric-sql/pglite";
 
 import * as schema from "./schema";
 
@@ -15,22 +11,23 @@ export { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 export type Db = PgAsyncDatabase<PgQueryResultHKT, typeof schema>;
 
 const casing = "snake_case" as const;
-const pkgDir = path.dirname(fileURLToPath(import.meta.url));
-const localDbPath = path.join(pkgDir, "..", "local_db");
 
 function createDb() {
-  if (process.env.DATABASE_URL) {
-    return drizzlePostgres({
-      client: postgres(process.env.DATABASE_URL),
-      schema,
-      casing,
-    });
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL is required. In dev, run `pnpm dev` (which starts a Postgres container and exports DATABASE_URL).",
+    );
   }
-  return drizzlePglite({
-    client: new PGlite(localDbPath),
+  return drizzlePostgres({
+    client: postgres(process.env.DATABASE_URL),
     schema,
     casing,
   });
 }
 
+// Module-level instantiation. Note that postgres-js is lazy — calling
+// `postgres(url)` doesn't open any connection; the first query does.
+// Tests import this module (transitively, via the RPC context) but
+// construct their own PGlite-backed db and never query through this
+// one, so a placeholder DATABASE_URL in tests is harmless.
 export const db = createDb() as Db;

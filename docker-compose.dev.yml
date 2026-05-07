@@ -1,0 +1,28 @@
+# Local-dev Postgres for Field Tools.
+#
+# Used by `pnpm dev` (the `dev:db` script invokes `docker compose -f
+# docker-compose.dev.yml up postgres`). Both the web app and the data
+# service connect to it via DATABASE_URL.
+#
+# Tests do NOT use this — they use in-process PGlite for speed.
+# Production uses a managed Postgres elsewhere; this file is dev-only.
+services:
+  postgres:
+    image: postgres:17
+    container_name: field-tools-dev-postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  postgres-data:
