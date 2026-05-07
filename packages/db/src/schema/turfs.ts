@@ -1,4 +1,5 @@
-import { jsonb, pgTable, integer, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { campaigns } from "./campaigns";
 import { scripts } from "./scripts";
 import { users } from "./users";
@@ -13,29 +14,46 @@ import { users } from "./users";
 // admins can delete or reorganize the source zone/segment without
 // breaking historical turfs. Stale-tracking based on whether the
 // referenced row still exists is a follow-up.
-export const turfs = pgTable("turfs", {
-  turfId: uuid().defaultRandom().primaryKey(),
-  campaignId: uuid()
-    .notNull()
-    .references(() => campaigns.campaignId),
-  segmentId: uuid().notNull(),
-  // Source zone (the cutter scope) and its parent group. Both kept
-  // as plain values rather than FKs — see comment above.
-  zoneId: uuid().notNull(),
-  zoneGroupId: uuid().notNull(),
-  scriptId: uuid()
-    .notNull()
-    .references(() => scripts.scriptId),
-  name: text().notNull(),
-  turfCode: text().unique(),
-  geometry: jsonb().$type<GeoJsonPolygon>(),
-  doorCount: integer(),
-  personCount: integer(),
-  createdBy: uuid()
-    .notNull()
-    .references(() => users.userId),
-  createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-});
+//
+// `status` gates the canvasser-facing lifecycle: only `'active'`
+// turfs honor their `turfCode` (the partial unique index enforces
+// uniqueness only across active turfs, so archived turfs hold
+// expired codes harmlessly without blocking new turfs from
+// reusing them).
+export type TurfStatus = "active" | "archived";
+
+export const turfs = pgTable(
+  "turfs",
+  {
+    turfId: uuid().defaultRandom().primaryKey(),
+    campaignId: uuid()
+      .notNull()
+      .references(() => campaigns.campaignId),
+    segmentId: uuid().notNull(),
+    // Source zone (the cutter scope) and its parent group. Both kept
+    // as plain values rather than FKs — see comment above.
+    zoneId: uuid().notNull(),
+    zoneGroupId: uuid().notNull(),
+    scriptId: uuid()
+      .notNull()
+      .references(() => scripts.scriptId),
+    name: text().notNull(),
+    turfCode: text(),
+    status: text().$type<TurfStatus>().notNull().default("active"),
+    geometry: jsonb().$type<GeoJsonPolygon>(),
+    doorCount: integer(),
+    personCount: integer(),
+    createdBy: uuid()
+      .notNull()
+      .references(() => users.userId),
+    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("turfs_active_turf_code")
+      .on(t.turfCode)
+      .where(sql`${t.status} = 'active'`),
+  ],
+);
 
 // Schema for the turf data payload stored in `turf_data.data`.
 // Mirrors the structure the canvasser app expects.

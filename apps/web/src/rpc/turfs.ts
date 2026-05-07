@@ -49,13 +49,17 @@ export const getById = pub
 // Capability-based — same reasoning as `getById`. Codes are
 // generated server-side at publish time with enough entropy to
 // resist brute-force at any reasonable rate limit.
+//
+// Filtered to `status = 'active'` because turf codes can repeat
+// across archived rows (the unique constraint is partial). Archived
+// turfs no longer honor their codes — canvassers can't access them.
 export const getByCode = pub
   .input(z.object({ code: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
       .select(turfSelect)
       .from(turfs)
-      .where(eq(turfs.turfCode, input.code));
+      .where(and(eq(turfs.turfCode, input.code), eq(turfs.status, "active")));
     return rows[0] ?? null;
   });
 
