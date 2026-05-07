@@ -377,9 +377,10 @@ def _accepts_context(func: JobFunc) -> bool:
             inspect.Parameter.VAR_POSITIONAL,
         )
     ]
-    return any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in positional_params) or len(
-        positional_params
-    ) >= 2
+    return (
+        any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in positional_params)
+        or len(positional_params) >= 2
+    )
 
 
 def _jsonable(value: Any) -> Any:

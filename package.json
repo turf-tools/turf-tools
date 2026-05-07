@@ -7,12 +7,13 @@
   "scripts": {
     "bootstrap": "pnpm install && cd apps/data && uv sync",
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
-    "dev": "concurrently -n web,native,data,search -c blue,green,yellow,magenta \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
-    "dev:ios": "concurrently -n web,native,data,search -c blue,green,yellow,magenta \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
+    "dev": "concurrently -n db,web,native,data,search -c gray,blue,green,yellow,magenta \"pnpm run dev:db\" \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
+    "dev:ios": "concurrently -n db,web,native,data,search -c gray,blue,green,yellow,magenta \"pnpm run dev:db\" \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
     "dev:search": "cd apps/data && quickwit run 2>&1 | grep --line-buffered -E '(REST server is ready|ERROR|FATAL)'",
-    "dev:web": "pnpm db:setup && vp run web#dev",
+    "dev:db": "docker compose -f docker-compose.dev.yml up postgres",
+    "dev:web": "export DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/postgres}; wait-on tcp:127.0.0.1:5432 && pnpm db:setup && vp run web#dev",
     "dev:native": "pnpm --filter native dev",
-    "dev:data": "cd apps/data && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:data": "export DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/postgres}; wait-on tcp:127.0.0.1:5432 && cd apps/data && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000",
     "check": "pnpm exec vp check --fix && cd apps/data && uv run ruff check --fix . && uv run ruff format .",
     "test": "pnpm --filter web exec vp test && cd apps/data && uv run pytest",
     "clear": "pnpm db:clear && pnpm data:clear",
@@ -22,17 +23,18 @@
     "data:pg-push": "DATABASE_URL=${DATABASE_URL:-postgresql://postgres:password@localhost:5432/field_tools_schema} pnpm db:push",
     "data:generate-pg-schema": "cd apps/data && DATABASE_URL=${DATABASE_URL:-postgresql://postgres:password@localhost:5432/field_tools_schema} uv run generate-pg-schema",
     "db:setup": "pnpm db:push && pnpm db:seed && pnpm db:mock",
-    "db:clear": "rm -rf packages/db/local_db",
+    "db:clear": "docker compose -f docker-compose.dev.yml down -v",
     "db:mock": "pnpm --filter @field-tools/db run mock",
     "db:seed": "pnpm --filter @field-tools/db run seed",
     "db:push": "pnpm db push",
-    "db:studio": "cd packages/db && npx drizzle-kit studio",
+    "db:studio": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@127.0.0.1:5432/postgres} bash -c 'cd packages/db && npx drizzle-kit studio'",
     "db": "pnpm --filter @field-tools/db run db",
     "prepare": "vp config"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "vite-plus": "latest"
+    "vite-plus": "latest",
+    "wait-on": "^9.0.5"
   },
   "engines": {
     "node": ">=22.12.0"

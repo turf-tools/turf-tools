@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 
 import duckdb
-
 from src.settings import Settings
 
 # Local dev paths

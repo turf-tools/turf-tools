@@ -13,7 +13,6 @@
     "mock": "tsx src/mock.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.4.4",
     "drizzle-orm": "beta",
     "postgres": "^3.4.8"
   },
