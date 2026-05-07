@@ -11,15 +11,15 @@ export type User = typeof users.$inferSelect;
 
 export type ORPCContext = {
   db: Db;
-  request?: Request;
   user: User;
 };
 
 // Load the user that should be associated with an incoming RPC call. For now
-// hardcode to a seeded admin; with real auth, we'll read a session
-// from `request` and look up the user accordingly. Throws if the seeded user
-// doesn't exist (i.e. `pnpm db:mock` hasn't been run).
-export async function loadUser(db: Db, _request?: Request): Promise<User> {
+// hardcode to a seeded admin; with real auth, the auth-derived facts
+// (userId, sessionToken, etc.) will be pre-extracted into the context shape
+// at the request boundary instead of carrying a Request object around.
+// Throws if the seeded user doesn't exist (i.e. `pnpm db:mock` hasn't been run).
+export async function loadUser(db: Db): Promise<User> {
   const rows = await db.select().from(users).where(eq(users.userId, SEEDED_ADMIN_USER_ID));
   const user = rows[0];
   if (!user) {
