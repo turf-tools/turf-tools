@@ -5,9 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+  "asyncpg>=0.29.0",
   "duckdb>=1.5.1",
   "fastapi>=0.135.3",
-  "piccolo[postgres]>=1.33.0",
   "pydantic-settings>=2.9.1",
   "requests>=2.33.1",
   "sf-hamilton[visualization]>=1.89.0",
@@ -18,7 +18,6 @@ dependencies = [
 update-visualizations = "src.cli:update_visualizations"
 seed-boundaries = "src.cli:seed_boundaries"
 seed-persons = "src.cli:seed_persons"
-generate-pg-schema = "src.pg.generate:main"
 
 [build-system]
 requires = ["hatchling>=1.27.0"]
