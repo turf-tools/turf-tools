@@ -1,7 +1,7 @@
 import { and, asc, type Db, eq } from "@field-tools/db";
 import { campaigns, organizations, segments } from "@field-tools/db/schema";
 import { z } from "zod";
-import { dataPostJson } from "~/lib/data-proxy";
+import { dataPostJson } from "~/lib/server/data-proxy";
 import { pub } from "./context";
 
 // Wire shapes returned by the data service. Kept here (next to the

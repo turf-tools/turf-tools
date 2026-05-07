@@ -6,7 +6,7 @@
 // `?v=updatedAt` cache-busting strategy keeps working.
 
 import { createFileRoute } from "@tanstack/react-router";
-import { dataFetch, passthrough } from "~/lib/data-proxy";
+import { dataFetch, passthrough } from "~/lib/server/data-proxy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

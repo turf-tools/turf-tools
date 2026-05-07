@@ -9,7 +9,7 @@
 // state, swapped for a session lookup once auth lands).
 
 import { createFileRoute } from "@tanstack/react-router";
-import { dataFetch, passthrough } from "~/lib/data-proxy";
+import { dataFetch, passthrough } from "~/lib/server/data-proxy";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
