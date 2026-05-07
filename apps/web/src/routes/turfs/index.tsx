@@ -1,7 +1,7 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DoorClosed, Megaphone, UserRound } from "lucide-react";
-import { Suspense } from "react";
+import { Suspense, useMemo } from "react";
 import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
 import { Page } from "~/components/page";
@@ -69,6 +69,18 @@ function TurfsIndex() {
 
 function TurfsTable({ campaignId }: { campaignId: string | null }) {
   const { data } = useSuspenseQuery(turfsListQuery(campaignId));
+  // Bulk publish writes all rows in a single statement, so they share a
+  // created_at; name (natural-numeric) breaks the tie so "Turf 2" stays
+  // ahead of "Turf 10" within a single publish batch.
+  const rows = useMemo(
+    () =>
+      [...data].sort((a, b) => {
+        const t = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        if (t !== 0) return t;
+        return a.name.localeCompare(b.name, undefined, { numeric: true });
+      }),
+    [data],
+  );
 
   return (
     <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto">
@@ -85,7 +97,7 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {data.map((t) => (
+        {rows.map((t) => (
           <TableRow key={t.turfId}>
             <TableCell>
               <Pill>{t.name}</Pill>

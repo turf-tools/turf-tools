@@ -383,7 +383,16 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
           <Eraser />
           Clear
         </Button>
-        <Button disabled={publishSummary.count === 0} onClick={() => setPublishOpen(true)}>
+        <Button
+          disabled={publishSummary.count === 0}
+          onClick={() => {
+            // Clear any stale error from a prior failed attempt so the
+            // dialog reopens clean. Synchronous so the open render sees
+            // both `publishOpen=true` and `error=null` in one pass.
+            if (publishMutation.error) publishMutation.reset();
+            setPublishOpen(true);
+          }}
+        >
           <Send />
           Publish
         </Button>
@@ -457,7 +466,6 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
           // user wondering whether the publish landed.
           if (publishMutation.isPending) return;
           setPublishOpen(next);
-          if (!next) publishMutation.reset();
         }}
       >
         <DialogContent>
@@ -481,7 +489,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
           {publishMutation.error ? (
             <div
               className={
-                "rounded-md border border-destructive/40 bg-destructive/10 " +
+                "mb-5 rounded-md border border-destructive/40 bg-destructive/10 " +
                 "px-3 py-2 text-sm text-destructive"
               }
             >

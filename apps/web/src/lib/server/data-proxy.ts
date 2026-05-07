@@ -18,9 +18,26 @@ export function dataFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(dataUrl(path), init);
 }
 
+// Structured failure for upstream-returned non-2xx. Carries the HTTP
+// status and FastAPI's `{detail}` message so RPC handlers can map to
+// the right ORPCError code (e.g. 400 → BAD_REQUEST with the detail
+// surfaced to the user).
+export class DataServiceError extends Error {
+  readonly status: number;
+  readonly detail: string;
+  readonly path: string;
+  constructor(status: number, detail: string, path: string) {
+    super(`data ${path} failed: ${status} ${detail}`);
+    this.name = "DataServiceError";
+    this.status = status;
+    this.detail = detail;
+    this.path = path;
+  }
+}
+
 // Typed POST { ...body } → JSON helper for oRPC handlers that proxy a
-// JSON request to data and parse JSON back. Throws on non-2xx with the
-// upstream body included for diagnosis.
+// JSON request to data and parse JSON back. Throws DataServiceError on
+// non-2xx, parsing FastAPI's `{detail}` envelope when present.
 export async function dataPostJson<T>(path: string, body: unknown): Promise<T> {
   const res = await dataFetch(path, {
     method: "POST",
@@ -28,7 +45,15 @@ export async function dataPostJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`data ${path} failed: ${res.status} ${await res.text()}`);
+    const text = await res.text();
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      // body wasn't JSON — fall back to raw text
+    }
+    throw new DataServiceError(res.status, detail, path);
   }
   return (await res.json()) as T;
 }
