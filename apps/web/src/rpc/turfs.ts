@@ -10,7 +10,7 @@ import {
 } from "@field-tools/db/schema";
 import type { TurfData, TurfDataBuilding } from "@field-tools/db/schema";
 import { z } from "zod";
-import { dataPostJson } from "~/lib/data-proxy";
+import { dataPostJson } from "~/lib/server/data-proxy";
 import { type Criteria } from "../lib/filters";
 import { mut, pub } from "./context";
 import { loadOrgSlug } from "./segments";

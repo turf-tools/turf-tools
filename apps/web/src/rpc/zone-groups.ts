@@ -1,7 +1,7 @@
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
-import { dataPostJson } from "~/lib/data-proxy";
+import { dataPostJson } from "~/lib/server/data-proxy";
 import { loadOrgSlug } from "./segments";
 import { pub } from "./context";
 
