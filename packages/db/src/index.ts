@@ -25,4 +25,9 @@ function createDb() {
   });
 }
 
+// Module-level instantiation. Note that postgres-js is lazy — calling
+// `postgres(url)` doesn't open any connection; the first query does.
+// Tests import this module (transitively, via the RPC context) but
+// construct their own PGlite-backed db and never query through this
+// one, so a placeholder DATABASE_URL in tests is harmless.
 export const db = createDb() as Db;
