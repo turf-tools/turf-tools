@@ -20,10 +20,10 @@ export const Route = createFileRoute("/api/rpc/$")({
           return new Response(null, { status: 204, headers: corsHeaders });
         }
 
-        const user = await loadUser(db, request);
+        const user = await loadUser(db);
         const { response } = await handler.handle(request, {
           prefix: "/api/rpc",
-          context: { db, request, user },
+          context: { db, user },
         });
 
         const res = response ?? new Response("Not Found", { status: 404 });
