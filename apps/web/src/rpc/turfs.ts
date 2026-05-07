@@ -153,10 +153,9 @@ export const getData = pub
 //   2. Runs the spatial join + per-turf JSON construction in DuckLake
 //   3. INSERTs the turfs + turf_data rows directly into Postgres
 //
-// Web is a thin enqueuer: it just looks up the org slug and forwards
-// the call. No JSON payload crosses the wire — only the summary comes
-// back. Replaces the older flow that round-tripped the full
-// buildings/doors/persons blob.
+// Web is a thin wrapper: it just looks up the org slug and forwards
+// the call. No JSON payload crosses the wire, only the summary comes
+// back.
 type PublishResult = {
   created: Array<{ turfId: string; name: string; turfCode: string }>;
   summary: { turfCount: number; doorCount: number; personCount: number };
