@@ -106,3 +106,36 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
 
     conn.execute("USE ducklake")
     return conn
+
+
+# Alias under which the operational Postgres database is mounted into
+# DuckDB by `attach_operational_postgres`. Cross-database SQL refers to
+# tables as `operational_pg.public.<table>`.
+OPERATIONAL_PG_ALIAS = "operational_pg"
+
+
+def attach_operational_postgres(conn: duckdb.DuckDBPyConnection, settings: Settings) -> None:
+    """Install + load DuckDB's `postgres` extension and ATTACH the operational
+    Postgres database under `OPERATIONAL_PG_ALIAS`.
+
+    Idempotent — safe to call repeatedly on a connection. Used by paths that
+    need to read or write operational tables in the same DuckDB session as
+    DuckLake (e.g. turf publish, future auto-cut), so cross-database SQL can
+    join filtered_persons + buildings against operational rows in one
+    transaction without round-tripping through Python.
+
+    Raises ``RuntimeError`` if ``DATABASE_URL`` isn't configured. Callers in
+    HTTP contexts can catch and re-raise as ``HTTPException``; jobs surface
+    it as the job's failure reason.
+    """
+    if not settings.database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+    conn.install_extension("postgres")
+    conn.load_extension("postgres")
+    # Single quotes in the URL escaped via double-up; ATTACH IF NOT EXISTS
+    # makes this a no-op if a previous call on the same connection already
+    # attached.
+    escaped = settings.database_url.replace("'", "''")
+    conn.execute(
+        f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)"
+    )

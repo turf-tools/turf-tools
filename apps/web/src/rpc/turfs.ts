@@ -1,17 +1,9 @@
-import { and, asc, eq, inArray, sql } from "@field-tools/db";
-import {
-  campaigns,
-  segments,
-  turfData,
-  turfDrafts,
-  turfs,
-  zoneGroups,
-  zones,
-} from "@field-tools/db/schema";
-import type { TurfData, TurfDataBuilding } from "@field-tools/db/schema";
+import { ORPCError } from "@orpc/server";
+import { and, asc, eq, sql } from "@field-tools/db";
+import { campaigns, segments, turfData, turfDrafts, turfs, zones } from "@field-tools/db/schema";
+import type { TurfData } from "@field-tools/db/schema";
 import { z } from "zod";
-import { dataPostJson } from "~/lib/data-proxy";
-import { type Criteria } from "../lib/filters";
+import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
 import { mut, pub } from "./context";
 import { loadOrgSlug } from "./segments";
 
@@ -49,13 +41,17 @@ export const getById = pub
 // Capability-based — same reasoning as `getById`. Codes are
 // generated server-side at publish time with enough entropy to
 // resist brute-force at any reasonable rate limit.
+//
+// Filtered to `status = 'active'` because turf codes can repeat
+// across archived rows (the unique constraint is partial). Archived
+// turfs no longer honor their codes — canvassers can't access them.
 export const getByCode = pub
   .input(z.object({ code: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
       .select(turfSelect)
       .from(turfs)
-      .where(eq(turfs.turfCode, input.code));
+      .where(and(eq(turfs.turfCode, input.code), eq(turfs.status, "active")));
     return rows[0] ?? null;
   });
 
@@ -149,18 +145,22 @@ export const getData = pub
     return rows[0]!.data as TurfData;
   });
 
-// Publish all drafts for a `(campaign, segment, zone)` scope as immutable
-// turfs. Each draft polygon becomes a turf row + a turf_data row
-// containing the buildings → doors → persons hierarchy of the
-// segment ∩ zone ∩ polygon intersection. Drafts are *not* cleared
-// after publish — re-publishing a zone appends a new batch of turfs
-// (stale-tracking of older batches is a follow-up).
+// Publish drafts for a `(campaign, zone)` as immutable turfs. The
+// data service does all the work in one transaction:
 //
-// Server-side computation: we run the segment criteria against
-// `_persons_geocoded`, point-in-polygon-test each building's
-// centroid against each draft (first-match-wins so overlapping
-// polygons partition the buildings deterministically), then
-// assemble the per-turf blob.
+//   1. Reads the campaign / segment / zone / drafts from operational
+//      Postgres via DuckDB's `postgres` ATTACH
+//   2. Runs the spatial join + per-turf JSON construction in DuckLake
+//   3. INSERTs the turfs + turf_data rows directly into Postgres
+//
+// Web is a thin wrapper: it just looks up the org slug and forwards
+// the call. No JSON payload crosses the wire, only the summary comes
+// back.
+type PublishResult = {
+  created: Array<{ turfId: string; name: string; turfCode: string }>;
+  summary: { turfCount: number; doorCount: number; personCount: number };
+};
+
 export const publish = mut
   .input(
     z.object({
@@ -168,197 +168,23 @@ export const publish = mut
       zoneId: z.string().uuid(),
     }),
   )
-  .handler(async ({ context, input }) => {
-    // 1. Resolve campaign — we need its segment, script, and zone
-    // group bindings, all of which must be set for a publish to be
-    // meaningful.
-    const campaignRow = await context.db
-      .select({
-        segmentId: campaigns.segmentId,
-        scriptId: campaigns.scriptId,
-        zoneGroupId: campaigns.zoneGroupId,
-      })
-      .from(campaigns)
-      .where(
-        and(
-          eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
-        ),
-      );
-    if (campaignRow.length === 0) throw new Error("Campaign not found");
-    const { segmentId, scriptId, zoneGroupId } = campaignRow[0]!;
-    if (!segmentId || !scriptId || !zoneGroupId) {
-      throw new Error("Campaign must have a segment, script, and zone group bound to publish");
-    }
-
-    // 2. Resolve zone (and verify it belongs to the campaign's
-    // zoneGroup — turfs are forever snapshots, so we want to be
-    // sure we're cutting from the right scope).
-    const zoneRow = await context.db
-      .select({ name: zones.name, keys: zones.keys })
-      .from(zones)
-      .where(and(eq(zones.zoneId, input.zoneId), eq(zones.zoneGroupId, zoneGroupId)));
-    if (zoneRow.length === 0) {
-      throw new Error("Zone not found in campaign's zone group");
-    }
-    const zone = zoneRow[0]!;
-
-    // 3. Resolve segment (need its criteria) and zone group (need its
-    // keyGroup label for the boundary-key filter).
-    const segmentRow = await context.db
-      .select({ criteria: segments.criteria })
-      .from(segments)
-      .where(eq(segments.segmentId, segmentId));
-    if (segmentRow.length === 0) throw new Error("Segment not found");
-    const segmentCriteria = segmentRow[0]!.criteria as Criteria | null;
-    if (!segmentCriteria) throw new Error("Segment has no criteria defined");
-
-    const zoneGroupRow = await context.db
-      .select({ keyGroup: zoneGroups.keyGroup })
-      .from(zoneGroups)
-      .where(eq(zoneGroups.zoneGroupId, zoneGroupId));
-    if (zoneGroupRow.length === 0) throw new Error("Zone group not found");
-    const keyGroup = zoneGroupRow[0]!.keyGroup;
-
-    // 4. Fetch drafts. Sort by `sortOrder` so the user's intent
-    // (numbering, overlap precedence) is preserved.
-    const drafts = await context.db
-      .select({
-        turfDraftId: turfDrafts.turfDraftId,
-        geometry: turfDrafts.geometry,
-        name: turfDrafts.name,
-        sortOrder: turfDrafts.sortOrder,
-      })
-      .from(turfDrafts)
-      .where(and(eq(turfDrafts.campaignId, input.campaignId), eq(turfDrafts.zoneId, input.zoneId)))
-      .orderBy(asc(turfDrafts.sortOrder));
-    if (drafts.length === 0) throw new Error("No drafts to publish");
-
-    // 5. Hand off the spatial join to the data app. Web sends the
-    // drafts + criteria + keyFilter; data does the filtered persons
-    // ∩ buildings ∩ polygons join and returns each draft's
-    // structured `buildings → doors → persons` payload plus
-    // pre-aggregated counts.
+  .handler(async ({ context, input }): Promise<PublishResult> => {
     const orgSlug = await loadOrgSlug(context);
-    const built = await dataPostJson<{
-      turfs: Array<{
-        name: string | null;
-        sortOrder: number;
-        geometry: { type: "Polygon"; coordinates: number[][][] };
-        doorCount: number;
-        personCount: number;
-        buildings: TurfDataBuilding[];
-      }>;
-    }>("/turfs/build", {
-      drafts: drafts.map((d) => ({
-        name: d.name,
-        sortOrder: d.sortOrder,
-        geometry: d.geometry,
-      })),
-      criteria: segmentCriteria,
-      keyFilter: { keyGroup, keys: zone.keys },
-      orgSlug,
-    });
-
-    // 6. Pair each returned turf with the corresponding draft (same
-    // input order). Drafts that produced no matched buildings still
-    // get a turf row with empty `buildings` — they're a valid (if
-    // empty) cut.
-    const turfPayloads = drafts.map((draft, i) => {
-      const t = built.turfs[i]!;
-      return {
-        draft,
-        buildings: t.buildings,
-        doorCount: t.doorCount,
-        personCount: t.personCount,
-      };
-    });
-
-    // 7. Insert turfs + turf_data rows in a single transaction with
-    // bulk inserts — collapses ~3 round trips per draft into ~3 total
-    // regardless of count. Pre-generate turfIds and turfCodes so each
-    // draft can be linked across both inserts without relying on
-    // RETURNING order.
-    const turfIds = turfPayloads.map(() => crypto.randomUUID());
-    const turfCodes = turfPayloads.map(() => genTurfCode());
-    const created: Array<{ turfId: string; name: string; turfCode: string }> = [];
-    await context.db.transaction(async (tx) => {
-      // Resolve any code collisions in bulk. 6-char Crockford base-32
-      // collisions are essentially nonexistent, so we cap at a small
-      // retry budget.
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const collisions = await tx
-          .select({ turfCode: turfs.turfCode })
-          .from(turfs)
-          .where(inArray(turfs.turfCode, turfCodes));
-        if (collisions.length === 0) break;
-        const colliding = new Set(collisions.map((c) => c.turfCode));
-        for (let i = 0; i < turfCodes.length; i++) {
-          if (colliding.has(turfCodes[i]!)) turfCodes[i] = genTurfCode();
-        }
-        if (attempt === 9) {
-          throw new Error("Could not generate unique turf codes after 10 attempts");
-        }
-      }
-
-      const turfRows = turfPayloads.map((p, i) => ({
-        turfId: turfIds[i]!,
+    try {
+      return await dataPostJson<PublishResult>("/turfs/publish", {
         campaignId: input.campaignId,
-        segmentId,
         zoneId: input.zoneId,
-        zoneGroupId,
-        scriptId,
-        name: p.draft.name ?? `Turf ${i + 1}`,
-        turfCode: turfCodes[i]!,
-        geometry: p.draft.geometry,
-        doorCount: p.doorCount,
-        personCount: p.personCount,
         createdBy: context.user.userId,
-      }));
-      await tx.insert(turfs).values(turfRows);
-
-      const dataRows = turfPayloads.map((p, i) => ({
-        turfId: turfIds[i]!,
-        data: {
-          turfId: turfIds[i]!,
-          turfCode: turfCodes[i]!,
-          name: turfRows[i]!.name,
-          geometry: p.draft.geometry,
-          buildings: p.buildings,
-        } satisfies TurfData,
-      }));
-      await tx.insert(turfData).values(dataRows);
-
-      for (let i = 0; i < turfPayloads.length; i++) {
-        created.push({
-          turfId: turfIds[i]!,
-          name: turfRows[i]!.name,
-          turfCode: turfCodes[i]!,
-        });
+        orgSlug,
+      });
+    } catch (e) {
+      // Surface upstream 4xx (e.g. ambiguous-assignment rejection) as a
+      // proper client error with the FastAPI `detail` message, so the UI
+      // shows "Buildings X, Y are inside multiple polygons" instead of a
+      // sanitized "Internal server error".
+      if (e instanceof DataServiceError && e.status >= 400 && e.status < 500) {
+        throw new ORPCError("BAD_REQUEST", { message: e.detail });
       }
-    });
-
-    return {
-      created,
-      summary: {
-        turfCount: created.length,
-        doorCount: turfPayloads.reduce((acc, p) => acc + p.doorCount, 0),
-        personCount: turfPayloads.reduce((acc, p) => acc + p.personCount, 0),
-      },
-    };
+      throw e;
+    }
   });
-
-// 8-digit numeric — chosen for phone/voice transmission ergonomics:
-// a lead reading a code to a canvasser only has to recite digits
-// (no letter/number ambiguity, no B/D/M/N confusion). 10^8 = 100M
-// possibilities; at ~1000s of turfs per org the birthday-collision
-// risk stays under 1%, with a unique-constraint retry catching the
-// rare hit anyway.
-const TURFCODE_ALPHABET = "0123456789";
-function genTurfCode(len = 8): string {
-  let s = "";
-  for (let i = 0; i < len; i++) {
-    s += TURFCODE_ALPHABET[Math.floor(Math.random() * TURFCODE_ALPHABET.length)];
-  }
-  return s;
-}

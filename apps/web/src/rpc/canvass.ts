@@ -9,8 +9,8 @@ import { mut, pub } from "./context";
 // here unchanged.
 //
 // Every result is an immutable append to canvass_events. "Current state" for
-// an entity = latest event by sequence. The eventId (client-generated UUID)
-// is used for dedup on retry.
+// an entity = latest event by sequence. The clientEventId (client-generated
+// UUID) is used for dedup on retry.
 
 const personOutcome = z.enum(["not_home", "deceased", "hostile", "moved"]);
 const doorOutcome = z.enum(["address_not_found"]);
@@ -23,14 +23,14 @@ export const appendDoorResult = mut
       doorId: z.string().uuid(),
       outcome: doorOutcome,
       inputType: z.string().optional(),
-      eventId: z.string().optional(),
+      clientEventId: z.string().optional(),
     }),
   )
   .handler(async ({ context, input }) => {
     await context.db
       .insert(canvassEvents)
       .values({
-        eventId: input.eventId,
+        clientEventId: input.clientEventId,
         turfId: input.turfId,
         userId: context.user.userId,
         doorId: input.doorId,
@@ -38,7 +38,7 @@ export const appendDoorResult = mut
         payload: { kind: "outcome", outcome: input.outcome },
         inputType: input.inputType,
       })
-      .onConflictDoNothing({ target: canvassEvents.eventId });
+      .onConflictDoNothing({ target: canvassEvents.clientEventId });
     return { ok: true };
   });
 
@@ -49,14 +49,14 @@ export const appendBuildingResult = mut
       buildingId: z.string().uuid(),
       outcome: buildingOutcome,
       inputType: z.string().optional(),
-      eventId: z.string().optional(),
+      clientEventId: z.string().optional(),
     }),
   )
   .handler(async ({ context, input }) => {
     await context.db
       .insert(canvassEvents)
       .values({
-        eventId: input.eventId,
+        clientEventId: input.clientEventId,
         turfId: input.turfId,
         userId: context.user.userId,
         buildingId: input.buildingId,
@@ -64,7 +64,7 @@ export const appendBuildingResult = mut
         payload: { kind: "outcome", outcome: input.outcome },
         inputType: input.inputType,
       })
-      .onConflictDoNothing({ target: canvassEvents.eventId });
+      .onConflictDoNothing({ target: canvassEvents.clientEventId });
     return { ok: true };
   });
 
@@ -77,7 +77,7 @@ export const appendPersonResult = mut
       doorId: z.string().uuid().optional(),
       personId: z.string(),
       inputType: z.string().optional(),
-      eventId: z.string().optional(),
+      clientEventId: z.string().optional(),
       payload: z.discriminatedUnion("kind", [
         z.object({
           kind: z.literal("survey"),
@@ -98,7 +98,7 @@ export const appendPersonResult = mut
     await context.db
       .insert(canvassEvents)
       .values({
-        eventId: input.eventId,
+        clientEventId: input.clientEventId,
         turfId: input.turfId,
         userId: context.user.userId,
         personId: input.personId,
@@ -106,11 +106,11 @@ export const appendPersonResult = mut
         payload: input.payload,
         inputType: input.inputType,
       })
-      .onConflictDoNothing({ target: canvassEvents.eventId });
+      .onConflictDoNothing({ target: canvassEvents.clientEventId });
     return { ok: true };
   });
 
-// Append a note to the event log. Deduped on eventId.
+// Append a note to the event log. Deduped on clientEventId.
 export const appendNote = mut
   .input(
     z.object({
@@ -121,14 +121,14 @@ export const appendNote = mut
       text: z.string().min(1),
       canvassedAt: z.string(),
       inputType: z.string().optional(),
-      eventId: z.string().optional(),
+      clientEventId: z.string().optional(),
     }),
   )
   .handler(async ({ context, input }) => {
     await context.db
       .insert(canvassEvents)
       .values({
-        eventId: input.eventId,
+        clientEventId: input.clientEventId,
         turfId: input.turfId,
         userId: context.user.userId,
         personId: input.personId,
@@ -138,7 +138,7 @@ export const appendNote = mut
         payload: { kind: "note", text: input.text, canvassedAt: input.canvassedAt },
         inputType: input.inputType,
       })
-      .onConflictDoNothing({ target: canvassEvents.eventId });
+      .onConflictDoNothing({ target: canvassEvents.clientEventId });
     return { ok: true };
   });
 

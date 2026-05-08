@@ -1,4 +1,13 @@
-import { bigserial, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  bigserial,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { turfs } from "./turfs";
 import { users } from "./users";
 
@@ -8,12 +17,20 @@ import { users } from "./users";
 //
 // Exactly one of (personId, doorId, buildingId) is set per event, identifying
 // the target entity level.
+//
+// Primary key is (turfId, sequence) rather than just sequence: sequence stays
+// globally unique (bigserial), but the composite PK matches the actual access
+// pattern (queries are always turf-scoped) and keeps the door open to
+// partitioning by turfId later without a PK migration on populated data.
+//
+// `clientEventId` is the client-supplied UUID used for retry deduplication —
+// it's NOT the row's primary id, hence the explicit `client` prefix.
 
 export const canvassEvents = pgTable(
   "canvass_events",
   {
-    sequence: bigserial({ mode: "number" }).primaryKey(),
-    eventId: text(),
+    sequence: bigserial({ mode: "number" }).notNull(),
+    clientEventId: text(),
     turfId: uuid()
       .notNull()
       .references(() => turfs.turfId),
@@ -28,7 +45,10 @@ export const canvassEvents = pgTable(
     inputType: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [uniqueIndex("canvass_events_event_id").on(t.eventId)],
+  (t) => [
+    primaryKey({ columns: [t.turfId, t.sequence] }),
+    uniqueIndex("canvass_events_client_event_id").on(t.clientEventId),
+  ],
 );
 
 // Payload discriminated union — shared between server and native app.
