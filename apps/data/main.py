@@ -1,6 +1,7 @@
 import array
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
@@ -185,7 +186,9 @@ async def persons_count(req: _PersonsCountRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
+    t0 = time.perf_counter()
     row = conn.execute(sql, params).fetchone()
+    logger.info("perf /persons/count %.1fms", (time.perf_counter() - t0) * 1000)
     if row is None:
         raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
     return {
@@ -257,7 +260,9 @@ async def persons_sample(req: _PersonsSampleRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
+    t0 = time.perf_counter()
     rows = conn.execute(sql, params).fetchall()
+    logger.info("perf /persons/sample %.1fms", (time.perf_counter() - t0) * 1000)
     return {
         "persons": [
             {
@@ -388,11 +393,13 @@ async def buildings_points(req: _BuildingsPointsRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
+    t0 = time.perf_counter()
     cursor = conn.execute(sql, params)
     arr = array.array("f")
     for lng, lat in cursor.fetchall():
         arr.append(lng)
         arr.append(lat)
+    logger.info("perf /buildings/points %.1fms (%d points)", (time.perf_counter() - t0) * 1000, len(arr) // 2)
     return Response(content=arr.tobytes(), media_type="application/octet-stream")
 
 
