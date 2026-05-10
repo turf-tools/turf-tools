@@ -252,26 +252,33 @@ export async function loadOrgSlug(context: {
   return slug;
 }
 
-// Total / per-door / per-building counts + sample people for a criteria.
-// Used by the segment editor's preview pane. No keyFilter — the segment
-// editor has no zone scoping.
+// Counts + sample for the segment editor's preview pane. All accept
+// `pipeline` (the new format) — the data service falls back to `criteria`
+// for old callers, but the segment editor now sends pipeline exclusively.
 export const count = pub
-  .input(z.object({ criteria: z.unknown() }))
+  .input(z.object({ pipeline: z.unknown() }))
   .handler(async ({ context, input }): Promise<PersonsCount> => {
     const orgSlug = await loadOrgSlug(context);
-    return dataPostJson<PersonsCount>("/persons/count", {
-      criteria: input.criteria,
+    return dataPostJson<PersonsCount>("/persons/count", { pipeline: input.pipeline, orgSlug });
+  });
+
+export type CascadeStep = { count: number; delta: number | null };
+export const countCascade = pub
+  .input(z.object({ pipeline: z.unknown() }))
+  .handler(async ({ context, input }): Promise<{ steps: CascadeStep[] }> => {
+    const orgSlug = await loadOrgSlug(context);
+    return dataPostJson<{ steps: CascadeStep[] }>("/persons/count-cascade", {
+      pipeline: input.pipeline,
       orgSlug,
     });
   });
 
-// Row-level sample for the segment editor's list view. Capped server-side.
 export const sample = pub
-  .input(z.object({ criteria: z.unknown(), limit: z.number().int().positive().optional() }))
+  .input(z.object({ pipeline: z.unknown(), limit: z.number().int().positive().optional() }))
   .handler(async ({ context, input }): Promise<PersonsSample> => {
     const orgSlug = await loadOrgSlug(context);
     return dataPostJson<PersonsSample>("/persons/sample", {
-      criteria: input.criteria,
+      pipeline: input.pipeline,
       orgSlug,
       limit: input.limit ?? 100,
     });

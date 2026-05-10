@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { Criteria } from "~/lib/filters";
+import type { Pipeline } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
 export type SegmentCriteria = NonNullable<
@@ -18,30 +18,34 @@ export const segmentDetailQuery = (segmentId: string) =>
     queryFn: () => client.segments.getById({ segmentId }),
   });
 
-export const segmentCountsQuery = (criteria: Criteria) =>
+export const segmentCountsQuery = (pipeline: Pipeline) =>
   queryOptions({
-    queryKey: ["segment-counts", JSON.stringify(criteria)] as const,
-    queryFn: () => client.segments.count({ criteria }),
+    queryKey: ["segment-counts", JSON.stringify(pipeline)] as const,
+    queryFn: () => client.segments.count({ pipeline }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
 // gcTime:0 releases the multi-MB Float32Array the moment the query goes
 // inactive — accumulating multiple buffers triggers V8 GC pauses.
-export const segmentPointsQuery = (criteria: Criteria) =>
+export const segmentPointsQuery = (pipeline: Pipeline) =>
   queryOptions({
-    queryKey: ["segment-points", JSON.stringify(criteria)] as const,
-    queryFn: () => fetchSegmentPoints({ criteria }),
+    queryKey: ["segment-points", JSON.stringify(pipeline)] as const,
+    queryFn: () => fetchSegmentPoints({ pipeline }),
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 0,
   });
 
-// Row-level sample for the segment editor's list view. Independent of
-// the points fetch so the map view doesn't pull row data and the list
-// view doesn't pull points.
-export const segmentSampleQuery = (criteria: Criteria) =>
+export const segmentSampleQuery = (pipeline: Pipeline) =>
   queryOptions({
-    queryKey: ["segment-sample", JSON.stringify(criteria)] as const,
-    queryFn: () => client.segments.sample({ criteria }),
+    queryKey: ["segment-sample", JSON.stringify(pipeline)] as const,
+    queryFn: () => client.segments.sample({ pipeline }),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+export const segmentCascadeQuery = (pipeline: Pipeline) =>
+  queryOptions({
+    queryKey: ["segment-cascade", JSON.stringify(pipeline)] as const,
+    queryFn: () => client.segments.countCascade({ pipeline }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -50,13 +54,15 @@ export const segmentSampleQuery = (criteria: Criteria) =>
 // no per-byte JS decode). Lives outside oRPC for that reason; auth /
 // org are enforced by the /api proxy on the web edge.
 export async function fetchSegmentPoints(input: {
-  criteria: unknown;
+  pipeline?: unknown;
+  criteria?: unknown;
   keyFilter?: { keyGroup: string; keys: string[] } | null;
 }): Promise<Float32Array> {
   const res = await fetch("/api/segment-points", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      pipeline: input.pipeline,
       criteria: input.criteria,
       keyFilter: input.keyFilter,
     }),

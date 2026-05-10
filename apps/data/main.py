@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.dsl.compile import boundary_key_expr_for, to_where
-from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.compile import boundary_key_expr_for, cascade_sql, pipeline_to_where, resolve_pipeline
+from src.dsl.criteria import Criteria, KeyFilter, Pipeline
 from src.duckdb import get_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
@@ -159,6 +159,7 @@ async def key_group_geojson(key_group: str):
 
 class _PersonsCountRequest(BaseModel):
     criteria: Criteria = Criteria()
+    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815  -- camelCase matches wire format from web
     orgSlug: str  # noqa: N815
 
@@ -168,15 +169,10 @@ async def persons_count(req: _PersonsCountRequest):
     """Persons-level summary counts.
 
     Response shape: ``{personCount, doorCount, buildingCount}``.
-
-    Aggregates only — no row-level data. DuckDB's column pruning means
-    we only read `door_id`, `building_id`, and the columns referenced by
-    the WHERE clause; orders of magnitude less I/O than materialising
-    every column. Row-level previews live at ``/persons/sample``.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
-    # CTE materialised once so the WHERE evaluates a single time even
-    # though three subqueries reference it.
+    pipeline = resolve_pipeline(req.criteria, req.pipeline)
+    params: list = []
+    where = pipeline_to_where(pipeline, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -199,8 +195,40 @@ async def persons_count(req: _PersonsCountRequest):
     }
 
 
+class _PersonsCountCascadeRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    pipeline: Pipeline | None = None
+    orgSlug: str  # noqa: N815
+
+
+@app.post("/persons/count-cascade")
+async def persons_count_cascade(req: _PersonsCountCascadeRequest):
+    """Per-step person counts for the segment editor's waterfall panel.
+
+    Returns one row per pipeline step (plus a baseline "all" row at index 0).
+    Each row carries the absolute count after that step and the delta vs the
+    prior row. The pipeline verb (add/narrow/remove) determines how each step
+    modifies the running set.
+    """
+    pipeline = resolve_pipeline(req.criteria, req.pipeline)
+    persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
+    params: list = []
+    sql = cascade_sql(pipeline, persons_table, params)
+    conn = get_connection(settings, read_only=True)
+    row = conn.execute(sql, params).fetchone()
+    counts = list(row)
+    steps_result = []
+    prev = counts[0]
+    steps_result.append({"count": prev, "delta": None})
+    for c in counts[1:]:
+        steps_result.append({"count": c, "delta": c - prev})
+        prev = c
+    return {"steps": steps_result}
+
+
 class _PersonsSampleRequest(BaseModel):
     criteria: Criteria = Criteria()
+    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     orgSlug: str  # noqa: N815
     limit: int = 100
@@ -208,28 +236,20 @@ class _PersonsSampleRequest(BaseModel):
 
 @app.post("/persons/sample")
 async def persons_sample(req: _PersonsSampleRequest):
-    """Row-level sample of people matching the criteria.
+    """Row-level sample of people matching the pipeline.
 
     Response shape: ``{persons: [{firstName, lastName, addressLine1,
     addressLine2, city, state, zip5}, ...]}``. Used by the segment
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
-    where, params = to_where(req.criteria, req.keyFilter)
+    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     limit = max(1, min(req.limit, 500))
-    # Random sample so the preview doesn't keep showing the same physical-order
-    # rows as filters change. Sample sits outside the filter subquery so the
-    # WHERE applies first, then we draw N rows from the matched set.
+    params: list = []
+    where = pipeline_to_where(pipeline, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
-            SELECT
-                first_name,
-                last_name,
-                address_line_1,
-                address_line_2,
-                city,
-                state,
-                zip5
+            SELECT first_name, last_name, address_line_1, address_line_2, city, state, zip5
             FROM {{persons_geocoded}}
             {where}
         ) USING SAMPLE {limit} ROWS
@@ -256,6 +276,7 @@ async def persons_sample(req: _PersonsSampleRequest):
 
 class _PersonsCountByKeyRequest(BaseModel):
     criteria: Criteria = Criteria()
+    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     keyGroup: str  # noqa: N815
     orgSlug: str  # noqa: N815
@@ -264,14 +285,16 @@ class _PersonsCountByKeyRequest(BaseModel):
 @app.post("/persons/count-by-key")
 async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     """Per-key (per ED, per ZIP, …) aggregation of doors + people for a
-    given criteria + optional spatial scope.
+    given pipeline + optional spatial scope.
 
     Drives the zone editor's heatmap overlay and the campaign editor's
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
+    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     group_expr = boundary_key_expr_for(req.keyGroup)
+    params: list = []
+    where = pipeline_to_where(pipeline, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -296,6 +319,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
 
 class _BuildingsListRequest(BaseModel):
     criteria: Criteria = Criteria()
+    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     orgSlug: str  # noqa: N815
 
@@ -305,16 +329,13 @@ async def buildings_list(req: _BuildingsListRequest):
     """One row per building containing at least one matching person,
     with door + person counts and the building's centroid.
 
-    The persons-side WHERE lives in a subquery so its unqualified
-    column references (e.g. `zip5`) only see persons — without the
-    subquery, columns shared between persons and buildings would be
-    ambiguous in the outer JOIN.
-
-    Used by the turf cutter to render buildings scoped to criteria ∩
+    Used by the turf cutter to render buildings scoped to pipeline ∩
     zone, with enough detail to compute "what's inside this drawn
     polygon" client-side.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
+    pipeline = resolve_pipeline(req.criteria, req.pipeline)
+    params: list = []
+    where = pipeline_to_where(pipeline, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -326,8 +347,7 @@ async def buildings_list(req: _BuildingsListRequest):
         FROM {{buildings_geocoded}} b
         JOIN (
             SELECT building_id, door_id FROM {{persons_geocoded}} {where}
-        ) fp
-            ON fp.building_id = b.building_id
+        ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
         slug=req.orgSlug,
@@ -341,6 +361,7 @@ async def buildings_list(req: _BuildingsListRequest):
 
 class _BuildingsPointsRequest(BaseModel):
     criteria: Criteria = Criteria()
+    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     orgSlug: str  # noqa: N815
 
@@ -348,23 +369,20 @@ class _BuildingsPointsRequest(BaseModel):
 @app.post("/buildings/points")
 async def buildings_points(req: _BuildingsPointsRequest):
     """Binary lng/lat pairs (Float32, row-major) for buildings whose
-    contained persons match the criteria.
-
-    The persons-side WHERE goes through a `WHERE building_id IN (SELECT
-    DISTINCT building_id FROM persons ...)` subquery so unqualified
-    column refs only see persons. Empty criteria → all buildings with
-    at least one matched person.
+    contained persons match the pipeline.
 
     Designed for direct upload into a GPU buffer on the browser — no
     JSON envelope, no per-byte decode work.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
+    pipeline = resolve_pipeline(req.criteria, req.pipeline)
+    params: list = []
+    where = pipeline_to_where(pipeline, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT longitude, latitude
         FROM {{buildings_geocoded}}
         WHERE building_id IN (
-          SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
+            SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
         )
         """,
         slug=req.orgSlug,

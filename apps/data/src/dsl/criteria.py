@@ -18,6 +18,14 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
+class AllFilter(BaseModel):
+    """Matches every person. Useful as the target of a "remove" step to
+    reset the running set to empty, enabling a build-from-nothing pipeline.
+    Compiles to ``1=1``."""
+
+    kind: Literal["all"]
+
+
 class EnumFilter(BaseModel):
     kind: Literal["enum"]
     key: str
@@ -38,12 +46,15 @@ class TextFilter(BaseModel):
 
 
 Filter = Annotated[
-    EnumFilter | AgeRangeFilter | TextFilter,
+    AllFilter | EnumFilter | AgeRangeFilter | TextFilter,
     Field(discriminator="kind"),
 ]
 
 
 class Criteria(BaseModel):
+    """Legacy flat-AND criteria. Accepted for backwards compat; new code
+    sends ``Pipeline`` instead."""
+
     filters: list[Filter] = []
 
 
@@ -55,6 +66,27 @@ class KeyFilter(BaseModel):
 
     keyGroup: str  # noqa: N815  -- camelCase matches the JSON shape sent from web
     keys: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline — ordered sequence of steps with verbs.
+# ---------------------------------------------------------------------------
+
+Verb = Literal["add", "narrow", "remove"]
+
+
+class Step(BaseModel):
+    verb: Verb
+    filter: Filter  # noqa: A003
+
+
+class Pipeline(BaseModel):
+    steps: list[Step] = []
+
+
+def pipeline_from_criteria(criteria: Criteria) -> Pipeline:
+    """Coerce legacy flat Criteria to an all-narrow Pipeline."""
+    return Pipeline(steps=[Step(verb="narrow", filter=f) for f in criteria.filters])
 
 
 # ---------------------------------------------------------------------------
