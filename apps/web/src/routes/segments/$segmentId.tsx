@@ -20,8 +20,9 @@ import {
   type TextFilter,
 } from "~/lib/filters";
 import {
+  segmentCountsQuery,
   segmentDetailQuery,
-  segmentPreviewQuery,
+  segmentPointsQuery,
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
@@ -63,8 +64,13 @@ function SegmentEditor() {
 
   const [view, setView] = useState<"map" | "list">("map");
 
-  const { data: preview, isPlaceholderData: previewStale } = useQuery({
-    ...segmentPreviewQuery(effectiveCriteria),
+  const { data: counts, isPlaceholderData: countsStale } = useQuery({
+    ...segmentCountsQuery(effectiveCriteria),
+    enabled: !!activeSegmentDetail,
+    placeholderData: keepPreviousData,
+  });
+  const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
+    ...segmentPointsQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
@@ -77,24 +83,21 @@ function SegmentEditor() {
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
-  const counts = preview?.counts;
-  const pointsBuffer = preview?.pointsBuffer;
 
   // stale = counts loading OR the active view's own data loading.
-  // Map data lives in the preview query so needs no extra term.
-  // Add `|| waterfallStale` here when that view is added.
-  const activeViewStale = view === "list" ? sampleStale : false;
-  const stale = previewStale || activeViewStale;
+  const activeViewStale = view === "map" ? pointsStale : view === "list" ? sampleStale : false;
+  const stale = countsStale || activeViewStale;
 
-  // Hold the last persons snapshot that was current when stale cleared.
-  // Written during render (not in an effect) so the update is synchronous
-  // with the stale→false transition — no intermediate render with new data
-  // while still faded.
-  const stablePersonsRef = useRef<NonNullable<typeof sample>["persons"]>([]);
-  if (!stale) stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
-
+  // Stable refs — written during render so each update is synchronous with
+  // the stale→false transition, no intermediate render with new data while faded.
   const stableCountsRef = useRef<typeof counts>(undefined);
   if (!stale) stableCountsRef.current = counts;
+
+  const stablePointsRef = useRef<typeof pointsBuffer>(undefined);
+  if (!stale) stablePointsRef.current = pointsBuffer;
+
+  const stablePersonsRef = useRef<NonNullable<typeof sample>["persons"]>([]);
+  if (!stale) stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
 
   // Optimistic update: write into the ["segment", id] cache in onMutate,
   // snapshot for rollback, restore on error. The cache is the single
@@ -150,7 +153,11 @@ function SegmentEditor() {
         <div className="relative flex-1 min-h-0">
           <div className={cn("h-full min-h-0 transition-opacity", stale ? "opacity-50" : null)}>
             {view === "map" ? (
-              <Map className="h-full" points={pointsBuffer} loading={!preview} />
+              <Map
+                className="h-full"
+                points={stablePointsRef.current}
+                loading={!stablePointsRef.current}
+              />
             ) : (
               <SamplePanel persons={stablePersonsRef.current} isLoading={sampleLoading} />
             )}
