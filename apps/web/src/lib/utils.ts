@@ -21,3 +21,12 @@ export function parseHexRgb(css: string): [number, number, number] {
     parseInt(hex.slice(4, 6), 16),
   ];
 }
+
+// Render an ALL-CAPS voter-file string (name, address, city) as
+// title case. Capitalizes the first letter of each word *and* of
+// each segment after a hyphen or apostrophe — "O'BRIEN" → "O'Brien",
+// "MARY-JANE" → "Mary-Jane". Returns "" for null/undefined/empty.
+export function toTitleCase(text: string | null | undefined): string {
+  if (!text) return "";
+  return text.toLowerCase().replace(/(?:^|[\s\-'])\p{L}/gu, (c) => c.toUpperCase());
+}
