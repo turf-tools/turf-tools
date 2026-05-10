@@ -60,13 +60,41 @@ function SegmentEditor() {
     () => ({ filters: filters.filter(isActiveFilter) }),
     [filters],
   );
-  const { data: preview, isPlaceholderData: stale } = useQuery({
+
+  const [view, setView] = useState<"map" | "list">("map");
+
+  const { data: preview, isPlaceholderData: previewStale } = useQuery({
     ...segmentPreviewQuery(effectiveCriteria),
+    enabled: !!activeSegmentDetail,
+    placeholderData: keepPreviousData,
+  });
+  const {
+    data: sample,
+    isPlaceholderData: sampleStale,
+    isLoading: sampleLoading,
+  } = useQuery({
+    ...segmentSampleQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
   const counts = preview?.counts;
   const pointsBuffer = preview?.pointsBuffer;
+
+  // stale = counts loading OR the active view's own data loading.
+  // Map data lives in the preview query so needs no extra term.
+  // Add `|| waterfallStale` here when that view is added.
+  const activeViewStale = view === "list" ? sampleStale : false;
+  const stale = previewStale || activeViewStale;
+
+  // Hold the last persons snapshot that was current when stale cleared.
+  // Written during render (not in an effect) so the update is synchronous
+  // with the stale→false transition — no intermediate render with new data
+  // while still faded.
+  const stablePersonsRef = useRef<NonNullable<typeof sample>["persons"]>([]);
+  if (!stale) stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
+
+  const stableCountsRef = useRef<typeof counts>(undefined);
+  if (!stale) stableCountsRef.current = counts;
 
   // Optimistic update: write into the ["segment", id] cache in onMutate,
   // snapshot for rollback, restore on error. The cache is the single
@@ -99,8 +127,6 @@ function SegmentEditor() {
   const usedKeys = new Set(filters.map((f) => f.key));
   const availableDefs = FILTERS.filter((d) => !usedKeys.has(d.key));
 
-  const [view, setView] = useState<"map" | "list">("map");
-
   return (
     <div className="grid grid-cols-3 gap-4 h-full">
       <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
@@ -122,11 +148,11 @@ function SegmentEditor() {
       </div>
       <div className="col-span-2 flex h-full min-h-0 flex-col gap-3">
         <div className="relative flex-1 min-h-0">
-          <div className={cn("h-full min-h-0 transition-opacity", stale ? "opacity-70" : null)}>
+          <div className={cn("h-full min-h-0 transition-opacity", stale ? "opacity-50" : null)}>
             {view === "map" ? (
               <Map className="h-full" points={pointsBuffer} loading={!preview} />
             ) : (
-              <SamplePanel criteria={effectiveCriteria} />
+              <SamplePanel persons={stablePersonsRef.current} isLoading={sampleLoading} />
             )}
           </div>
           <div className="absolute left-3 bottom-3 z-50 rounded-lg border border-border bg-background">
@@ -142,18 +168,19 @@ function SegmentEditor() {
             </ToggleGroup>
           </div>
         </div>
-        <CountsPanel counts={counts} stale={stale} />
+        <CountsPanel counts={stableCountsRef.current} stale={stale} />
       </div>
     </div>
   );
 }
 
-function SamplePanel({ criteria }: { criteria: Criteria }) {
-  const { data, isLoading } = useQuery({
-    ...segmentSampleQuery(criteria),
-    placeholderData: keepPreviousData,
-  });
-  const persons = data?.persons ?? [];
+function SamplePanel({
+  persons,
+  isLoading,
+}: {
+  persons: NonNullable<Awaited<ReturnType<typeof client.segments.sample>>>["persons"];
+  isLoading: boolean;
+}) {
   return (
     <div className="h-full rounded-lg border border-border bg-card px-4 pb-2 pt-2">
       <Table
@@ -222,7 +249,7 @@ function CountsPanel({
         className={cn(
           // Dim while mid-edit/save so it's clear the numbers reflect the
           // last saved query. Border + background stay solid.
-          "grid grid-cols-3 gap-4",
+          "grid grid-cols-3 gap-4 transition-opacity",
           stale ? "opacity-30" : null,
         )}
       >
