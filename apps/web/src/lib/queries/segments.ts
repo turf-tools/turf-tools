@@ -18,23 +18,31 @@ export const segmentDetailQuery = (segmentId: string) =>
     queryFn: () => client.segments.getById({ segmentId }),
   });
 
-// Counts + points for the segments-editor preview pane. Key-determined:
-// same criteria always yields the same result.
-export const segmentPreviewQuery = (criteria: Criteria) =>
+export const segmentCountsQuery = (criteria: Criteria) =>
   queryOptions({
-    queryKey: ["segment-preview", JSON.stringify(criteria)] as const,
-    queryFn: async () => {
-      const [counts, pointsBuffer] = await Promise.all([
-        client.segments.count({ criteria }),
-        fetchSegmentPoints({ criteria }),
-      ]);
-      return { counts, pointsBuffer };
-    },
+    queryKey: ["segment-counts", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.count({ criteria }),
     staleTime: Number.POSITIVE_INFINITY,
-    // Releases the multi-MB Float32Array buffer the moment the query
-    // goes inactive — accumulating multiple in cache triggers V8 GC
-    // pauses on subsequent navigations.
+  });
+
+// gcTime:0 releases the multi-MB Float32Array the moment the query goes
+// inactive — accumulating multiple buffers triggers V8 GC pauses.
+export const segmentPointsQuery = (criteria: Criteria) =>
+  queryOptions({
+    queryKey: ["segment-points", JSON.stringify(criteria)] as const,
+    queryFn: () => fetchSegmentPoints({ criteria }),
+    staleTime: Number.POSITIVE_INFINITY,
     gcTime: 0,
+  });
+
+// Row-level sample for the segment editor's list view. Independent of
+// the points fetch so the map view doesn't pull row data and the list
+// view doesn't pull points.
+export const segmentSampleQuery = (criteria: Criteria) =>
+  queryOptions({
+    queryKey: ["segment-sample", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.sample({ criteria }),
+    staleTime: Number.POSITIVE_INFINITY,
   });
 
 // Binary lng/lat pairs — uploaded directly into a GPU buffer, so the
