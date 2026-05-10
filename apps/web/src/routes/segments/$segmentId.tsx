@@ -5,6 +5,8 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
+import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AgeRangeFilter,
   type Criteria,
@@ -17,8 +19,14 @@ import {
   isActiveFilter,
   type TextFilter,
 } from "~/lib/filters";
-import { segmentDetailQuery, segmentPreviewQuery, segmentsListQuery } from "~/lib/queries/segments";
-import { cn } from "~/lib/utils";
+import {
+  segmentCountsQuery,
+  segmentDetailQuery,
+  segmentPointsQuery,
+  segmentSampleQuery,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
+import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/segments/$segmentId")({
@@ -53,13 +61,43 @@ function SegmentEditor() {
     () => ({ filters: filters.filter(isActiveFilter) }),
     [filters],
   );
-  const { data: preview, isPlaceholderData: stale } = useQuery({
-    ...segmentPreviewQuery(effectiveCriteria),
+
+  const [view, setView] = useState<"map" | "list">("map");
+
+  const { data: counts, isPlaceholderData: countsStale } = useQuery({
+    ...segmentCountsQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
-  const counts = preview?.counts;
-  const pointsBuffer = preview?.pointsBuffer;
+  const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
+    ...segmentPointsQuery(effectiveCriteria),
+    enabled: !!activeSegmentDetail,
+    placeholderData: keepPreviousData,
+  });
+  const {
+    data: sample,
+    isPlaceholderData: sampleStale,
+    isLoading: sampleLoading,
+  } = useQuery({
+    ...segmentSampleQuery(effectiveCriteria),
+    enabled: !!activeSegmentDetail,
+    placeholderData: keepPreviousData,
+  });
+
+  // stale = counts loading OR the active view's own data loading.
+  const activeViewStale = view === "map" ? pointsStale : view === "list" ? sampleStale : false;
+  const stale = countsStale || activeViewStale;
+
+  // Stable refs — written during render so each update is synchronous with
+  // the stale→false transition, no intermediate render with new data while faded.
+  const stableCountsRef = useRef<typeof counts>(undefined);
+  if (!stale) stableCountsRef.current = counts;
+
+  const stablePointsRef = useRef<typeof pointsBuffer>(undefined);
+  if (!stale) stablePointsRef.current = pointsBuffer;
+
+  const stablePersonsRef = useRef<NonNullable<typeof sample>["persons"]>([]);
+  if (!stale) stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
 
   // Optimistic update: write into the ["segment", id] cache in onMutate,
   // snapshot for rollback, restore on error. The cache is the single
@@ -111,15 +149,90 @@ function SegmentEditor() {
           </>
         ) : null}
       </div>
-      <div className="col-span-2 flex h-full flex-col gap-3">
-        <div className={cn("flex-1 transition-opacity", stale ? "opacity-70" : null)}>
-          {/* Map curtain stays up until the first preview lands; after
-              that `preview` stays defined via keepPreviousData, so
-              filter-change transitions use the dim wrapper instead. */}
-          <Map className="h-full" points={pointsBuffer} loading={!preview} />
+      <div className="col-span-2 flex h-full min-h-0 flex-col gap-3">
+        <div className="relative flex-1 min-h-0">
+          <div className={cn("h-full min-h-0 transition-opacity", stale ? "opacity-50" : null)}>
+            {view === "map" ? (
+              <Map
+                className="h-full"
+                points={stablePointsRef.current}
+                loading={!stablePointsRef.current}
+              />
+            ) : (
+              <SamplePanel persons={stablePersonsRef.current} isLoading={sampleLoading} />
+            )}
+          </div>
+          <div className="absolute left-3 bottom-3 z-50 rounded-lg border border-border bg-background">
+            <ToggleGroup
+              value={[view]}
+              onValueChange={(values) => {
+                const next = values[0];
+                if (next === "map" || next === "list") setView(next);
+              }}
+            >
+              <ToggleGroupItem value="map">Map</ToggleGroupItem>
+              <ToggleGroupItem value="list">List</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         </div>
-        <CountsPanel counts={counts} stale={stale} />
+        <CountsPanel counts={stableCountsRef.current} stale={stale} />
       </div>
+    </div>
+  );
+}
+
+function SamplePanel({
+  persons,
+  isLoading,
+}: {
+  persons: NonNullable<Awaited<ReturnType<typeof client.segments.sample>>>["persons"];
+  isLoading: boolean;
+}) {
+  return (
+    <div className="h-full rounded-lg border border-border bg-card px-4 pb-2 pt-2">
+      <Table
+        className="table-fixed"
+        containerClassName="h-full overflow-y-auto overflow-x-clip pb-10.5"
+      >
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card [&_th]:h-8">
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Address</TableHead>
+            <TableHead>City</TableHead>
+            <TableHead className="w-16">State</TableHead>
+            <TableHead className="w-20">Zip</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading && persons.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-muted-foreground">
+                Loading sample…
+              </TableCell>
+            </TableRow>
+          ) : persons.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-muted-foreground">
+                No people match this segment.
+              </TableCell>
+            </TableRow>
+          ) : (
+            persons.map((p, idx) => (
+              <TableRow key={idx}>
+                <TableCell className="truncate px-2">
+                  {toTitleCase([p.firstName, p.lastName].filter(Boolean).join(" ") || "—")}
+                </TableCell>
+                <TableCell className="truncate px-2">
+                  {[toTitleCase(p.addressLine1), p.addressLine2].filter(Boolean).join(", ") || "—"}
+                </TableCell>
+                <TableCell className="truncate px-2">{toTitleCase(p.city) ?? "—"}</TableCell>
+                <TableCell className="truncate px-2">{p.state ?? "—"}</TableCell>
+                <TableCell className="truncate px-2">{p.zip5 ?? "—"}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -143,7 +256,7 @@ function CountsPanel({
         className={cn(
           // Dim while mid-edit/save so it's clear the numbers reflect the
           // last saved query. Border + background stay solid.
-          "grid grid-cols-3 gap-4",
+          "grid grid-cols-3 gap-4 transition-opacity",
           stale ? "opacity-30" : null,
         )}
       >
