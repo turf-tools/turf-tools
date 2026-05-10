@@ -9,23 +9,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AgeRangeFilter,
-  type Criteria,
   definitionFor,
   emptyFilterFor,
   type EnumFilter,
   type Filter,
   type FilterDef,
+  filterKey,
   FILTERS,
-  isActiveFilter,
+  isActiveStep,
+  type Pipeline,
+  type Step,
   type TextFilter,
+  type Verb,
+  VERB_META,
 } from "~/lib/filters";
 import {
+  segmentCascadeQuery,
   segmentCountsQuery,
   segmentDetailQuery,
   segmentPointsQuery,
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import type { CascadeStep } from "~/rpc/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -50,27 +56,24 @@ function SegmentEditor() {
     ...segmentDetailQuery(segmentId),
   });
 
-  // Read filters straight from the detail cache — no separate draft layer.
-  // The optimistic mutation below writes to the same cache, so commits
-  // reflect on the next render without a hydration step.
-  const filters = (activeSegmentDetail?.criteria as Criteria | undefined)?.filters ?? [];
+  const steps = (activeSegmentDetail?.criteria as Pipeline | null)?.steps ?? [];
 
-  // Preview keys on active filters only so adding/removing an empty filter
+  // Only steps with active filters drive queries — adding an empty step
   // doesn't trigger a refetch.
-  const effectiveCriteria = useMemo<Criteria>(
-    () => ({ filters: filters.filter(isActiveFilter) }),
-    [filters],
+  const effectivePipeline = useMemo<Pipeline>(
+    () => ({ steps: steps.filter(isActiveStep) }),
+    [steps],
   );
 
-  const [view, setView] = useState<"map" | "list">("map");
+  const [view, setView] = useState<"map" | "list" | "waterfall">("map");
 
   const { data: counts, isPlaceholderData: countsStale } = useQuery({
-    ...segmentCountsQuery(effectiveCriteria),
+    ...segmentCountsQuery(effectivePipeline),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
   const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
-    ...segmentPointsQuery(effectiveCriteria),
+    ...segmentPointsQuery(effectivePipeline),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
@@ -79,13 +82,25 @@ function SegmentEditor() {
     isPlaceholderData: sampleStale,
     isLoading: sampleLoading,
   } = useQuery({
-    ...segmentSampleQuery(effectiveCriteria),
+    ...segmentSampleQuery(effectivePipeline),
+    enabled: !!activeSegmentDetail,
+    placeholderData: keepPreviousData,
+  });
+  const { data: cascade, isPlaceholderData: cascadeStale } = useQuery({
+    ...segmentCascadeQuery(effectivePipeline),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
 
   // stale = counts loading OR the active view's own data loading.
-  const activeViewStale = view === "map" ? pointsStale : view === "list" ? sampleStale : false;
+  const activeViewStale =
+    view === "map"
+      ? pointsStale
+      : view === "list"
+        ? sampleStale
+        : view === "waterfall"
+          ? cascadeStale
+          : false;
   const stale = countsStale || activeViewStale;
 
   // Stable refs — written during render so each update is synchronous with
@@ -99,17 +114,23 @@ function SegmentEditor() {
   const stablePersonsRef = useRef<NonNullable<typeof sample>["persons"]>([]);
   if (!stale) stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
 
-  // Optimistic update: write into the ["segment", id] cache in onMutate,
-  // snapshot for rollback, restore on error. The cache is the single
-  // source of truth — `filters` above reads from it.
+  const stableCascadeRef = useRef<typeof cascade>(undefined);
+  if (!stale) stableCascadeRef.current = cascade;
+
+  // Must update in lockstep with stableCascadeRef so verb labels match
+  // the step counts they annotate.
+  const stablePipelineStepsRef = useRef<Step[]>([]);
+  if (!stale) stablePipelineStepsRef.current = effectivePipeline.steps;
+
+  // Optimistic update: write Pipeline into the ["segment", id] cache.
   const updateCriteriaMutation = useMutation({
-    mutationFn: (input: { segmentId: string; criteria: Criteria }) =>
-      client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.criteria }),
-    onMutate: async ({ segmentId: id, criteria }) => {
+    mutationFn: (input: { segmentId: string; pipeline: Pipeline }) =>
+      client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.pipeline }),
+    onMutate: async ({ segmentId: id, pipeline }) => {
       await queryClient.cancelQueries({ queryKey: ["segment", id] });
       const previous = queryClient.getQueryData(["segment", id]);
       queryClient.setQueryData(["segment", id], (old: { criteria: unknown } | null | undefined) =>
-        old ? { ...old, criteria } : old,
+        old ? { ...old, criteria: pipeline } : old,
       );
       return { previous };
     },
@@ -119,15 +140,16 @@ function SegmentEditor() {
     },
   });
 
-  const commit = (nextFilters: Filter[]) => {
-    updateCriteriaMutation.mutate({ segmentId, criteria: { filters: nextFilters } });
+  const commit = (nextSteps: Step[]) => {
+    updateCriteriaMutation.mutate({ segmentId, pipeline: { steps: nextSteps } });
   };
-  const updateFilter = (idx: number, next: Filter) =>
-    commit(filters.map((f, i) => (i === idx ? next : f)));
-  const removeFilter = (idx: number) => commit(filters.filter((_, i) => i !== idx));
-  const addFilter = (def: FilterDef) => commit([...filters, emptyFilterFor(def)]);
+  const updateStep = (idx: number, next: Step) =>
+    commit(steps.map((s, i) => (i === idx ? next : s)));
+  const removeStep = (idx: number) => commit(steps.filter((_, i) => i !== idx));
+  const addStep = (verb: Verb, def: FilterDef) =>
+    commit([...steps, { verb, filter: emptyFilterFor(def) }]);
 
-  const usedKeys = new Set(filters.map((f) => f.key));
+  const usedKeys = new Set(steps.map((s) => filterKey(s.filter)));
   const availableDefs = FILTERS.filter((d) => !usedKeys.has(d.key));
 
   return (
@@ -135,16 +157,16 @@ function SegmentEditor() {
       <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
         {activeSegmentDetail ? (
           <>
-            {filters.map((filter, idx) => (
-              <FilterRow
-                key={`${filter.key}-${idx}`}
-                filter={filter}
-                onChange={(next) => updateFilter(idx, next)}
-                onRemove={() => removeFilter(idx)}
+            {steps.map((step, idx) => (
+              <StepRow
+                key={`${filterKey(step.filter)}-${idx}`}
+                step={step}
+                onChange={(next) => updateStep(idx, { ...step, filter: next })}
+                onRemove={() => removeStep(idx)}
               />
             ))}
             {availableDefs.length > 0 ? (
-              <AddFilterMenu defs={availableDefs} onPick={addFilter} />
+              <AddStepMenu defs={availableDefs} isFirstStep={steps.length === 0} onAdd={addStep} />
             ) : null}
           </>
         ) : null}
@@ -158,8 +180,13 @@ function SegmentEditor() {
                 points={stablePointsRef.current}
                 loading={!stablePointsRef.current}
               />
-            ) : (
+            ) : view === "list" ? (
               <SamplePanel persons={stablePersonsRef.current} isLoading={sampleLoading} />
+            ) : (
+              <WaterfallPanel
+                steps={stableCascadeRef.current?.steps ?? []}
+                pipelineSteps={stablePipelineStepsRef.current}
+              />
             )}
           </div>
           <div className="absolute left-3 bottom-3 z-50 rounded-lg border border-border bg-background">
@@ -167,11 +194,12 @@ function SegmentEditor() {
               value={[view]}
               onValueChange={(values) => {
                 const next = values[0];
-                if (next === "map" || next === "list") setView(next);
+                if (next === "map" || next === "list" || next === "waterfall") setView(next);
               }}
             >
               <ToggleGroupItem value="map">Map</ToggleGroupItem>
               <ToggleGroupItem value="list">List</ToggleGroupItem>
+              <ToggleGroupItem value="waterfall">Waterfall</ToggleGroupItem>
             </ToggleGroup>
           </div>
         </div>
@@ -237,6 +265,78 @@ function SamplePanel({
   );
 }
 
+function WaterfallPanel({ steps, pipelineSteps }: { steps: CascadeStep[]; pipelineSteps: Step[] }) {
+  const [anchor, setAnchor] = useState(0);
+  const effectiveAnchor = Math.min(anchor, steps.length - 1);
+  const anchorCount = steps[effectiveAnchor]?.count ?? 0;
+
+  if (steps.length === 0) {
+    return (
+      <div className="h-full rounded-lg border border-border bg-card flex items-center justify-center">
+        <span className="text-sm text-muted-foreground">Add filters to see the cascade.</span>
+      </div>
+    );
+  }
+  return (
+    <div className="h-full overflow-y-auto rounded-lg border border-border bg-card px-4 py-3">
+      <div className="flex flex-col gap-1">
+        {steps.map((step, i) => {
+          const pipelineStep = pipelineSteps[i - 1];
+          const verb = pipelineStep?.verb;
+          const verbMeta = verb ? VERB_META[verb] : null;
+          const filterDef = pipelineStep
+            ? pipelineStep.filter.kind === "all"
+              ? { label: "Everyone" }
+              : definitionFor(filterKey(pipelineStep.filter))
+            : null;
+          const label = i === 0 ? "All" : (filterDef?.label ?? "—");
+          const isAnchor = i === effectiveAnchor;
+          const above = i < effectiveAnchor;
+          const delta = isAnchor || above ? null : step.count - anchorCount;
+          const pct =
+            !above && anchorCount > 0 ? Math.round((step.count / anchorCount) * 100) : null;
+          return (
+            <div
+              key={i}
+              onClick={() => setAnchor(i)}
+              className={cn(
+                "flex items-baseline gap-3 py-1 -mx-2 px-2 rounded cursor-pointer",
+                isAnchor ? "bg-accent" : "hover:bg-accent/50",
+              )}
+            >
+              <span className="w-28 shrink-0 truncate text-sm text-muted-foreground">{label}</span>
+              {verbMeta ? (
+                <span
+                  className="w-14 shrink-0 rounded px-1.5 py-0.5 text-center text-xs font-medium"
+                  style={{ backgroundColor: `${verbMeta.color}22`, color: verbMeta.color }}
+                >
+                  {verbMeta.label}
+                </span>
+              ) : (
+                <span className="w-14 shrink-0" />
+              )}
+              <span className="w-24 shrink-0 text-right tabular-nums text-sm font-medium">
+                {step.count.toLocaleString()}
+              </span>
+              <span
+                className={cn(
+                  "w-20 shrink-0 text-right tabular-nums text-sm",
+                  delta !== null && delta < 0 ? "text-destructive" : "text-muted-foreground",
+                )}
+              >
+                {delta !== null ? delta.toLocaleString() : "—"}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {pct !== null ? `${pct}%` : "—"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CountsPanel({
   counts,
   stale,
@@ -279,41 +379,47 @@ function Stat({ label, value }: { label: string; value: number | null | undefine
   );
 }
 
-function FilterRow({
-  filter,
+function StepRow({
+  step,
   onChange,
   onRemove,
 }: {
-  filter: Filter;
+  step: Step;
   onChange: (next: Filter) => void;
   onRemove: () => void;
 }) {
-  const def = definitionFor(filter.key);
-  if (!def) {
-    return (
-      <div className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-sm">
-        <span>Unknown property: {filter.key}</span>
-        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove filter">
-          <X className="size-4" />
-        </Button>
-      </div>
-    );
-  }
+  const { filter, verb } = step;
+  const { color, label: verbLabel } = VERB_META[verb];
+  const def =
+    filter.kind === "all"
+      ? { kind: "all" as const, key: "all", label: "Everyone" }
+      : definitionFor((filter as Exclude<Filter, { kind: "all" }>).key);
+
   return (
     <div className="rounded-md border border-border bg-card p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm">{def.label}</span>
-        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove filter">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span
+            className="rounded px-1.5 py-0.5 text-xs font-medium"
+            style={{ backgroundColor: `${color}22`, color }}
+          >
+            {verbLabel}
+          </span>
+          <span className="text-sm">
+            {def?.label ?? (filter.kind === "all" ? "Everyone" : `Unknown: ${(filter as any).key}`)}
+          </span>
+        </div>
+        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove step">
           <X className="size-4" />
         </Button>
       </div>
-      {filter.kind === "enum" && def.kind === "enum" ? (
+      {filter.kind === "enum" && def?.kind === "enum" ? (
         <EnumFilterEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
-      {filter.kind === "age-range" && def.kind === "age-range" ? (
+      {filter.kind === "age-range" && def?.kind === "age-range" ? (
         <AgeRangeFilterEditor filter={filter} onChange={onChange} />
       ) : null}
-      {filter.kind === "text" && def.kind === "text" ? (
+      {filter.kind === "text" && def?.kind === "text" ? (
         <TextFilterEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
     </div>
@@ -449,62 +555,73 @@ function AgeRangeFilterEditor({
   );
 }
 
-function AddFilterMenu({
+function AddStepMenu({
   defs,
-  onPick,
+  isFirstStep,
+  onAdd,
 }: {
   defs: ReadonlyArray<FilterDef>;
-  onPick: (def: FilterDef) => void;
+  isFirstStep: boolean;
+  onAdd: (verb: Verb, def: FilterDef) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openVerb, setOpenVerb] = useState<Verb | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // Close on click outside the menu wrapper.
+  const verbs: Verb[] = isFirstStep ? ["narrow", "remove"] : ["narrow", "add", "remove"];
+
   useEffect(() => {
-    if (!open) return;
+    if (!openVerb) return;
     const onDocMouseDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpenVerb(null);
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [open]);
+  }, [openVerb]);
+
   return (
-    <div className="relative" ref={wrapRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "flex h-11 w-full items-center gap-2",
-          "rounded-md border border-border bg-card px-3 py-2 text-left text-sm",
-          "text-muted-foreground hover:border-muted-foreground hover:text-foreground",
-        )}
-      >
-        <Plus className="size-3.5" />
-        <span>Add filter</span>
-      </button>
-      {open ? (
-        <div
-          className={cn(
-            "absolute top-full right-0 left-0 z-10 mt-1",
-            "flex flex-col rounded-md border border-border bg-background py-1 shadow-md",
-          )}
-        >
-          {defs.map((def) => (
+    <div className="flex gap-2" ref={wrapRef}>
+      {verbs.map((verb) => {
+        const { color, label } = VERB_META[verb];
+        return (
+          <div key={verb} className="relative flex-1">
             <button
               type="button"
-              key={def.key}
-              onClick={() => {
-                onPick(def);
-                setOpen(false);
-              }}
-              className="px-3 py-1.5 text-left text-sm hover:bg-muted"
+              onClick={() => setOpenVerb((v) => (v === verb ? null : verb))}
+              className={cn(
+                "flex h-9 w-full items-center justify-center gap-1.5 rounded-md border text-xs",
+                openVerb === verb
+                  ? "border-transparent"
+                  : "border-border hover:border-muted-foreground",
+              )}
+              style={openVerb === verb ? { backgroundColor: `${color}22`, color } : {}}
             >
-              {def.label}
+              <Plus className="size-3" />
+              {label}
             </button>
-          ))}
-        </div>
-      ) : null}
+            {openVerb === verb ? (
+              <div
+                className={cn(
+                  "absolute top-full left-0 right-0 z-10 mt-1",
+                  "flex flex-col rounded-md border border-border bg-background py-1 shadow-md",
+                )}
+              >
+                {defs.map((def) => (
+                  <button
+                    type="button"
+                    key={def.key}
+                    onClick={() => {
+                      onAdd(verb, def);
+                      setOpenVerb(null);
+                    }}
+                    className="px-3 py-1.5 text-left text-sm hover:bg-muted"
+                  >
+                    {def.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

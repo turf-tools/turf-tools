@@ -136,6 +136,4 @@ def attach_operational_postgres(conn: duckdb.DuckDBPyConnection, settings: Setti
     # makes this a no-op if a previous call on the same connection already
     # attached.
     escaped = settings.database_url.replace("'", "''")
-    conn.execute(
-        f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)"
-    )
+    conn.execute(f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)")
