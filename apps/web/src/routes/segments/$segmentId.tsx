@@ -25,7 +25,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
-import { cn } from "~/lib/utils";
+import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/segments/$segmentId")({
@@ -155,9 +155,12 @@ function SamplePanel({ criteria }: { criteria: Criteria }) {
   });
   const persons = data?.persons ?? [];
   return (
-    <div className="h-full overflow-y-auto rounded-lg border border-border bg-card px-4 pb-2 pt-1">
-      <Table className="table-fixed">
-        <TableHeader>
+    <div className="h-full rounded-lg border border-border bg-card px-4 pb-2 pt-2">
+      <Table
+        className="table-fixed"
+        containerClassName="h-full overflow-y-auto overflow-x-clip pb-10.5"
+      >
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card [&_th]:h-8">
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Address</TableHead>
@@ -183,12 +186,12 @@ function SamplePanel({ criteria }: { criteria: Criteria }) {
             persons.map((p, idx) => (
               <TableRow key={idx}>
                 <TableCell className="truncate px-2">
-                  {[p.firstName, p.lastName].filter(Boolean).join(" ") || "—"}
+                  {toTitleCase([p.firstName, p.lastName].filter(Boolean).join(" ") || "—")}
                 </TableCell>
                 <TableCell className="truncate px-2">
-                  {[p.addressLine1, p.addressLine2].filter(Boolean).join(", ") || "—"}
+                  {[toTitleCase(p.addressLine1), p.addressLine2].filter(Boolean).join(", ") || "—"}
                 </TableCell>
-                <TableCell className="truncate px-2">{p.city ?? "—"}</TableCell>
+                <TableCell className="truncate px-2">{toTitleCase(p.city) ?? "—"}</TableCell>
                 <TableCell className="truncate px-2">{p.state ?? "—"}</TableCell>
                 <TableCell className="truncate px-2">{p.zip5 ?? "—"}</TableCell>
               </TableRow>
