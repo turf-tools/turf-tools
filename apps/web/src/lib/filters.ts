@@ -29,7 +29,7 @@ export type Filter = AllFilter | EnumFilter | AgeRangeFilter | TextFilter;
 
 // Pipeline model — ordered sequence of steps with verbs.
 export type Verb = "add" | "narrow" | "remove";
-export type Step = { verb: Verb; filter: Filter };
+export type Step = { id: string; verb: Verb; filter: Filter };
 export type Pipeline = { steps: Step[] };
 
 // Catalog of available filters. `source` tells the SQL translator where

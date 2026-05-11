@@ -1,7 +1,15 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { Filter as FilterIcon, Minus, Plus, X } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Reorder, useDragControls } from "motion/react";
+import { Filter as FilterIcon, GripVertical, Minus, Plus, X } from "lucide-react";
+import React, {
+  type KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
@@ -56,7 +64,18 @@ function SegmentEditor() {
     ...segmentDetailQuery(segmentId),
   });
 
-  const steps = (activeSegmentDetail?.criteria as Pipeline | null)?.steps ?? [];
+  const stepsRaw = (activeSegmentDetail?.criteria as Pipeline | null)?.steps ?? [];
+  const stepsIdRef = useRef<string[]>([]);
+  while (stepsIdRef.current.length < stepsRaw.length) stepsIdRef.current.push(crypto.randomUUID());
+  const serverSteps = stepsRaw.map((s, i) => (s.id ? s : { ...s, id: stepsIdRef.current[i]! }));
+
+  // During an active drag, the visual list reorders via `draft` — but
+  // `effectivePipeline` keeps reading server steps so dependent queries
+  // (count/sample/points) don't re-fire on every shift. Commit happens
+  // once on pointer-up.
+  const [draft, setDraft] = useState<Step[] | null>(null);
+  const displaySteps = draft ?? serverSteps;
+  const steps = serverSteps; // queries see committed state only
 
   // Only steps with active filters drive queries — adding an empty step
   // doesn't trigger a refetch.
@@ -158,13 +177,35 @@ function SegmentEditor() {
     commit(next);
   };
   const addStep = (verb: Verb, def: FilterDef) =>
-    commit([...steps, { verb, filter: emptyFilterFor(def) }]);
+    commit([...steps, { id: crypto.randomUUID(), verb, filter: emptyFilterFor(def) }]);
+
+  const handleDragEnd = () => {
+    if (!draft) return;
+    const next = [...draft];
+    if (next[0]?.verb === "add") next[0] = { ...next[0], verb: "narrow" };
+    commit(next);
+    setDraft(null);
+  };
+
+  // Auto-scroll the step list to the bottom when a step is added so the
+  // newly-added step is always visible even when the list overflows.
+  const stepsContainerRef = useRef<HTMLDivElement>(null);
+  const prevStepsLengthRef = useRef(serverSteps.length);
+  useEffect(() => {
+    if (serverSteps.length > prevStepsLengthRef.current && stepsContainerRef.current) {
+      stepsContainerRef.current.scrollTo({
+        top: stepsContainerRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+    prevStepsLengthRef.current = serverSteps.length;
+  }, [serverSteps.length]);
 
   const availableDefs = FILTERS;
 
   return (
     <div className="flex gap-4 h-full">
-      <div className="w-84 shrink-0 flex flex-col gap-3 overflow-y-auto">
+      <div ref={stepsContainerRef} className="w-86 shrink-0 flex flex-col gap-3 overflow-y-auto">
         {activeSegmentDetail ? (
           <>
             <div
@@ -176,15 +217,27 @@ function SegmentEditor() {
             >
               <AddStepMenu defs={availableDefs} isFirstStep={steps.length === 0} onAdd={addStep} />
             </div>
-            {steps.map((step, idx) => (
-              <StepRow
-                key={`${filterKey(step.filter)}-${idx}`}
-                number={idx + 1}
-                step={step}
-                onChange={(next) => updateStep(idx, { ...step, filter: next })}
-                onRemove={() => removeStep(idx)}
-              />
-            ))}
+            <Reorder.Group
+              axis="y"
+              values={displaySteps}
+              onReorder={setDraft}
+              as="div"
+              className="flex flex-col gap-3"
+            >
+              {displaySteps.map((step, idx) => {
+                const serverIdx = serverSteps.findIndex((s) => s.id === step.id);
+                return (
+                  <ReorderStepRow
+                    key={step.id}
+                    number={idx + 1}
+                    step={step}
+                    onChange={(next) => updateStep(serverIdx, { ...step, filter: next })}
+                    onRemove={() => removeStep(serverIdx)}
+                    onDragEnd={handleDragEnd}
+                  />
+                );
+              })}
+            </Reorder.Group>
           </>
         ) : null}
       </div>
@@ -345,12 +398,16 @@ function WaterfallPanel({
               >
                 <TableCell className="!pl-2 px-2 truncate">{label}</TableCell>
                 <TableCell className="px-2">
-                  {verbMeta && (
+                  {verbMeta ? (
                     <span
                       className="rounded px-1.5 py-0.5 text-xs font-medium"
                       style={{ backgroundColor: `${verbMeta.color}22`, color: verbMeta.color }}
                     >
                       {verbMeta.label}
+                    </span>
+                  ) : (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                      Start
                     </span>
                   )}
                 </TableCell>
@@ -432,16 +489,38 @@ function Stat({ label, value }: { label: string; value: number | null | undefine
   );
 }
 
+function ReorderStepRow({
+  onDragEnd,
+  ...props
+}: React.ComponentProps<typeof StepRow> & { onDragEnd?: () => void }) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={props.step}
+      dragListener={false}
+      dragControls={controls}
+      as="div"
+      onDragEnd={onDragEnd}
+      transition={{ layout: { type: "tween", duration: 0.15, ease: "easeOut" } }}
+      dragTransition={{ bounceStiffness: 10000, bounceDamping: 500, power: 0 }}
+    >
+      <StepRow {...props} dragControls={controls} />
+    </Reorder.Item>
+  );
+}
+
 function StepRow({
   number,
   step,
   onChange,
   onRemove,
+  dragControls,
 }: {
   number: number;
   step: Step;
   onChange: (next: Filter) => void;
   onRemove: () => void;
+  dragControls?: ReturnType<typeof useDragControls>;
 }) {
   const { filter, verb } = step;
   const { color, label: verbLabel } = VERB_META[verb];
@@ -458,11 +537,21 @@ function StepRow({
           "flex items-center justify-between gap-2",
         )}
       >
-        <span className="text-sm">
-          <span className="text-muted-foreground pr-2">{number}</span>
-          {def?.label ?? (filter.kind === "all" ? "Everyone" : `Unknown: ${(filter as any).key}`)}
-        </span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            className="cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground shrink-0"
+            onPointerDown={(e) => dragControls?.start(e)}
+            aria-label="Drag to reorder"
+          >
+            <GripVertical className="size-3.5" />
+          </button>
+          <span className="text-sm truncate">
+            <span className="text-muted-foreground pr-2">{number}</span>
+            {def?.label ?? (filter.kind === "all" ? "Everyone" : `Unknown: ${(filter as any).key}`)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
           <span
             className="rounded px-1.5 py-0.5 text-xs font-medium"
             style={{ backgroundColor: `${color}22`, color }}
