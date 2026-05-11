@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.dsl.compile import boundary_key_expr_for, to_where
+from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import get_connection
 from src.job_runner import JobManager
@@ -168,15 +168,9 @@ async def persons_count(req: _PersonsCountRequest):
     """Persons-level summary counts.
 
     Response shape: ``{personCount, doorCount, buildingCount}``.
-
-    Aggregates only — no row-level data. DuckDB's column pruning means
-    we only read `door_id`, `building_id`, and the columns referenced by
-    the WHERE clause; orders of magnitude less I/O than materialising
-    every column. Row-level previews live at ``/persons/sample``.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
-    # CTE materialised once so the WHERE evaluates a single time even
-    # though three subqueries reference it.
+    params: list = []
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -199,6 +193,35 @@ async def persons_count(req: _PersonsCountRequest):
     }
 
 
+class _PersonsCountCascadeRequest(BaseModel):
+    criteria: Criteria = Criteria()
+    orgSlug: str  # noqa: N815
+
+
+@app.post("/persons/count-cascade")
+async def persons_count_cascade(req: _PersonsCountCascadeRequest):
+    """Per-step person counts for the segment editor's waterfall panel.
+
+    Returns one row per step (plus a baseline "all" row at index 0). Each
+    row carries the absolute count after that step and the delta vs the
+    prior row. The step verb (add/narrow/remove) determines how each step
+    modifies the running set.
+    """
+    persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
+    params: list = []
+    sql = cascade_sql(req.criteria, persons_table, params)
+    conn = get_connection(settings, read_only=True)
+    row = conn.execute(sql, params).fetchone()
+    counts = list(row)
+    steps_result = []
+    prev = counts[0]
+    steps_result.append({"count": prev, "delta": None})
+    for c in counts[1:]:
+        steps_result.append({"count": c, "delta": c - prev})
+        prev = c
+    return {"steps": steps_result}
+
+
 class _PersonsSampleRequest(BaseModel):
     criteria: Criteria = Criteria()
     keyFilter: KeyFilter | None = None  # noqa: N815
@@ -214,22 +237,13 @@ async def persons_sample(req: _PersonsSampleRequest):
     addressLine2, city, state, zip5}, ...]}``. Used by the segment
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
-    where, params = to_where(req.criteria, req.keyFilter)
     limit = max(1, min(req.limit, 500))
-    # Random sample so the preview doesn't keep showing the same physical-order
-    # rows as filters change. Sample sits outside the filter subquery so the
-    # WHERE applies first, then we draw N rows from the matched set.
+    params: list = []
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
-            SELECT
-                first_name,
-                last_name,
-                address_line_1,
-                address_line_2,
-                city,
-                state,
-                zip5
+            SELECT first_name, last_name, address_line_1, address_line_2, city, state, zip5
             FROM {{persons_geocoded}}
             {where}
         ) USING SAMPLE {limit} ROWS
@@ -270,8 +284,9 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
     group_expr = boundary_key_expr_for(req.keyGroup)
+    params: list = []
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -305,16 +320,12 @@ async def buildings_list(req: _BuildingsListRequest):
     """One row per building containing at least one matching person,
     with door + person counts and the building's centroid.
 
-    The persons-side WHERE lives in a subquery so its unqualified
-    column references (e.g. `zip5`) only see persons — without the
-    subquery, columns shared between persons and buildings would be
-    ambiguous in the outer JOIN.
-
     Used by the turf cutter to render buildings scoped to criteria ∩
     zone, with enough detail to compute "what's inside this drawn
     polygon" client-side.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
+    params: list = []
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -326,8 +337,7 @@ async def buildings_list(req: _BuildingsListRequest):
         FROM {{buildings_geocoded}} b
         JOIN (
             SELECT building_id, door_id FROM {{persons_geocoded}} {where}
-        ) fp
-            ON fp.building_id = b.building_id
+        ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
         slug=req.orgSlug,
@@ -350,21 +360,17 @@ async def buildings_points(req: _BuildingsPointsRequest):
     """Binary lng/lat pairs (Float32, row-major) for buildings whose
     contained persons match the criteria.
 
-    The persons-side WHERE goes through a `WHERE building_id IN (SELECT
-    DISTINCT building_id FROM persons ...)` subquery so unqualified
-    column refs only see persons. Empty criteria → all buildings with
-    at least one matched person.
-
     Designed for direct upload into a GPU buffer on the browser — no
     JSON envelope, no per-byte decode work.
     """
-    where, params = to_where(req.criteria, req.keyFilter)
+    params: list = []
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT longitude, latitude
         FROM {{buildings_geocoded}}
         WHERE building_id IN (
-          SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
+            SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
         )
         """,
         slug=req.orgSlug,

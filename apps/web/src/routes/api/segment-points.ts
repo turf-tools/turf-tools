@@ -25,7 +25,7 @@ export const Route = createFileRoute("/api/segment-points")({
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
         const body = (await request.json()) as {
-          criteria?: unknown;
+          criteria: unknown;
           keyFilter?: { keyGroup: string; keys: string[] } | null;
         };
         const upstream = await dataFetch("/buildings/points", {

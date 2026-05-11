@@ -85,7 +85,7 @@ export const create = pub
       .values({
         organizationId: context.user.organizationId,
         name: input.name,
-        criteria: { filters: [] },
+        criteria: { steps: [] },
         createdBy: context.user.userId,
       })
       .returning({ ...segmentSelect, criteria: segments.criteria });
@@ -252,20 +252,25 @@ export async function loadOrgSlug(context: {
   return slug;
 }
 
-// Total / per-door / per-building counts + sample people for a criteria.
-// Used by the segment editor's preview pane. No keyFilter — the segment
-// editor has no zone scoping.
+// Counts + sample for the segment editor's preview pane.
 export const count = pub
   .input(z.object({ criteria: z.unknown() }))
   .handler(async ({ context, input }): Promise<PersonsCount> => {
     const orgSlug = await loadOrgSlug(context);
-    return dataPostJson<PersonsCount>("/persons/count", {
+    return dataPostJson<PersonsCount>("/persons/count", { criteria: input.criteria, orgSlug });
+  });
+
+export type CascadeStep = { count: number; delta: number | null };
+export const countCascade = pub
+  .input(z.object({ criteria: z.unknown() }))
+  .handler(async ({ context, input }): Promise<{ steps: CascadeStep[] }> => {
+    const orgSlug = await loadOrgSlug(context);
+    return dataPostJson<{ steps: CascadeStep[] }>("/persons/count-cascade", {
       criteria: input.criteria,
       orgSlug,
     });
   });
 
-// Row-level sample for the segment editor's list view. Capped server-side.
 export const sample = pub
   .input(z.object({ criteria: z.unknown(), limit: z.number().int().positive().optional() }))
   .handler(async ({ context, input }): Promise<PersonsSample> => {
