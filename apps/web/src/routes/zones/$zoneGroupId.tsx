@@ -305,8 +305,8 @@ function ZoneGroupEditor() {
   }, [activeZoneId, renamingZoneId, overlaySegmentDropdown.open]);
 
   return (
-    <div className="grid grid-cols-3 gap-4 h-full">
-      <div className="col-span-1 flex flex-col gap-2 overflow-y-auto">
+    <div className="flex gap-4 h-full">
+      <div className="w-86 shrink-0 flex flex-col gap-2 overflow-y-auto">
         {zones?.map((zone, idx) => {
           const isActive = zone.zoneId === activeZoneId;
           const isRenaming = renamingZoneId === zone.zoneId;
@@ -423,7 +423,7 @@ function ZoneGroupEditor() {
           </button>
         ) : null}
       </div>
-      <div ref={mapWrapperRef} className="relative col-span-2 h-full">
+      <div ref={mapWrapperRef} className="relative flex-1 min-w-0 h-full">
         <Map
           className="h-full"
           boundariesUrl={
