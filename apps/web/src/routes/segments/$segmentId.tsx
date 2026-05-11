@@ -352,7 +352,7 @@ function WaterfallPanel({
     return <div className="h-full rounded-lg border border-border bg-card" />;
   }
   return (
-    <div className="h-full rounded-lg border border-border bg-card px-2 pb-2 pt-2">
+    <div className="h-full rounded-lg border border-border bg-card px-2 pb-2 pt-1.5">
       <Table
         containerClassName="h-full overflow-y-auto overflow-x-clip pb-10"
         className="border-separate border-spacing-y-0.5"
@@ -366,7 +366,7 @@ function WaterfallPanel({
             <TableHead className="w-44">Fraction</TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
+        <TableBody className="relative -top-[2px]">
           {steps.map((step, i) => {
             const criteriaStep = criteriaSteps[i - 1];
             const verb = criteriaStep?.verb;
