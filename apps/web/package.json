@@ -34,6 +34,7 @@
     "jotai": "^2.19.1",
     "lucide-react": "^1.7.0",
     "maplibre-gl": "^5.24.0",
+    "motion": "^12.38.0",
     "react": "^19",
     "react-dom": "^19",
     "react-map-gl": "^8.1.1",
