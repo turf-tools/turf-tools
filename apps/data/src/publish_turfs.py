@@ -1,6 +1,6 @@
 """Publish drafts for a (campaign, zone) into immutable turfs.
 
-Single-transaction pipeline: reads scope (campaign, segment, zone, drafts)
+Single-transaction publish: reads scope (campaign, segment, zone, drafts)
 from operational Postgres via DuckDB's postgres ATTACH, runs the spatial
 join + per-turf JSON construction in DuckLake, INSERTs both the `turfs`
 rows and their `turf_data` rows directly into Postgres. The web RPC's
@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.dsl.compile import to_where
+from src.dsl.compile import criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
@@ -82,7 +82,10 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     scope = _load_publish_scope(conn, req)
-    where_sql, where_params = to_where(scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys))
+    where_params: list = []
+    where_sql = criteria_to_where(
+        scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params
+    )
     _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
 
     # Retry budget exists only to swallow the rare turf_code collision

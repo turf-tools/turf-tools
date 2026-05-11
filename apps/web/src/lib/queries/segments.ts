@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import type { Pipeline } from "~/lib/filters";
+import type { Criteria } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
 export type SegmentCriteria = NonNullable<
@@ -18,34 +18,34 @@ export const segmentDetailQuery = (segmentId: string) =>
     queryFn: () => client.segments.getById({ segmentId }),
   });
 
-export const segmentCountsQuery = (pipeline: Pipeline) =>
+export const segmentCountsQuery = (criteria: Criteria) =>
   queryOptions({
-    queryKey: ["segment-counts", JSON.stringify(pipeline)] as const,
-    queryFn: () => client.segments.count({ pipeline }),
+    queryKey: ["segment-counts", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.count({ criteria }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
 // gcTime:0 releases the multi-MB Float32Array the moment the query goes
 // inactive — accumulating multiple buffers triggers V8 GC pauses.
-export const segmentPointsQuery = (pipeline: Pipeline) =>
+export const segmentPointsQuery = (criteria: Criteria) =>
   queryOptions({
-    queryKey: ["segment-points", JSON.stringify(pipeline)] as const,
-    queryFn: () => fetchSegmentPoints({ pipeline }),
+    queryKey: ["segment-points", JSON.stringify(criteria)] as const,
+    queryFn: () => fetchSegmentPoints({ criteria }),
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 0,
   });
 
-export const segmentSampleQuery = (pipeline: Pipeline) =>
+export const segmentSampleQuery = (criteria: Criteria) =>
   queryOptions({
-    queryKey: ["segment-sample", JSON.stringify(pipeline)] as const,
-    queryFn: () => client.segments.sample({ pipeline }),
+    queryKey: ["segment-sample", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.sample({ criteria }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-export const segmentCascadeQuery = (pipeline: Pipeline) =>
+export const segmentCascadeQuery = (criteria: Criteria) =>
   queryOptions({
-    queryKey: ["segment-cascade", JSON.stringify(pipeline)] as const,
-    queryFn: () => client.segments.countCascade({ pipeline }),
+    queryKey: ["segment-cascade", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.countCascade({ criteria }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -54,15 +54,13 @@ export const segmentCascadeQuery = (pipeline: Pipeline) =>
 // no per-byte JS decode). Lives outside oRPC for that reason; auth /
 // org are enforced by the /api proxy on the web edge.
 export async function fetchSegmentPoints(input: {
-  pipeline?: unknown;
-  criteria?: unknown;
+  criteria: unknown;
   keyFilter?: { keyGroup: string; keys: string[] } | null;
 }): Promise<Float32Array> {
   const res = await fetch("/api/segment-points", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      pipeline: input.pipeline,
       criteria: input.criteria,
       keyFilter: input.keyFilter,
     }),
@@ -71,10 +69,9 @@ export async function fetchSegmentPoints(input: {
   return new Float32Array(await res.arrayBuffer());
 }
 
-// Buildings inside a single zone, narrowed by segment criteria. Used
-// by the turf cutter. `segmentCriteria` is `unknown`-typed at the type
-// level, so passing `undefined` is structurally allowed for
-// disabled-state calls.
+// Buildings inside a single zone, narrowed by segment criteria. Used by
+// the turf cutter. `segmentCriteria` is `unknown`-typed at the type level,
+// so passing `undefined` is structurally allowed for disabled-state calls.
 export const cutterBuildingsQuery = (
   zoneId: string,
   segmentCriteria: SegmentCriteria,

@@ -27,10 +27,10 @@ export type TextFilter = {
 
 export type Filter = AllFilter | EnumFilter | AgeRangeFilter | TextFilter;
 
-// Pipeline model — ordered sequence of steps with verbs.
+// Criteria — ordered sequence of steps with verbs.
 export type Verb = "add" | "narrow" | "remove";
 export type Step = { id: string; verb: Verb; filter: Filter };
-export type Pipeline = { steps: Step[] };
+export type Criteria = { steps: Step[] };
 
 // Catalog of available filters. `source` tells the SQL translator where
 // the field lives (top level "column" or "other_properties").
@@ -161,7 +161,7 @@ export function isActiveStep(s: Step): boolean {
   return isActiveFilter(s.filter);
 }
 
-// Verb display metadata — label and schemeObservable10 color.
+// Verb display metadata — label and accent color.
 export const VERB_META: Record<Verb, { label: string; color: string }> = {
   narrow: { label: "Narrow", color: "#4269d0" },
   add: { label: "Add", color: "#3ca951" },

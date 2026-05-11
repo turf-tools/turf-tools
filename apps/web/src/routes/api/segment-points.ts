@@ -25,8 +25,7 @@ export const Route = createFileRoute("/api/segment-points")({
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
         const body = (await request.json()) as {
-          pipeline?: unknown;
-          criteria?: unknown;
+          criteria: unknown;
           keyFilter?: { keyGroup: string; keys: string[] } | null;
         };
         const upstream = await dataFetch("/buildings/points", {
@@ -36,7 +35,6 @@ export const Route = createFileRoute("/api/segment-points")({
             Accept: "application/octet-stream",
           },
           body: JSON.stringify({
-            pipeline: body.pipeline,
             criteria: body.criteria,
             keyFilter: body.keyFilter,
             orgSlug: ORG_SLUG,

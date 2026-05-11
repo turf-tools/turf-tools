@@ -2,13 +2,14 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
 import { Filter as FilterIcon, GripVertical, Minus, Plus, X } from "lucide-react";
-import React, {
+import {
+  type ComponentProps,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
@@ -25,7 +26,7 @@ import {
   filterKey,
   FILTERS,
   isActiveStep,
-  type Pipeline,
+  type Criteria,
   type Step,
   type TextFilter,
   type Verb,
@@ -64,22 +65,20 @@ function SegmentEditor() {
     ...segmentDetailQuery(segmentId),
   });
 
-  const stepsRaw = (activeSegmentDetail?.criteria as Pipeline | null)?.steps ?? [];
+  const stepsRaw = (activeSegmentDetail?.criteria as Criteria | null)?.steps ?? [];
   const stepsIdRef = useRef<string[]>([]);
   while (stepsIdRef.current.length < stepsRaw.length) stepsIdRef.current.push(crypto.randomUUID());
-  const serverSteps = stepsRaw.map((s, i) => (s.id ? s : { ...s, id: stepsIdRef.current[i]! }));
+  const steps = stepsRaw.map((s, i) => (s.id ? s : { ...s, id: stepsIdRef.current[i]! }));
 
-  // During an active drag, the visual list reorders via `draft` — but
-  // `effectivePipeline` keeps reading server steps so dependent queries
-  // (count/sample/points) don't re-fire on every shift. Commit happens
-  // once on pointer-up.
+  // While a drag is active, the visual list reorders via `draft`; queries
+  // keep reading committed `steps` so they don't refire on every shift.
+  // Commit happens once on pointer-up.
   const [draft, setDraft] = useState<Step[] | null>(null);
-  const displaySteps = draft ?? serverSteps;
-  const steps = serverSteps; // queries see committed state only
+  const displaySteps = draft ?? steps;
 
   // Only steps with active filters drive queries — adding an empty step
   // doesn't trigger a refetch.
-  const effectivePipeline = useMemo<Pipeline>(
+  const effectiveCriteria = useMemo<Criteria>(
     () => ({ steps: steps.filter(isActiveStep) }),
     [steps],
   );
@@ -92,7 +91,7 @@ function SegmentEditor() {
   // revisiting a view after a criteria change shows the last result while
   // the new fetch lands, and a previously-visited view is instant from cache.
   const { data: counts, isPlaceholderData: countsStale } = useQuery({
-    ...segmentCountsQuery(effectivePipeline),
+    ...segmentCountsQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
@@ -101,7 +100,7 @@ function SegmentEditor() {
     isPlaceholderData: pointsStale,
     isLoading: pointsLoading,
   } = useQuery({
-    ...segmentPointsQuery(effectivePipeline),
+    ...segmentPointsQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail && view === "map",
     placeholderData: keepPreviousData,
   });
@@ -110,16 +109,12 @@ function SegmentEditor() {
     isPlaceholderData: sampleStale,
     isLoading: sampleLoading,
   } = useQuery({
-    ...segmentSampleQuery(effectivePipeline),
+    ...segmentSampleQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail && view === "list",
     placeholderData: keepPreviousData,
   });
-  const {
-    data: cascade,
-    isPlaceholderData: cascadeStale,
-    isLoading: cascadeLoading,
-  } = useQuery({
-    ...segmentCascadeQuery(effectivePipeline),
+  const { data: cascade, isPlaceholderData: cascadeStale } = useQuery({
+    ...segmentCascadeQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail && view === "waterfall",
     placeholderData: keepPreviousData,
   });
@@ -145,18 +140,18 @@ function SegmentEditor() {
   if (!stale && view === "waterfall")
     stableCascadeRef.current = cascade ?? stableCascadeRef.current;
 
-  const stablePipelineStepsRef = useRef<Step[]>([]);
-  if (!stale && view === "waterfall") stablePipelineStepsRef.current = effectivePipeline.steps;
+  const stableCriteriaStepsRef = useRef<Step[]>([]);
+  if (!stale && view === "waterfall") stableCriteriaStepsRef.current = effectiveCriteria.steps;
 
-  // Optimistic update: write Pipeline into the ["segment", id] cache.
+  // Optimistic update: write Criteria into the ["segment", id] cache.
   const updateCriteriaMutation = useMutation({
-    mutationFn: (input: { segmentId: string; pipeline: Pipeline }) =>
-      client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.pipeline }),
-    onMutate: async ({ segmentId: id, pipeline }) => {
+    mutationFn: (input: { segmentId: string; criteria: Criteria }) =>
+      client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.criteria }),
+    onMutate: async ({ segmentId: id, criteria }) => {
       await queryClient.cancelQueries({ queryKey: ["segment", id] });
       const previous = queryClient.getQueryData(["segment", id]);
       queryClient.setQueryData(["segment", id], (old: { criteria: unknown } | null | undefined) =>
-        old ? { ...old, criteria: pipeline } : old,
+        old ? { ...old, criteria } : old,
       );
       return { previous };
     },
@@ -167,39 +162,41 @@ function SegmentEditor() {
   });
 
   const commit = (nextSteps: Step[]) => {
-    updateCriteriaMutation.mutate({ segmentId, pipeline: { steps: nextSteps } });
+    updateCriteriaMutation.mutate({ segmentId, criteria: { steps: nextSteps } });
   };
+  // If the first step ends up as `add` (after a delete or reorder), coerce
+  // it to `narrow` — first-step add is semantically equivalent to narrow but
+  // would read oddly in the UI.
+  const coerceFirstStep = (s: Step[]): Step[] => {
+    if (s[0]?.verb !== "add") return s;
+    return [{ ...s[0], verb: "narrow" }, ...s.slice(1)];
+  };
+
   const updateStep = (idx: number, next: Step) =>
     commit(steps.map((s, i) => (i === idx ? next : s)));
-  const removeStep = (idx: number) => {
-    const next = steps.filter((_, i) => i !== idx);
-    if (next[0]?.verb === "add") next[0] = { ...next[0], verb: "narrow" };
-    commit(next);
-  };
+  const removeStep = (idx: number) => commit(coerceFirstStep(steps.filter((_, i) => i !== idx)));
   const addStep = (verb: Verb, def: FilterDef) =>
     commit([...steps, { id: crypto.randomUUID(), verb, filter: emptyFilterFor(def) }]);
 
   const handleDragEnd = () => {
     if (!draft) return;
-    const next = [...draft];
-    if (next[0]?.verb === "add") next[0] = { ...next[0], verb: "narrow" };
-    commit(next);
+    commit(coerceFirstStep(draft));
     setDraft(null);
   };
 
   // Auto-scroll the step list to the bottom when a step is added so the
   // newly-added step is always visible even when the list overflows.
   const stepsContainerRef = useRef<HTMLDivElement>(null);
-  const prevStepsLengthRef = useRef(serverSteps.length);
+  const prevStepsLengthRef = useRef(steps.length);
   useEffect(() => {
-    if (serverSteps.length > prevStepsLengthRef.current && stepsContainerRef.current) {
+    if (steps.length > prevStepsLengthRef.current && stepsContainerRef.current) {
       stepsContainerRef.current.scrollTo({
         top: stepsContainerRef.current.scrollHeight,
         behavior: "smooth",
       });
     }
-    prevStepsLengthRef.current = serverSteps.length;
-  }, [serverSteps.length]);
+    prevStepsLengthRef.current = steps.length;
+  }, [steps.length]);
 
   const availableDefs = FILTERS;
 
@@ -225,7 +222,7 @@ function SegmentEditor() {
               className="flex flex-col gap-3"
             >
               {displaySteps.map((step, idx) => {
-                const serverIdx = serverSteps.findIndex((s) => s.id === step.id);
+                const serverIdx = steps.findIndex((s) => s.id === step.id);
                 return (
                   <ReorderStepRow
                     key={step.id}
@@ -258,8 +255,8 @@ function SegmentEditor() {
             ) : (
               <WaterfallPanel
                 steps={stableCascadeRef.current?.steps ?? []}
-                pipelineSteps={stablePipelineStepsRef.current}
-                firstLoad={cascadeLoading && stableCascadeRef.current === undefined}
+                criteriaSteps={stableCriteriaStepsRef.current}
+                firstLoad={stableCascadeRef.current === undefined}
               />
             )}
           </div>
@@ -340,11 +337,11 @@ function SamplePanel({
 
 function WaterfallPanel({
   steps,
-  pipelineSteps,
+  criteriaSteps,
   firstLoad,
 }: {
   steps: CascadeStep[];
-  pipelineSteps: Step[];
+  criteriaSteps: Step[];
   firstLoad: boolean;
 }) {
   const [anchor, setAnchor] = useState(0);
@@ -353,13 +350,6 @@ function WaterfallPanel({
 
   if (firstLoad) {
     return <div className="h-full rounded-lg border border-border bg-card" />;
-  }
-  if (steps.length === 0) {
-    return (
-      <div className="h-full rounded-lg border border-border bg-card flex items-center justify-center">
-        <span className="text-sm text-muted-foreground">Add filters to see the cascade.</span>
-      </div>
-    );
   }
   return (
     <div className="h-full rounded-lg border border-border bg-card px-2 pb-2 pt-2">
@@ -375,13 +365,13 @@ function WaterfallPanel({
         </TableHeader>
         <TableBody>
           {steps.map((step, i) => {
-            const pipelineStep = pipelineSteps[i - 1];
-            const verb = pipelineStep?.verb;
+            const criteriaStep = criteriaSteps[i - 1];
+            const verb = criteriaStep?.verb;
             const verbMeta = verb ? VERB_META[verb] : null;
-            const filterDef = pipelineStep
-              ? pipelineStep.filter.kind === "all"
+            const filterDef = criteriaStep
+              ? criteriaStep.filter.kind === "all"
                 ? { label: "Everyone" }
-                : definitionFor(filterKey(pipelineStep.filter))
+                : definitionFor(filterKey(criteriaStep.filter))
               : null;
             const label = i === 0 ? "All" : (filterDef?.label ?? "—");
             const isAnchor = i === effectiveAnchor;
@@ -492,7 +482,7 @@ function Stat({ label, value }: { label: string; value: number | null | undefine
 function ReorderStepRow({
   onDragEnd,
   ...props
-}: React.ComponentProps<typeof StepRow> & { onDragEnd?: () => void }) {
+}: ComponentProps<typeof StepRow> & { onDragEnd?: () => void }) {
   const controls = useDragControls();
   return (
     <Reorder.Item
@@ -548,7 +538,7 @@ function StepRow({
           </button>
           <span className="text-sm truncate">
             <span className="text-muted-foreground pr-2">{number}</span>
-            {def?.label ?? (filter.kind === "all" ? "Everyone" : `Unknown: ${(filter as any).key}`)}
+            {def?.label ?? "—"}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
