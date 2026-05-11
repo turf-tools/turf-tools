@@ -707,9 +707,9 @@ function AddStepMenu({
   const [openVerb, setOpenVerb] = useState<Verb | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const verbIcons: Record<Verb, ReactNode> = {
-    narrow: <FilterIcon className="size-3" />,
-    add: <Plus className="size-3" />,
-    remove: <Minus className="size-3" />,
+    narrow: <FilterIcon className="size-3" strokeWidth={2.5} />,
+    add: <Plus className="size-3" strokeWidth={2.5} />,
+    remove: <Minus className="size-3" strokeWidth={2.5} />,
   };
 
   useEffect(() => {
@@ -734,7 +734,7 @@ function AddStepMenu({
               variant="outline"
               disabled={disabled}
               onClick={() => setOpenVerb((v) => (v === verb ? null : verb))}
-              className="w-full gap-1.5 text-xs"
+              className="w-full gap-1.5 text-sm"
             >
               {verbIcons[verb]}
               {label}
