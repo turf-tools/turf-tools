@@ -277,11 +277,11 @@ function CampaignEditor() {
   }, [selectedZoneId]);
 
   return (
-    <div className="grid grid-cols-2 gap-4 h-full">
+    <div className="flex gap-4 h-full">
       {/* Sidebar renders immediately against loader-cached chrome data
           (zones, segmentDetail). The map curtain handles waits for the
           heavy data still fetching in-component. */}
-      <div className="h-full min-h-0">
+      <div className="w-124 shrink-0 h-full min-h-0">
         <ZonesList
           campaignId={campaignId}
           zones={zones ?? null}
@@ -298,7 +298,7 @@ function CampaignEditor() {
         />
       </div>
 
-      <div ref={mapWrapperRef} className="relative h-full">
+      <div ref={mapWrapperRef} className="relative flex-1 min-w-0 h-full">
         <Map
           className="h-full"
           points={pointsBuffer ?? undefined}
