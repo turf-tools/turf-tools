@@ -1,7 +1,16 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { Plus, X } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Reorder, useDragControls } from "motion/react";
+import { Filter as FilterIcon, GripVertical, Minus, Plus, X } from "lucide-react";
+import {
+  type ComponentProps,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
@@ -9,23 +18,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AgeRangeFilter,
-  type Criteria,
   definitionFor,
   emptyFilterFor,
   type EnumFilter,
   type Filter,
   type FilterDef,
+  filterKey,
   FILTERS,
-  isActiveFilter,
+  isActiveStep,
+  type Criteria,
+  type Step,
   type TextFilter,
+  type Verb,
+  VERB_META,
 } from "~/lib/filters";
 import {
+  segmentCascadeQuery,
   segmentCountsQuery,
   segmentDetailQuery,
   segmentPointsQuery,
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import type { CascadeStep } from "~/rpc/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -50,28 +65,43 @@ function SegmentEditor() {
     ...segmentDetailQuery(segmentId),
   });
 
-  // Read filters straight from the detail cache — no separate draft layer.
-  // The optimistic mutation below writes to the same cache, so commits
-  // reflect on the next render without a hydration step.
-  const filters = (activeSegmentDetail?.criteria as Criteria | undefined)?.filters ?? [];
+  const stepsRaw = (activeSegmentDetail?.criteria as Criteria | null)?.steps ?? [];
+  const stepsIdRef = useRef<string[]>([]);
+  while (stepsIdRef.current.length < stepsRaw.length) stepsIdRef.current.push(crypto.randomUUID());
+  const steps = stepsRaw.map((s, i) => (s.id ? s : { ...s, id: stepsIdRef.current[i]! }));
 
-  // Preview keys on active filters only so adding/removing an empty filter
+  // While a drag is active, the visual list reorders via `draft`; queries
+  // keep reading committed `steps` so they don't refire on every shift.
+  // Commit happens once on pointer-up.
+  const [draft, setDraft] = useState<Step[] | null>(null);
+  const displaySteps = draft ?? steps;
+
+  // Only steps with active filters drive queries — adding an empty step
   // doesn't trigger a refetch.
   const effectiveCriteria = useMemo<Criteria>(
-    () => ({ filters: filters.filter(isActiveFilter) }),
-    [filters],
+    () => ({ steps: steps.filter(isActiveStep) }),
+    [steps],
   );
 
-  const [view, setView] = useState<"map" | "list">("map");
+  const [view, setView] = useState<"map" | "list" | "waterfall">("map");
 
+  // Counts are always needed (shown in every view). View-specific queries
+  // only fire when that view is active — no point hitting DuckDB for data
+  // the user isn't looking at. keepPreviousData + staleTime:∞ means
+  // revisiting a view after a criteria change shows the last result while
+  // the new fetch lands, and a previously-visited view is instant from cache.
   const { data: counts, isPlaceholderData: countsStale } = useQuery({
     ...segmentCountsQuery(effectiveCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
-  const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
+  const {
+    data: pointsBuffer,
+    isPlaceholderData: pointsStale,
+    isLoading: pointsLoading,
+  } = useQuery({
     ...segmentPointsQuery(effectiveCriteria),
-    enabled: !!activeSegmentDetail,
+    enabled: !!activeSegmentDetail && view === "map",
     placeholderData: keepPreviousData,
   });
   const {
@@ -80,28 +110,40 @@ function SegmentEditor() {
     isLoading: sampleLoading,
   } = useQuery({
     ...segmentSampleQuery(effectiveCriteria),
-    enabled: !!activeSegmentDetail,
+    enabled: !!activeSegmentDetail && view === "list",
+    placeholderData: keepPreviousData,
+  });
+  const { data: cascade, isPlaceholderData: cascadeStale } = useQuery({
+    ...segmentCascadeQuery(effectiveCriteria),
+    enabled: !!activeSegmentDetail && view === "waterfall",
     placeholderData: keepPreviousData,
   });
 
-  // stale = counts loading OR the active view's own data loading.
-  const activeViewStale = view === "map" ? pointsStale : view === "list" ? sampleStale : false;
+  const activeViewStale =
+    view === "map" ? pointsStale : view === "list" ? sampleStale : cascadeStale;
   const stale = countsStale || activeViewStale;
 
   // Stable refs — written during render so each update is synchronous with
-  // the stale→false transition, no intermediate render with new data while faded.
+  // the stale→false transition. Each ref only updates when its view is active
+  // so switching views doesn't overwrite cached data with undefined.
   const stableCountsRef = useRef<typeof counts>(undefined);
   if (!stale) stableCountsRef.current = counts;
 
   const stablePointsRef = useRef<typeof pointsBuffer>(undefined);
-  if (!stale) stablePointsRef.current = pointsBuffer;
+  if (!stale && view === "map") stablePointsRef.current = pointsBuffer ?? stablePointsRef.current;
 
   const stablePersonsRef = useRef<NonNullable<typeof sample>["persons"]>([]);
-  if (!stale) stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
+  if (!stale && view === "list")
+    stablePersonsRef.current = sample?.persons ?? stablePersonsRef.current;
 
-  // Optimistic update: write into the ["segment", id] cache in onMutate,
-  // snapshot for rollback, restore on error. The cache is the single
-  // source of truth — `filters` above reads from it.
+  const stableCascadeRef = useRef<typeof cascade>(undefined);
+  if (!stale && view === "waterfall")
+    stableCascadeRef.current = cascade ?? stableCascadeRef.current;
+
+  const stableCriteriaStepsRef = useRef<Step[]>([]);
+  if (!stale && view === "waterfall") stableCriteriaStepsRef.current = effectiveCriteria.steps;
+
+  // Optimistic update: write Criteria into the ["segment", id] cache.
   const updateCriteriaMutation = useMutation({
     mutationFn: (input: { segmentId: string; criteria: Criteria }) =>
       client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.criteria }),
@@ -119,47 +161,103 @@ function SegmentEditor() {
     },
   });
 
-  const commit = (nextFilters: Filter[]) => {
-    updateCriteriaMutation.mutate({ segmentId, criteria: { filters: nextFilters } });
+  const commit = (nextSteps: Step[]) => {
+    updateCriteriaMutation.mutate({ segmentId, criteria: { steps: nextSteps } });
   };
-  const updateFilter = (idx: number, next: Filter) =>
-    commit(filters.map((f, i) => (i === idx ? next : f)));
-  const removeFilter = (idx: number) => commit(filters.filter((_, i) => i !== idx));
-  const addFilter = (def: FilterDef) => commit([...filters, emptyFilterFor(def)]);
+  // If the first step ends up as `add` (after a delete or reorder), coerce
+  // it to `narrow` — first-step add is semantically equivalent to narrow but
+  // would read oddly in the UI.
+  const coerceFirstStep = (s: Step[]): Step[] => {
+    if (s[0]?.verb !== "add") return s;
+    return [{ ...s[0], verb: "narrow" }, ...s.slice(1)];
+  };
 
-  const usedKeys = new Set(filters.map((f) => f.key));
-  const availableDefs = FILTERS.filter((d) => !usedKeys.has(d.key));
+  const updateStep = (idx: number, next: Step) =>
+    commit(steps.map((s, i) => (i === idx ? next : s)));
+  const removeStep = (idx: number) => commit(coerceFirstStep(steps.filter((_, i) => i !== idx)));
+  const addStep = (verb: Verb, def: FilterDef) =>
+    commit([...steps, { id: crypto.randomUUID(), verb, filter: emptyFilterFor(def) }]);
+
+  const handleDragEnd = () => {
+    if (!draft) return;
+    commit(coerceFirstStep(draft));
+    setDraft(null);
+  };
+
+  // Auto-scroll the step list to the bottom when a step is added so the
+  // newly-added step is always visible even when the list overflows.
+  const stepsContainerRef = useRef<HTMLDivElement>(null);
+  const prevStepsLengthRef = useRef(steps.length);
+  useEffect(() => {
+    if (steps.length > prevStepsLengthRef.current && stepsContainerRef.current) {
+      stepsContainerRef.current.scrollTo({
+        top: stepsContainerRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+    prevStepsLengthRef.current = steps.length;
+  }, [steps.length]);
+
+  const availableDefs = FILTERS;
 
   return (
-    <div className="grid grid-cols-3 gap-4 h-full">
-      <div className="col-span-1 flex flex-col gap-3 overflow-y-auto">
+    <div className="flex gap-4 h-full">
+      <div ref={stepsContainerRef} className="w-86 shrink-0 flex flex-col gap-3 overflow-y-auto">
         {activeSegmentDetail ? (
           <>
-            {filters.map((filter, idx) => (
-              <FilterRow
-                key={`${filter.key}-${idx}`}
-                filter={filter}
-                onChange={(next) => updateFilter(idx, next)}
-                onRemove={() => removeFilter(idx)}
-              />
-            ))}
-            {availableDefs.length > 0 ? (
-              <AddFilterMenu defs={availableDefs} onPick={addFilter} />
-            ) : null}
+            <div
+              className={cn(
+                "sticky top-0 z-10 bg-background",
+                "before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background before:-z-10",
+                "after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-2 after:bg-background after:-z-10",
+              )}
+            >
+              <AddStepMenu defs={availableDefs} isFirstStep={steps.length === 0} onAdd={addStep} />
+            </div>
+            <Reorder.Group
+              axis="y"
+              values={displaySteps}
+              onReorder={setDraft}
+              as="div"
+              className="flex flex-col gap-3"
+            >
+              {displaySteps.map((step, idx) => {
+                const serverIdx = steps.findIndex((s) => s.id === step.id);
+                return (
+                  <ReorderStepRow
+                    key={step.id}
+                    number={idx + 1}
+                    step={step}
+                    onChange={(next) => updateStep(serverIdx, { ...step, filter: next })}
+                    onRemove={() => removeStep(serverIdx)}
+                    onDragEnd={handleDragEnd}
+                  />
+                );
+              })}
+            </Reorder.Group>
           </>
         ) : null}
       </div>
-      <div className="col-span-2 flex h-full min-h-0 flex-col gap-3">
+      <div className="flex-1 min-w-0 flex h-full min-h-0 flex-col gap-3">
         <div className="relative flex-1 min-h-0">
           <div className={cn("h-full min-h-0 transition-opacity", stale ? "opacity-50" : null)}>
             {view === "map" ? (
               <Map
                 className="h-full"
                 points={stablePointsRef.current}
-                loading={!stablePointsRef.current}
+                loading={pointsLoading && !stablePointsRef.current}
+              />
+            ) : view === "list" ? (
+              <SamplePanel
+                persons={stablePersonsRef.current}
+                firstLoad={sampleLoading && stablePersonsRef.current.length === 0}
               />
             ) : (
-              <SamplePanel persons={stablePersonsRef.current} isLoading={sampleLoading} />
+              <WaterfallPanel
+                steps={stableCascadeRef.current?.steps ?? []}
+                criteriaSteps={stableCriteriaStepsRef.current}
+                firstLoad={stableCascadeRef.current === undefined}
+              />
             )}
           </div>
           <div className="absolute left-3 bottom-3 z-50 rounded-lg border border-border bg-background">
@@ -167,11 +265,14 @@ function SegmentEditor() {
               value={[view]}
               onValueChange={(values) => {
                 const next = values[0];
-                if (next === "map" || next === "list") setView(next);
+                if (next === "map" || next === "list" || next === "waterfall") setView(next);
               }}
             >
               <ToggleGroupItem value="map">Map</ToggleGroupItem>
+              <div className="w-px self-stretch bg-border" />
               <ToggleGroupItem value="list">List</ToggleGroupItem>
+              <div className="w-px self-stretch bg-border" />
+              <ToggleGroupItem value="waterfall">Steps</ToggleGroupItem>
             </ToggleGroup>
           </div>
         </div>
@@ -183,11 +284,14 @@ function SegmentEditor() {
 
 function SamplePanel({
   persons,
-  isLoading,
+  firstLoad,
 }: {
   persons: NonNullable<Awaited<ReturnType<typeof client.segments.sample>>>["persons"];
-  isLoading: boolean;
+  firstLoad: boolean;
 }) {
+  if (firstLoad) {
+    return <div className="h-full rounded-lg border border-border bg-card" />;
+  }
   return (
     <div className="h-full rounded-lg border border-border bg-card px-4 pb-2 pt-2">
       <Table
@@ -204,13 +308,7 @@ function SamplePanel({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && persons.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={5} className="text-muted-foreground">
-                Loading sample…
-              </TableCell>
-            </TableRow>
-          ) : persons.length === 0 ? (
+          {persons.length === 0 ? (
             <TableRow>
               <TableCell colSpan={5} className="text-muted-foreground">
                 No people match this segment.
@@ -231,6 +329,116 @@ function SamplePanel({
               </TableRow>
             ))
           )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function WaterfallPanel({
+  steps,
+  criteriaSteps,
+  firstLoad,
+}: {
+  steps: CascadeStep[];
+  criteriaSteps: Step[];
+  firstLoad: boolean;
+}) {
+  const [anchor, setAnchor] = useState(0);
+  const effectiveAnchor = Math.min(anchor, steps.length - 1);
+  const anchorCount = steps[effectiveAnchor]?.count ?? 0;
+
+  if (firstLoad) {
+    return <div className="h-full rounded-lg border border-border bg-card" />;
+  }
+  return (
+    <div className="h-full rounded-lg border border-border bg-card px-2 pb-2 pt-2">
+      <Table
+        containerClassName="h-full overflow-y-auto overflow-x-clip pb-10"
+        className="border-separate border-spacing-y-0.5"
+      >
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card [&_th]:h-8">
+          <TableRow>
+            <TableHead className="!pl-2">Step</TableHead>
+            <TableHead className="w-20">Type</TableHead>
+            <TableHead className="w-26 text-right">Count</TableHead>
+            <TableHead className="w-26 text-right">Delta</TableHead>
+            <TableHead className="w-44">Fraction</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {steps.map((step, i) => {
+            const criteriaStep = criteriaSteps[i - 1];
+            const verb = criteriaStep?.verb;
+            const verbMeta = verb ? VERB_META[verb] : null;
+            const filterDef = criteriaStep
+              ? criteriaStep.filter.kind === "all"
+                ? { label: "Everyone" }
+                : definitionFor(filterKey(criteriaStep.filter))
+              : null;
+            const label = i === 0 ? "All" : (filterDef?.label ?? "—");
+            const isAnchor = i === effectiveAnchor;
+            const above = i < effectiveAnchor;
+            const prevCount = steps[i - 1]?.count ?? 0;
+            const delta = i === 0 || above || isAnchor ? null : step.count - prevCount;
+            const pct =
+              !above && anchorCount > 0 ? Math.round((step.count / anchorCount) * 100) : null;
+            return (
+              <TableRow
+                key={i}
+                onClick={() => setAnchor(i)}
+                className={cn(
+                  "cursor-pointer [&>td:first-child]:rounded-l-md [&>td:last-child]:rounded-r-md",
+                  isAnchor ? "[&>td]:bg-accent/50" : "hover:[&>td]:bg-accent/50",
+                )}
+              >
+                <TableCell className="!pl-2 px-2 truncate">{label}</TableCell>
+                <TableCell className="px-2">
+                  {verbMeta ? (
+                    <span
+                      className="rounded px-1.5 py-0.5 text-xs font-medium"
+                      style={{ backgroundColor: `${verbMeta.color}22`, color: verbMeta.color }}
+                    >
+                      {verbMeta.label}
+                    </span>
+                  ) : (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                      Start
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="px-2 text-right tabular-nums">
+                  {step.count.toLocaleString()}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "px-2 text-right tabular-nums",
+                    delta === null && "text-muted-foreground",
+                  )}
+                  style={{ color: delta !== null ? (verbMeta?.color ?? "inherit") : undefined }}
+                >
+                  {delta !== null
+                    ? delta.toLocaleString(undefined, { signDisplay: "exceptZero" })
+                    : "—"}
+                </TableCell>
+                <TableCell className="px-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                      {pct !== null && (
+                        <div
+                          className="h-full rounded-full bg-foreground/30"
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                        />
+                      )}
+                    </div>
+                    <span className="w-12 shrink-0 text-right text-muted-foreground tabular-nums">
+                      {pct !== null ? `${pct}%` : "—"}
+                    </span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
@@ -279,41 +487,87 @@ function Stat({ label, value }: { label: string; value: number | null | undefine
   );
 }
 
-function FilterRow({
-  filter,
+function ReorderStepRow({
+  onDragEnd,
+  ...props
+}: ComponentProps<typeof StepRow> & { onDragEnd?: () => void }) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={props.step}
+      dragListener={false}
+      dragControls={controls}
+      as="div"
+      onDragEnd={onDragEnd}
+      transition={{ layout: { type: "tween", duration: 0.15, ease: "easeOut" } }}
+      dragTransition={{ bounceStiffness: 10000, bounceDamping: 500, power: 0 }}
+    >
+      <StepRow {...props} dragControls={controls} />
+    </Reorder.Item>
+  );
+}
+
+function StepRow({
+  number,
+  step,
   onChange,
   onRemove,
+  dragControls,
 }: {
-  filter: Filter;
+  number: number;
+  step: Step;
   onChange: (next: Filter) => void;
   onRemove: () => void;
+  dragControls?: ReturnType<typeof useDragControls>;
 }) {
-  const def = definitionFor(filter.key);
-  if (!def) {
-    return (
-      <div className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-sm">
-        <span>Unknown property: {filter.key}</span>
-        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove filter">
-          <X className="size-4" />
-        </Button>
-      </div>
-    );
-  }
+  const { filter, verb } = step;
+  const { color, label: verbLabel } = VERB_META[verb];
+  const def =
+    filter.kind === "all"
+      ? { kind: "all" as const, key: "all", label: "Everyone" }
+      : definitionFor((filter as Exclude<Filter, { kind: "all" }>).key);
+
   return (
     <div className="rounded-md border border-border bg-card p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm">{def.label}</span>
-        <Button variant="outline" size="icon-sm" onClick={onRemove} aria-label="Remove filter">
-          <X className="size-4" />
-        </Button>
+      <div
+        className={cn(
+          filter.kind === "all" ? "mb-0" : "mb-3",
+          "flex items-center justify-between gap-2",
+        )}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            className="cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground shrink-0"
+            onPointerDown={(e) => dragControls?.start(e)}
+            aria-label="Drag to reorder"
+          >
+            <GripVertical className="size-3.5" />
+          </button>
+          <span className="text-sm truncate">
+            <span className="text-muted-foreground pr-2">{number}</span>
+            {def?.label ?? "—"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className="rounded px-1.5 py-0.5 text-xs font-medium"
+            style={{ backgroundColor: `${color}22`, color }}
+          >
+            {verbLabel}
+          </span>
+          <Button variant="outline" size="icon-xs" onClick={onRemove} aria-label="Remove step">
+            <X className="size-4" />
+          </Button>
+        </div>
       </div>
-      {filter.kind === "enum" && def.kind === "enum" ? (
+      {filter.kind === "enum" && def?.kind === "enum" ? (
         <EnumFilterEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
-      {filter.kind === "age-range" && def.kind === "age-range" ? (
+      {filter.kind === "age-range" && def?.kind === "age-range" ? (
         <AgeRangeFilterEditor filter={filter} onChange={onChange} />
       ) : null}
-      {filter.kind === "text" && def.kind === "text" ? (
+      {filter.kind === "text" && def?.kind === "text" ? (
         <TextFilterEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
     </div>
@@ -449,62 +703,78 @@ function AgeRangeFilterEditor({
   );
 }
 
-function AddFilterMenu({
+function AddStepMenu({
   defs,
-  onPick,
+  isFirstStep,
+  onAdd,
 }: {
   defs: ReadonlyArray<FilterDef>;
-  onPick: (def: FilterDef) => void;
+  isFirstStep: boolean;
+  onAdd: (verb: Verb, def: FilterDef) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openVerb, setOpenVerb] = useState<Verb | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // Close on click outside the menu wrapper.
+  const verbIcons: Record<Verb, ReactNode> = {
+    narrow: <FilterIcon className="size-3" strokeWidth={2.5} />,
+    add: <Plus className="size-3" strokeWidth={2.5} />,
+    remove: <Minus className="size-3" strokeWidth={2.5} />,
+  };
+
   useEffect(() => {
-    if (!open) return;
+    if (!openVerb) return;
     const onDocMouseDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpenVerb(null);
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [open]);
+  }, [openVerb]);
+
+  const allVerbs: Verb[] = ["narrow", "remove", "add"];
+
   return (
-    <div className="relative" ref={wrapRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "flex h-11 w-full items-center gap-2",
-          "rounded-md border border-border bg-card px-3 py-2 text-left text-sm",
-          "text-muted-foreground hover:border-muted-foreground hover:text-foreground",
-        )}
-      >
-        <Plus className="size-3.5" />
-        <span>Add filter</span>
-      </button>
-      {open ? (
-        <div
-          className={cn(
-            "absolute top-full right-0 left-0 z-10 mt-1",
-            "flex flex-col rounded-md border border-border bg-background py-1 shadow-md",
-          )}
-        >
-          {defs.map((def) => (
-            <button
-              type="button"
-              key={def.key}
-              onClick={() => {
-                onPick(def);
-                setOpen(false);
-              }}
-              className="px-3 py-1.5 text-left text-sm hover:bg-muted"
+    <div className="flex gap-2" ref={wrapRef}>
+      {allVerbs.map((verb) => {
+        const { label } = VERB_META[verb];
+        const disabled = isFirstStep && verb === "add"; // add only makes sense after a first step
+        return (
+          <div key={verb} className="relative flex-1">
+            <Button
+              variant="outline"
+              disabled={disabled}
+              onClick={() => setOpenVerb((v) => (v === verb ? null : verb))}
+              className="w-full gap-1.5 text-sm"
             >
-              {def.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+              {verbIcons[verb]}
+              {label}
+            </Button>
+            {openVerb === verb ? (
+              <div
+                className={cn(
+                  "absolute top-full z-10 mt-1 min-w-48",
+                  verb === "add" ? "right-0" : "left-0",
+                  "flex flex-col rounded-md border border-border bg-background py-1 shadow-md",
+                )}
+              >
+                {defs
+                  .filter((d) => verb !== "narrow" || d.kind !== "all")
+                  .map((def) => (
+                    <button
+                      type="button"
+                      key={def.key}
+                      onClick={() => {
+                        onAdd(verb, def);
+                        setOpenVerb(null);
+                      }}
+                      className="px-3 py-1.5 text-left text-sm hover:bg-muted"
+                    >
+                      {def.label}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }

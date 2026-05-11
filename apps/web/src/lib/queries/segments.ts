@@ -35,13 +35,17 @@ export const segmentPointsQuery = (criteria: Criteria) =>
     gcTime: 0,
   });
 
-// Row-level sample for the segment editor's list view. Independent of
-// the points fetch so the map view doesn't pull row data and the list
-// view doesn't pull points.
 export const segmentSampleQuery = (criteria: Criteria) =>
   queryOptions({
     queryKey: ["segment-sample", JSON.stringify(criteria)] as const,
     queryFn: () => client.segments.sample({ criteria }),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+export const segmentCascadeQuery = (criteria: Criteria) =>
+  queryOptions({
+    queryKey: ["segment-cascade", JSON.stringify(criteria)] as const,
+    queryFn: () => client.segments.countCascade({ criteria }),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -65,10 +69,9 @@ export async function fetchSegmentPoints(input: {
   return new Float32Array(await res.arrayBuffer());
 }
 
-// Buildings inside a single zone, narrowed by segment criteria. Used
-// by the turf cutter. `segmentCriteria` is `unknown`-typed at the type
-// level, so passing `undefined` is structurally allowed for
-// disabled-state calls.
+// Buildings inside a single zone, narrowed by segment criteria. Used by
+// the turf cutter. `segmentCriteria` is `unknown`-typed at the type level,
+// so passing `undefined` is structurally allowed for disabled-state calls.
 export const cutterBuildingsQuery = (
   zoneId: string,
   segmentCriteria: SegmentCriteria,

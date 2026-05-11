@@ -1,6 +1,6 @@
 """Publish drafts for a (campaign, zone) into immutable turfs.
 
-Single-transaction pipeline: reads scope (campaign, segment, zone, drafts)
+Single-transaction publish: reads scope (campaign, segment, zone, drafts)
 from operational Postgres via DuckDB's postgres ATTACH, runs the spatial
 join + per-turf JSON construction in DuckLake, INSERTs both the `turfs`
 rows and their `turf_data` rows directly into Postgres. The web RPC's
@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.dsl.compile import to_where
+from src.dsl.compile import criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
@@ -82,8 +82,9 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     scope = _load_publish_scope(conn, req)
-    where_sql, where_params = to_where(
-        scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys)
+    where_params: list = []
+    where_sql = criteria_to_where(
+        scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params
     )
     _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
 
@@ -97,9 +98,15 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
             conn.execute(
                 _build_publish_temp_table_sql(req.orgSlug, where_sql),
                 [
-                    req.campaignId, req.zoneId, *where_params,
-                    scope.campaign_id, scope.segment_id, scope.zone_id,
-                    scope.zone_group_id, scope.script_id, req.createdBy,
+                    req.campaignId,
+                    req.zoneId,
+                    *where_params,
+                    scope.campaign_id,
+                    scope.segment_id,
+                    scope.zone_id,
+                    scope.zone_group_id,
+                    scope.script_id,
+                    req.createdBy,
                 ],
             )
             conn.execute(_insert_turfs_sql())
@@ -112,7 +119,8 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
             if _is_turf_code_collision(exc) and attempt < _MAX_PUBLISH_RETRIES - 1:
                 logger.warning(
                     "publish_turfs: turf_code collision (attempt %d/%d), retrying",
-                    attempt + 1, _MAX_PUBLISH_RETRIES,
+                    attempt + 1,
+                    _MAX_PUBLISH_RETRIES,
                 )
                 continue
             raise
@@ -179,16 +187,15 @@ def _check_no_ambiguous_assignments(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"{ambiguous_count} building{'s' if ambiguous_count > 1 else ''} fall{'' if ambiguous_count > 1 else 's'} inside more than one turf."
+                f"{ambiguous_count} building{'s' if ambiguous_count > 1 else ''} "
+                f"fall{'s' if ambiguous_count == 1 else ''} inside more than one turf."
                 " Adjust the turfs so that each building belongs to exactly "
                 "one turf before publishing."
             ),
         )
 
 
-def _load_publish_scope(
-    conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest
-) -> _PublishScope:
+def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> _PublishScope:
     """Resolve the campaign + segment + zone + draft count in a single SQL
     hit through the attached Postgres. Raises 4xx for the various
     "not configured to publish" cases."""
@@ -223,8 +230,15 @@ def _load_publish_scope(
         raise HTTPException(status_code=404, detail="Campaign or zone not found.")
 
     (
-        campaign_id, segment_id, script_id, zone_group_id,
-        criteria_json, key_group, zone_id, keys_json, draft_count,
+        campaign_id,
+        segment_id,
+        script_id,
+        zone_group_id,
+        criteria_json,
+        key_group,
+        zone_id,
+        keys_json,
+        draft_count,
     ) = row
 
     if not segment_id or not script_id or not zone_group_id:
@@ -440,9 +454,7 @@ def _publish_summary(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         """
     ).fetchall()
     return {
-        "created": [
-            {"turfId": r[0], "name": r[1], "turfCode": r[2]} for r in rows
-        ],
+        "created": [{"turfId": r[0], "name": r[1], "turfCode": r[2]} for r in rows],
         "summary": {
             "turfCount": len(rows),
             "doorCount": sum(r[3] or 0 for r in rows),

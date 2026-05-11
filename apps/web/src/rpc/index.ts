@@ -37,6 +37,7 @@ export const router = {
     countCampaigns: segmentsProcedures.countCampaigns,
     updateCriteria: segmentsProcedures.updateCriteria,
     count: segmentsProcedures.count,
+    countCascade: segmentsProcedures.countCascade,
     sample: segmentsProcedures.sample,
     countByKey: segmentsProcedures.countByKey,
     listBuildings: segmentsProcedures.listBuildings,
