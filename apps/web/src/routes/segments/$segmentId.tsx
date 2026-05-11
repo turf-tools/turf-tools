@@ -211,8 +211,8 @@ function SegmentEditor() {
             <div
               className={cn(
                 "sticky top-0 z-10 bg-background",
-                "before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background",
-                "after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-2 after:bg-background",
+                "before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background before:-z-10",
+                "after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-2 after:bg-background after:-z-10",
               )}
             >
               <AddStepMenu defs={availableDefs} isFirstStep={steps.length === 0} onAdd={addStep} />
