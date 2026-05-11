@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 class AllFilter(BaseModel):
     """Matches every person. Useful as the target of a "remove" step to
-    reset the running set to empty, enabling a build-from-nothing pipeline.
+    reset the running set to empty, enabling a build-from-nothing flow.
     Compiles to ``1=1``."""
 
     kind: Literal["all"]
@@ -51,13 +51,6 @@ Filter = Annotated[
 ]
 
 
-class Criteria(BaseModel):
-    """Legacy flat-AND criteria. Accepted for backwards compat; new code
-    sends ``Pipeline`` instead."""
-
-    filters: list[Filter] = []
-
-
 class KeyFilter(BaseModel):
     """Spatial scope — clip results to persons whose boundary key falls in
     the supplied set. Used by the campaign editor to constrain segment
@@ -69,7 +62,7 @@ class KeyFilter(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Pipeline — ordered sequence of steps with verbs.
+# Criteria — ordered sequence of steps with verbs.
 # ---------------------------------------------------------------------------
 
 Verb = Literal["add", "narrow", "remove"]
@@ -80,13 +73,8 @@ class Step(BaseModel):
     filter: Filter  # noqa: A003
 
 
-class Pipeline(BaseModel):
+class Criteria(BaseModel):
     steps: list[Step] = []
-
-
-def pipeline_from_criteria(criteria: Criteria) -> Pipeline:
-    """Coerce legacy flat Criteria to an all-narrow Pipeline."""
-    return Pipeline(steps=[Step(verb="narrow", filter=f) for f in criteria.filters])
 
 
 # ---------------------------------------------------------------------------

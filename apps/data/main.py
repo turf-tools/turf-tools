@@ -1,7 +1,6 @@
 import array
 import asyncio
 import logging
-import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
@@ -10,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.abstract_tables import resolve
-from src.dsl.compile import boundary_key_expr_for, cascade_sql, pipeline_to_where, resolve_pipeline
-from src.dsl.criteria import Criteria, KeyFilter, Pipeline
+from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
+from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import get_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
@@ -160,7 +159,6 @@ async def key_group_geojson(key_group: str):
 
 class _PersonsCountRequest(BaseModel):
     criteria: Criteria = Criteria()
-    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815  -- camelCase matches wire format from web
     orgSlug: str  # noqa: N815
 
@@ -171,9 +169,8 @@ async def persons_count(req: _PersonsCountRequest):
 
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
-    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     params: list = []
-    where = pipeline_to_where(pipeline, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -186,9 +183,7 @@ async def persons_count(req: _PersonsCountRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    t0 = time.perf_counter()
     row = conn.execute(sql, params).fetchone()
-    logger.info("perf /persons/count %.1fms", (time.perf_counter() - t0) * 1000)
     if row is None:
         raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
     return {
@@ -200,7 +195,6 @@ async def persons_count(req: _PersonsCountRequest):
 
 class _PersonsCountCascadeRequest(BaseModel):
     criteria: Criteria = Criteria()
-    pipeline: Pipeline | None = None
     orgSlug: str  # noqa: N815
 
 
@@ -208,15 +202,14 @@ class _PersonsCountCascadeRequest(BaseModel):
 async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     """Per-step person counts for the segment editor's waterfall panel.
 
-    Returns one row per pipeline step (plus a baseline "all" row at index 0).
-    Each row carries the absolute count after that step and the delta vs the
-    prior row. The pipeline verb (add/narrow/remove) determines how each step
+    Returns one row per step (plus a baseline "all" row at index 0). Each
+    row carries the absolute count after that step and the delta vs the
+    prior row. The step verb (add/narrow/remove) determines how each step
     modifies the running set.
     """
-    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
     params: list = []
-    sql = cascade_sql(pipeline, persons_table, params)
+    sql = cascade_sql(req.criteria, persons_table, params)
     conn = get_connection(settings, read_only=True)
     row = conn.execute(sql, params).fetchone()
     counts = list(row)
@@ -231,7 +224,6 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
 
 class _PersonsSampleRequest(BaseModel):
     criteria: Criteria = Criteria()
-    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     orgSlug: str  # noqa: N815
     limit: int = 100
@@ -239,16 +231,15 @@ class _PersonsSampleRequest(BaseModel):
 
 @app.post("/persons/sample")
 async def persons_sample(req: _PersonsSampleRequest):
-    """Row-level sample of people matching the pipeline.
+    """Row-level sample of people matching the criteria.
 
     Response shape: ``{persons: [{firstName, lastName, addressLine1,
     addressLine2, city, state, zip5}, ...]}``. Used by the segment
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
-    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     limit = max(1, min(req.limit, 500))
     params: list = []
-    where = pipeline_to_where(pipeline, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
@@ -260,9 +251,7 @@ async def persons_sample(req: _PersonsSampleRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    t0 = time.perf_counter()
     rows = conn.execute(sql, params).fetchall()
-    logger.info("perf /persons/sample %.1fms", (time.perf_counter() - t0) * 1000)
     return {
         "persons": [
             {
@@ -281,7 +270,6 @@ async def persons_sample(req: _PersonsSampleRequest):
 
 class _PersonsCountByKeyRequest(BaseModel):
     criteria: Criteria = Criteria()
-    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     keyGroup: str  # noqa: N815
     orgSlug: str  # noqa: N815
@@ -290,16 +278,15 @@ class _PersonsCountByKeyRequest(BaseModel):
 @app.post("/persons/count-by-key")
 async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     """Per-key (per ED, per ZIP, …) aggregation of doors + people for a
-    given pipeline + optional spatial scope.
+    given criteria + optional spatial scope.
 
     Drives the zone editor's heatmap overlay and the campaign editor's
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     group_expr = boundary_key_expr_for(req.keyGroup)
     params: list = []
-    where = pipeline_to_where(pipeline, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -324,7 +311,6 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
 
 class _BuildingsListRequest(BaseModel):
     criteria: Criteria = Criteria()
-    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     orgSlug: str  # noqa: N815
 
@@ -334,13 +320,12 @@ async def buildings_list(req: _BuildingsListRequest):
     """One row per building containing at least one matching person,
     with door + person counts and the building's centroid.
 
-    Used by the turf cutter to render buildings scoped to pipeline ∩
+    Used by the turf cutter to render buildings scoped to criteria ∩
     zone, with enough detail to compute "what's inside this drawn
     polygon" client-side.
     """
-    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     params: list = []
-    where = pipeline_to_where(pipeline, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT
@@ -366,7 +351,6 @@ async def buildings_list(req: _BuildingsListRequest):
 
 class _BuildingsPointsRequest(BaseModel):
     criteria: Criteria = Criteria()
-    pipeline: Pipeline | None = None
     keyFilter: KeyFilter | None = None  # noqa: N815
     orgSlug: str  # noqa: N815
 
@@ -374,14 +358,13 @@ class _BuildingsPointsRequest(BaseModel):
 @app.post("/buildings/points")
 async def buildings_points(req: _BuildingsPointsRequest):
     """Binary lng/lat pairs (Float32, row-major) for buildings whose
-    contained persons match the pipeline.
+    contained persons match the criteria.
 
     Designed for direct upload into a GPU buffer on the browser — no
     JSON envelope, no per-byte decode work.
     """
-    pipeline = resolve_pipeline(req.criteria, req.pipeline)
     params: list = []
-    where = pipeline_to_where(pipeline, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.keyFilter, params)
     sql = resolve(
         f"""
         SELECT longitude, latitude
@@ -393,13 +376,11 @@ async def buildings_points(req: _BuildingsPointsRequest):
         slug=req.orgSlug,
     )
     conn = get_connection(settings, read_only=True)
-    t0 = time.perf_counter()
     cursor = conn.execute(sql, params)
     arr = array.array("f")
     for lng, lat in cursor.fetchall():
         arr.append(lng)
         arr.append(lat)
-    logger.info("perf /buildings/points %.1fms (%d points)", (time.perf_counter() - t0) * 1000, len(arr) // 2)
     return Response(content=arr.tobytes(), media_type="application/octet-stream")
 
 

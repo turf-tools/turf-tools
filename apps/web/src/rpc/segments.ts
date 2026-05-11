@@ -85,7 +85,7 @@ export const create = pub
       .values({
         organizationId: context.user.organizationId,
         name: input.name,
-        criteria: { filters: [] },
+        criteria: { steps: [] },
         createdBy: context.user.userId,
       })
       .returning({ ...segmentSelect, criteria: segments.criteria });
@@ -252,33 +252,31 @@ export async function loadOrgSlug(context: {
   return slug;
 }
 
-// Counts + sample for the segment editor's preview pane. All accept
-// `pipeline` (the new format) — the data service falls back to `criteria`
-// for old callers, but the segment editor now sends pipeline exclusively.
+// Counts + sample for the segment editor's preview pane.
 export const count = pub
-  .input(z.object({ pipeline: z.unknown() }))
+  .input(z.object({ criteria: z.unknown() }))
   .handler(async ({ context, input }): Promise<PersonsCount> => {
     const orgSlug = await loadOrgSlug(context);
-    return dataPostJson<PersonsCount>("/persons/count", { pipeline: input.pipeline, orgSlug });
+    return dataPostJson<PersonsCount>("/persons/count", { criteria: input.criteria, orgSlug });
   });
 
 export type CascadeStep = { count: number; delta: number | null };
 export const countCascade = pub
-  .input(z.object({ pipeline: z.unknown() }))
+  .input(z.object({ criteria: z.unknown() }))
   .handler(async ({ context, input }): Promise<{ steps: CascadeStep[] }> => {
     const orgSlug = await loadOrgSlug(context);
     return dataPostJson<{ steps: CascadeStep[] }>("/persons/count-cascade", {
-      pipeline: input.pipeline,
+      criteria: input.criteria,
       orgSlug,
     });
   });
 
 export const sample = pub
-  .input(z.object({ pipeline: z.unknown(), limit: z.number().int().positive().optional() }))
+  .input(z.object({ criteria: z.unknown(), limit: z.number().int().positive().optional() }))
   .handler(async ({ context, input }): Promise<PersonsSample> => {
     const orgSlug = await loadOrgSlug(context);
     return dataPostJson<PersonsSample>("/persons/sample", {
-      pipeline: input.pipeline,
+      criteria: input.criteria,
       orgSlug,
       limit: input.limit ?? 100,
     });

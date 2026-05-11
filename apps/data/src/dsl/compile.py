@@ -20,12 +20,11 @@ from .criteria import (
     Criteria,
     EnumFieldDef,
     EnumFilter,
+    FieldDef,
     Filter,
     KeyFilter,
-    Pipeline,
     TextFieldDef,
     TextFilter,
-    pipeline_from_criteria,
 )
 
 
@@ -33,37 +32,12 @@ class CriteriaError(ValueError):
     """Invalid criteria — unknown field, kind/field-def mismatch, etc."""
 
 
-def to_where(
+def criteria_to_where(
     criteria: Criteria,
-    key_filter: KeyFilter | None = None,
-) -> tuple[str, list[Any]]:
-    """Compile a ``Criteria`` (and optional spatial scope) into a WHERE
-    fragment + bind params.
-
-    Returns ``("WHERE ...", [...])`` when there's at least one constraint,
-    or ``("", [])`` for empty criteria with no key filter.
-    """
-    clauses: list[str] = []
-    params: list[Any] = []
-    for f in criteria.filters:
-        clause = _filter_clause(f, params)
-        if clause:
-            clauses.append(clause)
-    if key_filter is not None:
-        clause = _key_filter_clause(key_filter, params)
-        if clause:
-            clauses.append(clause)
-    if not clauses:
-        return "", []
-    return f"WHERE {' AND '.join(clauses)}", params
-
-
-def pipeline_to_where(
-    pipeline: Pipeline,
     key_filter: KeyFilter | None,
     params: list[Any],
 ) -> str:
-    """Compile a ``Pipeline`` to a WHERE fragment using Boolean algebra.
+    """Compile a ``Criteria`` to a WHERE fragment using Boolean algebra.
 
     Each verb maps directly to a Boolean operator over the running expression:
 
@@ -76,53 +50,34 @@ def pipeline_to_where(
     sequential set operations and lets DuckDB apply its normal predicate
     pushdown and column-pruning optimisations.
 
-    Params are appended in-place. Returns ``""`` (no WHERE) for an empty
-    pipeline with no key_filter.
+    Params are appended in-place. Returns ``""`` (no WHERE) for empty
+    criteria with no key_filter.
     """
-    expr = _pipeline_bool_expr(pipeline, params)
+    expr = _criteria_bool_expr(criteria, params)
     clauses = [c for c in [expr, _key_filter_clause(key_filter, params) if key_filter else ""] if c]
     if not clauses:
         return ""
     return f"WHERE {' AND '.join(clauses)}"
 
 
-def cascade_sql(pipeline: Pipeline, persons_table: str, params: list[Any]) -> str:
-    """Build a single SQL query that returns all N+1 waterfall counts at once.
+def cascade_sql(criteria: Criteria, persons_table: str, params: list[Any]) -> str:
+    """Build a single SQL query returning N+1 waterfall counts in one scan.
 
-    Uses ``COUNT(*) FILTER (WHERE expr_i)`` aggregates so DuckDB scans
-    the table once and evaluates each prefix expression per-row — O(1)
-    queries regardless of pipeline length, vs the N+1 separate queries
-    the naive approach would require.
-
-    Each prefix pipeline is recompiled independently, appending its params
-    to the shared ``params`` list in the order they appear left-to-right in
-    the SQL.
+    Emits ``COUNT(*) FILTER (WHERE expr_i)`` per prefix so each row is
+    visited once and tested against every step's expression. Params are
+    appended in source order so the ``?`` placeholders line up.
     """
     selects = ["count(*) AS step_0"]
-    for i in range(1, len(pipeline.steps) + 1):
-        prefix = Pipeline(steps=pipeline.steps[:i])
+    for i in range(1, len(criteria.steps) + 1):
+        prefix = Criteria(steps=criteria.steps[:i])
         prefix_params: list[Any] = []
-        expr = _pipeline_bool_expr(prefix, prefix_params)
+        expr = _criteria_bool_expr(prefix, prefix_params)
         params.extend(prefix_params)
         if expr:
             selects.append(f"count(*) FILTER (WHERE {expr}) AS step_{i}")
         else:
             selects.append(f"count(*) AS step_{i}")
     return f"SELECT {', '.join(selects)} FROM {persons_table}"
-
-
-def resolve_pipeline(criteria: Criteria | None, pipeline: Pipeline | None) -> Pipeline:
-    """Return a Pipeline from whichever argument is provided.
-
-    If ``pipeline`` is present it wins. If only ``criteria`` is present
-    (legacy request), coerce to an all-narrow pipeline. Falls back to
-    an empty pipeline (= full universe, no filters).
-    """
-    if pipeline is not None:
-        return pipeline
-    if criteria is not None and criteria.filters:
-        return pipeline_from_criteria(criteria)
-    return Pipeline()
 
 
 def column_expr_for(field_key: str) -> str:
@@ -150,14 +105,14 @@ def boundary_key_expr_for(key_group: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _pipeline_bool_expr(pipeline: Pipeline, params: list[Any]) -> str:
-    """Reduce a pipeline to a Boolean SQL expression string.
+def _criteria_bool_expr(criteria: Criteria, params: list[Any]) -> str:
+    """Reduce criteria to a Boolean SQL expression string.
 
-    Returns ``""`` for an empty / fully-inactive pipeline (match all).
+    Returns ``""`` for empty / fully-inactive criteria (match all).
     """
     current: str | None = None  # None = True (full universe)
 
-    for step in pipeline.steps:
+    for step in criteria.steps:
         fc = _filter_clause(step.filter, params)
         if not fc:
             # Inactive filter (empty enum values, unbounded age range, etc.)
@@ -181,7 +136,7 @@ def _column_expr(key: str, source: str) -> str:
     if source == "column":
         return key
     # other_properties JSONB extract — parenthesized to dodge DuckDB's
-    # precedence trap where `->>` binds looser than `IN/=/ILIKE`.
+    # precedence trap where ``->>`` binds looser than ``IN/=/ILIKE``.
     return f"(other_properties->>'{key}')"
 
 
@@ -206,7 +161,7 @@ def _filter_clause(f: Filter, params: list[Any]) -> str:
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 
-def _enum_clause(f: EnumFilter, def_: Any, params: list[Any]) -> str:
+def _enum_clause(f: EnumFilter, def_: FieldDef, params: list[Any]) -> str:
     if not isinstance(def_, EnumFieldDef):
         raise CriteriaError(f"Field {f.key} is not an enum field")
     if not f.values:
@@ -217,7 +172,7 @@ def _enum_clause(f: EnumFilter, def_: Any, params: list[Any]) -> str:
     return f"{expr} IN ({placeholders})"
 
 
-def _age_range_clause(f: AgeRangeFilter, def_: Any, params: list[Any]) -> str:
+def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> str:
     if not isinstance(def_, AgeRangeFieldDef):
         raise CriteriaError(f"Field {f.key} is not an age-range field")
     if f.min is None and f.max is None:
@@ -235,7 +190,7 @@ def _age_range_clause(f: AgeRangeFilter, def_: Any, params: list[Any]) -> str:
     return f"({' AND '.join(parts)})"
 
 
-def _text_clause(f: TextFilter, def_: Any, params: list[Any]) -> str:
+def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
     if not isinstance(def_, TextFieldDef):
         raise CriteriaError(f"Field {f.key} is not a text field")
     if not f.value.strip():
