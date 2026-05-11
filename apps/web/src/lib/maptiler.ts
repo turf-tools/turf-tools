@@ -2,11 +2,9 @@
 // (gitignored .env), and is inlined into the JS bundle at build time. Sign up
 // at maptiler.com and add your key to apps/web/.env. Use the same key as
 // EXPO_PUBLIC_MAPTILER_KEY in apps/native/.env so both apps share the styles.
-
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY ?? "";
 
-// Custom styles designed for canvassing — high contrast streets, muted
-// everything else. Style IDs match apps/native/src/lib/maptiler.ts.
+// Custom styles from Maptiler account.
 const STYLE_ID_LIGHT = "01961350-1791-703e-8753-2c795c604620";
 const STYLE_ID_DARK = "019dc276-9981-7168-a043-8a1ae4051996";
 
