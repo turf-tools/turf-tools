@@ -59,7 +59,7 @@ importers:
         version: 5.96.2
       '@tanstack/query-db-collection':
         specifier: ^1.0.36
-        version: 1.0.36(@tanstack/query-core@5.96.2)(typescript@5.9.3)
+        version: 1.0.36(@tanstack/query-core@5.100.10)(typescript@5.9.3)
       '@tanstack/react-db':
         specifier: ^0.1.83
         version: 0.1.83(react@19.2.0)(typescript@5.9.3)
@@ -71,7 +71,7 @@ importers:
         version: 5.96.2(@tanstack/react-query@5.96.1)(react@19.2.0)
       expo:
         specifier: ~55.0.12
-        version: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+        version: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-camera:
         specifier: ~55.0.14
         version: 55.0.14(@types/emscripten@1.41.5)(expo@55.0.12)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
@@ -89,7 +89,7 @@ importers:
         version: 55.1.7(expo@55.0.12)
       expo-router:
         specifier: ~55.0.11
-        version: 55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
+        version: 55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.11)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-status-bar:
         specifier: ~55.0.5
         version: 55.0.5(react-native@0.83.4)(react@19.2.0)
@@ -119,7 +119,7 @@ importers:
         version: 2.30.1(react-native@0.83.4)(react@19.2.0)
       react-native-mmkv:
         specifier: ^4.3.1
-        version: 4.3.1(react-native-nitro-modules@0.35.4)(react-native@0.83.4)(react@19.2.0)
+        version: 4.3.1(react-native-nitro-modules@0.35.6)(react-native@0.83.4)(react@19.2.0)
       react-native-random-uuid:
         specifier: ^0.1.4
         version: 0.1.4(react-native@0.83.4)
@@ -165,7 +165,7 @@ importers:
         version: 55.0.13(@babel/core@7.29.0)(expo@55.0.12)(react-refresh@0.18.0)
       prettier-plugin-tailwindcss:
         specifier: ~0.5.14
-        version: 0.5.14(prettier@3.8.1)
+        version: 0.5.14(prettier@3.8.3)
       tailwindcss:
         specifier: ~3.4.17
         version: 3.4.17
@@ -203,14 +203,14 @@ importers:
         specifier: ^5.96.1
         version: 5.96.1(react@19.2.4)
       '@tanstack/react-router':
-        specifier: ^1
-        version: 1.168.7(react-dom@19.2.4)(react@19.2.4)
+        specifier: ^1.169.2
+        version: 1.169.2(react-dom@19.2.4)(react@19.2.4)
       '@tanstack/react-router-with-query':
         specifier: ^1.130.17
-        version: 1.130.17(@tanstack/react-query@5.96.1)(@tanstack/react-router@1.168.7)(@tanstack/router-core@1.168.6)(react-dom@19.2.4)(react@19.2.4)
+        version: 1.130.17(@tanstack/react-query@5.96.1)(@tanstack/react-router@1.169.2)(@tanstack/router-core@1.169.2)(react-dom@19.2.4)(react@19.2.4)
       '@tanstack/react-start':
-        specifier: ^1
-        version: 1.167.12(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4)
+        specifier: ^1.167.65
+        version: 1.167.65(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4)
       '@turf/clean-coords':
         specifier: ^7.3.5
         version: 7.3.5
@@ -289,7 +289,7 @@ importers:
         version: 4.7.0(@voidzero-dev/vite-plus-core@0.1.14)
       nitro:
         specifier: ^3.0.260311-beta
-        version: 3.0.260311-beta(@electric-sql/pglite@0.4.2)(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20)
+        version: 3.0.260311-beta(@electric-sql/pglite@0.4.2)(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20)
       tailwindcss:
         specifier: ^4
         version: 4.2.2
@@ -349,15 +349,15 @@ packages:
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
     engines: {node: '>=10'}
 
-  /@azure-rest/core-client@2.5.1:
-    resolution: {integrity: sha512-EHaOXW0RYDKS5CFffnixdyRPak5ytiCtU7uXDcP/uiY+A6jFRwNGzzJBiznkCzvi5EYpY+YWinieqHb0oY916A==}
+  /@azure-rest/core-client@2.6.0:
+    resolution: {integrity: sha512-iuFKDm8XPzNxPfRjhyU5/xKZmcRDzSuEghXDHHk4MjBV/wFL34GmYVBZnn9wmuoLBeS1qAw9ceMdaeJBPcB1QQ==}
     engines: {node: '>=20.0.0'}
     dependencies:
       '@azure/abort-controller': 2.1.2
       '@azure/core-auth': 1.10.1
       '@azure/core-rest-pipeline': 1.23.0
       '@azure/core-tracing': 1.3.1
-      '@typespec/ts-http-runtime': 0.3.4
+      '@typespec/ts-http-runtime': 0.3.5
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
@@ -392,8 +392,8 @@ packages:
     transitivePeerDependencies:
       - supports-color
 
-  /@azure/core-http-compat@2.3.2(@azure/core-client@1.10.1)(@azure/core-rest-pipeline@1.23.0):
-    resolution: {integrity: sha512-Tf6ltdKzOJEgxZeWLCjMxrxbodB/ZeCbzzA1A2qHbhzAjzjHoBVSUeSl/baT/oHAxhc4qdqVaDKnc2+iE932gw==}
+  /@azure/core-http-compat@2.4.0(@azure/core-client@1.10.1)(@azure/core-rest-pipeline@1.23.0):
+    resolution: {integrity: sha512-f1P96IB399YiN2ARYHP7EpZi3Bf3wH4SN2lGzrw7JVwm7bbsVYtf2iKSBwTywD2P62NOPZGHFSZi+6jjb75JuA==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@azure/core-client': ^1.10.0
@@ -429,7 +429,7 @@ packages:
       '@azure/core-tracing': 1.3.1
       '@azure/core-util': 1.13.1
       '@azure/logger': 1.3.0
-      '@typespec/ts-http-runtime': 0.3.4
+      '@typespec/ts-http-runtime': 0.3.5
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
@@ -445,7 +445,7 @@ packages:
     engines: {node: '>=20.0.0'}
     dependencies:
       '@azure/abort-controller': 2.1.2
-      '@typespec/ts-http-runtime': 0.3.4
+      '@typespec/ts-http-runtime': 0.3.5
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
@@ -461,20 +461,20 @@ packages:
       '@azure/core-tracing': 1.3.1
       '@azure/core-util': 1.13.1
       '@azure/logger': 1.3.0
-      '@azure/msal-browser': 5.6.2
-      '@azure/msal-node': 5.1.1
+      '@azure/msal-browser': 5.10.0
+      '@azure/msal-node': 5.2.0
       open: 10.2.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
 
-  /@azure/keyvault-common@2.0.0:
-    resolution: {integrity: sha512-wRLVaroQtOqfg60cxkzUkGKrKMsCP6uYXAOomOIysSMyt1/YM0eUn9LqieAWM8DLcU4+07Fio2YGpPeqUbpP9w==}
-    engines: {node: '>=18.0.0'}
+  /@azure/keyvault-common@2.1.0:
+    resolution: {integrity: sha512-aCDidWuKY06LWQ4x7/8TIXK6iRqTaRWRL3t7T+LC+j1b07HtoIsOxP/tU90G4jCSBn5TAyUTCtA4MS/y5Hudaw==}
+    engines: {node: '>=20.0.0'}
     dependencies:
+      '@azure-rest/core-client': 2.6.0
       '@azure/abort-controller': 2.1.2
       '@azure/core-auth': 1.10.1
-      '@azure/core-client': 1.10.1
       '@azure/core-rest-pipeline': 1.23.0
       '@azure/core-tracing': 1.3.1
       '@azure/core-util': 1.13.1
@@ -487,16 +487,16 @@ packages:
     resolution: {integrity: sha512-eDT7iXoBTRZ2n3fLiftuGJFD+yjkiB1GNqzU2KbY1TLYeXeSPVTVgn2eJ5vmRTZ11978jy2Kg2wI7xa9Tyr8ag==}
     engines: {node: '>=18.0.0'}
     dependencies:
-      '@azure-rest/core-client': 2.5.1
+      '@azure-rest/core-client': 2.6.0
       '@azure/abort-controller': 2.1.2
       '@azure/core-auth': 1.10.1
-      '@azure/core-http-compat': 2.3.2(@azure/core-client@1.10.1)(@azure/core-rest-pipeline@1.23.0)
+      '@azure/core-http-compat': 2.4.0(@azure/core-client@1.10.1)(@azure/core-rest-pipeline@1.23.0)
       '@azure/core-lro': 2.7.2
       '@azure/core-paging': 1.6.2
       '@azure/core-rest-pipeline': 1.23.0
       '@azure/core-tracing': 1.3.1
       '@azure/core-util': 1.13.1
-      '@azure/keyvault-common': 2.0.0
+      '@azure/keyvault-common': 2.1.0
       '@azure/logger': 1.3.0
       tslib: 2.8.1
     transitivePeerDependencies:
@@ -507,28 +507,27 @@ packages:
     resolution: {integrity: sha512-fCqPIfOcLE+CGqGPd66c8bZpwAji98tZ4JI9i/mlTNTlsIWslCfpg48s/ypyLxZTump5sypjrKn2/kY7q8oAbA==}
     engines: {node: '>=20.0.0'}
     dependencies:
-      '@typespec/ts-http-runtime': 0.3.4
+      '@typespec/ts-http-runtime': 0.3.5
       tslib: 2.8.1
     transitivePeerDependencies:
       - supports-color
 
-  /@azure/msal-browser@5.6.2:
-    resolution: {integrity: sha512-ZgcN9ToRJ80f+wNPBBKYJ+DG0jlW7ktEjYtSNkNsTrlHVMhKB8tKMdI1yIG1I9BJtykkXtqnuOjlJaEMC7J6aw==}
+  /@azure/msal-browser@5.10.0:
+    resolution: {integrity: sha512-2Y4TlG5mCfxviHutfW50i8Xd8xhGKTgieL02vMYOE5ZbZrVM+drKSGD//tweRAmlmqqp+F9vrKoHWri/buzxWQ==}
     engines: {node: '>=0.8.0'}
     dependencies:
-      '@azure/msal-common': 16.4.0
+      '@azure/msal-common': 16.6.0
 
-  /@azure/msal-common@16.4.0:
-    resolution: {integrity: sha512-twXt09PYtj1PffNNIAzQlrBd0DS91cdA6i1gAfzJ6BnPM4xNk5k9q/5xna7jLIjU3Jnp0slKYtucshGM8OGNAw==}
+  /@azure/msal-common@16.6.0:
+    resolution: {integrity: sha512-FemGljX0csPlBMUE5GUan7BfRn1emeMRUhHSARhqzLN6LA9nt+MgzmAQ1xVqdLm+6plVoxsq9mS5eoyKtpPSgA==}
     engines: {node: '>=0.8.0'}
 
-  /@azure/msal-node@5.1.1:
-    resolution: {integrity: sha512-71grXU6+5hl+3CL3joOxlj/AW6rmhthuTlG0fRqsTrhPArQBpZuUFzCIlKOGdcafLUa/i1hBdV78ZxJdlvRA+g==}
+  /@azure/msal-node@5.2.0:
+    resolution: {integrity: sha512-b/ak8XAqpnGk1N1nsyTVV0Remp48BP3QrGQZ1uCMcvg2S8X1eSXzhHQZEae2oX276Q4KFAqCUswanDtcvIKLrw==}
     engines: {node: '>=20'}
     dependencies:
-      '@azure/msal-common': 16.4.0
+      '@azure/msal-common': 16.6.0
       jsonwebtoken: 9.0.3
-      uuid: 8.3.2
 
   /@babel/code-frame@7.27.1:
     resolution: {integrity: sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg==}
@@ -756,6 +755,14 @@ packages:
     hasBin: true
     dependencies:
       '@babel/types': 7.29.0
+
+  /@babel/parser@7.29.3:
+    resolution: {integrity: sha512-b3ctpQwp+PROvU/cttc4OYl4MzfJUWy6FZg+PMXfzmt/+39iHVF0sDfqay8TQM3JA2EUOyKcFZt75jWriQijsA==}
+    engines: {node: '>=6.0.0'}
+    hasBin: true
+    dependencies:
+      '@babel/types': 7.29.0
+    dev: false
 
   /@babel/plugin-proposal-decorators@7.29.0(@babel/core@7.29.0):
     resolution: {integrity: sha512-CVBVv3VY/XRMxRYq5dwr2DS7/MvqPm23cOCjbwNnVrfOqcWlnefua1uUs0sjdKOGjvPUG633o07uWzJq4oI6dA==}
@@ -1592,26 +1599,23 @@ packages:
   /@electric-sql/pglite@0.4.2:
     resolution: {integrity: sha512-1GUUl/MZpy5QWgWisD3Epho3GkJrZ1MzVgQpo2pifQWUs96F9rXKZxeVLPhkwFYck34CH/kQ8lis6wX9ifn3kg==}
 
-  /@emnapi/core@1.9.1:
-    resolution: {integrity: sha512-mukuNALVsoix/w1BJwFzwXBN/dHeejQtuVzcDsfOEsdpCumXb/E9j8w11h5S54tT1xhifGfbbSm/ICrObRb3KA==}
-    requiresBuild: true
+  /@emnapi/core@1.10.0:
+    resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
     dependencies:
-      '@emnapi/wasi-threads': 1.2.0
+      '@emnapi/wasi-threads': 1.2.1
       tslib: 2.8.1
     dev: true
     optional: true
 
-  /@emnapi/runtime@1.9.1:
-    resolution: {integrity: sha512-VYi5+ZVLhpgK4hQ0TAjiQiZ6ol0oe4mBx7mVv7IflsiEp0OWoVsp/+f9Vc1hOhE0TtkORVrI1GvzyreqpgWtkA==}
-    requiresBuild: true
+  /@emnapi/runtime@1.10.0:
+    resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
     dependencies:
       tslib: 2.8.1
     dev: true
     optional: true
 
-  /@emnapi/wasi-threads@1.2.0:
-    resolution: {integrity: sha512-N10dEJNSsUx41Z6pZsXU8FjPjpBEplgH24sfkmITrBED1/U2Esum9F3lfLrMjKHHjmi557zQn7kR9R+XWXu5Rg==}
-    requiresBuild: true
+  /@emnapi/wasi-threads@1.2.1:
+    resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
     dependencies:
       tslib: 2.8.1
     dev: true
@@ -1632,6 +1636,7 @@ packages:
     cpu: [ppc64]
     os: [aix]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/android-arm64@0.25.12:
@@ -1649,6 +1654,7 @@ packages:
     cpu: [arm64]
     os: [android]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/android-arm@0.25.12:
@@ -1666,6 +1672,7 @@ packages:
     cpu: [arm]
     os: [android]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/android-x64@0.25.12:
@@ -1683,6 +1690,7 @@ packages:
     cpu: [x64]
     os: [android]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/darwin-arm64@0.25.12:
@@ -1700,6 +1708,7 @@ packages:
     cpu: [arm64]
     os: [darwin]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/darwin-x64@0.25.12:
@@ -1717,6 +1726,7 @@ packages:
     cpu: [x64]
     os: [darwin]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/freebsd-arm64@0.25.12:
@@ -1734,6 +1744,7 @@ packages:
     cpu: [arm64]
     os: [freebsd]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/freebsd-x64@0.25.12:
@@ -1751,6 +1762,7 @@ packages:
     cpu: [x64]
     os: [freebsd]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-arm64@0.25.12:
@@ -1768,6 +1780,7 @@ packages:
     cpu: [arm64]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-arm@0.25.12:
@@ -1785,6 +1798,7 @@ packages:
     cpu: [arm]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-ia32@0.25.12:
@@ -1802,6 +1816,7 @@ packages:
     cpu: [ia32]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-loong64@0.25.12:
@@ -1819,6 +1834,7 @@ packages:
     cpu: [loong64]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-mips64el@0.25.12:
@@ -1836,6 +1852,7 @@ packages:
     cpu: [mips64el]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-ppc64@0.25.12:
@@ -1853,6 +1870,7 @@ packages:
     cpu: [ppc64]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-riscv64@0.25.12:
@@ -1870,6 +1888,7 @@ packages:
     cpu: [riscv64]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-s390x@0.25.12:
@@ -1887,6 +1906,7 @@ packages:
     cpu: [s390x]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/linux-x64@0.25.12:
@@ -1904,6 +1924,7 @@ packages:
     cpu: [x64]
     os: [linux]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/netbsd-arm64@0.25.12:
@@ -1921,6 +1942,7 @@ packages:
     cpu: [arm64]
     os: [netbsd]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/netbsd-x64@0.25.12:
@@ -1938,6 +1960,7 @@ packages:
     cpu: [x64]
     os: [netbsd]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/openbsd-arm64@0.25.12:
@@ -1955,6 +1978,7 @@ packages:
     cpu: [arm64]
     os: [openbsd]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/openbsd-x64@0.25.12:
@@ -1972,6 +1996,7 @@ packages:
     cpu: [x64]
     os: [openbsd]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/openharmony-arm64@0.25.12:
@@ -1989,6 +2014,7 @@ packages:
     cpu: [arm64]
     os: [openharmony]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/sunos-x64@0.25.12:
@@ -2006,6 +2032,7 @@ packages:
     cpu: [x64]
     os: [sunos]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/win32-arm64@0.25.12:
@@ -2023,6 +2050,7 @@ packages:
     cpu: [arm64]
     os: [win32]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/win32-ia32@0.25.12:
@@ -2040,6 +2068,7 @@ packages:
     cpu: [ia32]
     os: [win32]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@esbuild/win32-x64@0.25.12:
@@ -2057,6 +2086,7 @@ packages:
     cpu: [x64]
     os: [win32]
     requiresBuild: true
+    dev: true
     optional: true
 
   /@expo-google-fonts/geist@0.4.1:
@@ -2066,7 +2096,7 @@ packages:
   /@expo-google-fonts/material-symbols@0.4.27:
     resolution: {integrity: sha512-cnb3DZnWUWpezGFkJ8y4MT5f/lw6FcgDzeJzic+T+vpQHLHG1cg3SC3i1w1i8Bk4xKR4HPY3t9iIRNvtr5ml8A==}
 
-  /@expo/cli@55.0.22(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3):
+  /@expo/cli@55.0.22(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3):
     resolution: {integrity: sha512-tq6lkS50edbfbKGUkgUmrOZ6JwRZrQY1fFVTrrtakkMFIbNtMTsImFsDpV8nstQM88DvsA9hb2W5cxRStPtIWw==}
     hasBin: true
     peerDependencies:
@@ -2086,7 +2116,7 @@ packages:
       '@expo/env': 2.1.1
       '@expo/image-utils': 0.8.12
       '@expo/json-file': 10.0.13
-      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       '@expo/metro': 55.0.0
       '@expo/metro-config': 55.0.14(expo@55.0.12)(typescript@5.9.3)
       '@expo/osascript': 2.4.2
@@ -2094,7 +2124,7 @@ packages:
       '@expo/plist': 0.5.2
       '@expo/prebuild-config': 55.0.13(expo@55.0.12)(typescript@5.9.3)
       '@expo/require-utils': 55.0.3(typescript@5.9.3)
-      '@expo/router-server': 55.0.13(@expo/metro-runtime@55.0.9)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo-server@55.0.7)(expo@55.0.12)(react-dom@19.2.0)(react@19.2.0)
+      '@expo/router-server': 55.0.13(@expo/metro-runtime@55.0.11)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo-server@55.0.7)(expo@55.0.12)(react-dom@19.2.0)(react@19.2.0)
       '@expo/schema-utils': 55.0.3
       '@expo/spawn-async': 1.7.2
       '@expo/ws-tunnel': 1.0.6
@@ -2111,8 +2141,8 @@ packages:
       connect: 3.7.0
       debug: 4.4.3
       dnssd-advertise: 1.1.4
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
-      expo-router: 55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo-router: 55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.11)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-server: 55.0.7
       fetch-nodeshim: 0.4.10
       getenv: 2.0.0
@@ -2220,14 +2250,14 @@ packages:
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
-  /@expo/dom-webview@55.0.5(expo@55.0.12)(react-native@0.83.4)(react@19.2.0):
-    resolution: {integrity: sha512-lt3uxYOCk3wmWvtOOvsC35CKGbDAOx5C2EaY8SH1JVSfBzqmF8Cs0Xp1MPxncDPMyxpMiWx5SvvV/iLF1rJU4A==}
+  /@expo/dom-webview@55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0):
+    resolution: {integrity: sha512-ZNm8tiNEZysxrr36J0x4mOCGyJDcaIvL/3tMxBz0VJIJDcV19xjuJAhJQxHovu+jKx6s9tRyEAINa1mdrzV39g==}
     peerDependencies:
       expo: '*'
       react: '*'
       react-native: '*'
     dependencies:
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
@@ -2285,7 +2315,7 @@ packages:
       - supports-color
       - typescript
 
-  /@expo/log-box@55.0.10(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0):
+  /@expo/log-box@55.0.10(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0):
     resolution: {integrity: sha512-7jdikExgIrCIF5e3P1qMwcUZ2tcxrNdVqE9Y8kNMUHqZ+ipMlin+SiZwJKHM1+am4CYGjhdyrzbnIpvEcLDYcg==}
     peerDependencies:
       '@expo/dom-webview': ^55.0.5
@@ -2293,9 +2323,24 @@ packages:
       react: '*'
       react-native: '*'
     dependencies:
-      '@expo/dom-webview': 55.0.5(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      '@expo/dom-webview': 55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       anser: 1.4.10
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      react: 19.2.0
+      react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
+      stacktrace-parser: 0.1.11
+
+  /@expo/log-box@55.0.12(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0):
+    resolution: {integrity: sha512-f9ARS8J60cq3LLNdIqmUjYwyerBzVS5Ecp7KjIf3GOIPjW0571rkcwLz4/U18l/1DeSkSzIkYsNl2TC9oTdWaQ==}
+    peerDependencies:
+      '@expo/dom-webview': ^55.0.6
+      expo: '*'
+      react: '*'
+      react-native: '*'
+    dependencies:
+      '@expo/dom-webview': 55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      anser: 1.4.10
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
       stacktrace-parser: 0.1.11
@@ -2319,7 +2364,7 @@ packages:
       browserslist: 4.28.1
       chalk: 4.1.2
       debug: 4.4.3
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       getenv: 2.0.0
       glob: 13.0.6
       hermes-parser: 0.32.1
@@ -2334,8 +2379,8 @@ packages:
       - typescript
       - utf-8-validate
 
-  /@expo/metro-runtime@55.0.9(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0):
-    resolution: {integrity: sha512-H37b2Mc/8GiQbwtUFzUTxA3KsAMZu00SRg/RhbHa9xVE7J0n5ZX4NHy0LJEFAbkzTb1TUy1hLpo3oEKnG+rLyg==}
+  /@expo/metro-runtime@55.0.11(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0):
+    resolution: {integrity: sha512-4KKi/jGrIEXi2YGu0hYTVr0CEeRJy5SXbCrz9+KDZkuD3ROwKNpM1DBawni5rhPVovFnR323HBck9GaxhnfrRw==}
     peerDependencies:
       expo: '*'
       react: '*'
@@ -2345,9 +2390,9 @@ packages:
       react-dom:
         optional: true
     dependencies:
-      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      '@expo/log-box': 55.0.12(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       anser: 1.4.10
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       pretty-format: 29.7.0
       react: 19.2.0
       react-dom: 19.2.0(react@19.2.0)
@@ -2414,7 +2459,7 @@ packages:
       '@expo/json-file': 10.0.13
       '@react-native/normalize-colors': 0.83.4
       debug: 4.4.3
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       resolve-from: 5.0.0
       semver: 7.7.4
       xml2js: 0.6.0
@@ -2437,7 +2482,7 @@ packages:
     transitivePeerDependencies:
       - supports-color
 
-  /@expo/router-server@55.0.13(@expo/metro-runtime@55.0.9)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo-server@55.0.7)(expo@55.0.12)(react-dom@19.2.0)(react@19.2.0):
+  /@expo/router-server@55.0.13(@expo/metro-runtime@55.0.11)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo-server@55.0.7)(expo@55.0.12)(react-dom@19.2.0)(react@19.2.0):
     resolution: {integrity: sha512-AoxfxJYkAIMey8YqAohFovp4M4DjzoCDH9ampVN/ZKt+bzXkTIFmWEinQ5mpMfHdfIWaumvxQbohgoo6D5xUZA==}
     peerDependencies:
       '@expo/metro-runtime': ^55.0.9
@@ -2459,12 +2504,12 @@ packages:
       react-server-dom-webpack:
         optional: true
     dependencies:
-      '@expo/metro-runtime': 55.0.9(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)
+      '@expo/metro-runtime': 55.0.11(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)
       debug: 4.4.3
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-constants: 55.0.12(expo@55.0.12)(react-native@0.83.4)(typescript@5.9.3)
       expo-font: 55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
-      expo-router: 55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
+      expo-router: 55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.11)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
       expo-server: 55.0.7
       react: 19.2.0
       react-dom: 19.2.0(react@19.2.0)
@@ -2950,13 +2995,16 @@ packages:
       strict-event-emitter: 0.5.1
     dev: false
 
-  /@napi-rs/wasm-runtime@1.1.1:
-    resolution: {integrity: sha512-p64ah1M1ld8xjWv3qbvFwHiFVWrq1yFvV4f7w+mzaqiR4IlSgkqhcRdHwsGgomwzBH51sRY4NEowLxnaBjcW/A==}
+  /@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
+    resolution: {integrity: sha512-3NQNNgA1YSlJb/kMH1ildASP9HW7/7kYnRI2szWJaofaS1hWmbGI4H+d3+22aGzXXN9IJ+n+GiFVcGipJP18ow==}
     requiresBuild: true
+    peerDependencies:
+      '@emnapi/core': ^1.7.1
+      '@emnapi/runtime': ^1.7.1
     dependencies:
-      '@emnapi/core': 1.9.1
-      '@emnapi/runtime': 1.9.1
-      '@tybys/wasm-util': 0.10.1
+      '@emnapi/core': 1.10.0
+      '@emnapi/runtime': 1.10.0
+      '@tybys/wasm-util': 0.10.2
     dev: true
     optional: true
 
@@ -4387,13 +4435,16 @@ packages:
     dev: true
     optional: true
 
-  /@rolldown/binding-wasm32-wasi@1.0.0-rc.12:
+  /@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     resolution: {integrity: sha512-ykGiLr/6kkiHc0XnBfmFJuCjr5ZYKKofkx+chJWDjitX+KsJuAmrzWhwyOMSHzPhzOHOy7u9HlFoa5MoAOJ/Zg==}
     engines: {node: '>=14.0.0'}
     cpu: [wasm32]
     requiresBuild: true
     dependencies:
-      '@napi-rs/wasm-runtime': 1.1.1
+      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
+    transitivePeerDependencies:
+      - '@emnapi/core'
+      - '@emnapi/runtime'
     dev: true
     optional: true
 
@@ -4663,6 +4714,10 @@ packages:
       '@tanstack/query-persist-client-core': 5.96.2
     dev: false
 
+  /@tanstack/query-core@5.100.10:
+    resolution: {integrity: sha512-8UR0yJR+GiQ40m3lPhUr0xbfAupe6GSQiksSBSa9SM2NjezFyxXCIA69/lz8cSoNKZLrw1/PktIyQBJcVeMi3w==}
+    dev: false
+
   /@tanstack/query-core@5.96.1:
     resolution: {integrity: sha512-u1yBgtavSy+N8wgtW3PiER6UpxcplMje65yXnnVgiHTqiMwLlxiw4WvQDrXyn+UD6lnn8kHaxmerJUzQcV/MMg==}
     dev: false
@@ -4671,7 +4726,7 @@ packages:
     resolution: {integrity: sha512-hzI6cTVh4KNRk8UtoIBS7Lv9g6BnJPXvBKsvYH1aGWvv0347jT3BnSvztOE+kD76XGvZnRC/t6qdW1CaIfwCeA==}
     dev: false
 
-  /@tanstack/query-db-collection@1.0.36(@tanstack/query-core@5.96.2)(typescript@5.9.3):
+  /@tanstack/query-db-collection@1.0.36(@tanstack/query-core@5.100.10)(typescript@5.9.3):
     resolution: {integrity: sha512-WOHSZeqFOflWpMxp7ndu8x3M8GyLieWyUsS1fReG8wv6I/1MGOz1j3+XNlGoeoWolYF2hV4l324/dB9BxjAwxw==}
     peerDependencies:
       '@tanstack/query-core': ^5.0.0
@@ -4679,7 +4734,7 @@ packages:
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@tanstack/db': 0.6.5(typescript@5.9.3)
-      '@tanstack/query-core': 5.96.2
+      '@tanstack/query-core': 5.100.10
       typescript: 5.9.3
     dev: false
 
@@ -4730,7 +4785,7 @@ packages:
       react: 19.2.4
     dev: false
 
-  /@tanstack/react-router-with-query@1.130.17(@tanstack/react-query@5.96.1)(@tanstack/react-router@1.168.7)(@tanstack/router-core@1.168.6)(react-dom@19.2.4)(react@19.2.4):
+  /@tanstack/react-router-with-query@1.130.17(@tanstack/react-query@5.96.1)(@tanstack/react-router@1.169.2)(@tanstack/router-core@1.169.2)(react-dom@19.2.4)(react@19.2.4):
     resolution: {integrity: sha512-TNaSocW20KuPwUojEm130DLWTr9M5hsSzxiu4QqS2jNCnrGLuDrwMHyP+6fq13lG3YuU4u9O1qajxfJIGomZCg==}
     engines: {node: '>=12'}
     peerDependencies:
@@ -4741,14 +4796,14 @@ packages:
       react-dom: '>=18.0.0 || >=19.0.0'
     dependencies:
       '@tanstack/react-query': 5.96.1(react@19.2.4)
-      '@tanstack/react-router': 1.168.7(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/router-core': 1.168.6
+      '@tanstack/react-router': 1.169.2(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-core': 1.169.2
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
     dev: false
 
-  /@tanstack/react-router@1.168.7(react-dom@19.2.4)(react@19.2.4):
-    resolution: {integrity: sha512-fW/HvQja4PQeu9lsoyh+pXpZ0UXezbpQkkJvCuH6tHAaW3jvPkjh14lfadrNNiY+pXT7WiMTB3afGhTCC78PDQ==}
+  /@tanstack/react-router@1.169.2(react-dom@19.2.4)(react@19.2.4):
+    resolution: {integrity: sha512-OJM7Kguc7ERnweaNRWsyWgIKcl3z23rD1B4jaxjzd9RGdnzpt2HfrWa9rggbT0Hfzhfo4D2ZmsfoTme035tniQ==}
     engines: {node: '>=20.19'}
     peerDependencies:
       react: '>=18.0.0 || >=19.0.0'
@@ -4756,67 +4811,115 @@ packages:
     dependencies:
       '@tanstack/history': 1.161.6
       '@tanstack/react-store': 0.9.3(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/router-core': 1.168.6
+      '@tanstack/router-core': 1.169.2
       isbot: 5.1.36
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
     dev: false
 
-  /@tanstack/react-start-client@1.166.22(react-dom@19.2.4)(react@19.2.4):
-    resolution: {integrity: sha512-q8GjmehiKPlmbZ2ZjIjeTR8u8Xr8kilbD/AIAvBpd5GCHvwSKYSjgQXSQXbe+B8wqiGXrrid7R9DAeurDHM46A==}
+  /@tanstack/react-start-client@1.166.48(react-dom@19.2.4)(react@19.2.4):
+    resolution: {integrity: sha512-6fqwCwe6v+Nvtdf6vg6gxs/0gCXyZEHF18EslNeG/kca2wnXYFuXRhqGJjJaEgMk3WF4IE9mUgFuBSAOY3P7nQ==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       react: '>=18.0.0 || >=19.0.0'
       react-dom: '>=18.0.0 || >=19.0.0'
     dependencies:
-      '@tanstack/react-router': 1.168.7(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/router-core': 1.168.6
-      '@tanstack/start-client-core': 1.167.6
+      '@tanstack/react-router': 1.169.2(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/start-client-core': 1.168.2
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
     dev: false
 
-  /@tanstack/react-start-server@1.166.22(react-dom@19.2.4)(react@19.2.4):
-    resolution: {integrity: sha512-Ce0WsGkxzZxhithG23EObJxJ3MPhiZpNbsqRSXyDJ/ccKLRNyjlO0frPxqyVM21/geugv7HVBbU8Cx4TB54dLQ==}
+  /@tanstack/react-start-rsc@0.0.44(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4):
+    resolution: {integrity: sha512-5iYUWSBjTwJbV8bTLJHZ5dHm8c/79J6spxPlKsjt9/R0mQaQQjLVNMpv5CrOZ2vPTaZx1ALoGdSWP4WdPcuKRA==}
+    engines: {node: '>=22.12.0'}
+    peerDependencies:
+      '@rspack/core': '>=2.0.0-0'
+      '@vitejs/plugin-rsc': '>=0.5.20'
+      react: '>=18.0.0 || >=19.0.0'
+      react-dom: '>=18.0.0 || >=19.0.0'
+      react-server-dom-rspack: '>=0.0.2'
+    peerDependenciesMeta:
+      '@rspack/core':
+        optional: true
+      '@vitejs/plugin-rsc':
+        optional: true
+      react-server-dom-rspack:
+        optional: true
+    dependencies:
+      '@tanstack/react-router': 1.169.2(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/react-start-server': 1.166.52(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/router-utils': 1.161.8
+      '@tanstack/start-client-core': 1.168.2
+      '@tanstack/start-fn-stubs': 1.161.6
+      '@tanstack/start-plugin-core': 1.169.20(@tanstack/react-router@1.169.2)(@voidzero-dev/vite-plus-core@0.1.14)
+      '@tanstack/start-server-core': 1.167.30
+      '@tanstack/start-storage-context': 1.166.35
+      pathe: 2.0.3
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+    transitivePeerDependencies:
+      - '@rsbuild/core'
+      - crossws
+      - supports-color
+      - vite
+      - vite-plugin-solid
+      - webpack
+    dev: false
+
+  /@tanstack/react-start-server@1.166.52(react-dom@19.2.4)(react@19.2.4):
+    resolution: {integrity: sha512-46Gx+byIndYywUtyna5h3qatHipJkPFqo/miexfuYPgeVAI6ypQzsw7wxF194H6VAP43m2q+fdLPBXStufoOGw==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       react: '>=18.0.0 || >=19.0.0'
       react-dom: '>=18.0.0 || >=19.0.0'
     dependencies:
       '@tanstack/history': 1.161.6
-      '@tanstack/react-router': 1.168.7(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/router-core': 1.168.6
-      '@tanstack/start-client-core': 1.167.6
-      '@tanstack/start-server-core': 1.167.6
+      '@tanstack/react-router': 1.169.2(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/start-client-core': 1.168.2
+      '@tanstack/start-server-core': 1.167.30
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
     transitivePeerDependencies:
       - crossws
     dev: false
 
-  /@tanstack/react-start@1.167.12(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4):
-    resolution: {integrity: sha512-My4ICbFKlpkA5Uxk/7kczXKLHtBaxNzUzrPSXlLcRz87UhMAUNw92ujIGEUhYs3BGuajjdlAvhH4HW8wIkWhkw==}
+  /@tanstack/react-start@1.167.65(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4):
+    resolution: {integrity: sha512-vCGga3RECeR4VpSVuXIU/+zxak5f2qdpUXdZ2yrgcwwKoYPtatdJm6zjS0Py7UOecRqLqMtSeuOjowBJ1higWQ==}
     engines: {node: '>=22.12.0'}
-    hasBin: true
     peerDependencies:
+      '@rsbuild/core': ^2.0.0
+      '@vitejs/plugin-rsc': '*'
       react: '>=18.0.0 || >=19.0.0'
       react-dom: '>=18.0.0 || >=19.0.0'
       vite: npm:@voidzero-dev/vite-plus-core@latest
+    peerDependenciesMeta:
+      '@rsbuild/core':
+        optional: true
+      '@vitejs/plugin-rsc':
+        optional: true
+      vite:
+        optional: true
     dependencies:
-      '@tanstack/react-router': 1.168.7(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/react-start-client': 1.166.22(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/react-start-server': 1.166.22(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/router-utils': 1.161.6
-      '@tanstack/start-client-core': 1.167.6
-      '@tanstack/start-plugin-core': 1.167.13(@tanstack/react-router@1.168.7)(@voidzero-dev/vite-plus-core@0.1.14)
-      '@tanstack/start-server-core': 1.167.6
+      '@tanstack/react-router': 1.169.2(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/react-start-client': 1.166.48(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/react-start-rsc': 0.0.44(@voidzero-dev/vite-plus-core@0.1.14)(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/react-start-server': 1.166.52(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-utils': 1.161.8
+      '@tanstack/start-client-core': 1.168.2
+      '@tanstack/start-plugin-core': 1.169.20(@tanstack/react-router@1.169.2)(@voidzero-dev/vite-plus-core@0.1.14)
+      '@tanstack/start-server-core': 1.167.30
       pathe: 2.0.3
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
       vite: /@voidzero-dev/vite-plus-core@0.1.14(@types/node@22.19.15)(typescript@5.9.3)
     transitivePeerDependencies:
-      - '@rsbuild/core'
+      - '@rspack/core'
       - crossws
+      - react-server-dom-rspack
       - supports-color
       - vite-plugin-solid
       - webpack
@@ -4834,42 +4937,40 @@ packages:
       use-sync-external-store: 1.6.0(react@19.2.4)
     dev: false
 
-  /@tanstack/router-core@1.168.6:
-    resolution: {integrity: sha512-okCno3pImpLFQMJ/4zqEIGjIV5yhxLGj0JByrzQDQehORN1y1q6lJUezT0KPK5qCQiKUApeWaboLPjgBVx1kaQ==}
+  /@tanstack/router-core@1.169.2:
+    resolution: {integrity: sha512-5sm0DJF1A7Mz+9gy4Gz/lLovNailK3yot4vYvz9MkBUPw26uLnhQiR8hSCYxucjE0wD6Mdlc5l+Z0/XTlZ7xHw==}
     engines: {node: '>=20.19'}
-    hasBin: true
     dependencies:
       '@tanstack/history': 1.161.6
-      cookie-es: 2.0.0
-      seroval: 1.5.1
-      seroval-plugins: 1.5.1(seroval@1.5.1)
+      cookie-es: 3.1.1
+      seroval: 1.5.4
+      seroval-plugins: 1.5.4(seroval@1.5.4)
     dev: false
 
-  /@tanstack/router-generator@1.166.21:
-    resolution: {integrity: sha512-pJWsP6HaGrkIkfkcg6vzKyCBMbf1vV1BrQH+bFAVzXj3T/afmix3IPV2hiAj4zzjMxuddJD1on0Hn5+WDYA7zQ==}
+  /@tanstack/router-generator@1.166.42:
+    resolution: {integrity: sha512-2qBWC0t78r6b3vI+AbnvCZcFAvbYBDlLuWZrTjQbcjUmwG3qyeQp983tJyDuj9wb5//adG1tgAGXZkJ3aDwdBg==}
     engines: {node: '>=20.19'}
     dependencies:
-      '@tanstack/router-core': 1.168.6
-      '@tanstack/router-utils': 1.161.6
+      '@babel/types': 7.29.0
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/router-utils': 1.161.8
       '@tanstack/virtual-file-routes': 1.161.7
-      prettier: 3.8.1
-      recast: 0.23.11
-      source-map: 0.7.6
-      tsx: 4.21.0
+      jiti: 2.7.0
+      magic-string: 0.30.21
+      prettier: 3.8.3
       zod: 3.25.76
     transitivePeerDependencies:
       - supports-color
     dev: false
 
-  /@tanstack/router-plugin@1.167.8(@tanstack/react-router@1.168.7)(@voidzero-dev/vite-plus-core@0.1.14):
-    resolution: {integrity: sha512-/X4ACYsSX4bRmomj5X2TBU75cHuIVI99Fsax6DWnP6hPb4PaSjPUHVBfHhk2NemJzEOZu1L31UQ9QDlbHU4ZTQ==}
+  /@tanstack/router-plugin@1.167.35(@tanstack/react-router@1.169.2)(@voidzero-dev/vite-plus-core@0.1.14):
+    resolution: {integrity: sha512-UAScU5VAzLYVY4FML/Cbc5S5TucT4I8Ata05yozGOe4ZfepTKRffA5xWLtD2N+ov5svdv0KTX/kqlZnYPe28mA==}
     engines: {node: '>=20.19'}
-    hasBin: true
     peerDependencies:
-      '@rsbuild/core': '>=1.0.2'
-      '@tanstack/react-router': ^1.168.7
+      '@rsbuild/core': '>=1.0.2 || ^2.0.0'
+      '@tanstack/react-router': ^1.169.2
       vite: npm:@voidzero-dev/vite-plus-core@latest
-      vite-plugin-solid: ^2.11.10
+      vite-plugin-solid: ^2.11.10 || ^3.0.0-0
       webpack: '>=5.92.0'
     peerDependenciesMeta:
       '@rsbuild/core':
@@ -4889,45 +4990,44 @@ packages:
       '@babel/template': 7.28.6
       '@babel/traverse': 7.29.0
       '@babel/types': 7.29.0
-      '@tanstack/react-router': 1.168.7(react-dom@19.2.4)(react@19.2.4)
-      '@tanstack/router-core': 1.168.6
-      '@tanstack/router-generator': 1.166.21
-      '@tanstack/router-utils': 1.161.6
+      '@tanstack/react-router': 1.169.2(react-dom@19.2.4)(react@19.2.4)
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/router-generator': 1.166.42
+      '@tanstack/router-utils': 1.161.8
       '@tanstack/virtual-file-routes': 1.161.7
       chokidar: 3.6.0
-      unplugin: 2.3.11
+      unplugin: 3.0.0
       vite: /@voidzero-dev/vite-plus-core@0.1.14(@types/node@22.19.15)(typescript@5.9.3)
       zod: 3.25.76
     transitivePeerDependencies:
       - supports-color
     dev: false
 
-  /@tanstack/router-utils@1.161.6:
-    resolution: {integrity: sha512-nRcYw+w2OEgK6VfjirYvGyPLOK+tZQz1jkYcmH5AjMamQ9PycnlxZF2aEZtPpNoUsaceX2bHptn6Ub5hGXqNvw==}
+  /@tanstack/router-utils@1.161.8:
+    resolution: {integrity: sha512-xyiLWEKjfBAVhauDSSjXxyf7s8elU6SM+V050sbkofvGmIIvkwPFtDsX7Gvwh14kBd6iCwAT+RiPvXTxAptY0Q==}
     engines: {node: '>=20.19'}
     dependencies:
       '@babel/core': 7.29.0
       '@babel/generator': 7.29.1
-      '@babel/parser': 7.29.2
+      '@babel/parser': 7.29.3
       '@babel/types': 7.29.0
-      ansis: 4.2.0
+      ansis: 4.3.0
       babel-dead-code-elimination: 1.0.12
       diff: 8.0.4
       pathe: 2.0.3
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.16
     transitivePeerDependencies:
       - supports-color
     dev: false
 
-  /@tanstack/start-client-core@1.167.6:
-    resolution: {integrity: sha512-SmGQMSY5DEP8ZvfT1IGp0prUYdlEX0mbd1Dz+lAfma8+kA0u1Aa/IDALuQsahbga6VJ+um8KFyCNtvKHKEying==}
+  /@tanstack/start-client-core@1.168.2:
+    resolution: {integrity: sha512-/bckv9k/yxY4VmSY2V2MeX7NBsS5uqGvdSPs5WIvW3Uv35DXPrdiumKXTNJeZRNRMtxrM+YfxQPjXLx3C7ykvg==}
     engines: {node: '>=22.12.0'}
-    hasBin: true
     dependencies:
-      '@tanstack/router-core': 1.168.6
+      '@tanstack/router-core': 1.169.2
       '@tanstack/start-fn-stubs': 1.161.6
-      '@tanstack/start-storage-context': 1.166.20
-      seroval: 1.5.1
+      '@tanstack/start-storage-context': 1.166.35
+      seroval: 1.5.4
     dev: false
 
   /@tanstack/start-fn-stubs@1.161.6:
@@ -4935,36 +5035,43 @@ packages:
     engines: {node: '>=22.12.0'}
     dev: false
 
-  /@tanstack/start-plugin-core@1.167.13(@tanstack/react-router@1.168.7)(@voidzero-dev/vite-plus-core@0.1.14):
-    resolution: {integrity: sha512-rKS02qj9/X3rRKAe/93INtR/1EGawN1vgy9fULtMKXvwWC8ZSU3VAs9zjPg8nHjy3fVE3SSL6NxFr4LJmdPYyg==}
+  /@tanstack/start-plugin-core@1.169.20(@tanstack/react-router@1.169.2)(@voidzero-dev/vite-plus-core@0.1.14):
+    resolution: {integrity: sha512-MLSH5P3auFpnol1lMGQhUrpJH7+P5knzBXMnJjXG+nVOvmcYbY0JA+nQMl81kKiqfkEceAiaEdKhl8Zc5Ldolw==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
+      '@rsbuild/core': ^2.0.0
       vite: npm:@voidzero-dev/vite-plus-core@latest
+    peerDependenciesMeta:
+      '@rsbuild/core':
+        optional: true
+      vite:
+        optional: true
     dependencies:
       '@babel/code-frame': 7.27.1
       '@babel/core': 7.29.0
       '@babel/types': 7.29.0
       '@rolldown/pluginutils': 1.0.0-beta.40
-      '@tanstack/router-core': 1.168.6
-      '@tanstack/router-generator': 1.166.21
-      '@tanstack/router-plugin': 1.167.8(@tanstack/react-router@1.168.7)(@voidzero-dev/vite-plus-core@0.1.14)
-      '@tanstack/router-utils': 1.161.6
-      '@tanstack/start-client-core': 1.167.6
-      '@tanstack/start-server-core': 1.167.6
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/router-generator': 1.166.42
+      '@tanstack/router-plugin': 1.167.35(@tanstack/react-router@1.169.2)(@voidzero-dev/vite-plus-core@0.1.14)
+      '@tanstack/router-utils': 1.161.8
+      '@tanstack/start-client-core': 1.168.2
+      '@tanstack/start-server-core': 1.167.30
       cheerio: 1.2.0
       exsolve: 1.0.8
+      lightningcss: 1.32.0
       pathe: 2.0.3
       picomatch: 4.0.4
+      seroval: 1.5.4
       source-map: 0.7.6
-      srvx: 0.11.13
-      tinyglobby: 0.2.15
-      ufo: 1.6.3
+      srvx: 0.11.15
+      tinyglobby: 0.2.16
+      ufo: 1.6.4
       vite: /@voidzero-dev/vite-plus-core@0.1.14(@types/node@22.19.15)(typescript@5.9.3)
-      vitefu: 1.1.2(@voidzero-dev/vite-plus-core@0.1.14)
+      vitefu: 1.1.3(@voidzero-dev/vite-plus-core@0.1.14)
       xmlbuilder2: 4.0.3
       zod: 3.25.76
     transitivePeerDependencies:
-      - '@rsbuild/core'
       - '@tanstack/react-router'
       - crossws
       - supports-color
@@ -4972,26 +5079,26 @@ packages:
       - webpack
     dev: false
 
-  /@tanstack/start-server-core@1.167.6:
-    resolution: {integrity: sha512-IC1U3SMM2SVZ3M9KMSHjV0AqAU3snGtGz6D3psrX8RZxTuMpmv/DaCs8jqGwfZbB2D2EQNUxDrBOmFYr7m7dQw==}
+  /@tanstack/start-server-core@1.167.30:
+    resolution: {integrity: sha512-GC0PXzYYSEwfAOC2NxGXFUyYvfbSjVoqnIrzJsyInKd8xQxGEQaVdrebbyx9TV5cj7A5e7EJcWAsf3G3wRDQBw==}
     engines: {node: '>=22.12.0'}
-    hasBin: true
     dependencies:
       '@tanstack/history': 1.161.6
-      '@tanstack/router-core': 1.168.6
-      '@tanstack/start-client-core': 1.167.6
-      '@tanstack/start-storage-context': 1.166.20
-      h3-v2: /h3@2.0.1-rc.16
-      seroval: 1.5.1
+      '@tanstack/router-core': 1.169.2
+      '@tanstack/start-client-core': 1.168.2
+      '@tanstack/start-storage-context': 1.166.35
+      fetchdts: 0.1.7
+      h3-v2: /h3@2.0.1-rc.20(crossws@0.4.4)
+      seroval: 1.5.4
     transitivePeerDependencies:
       - crossws
     dev: false
 
-  /@tanstack/start-storage-context@1.166.20:
-    resolution: {integrity: sha512-eQQG+0V3NMpPKd7K6mgqO4vwOdpj66m9F7UxVOiazcUrv5CgAM6H240tyHKKeHRMjykRhkF1ubarUF2Yd+GTOg==}
+  /@tanstack/start-storage-context@1.166.35:
+    resolution: {integrity: sha512-ZKDkKiorJrKwfEHjatEwRHG7EP3raJPhh6CSl4CFmHW0naIvwaW5gQcxcT8IlHtoGDLYDAjBEcSr3MZyXgqmOA==}
     engines: {node: '>=22.12.0'}
     dependencies:
-      '@tanstack/router-core': 1.168.6
+      '@tanstack/router-core': 1.169.2
     dev: false
 
   /@tanstack/store@0.9.3:
@@ -5120,8 +5227,8 @@ packages:
       tslib: 2.8.1
     dev: false
 
-  /@tybys/wasm-util@0.10.1:
-    resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
+  /@tybys/wasm-util@0.10.2:
+    resolution: {integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==}
     requiresBuild: true
     dependencies:
       tslib: 2.8.1
@@ -5199,7 +5306,7 @@ packages:
   /@types/mssql@9.1.11(@azure/core-client@1.10.1):
     resolution: {integrity: sha512-vcujgrDbDezCxNDO4KY6gjwduLYOKfrexpRUwhoysRvcXZ3+IgZ/PMYFDgh8c3cQIxZ6skAwYo+H6ibMrBWPjQ==}
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 22.19.18
       tarn: 3.0.2
       tedious: 19.2.1(@azure/core-client@1.10.1)
     transitivePeerDependencies:
@@ -5208,6 +5315,11 @@ packages:
 
   /@types/node@22.19.15:
     resolution: {integrity: sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg==}
+    dependencies:
+      undici-types: 6.21.0
+
+  /@types/node@22.19.18:
+    resolution: {integrity: sha512-9v00a+dn2yWVsYDEunWC4g/TcRKVq3r8N5FuZp7u0SGrPvdN9c2yXI9bBuf5Fl0hNCb+QTIePTn5pJs2pwBOQQ==}
     dependencies:
       undici-types: 6.21.0
 
@@ -5237,7 +5349,7 @@ packages:
   /@types/readable-stream@4.0.23:
     resolution: {integrity: sha512-wwXrtQvbMHxCbBgjHaMGEmImFTQxxpfMOR/ZoQnXxB1woqkUbdLGFDgauo00Py9IudiaqSeiBiulSV9i6XIPig==}
     dependencies:
-      '@types/node': 25.5.0
+      '@types/node': 22.19.18
 
   /@types/stack-utils@2.0.3:
     resolution: {integrity: sha512-9aEbYZ3TbYMznPdcdr3SmIrLXwC/AKZXQeCf9Pgao5CKb8CyHuEX5jzWPTkvregvhRJHcpRO6BFoGW9ycaOkYw==}
@@ -5332,8 +5444,8 @@ packages:
       '@typescript/native-preview-win32-x64': 7.0.0-dev.20260316.1
     dev: true
 
-  /@typespec/ts-http-runtime@0.3.4:
-    resolution: {integrity: sha512-CI0NhTrz4EBaa0U+HaaUZrJhPoso8sG7ZFya8uQoBA57fjzrjRSv87ekCjLZOFExN+gXE/z0xuN2QfH4H2HrLQ==}
+  /@typespec/ts-http-runtime@0.3.5:
+    resolution: {integrity: sha512-yURCknZhvywvQItHMMmFSo+fq5arCUIyz/CVk7jD89MSai7dkaX8ufjCWp3NttLojoTVbcE72ri+be/TnEbMHw==}
     engines: {node: '>=20.0.0'}
     dependencies:
       http-proxy-agent: 7.0.2
@@ -5390,74 +5502,6 @@ packages:
       vite: /@voidzero-dev/vite-plus-core@0.1.14(@types/node@22.19.15)(typescript@5.9.3)
     transitivePeerDependencies:
       - supports-color
-    dev: true
-
-  /@voidzero-dev/vite-plus-core@0.1.14:
-    resolution: {integrity: sha512-CCWzdkfW0fo0cQNlIsYp5fOuH2IwKuPZEb2UY2Z8gXcp5pG74A82H2Pthj0heAuvYTAnfT7kEC6zM+RbiBgQbg==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    peerDependencies:
-      '@arethetypeswrong/core': ^0.18.1
-      '@tsdown/css': 0.21.4
-      '@tsdown/exe': 0.21.4
-      '@types/node': ^20.19.0 || >=22.12.0
-      '@vitejs/devtools': ^0.1.0
-      esbuild: ^0.27.0
-      jiti: '>=1.21.0'
-      less: ^4.0.0
-      publint: ^0.3.0
-      sass: ^1.70.0
-      sass-embedded: ^1.70.0
-      stylus: '>=0.54.8'
-      sugarss: ^5.0.0
-      terser: ^5.16.0
-      tsx: ^4.8.1
-      typescript: ^5.0.0
-      unplugin-unused: ^0.5.0
-      yaml: ^2.4.2
-    peerDependenciesMeta:
-      '@arethetypeswrong/core':
-        optional: true
-      '@tsdown/css':
-        optional: true
-      '@tsdown/exe':
-        optional: true
-      '@types/node':
-        optional: true
-      '@vitejs/devtools':
-        optional: true
-      esbuild:
-        optional: true
-      jiti:
-        optional: true
-      less:
-        optional: true
-      publint:
-        optional: true
-      sass:
-        optional: true
-      sass-embedded:
-        optional: true
-      stylus:
-        optional: true
-      sugarss:
-        optional: true
-      terser:
-        optional: true
-      tsx:
-        optional: true
-      typescript:
-        optional: true
-      unplugin-unused:
-        optional: true
-      yaml:
-        optional: true
-    dependencies:
-      '@oxc-project/runtime': 0.121.0
-      '@oxc-project/types': 0.122.0
-      lightningcss: 1.32.0
-      postcss: 8.5.8
-    optionalDependencies:
-      fsevents: 2.3.3
     dev: true
 
   /@voidzero-dev/vite-plus-core@0.1.14(@types/node@22.19.15)(typescript@5.9.3):
@@ -5680,7 +5724,7 @@ packages:
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@voidzero-dev/vite-plus-core': 0.1.14
+      '@voidzero-dev/vite-plus-core': 0.1.14(@types/node@25.5.0)(typescript@5.9.3)
       es-module-lexer: 1.7.0
       obug: 2.1.1
       pixelmatch: 7.1.0
@@ -5946,8 +5990,8 @@ packages:
     resolution: {integrity: sha512-Cxwpt2SfTzTtXcfOlzGEee8O+c+MmUgGrNiBcXnuWxuFJHe6a5Hz7qwhwe5OgaSYI0IJvkLqWX1ASG+cJOkEiA==}
     engines: {node: '>=10'}
 
-  /ansis@4.2.0:
-    resolution: {integrity: sha512-HqZ5rWlFjGiV0tDm3UxxgNRqsOTniqoKZu0pIAfh7TZQMGuZK+hH0drySty0si0QXj1ieop4+SkSfPZBPPkHig==}
+  /ansis@4.3.0:
+    resolution: {integrity: sha512-44mvgtPvohuU/70DdY5Oz2AIrLJ9k6/5x4KmoSvPwO+5Moijo0+N9D0fKbbYZQWP1hNm5CpOf+E01jhxG/r8xg==}
     engines: {node: '>=14'}
     dev: false
 
@@ -6029,7 +6073,7 @@ packages:
     resolution: {integrity: sha512-GERT7L2TiYcYDtYk1IpD+ASAYXjKbLTDPhBtYj7X1NuRMDTMtAx9kyBenub1Ev41lo91OHCKdmP+egTDmfQ7Ig==}
     dependencies:
       '@babel/core': 7.29.0
-      '@babel/parser': 7.29.2
+      '@babel/parser': 7.29.3
       '@babel/traverse': 7.29.0
       '@babel/types': 7.29.0
     transitivePeerDependencies:
@@ -6191,7 +6235,7 @@ packages:
       babel-plugin-syntax-hermes-parser: 0.32.1
       babel-plugin-transform-flow-enums: 0.0.2(@babel/core@7.29.0)
       debug: 4.4.3
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react-refresh: 0.18.0
       resolve-from: 5.0.0
     transitivePeerDependencies:
@@ -6237,7 +6281,7 @@ packages:
       babel-plugin-syntax-hermes-parser: 0.32.1
       babel-plugin-transform-flow-enums: 0.0.2(@babel/core@7.29.0)
       debug: 4.4.3
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react-refresh: 0.14.2
       resolve-from: 5.0.0
     transitivePeerDependencies:
@@ -6510,7 +6554,7 @@ packages:
       parse5: 7.3.0
       parse5-htmlparser2-tree-adapter: 7.1.0
       parse5-parser-stream: 7.1.2
-      undici: 7.24.6
+      undici: 7.25.0
       whatwg-mimetype: 4.0.0
     dev: false
 
@@ -6745,8 +6789,8 @@ packages:
   /convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
-  /cookie-es@2.0.0:
-    resolution: {integrity: sha512-RAj4E421UYRgqokKUmotqAwuplYw15qtdXfY+hGzgCJ/MBjCVZcSoHK/kH9kocfjRjcDME7IiDWR/1WX1TM2Pg==}
+  /cookie-es@3.1.1:
+    resolution: {integrity: sha512-UaXxwISYJPTr9hwQxMFYZ7kNhSXboMXP+Z3TRX6f1/NyaGPfuNUZOWP1pUEb75B2HjfklIYLVRfWiFZJyC6Npg==}
     dev: false
 
   /cookie-signature@1.2.2:
@@ -6817,7 +6861,6 @@ packages:
         optional: true
     dependencies:
       srvx: 0.11.13
-    dev: true
 
   /css-in-js-utils@3.1.0:
     resolution: {integrity: sha512-fJAcud6B3rRu+KHYk+Bwf+WFL2MDCJJ1XG9x137tJQ0xYxor7XziQtuGFbWNdqrvF4Tk26O3H73nfVqXt/fW1A==}
@@ -7513,6 +7556,7 @@ packages:
       '@esbuild/win32-arm64': 0.27.4
       '@esbuild/win32-ia32': 0.27.4
       '@esbuild/win32-x64': 0.27.4
+    dev: true
 
   /escalade@3.2.0:
     resolution: {integrity: sha512-WUj2qlxaQtO4g6Pq5c29GTcWGDyd8itL8zTlipgECz3JesAiiOKotd8JU6otB3PACgG6xkJUyVhboMS+bje/jA==}
@@ -7608,7 +7652,7 @@ packages:
       react-native: '*'
     dependencies:
       '@expo/image-utils': 0.8.12
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-constants: 55.0.12(expo@55.0.12)(react-native@0.83.4)(typescript@5.9.3)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
@@ -7628,7 +7672,7 @@ packages:
         optional: true
     dependencies:
       barcode-detector: 3.1.2(@types/emscripten@1.41.5)
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
       react-native-web: 0.21.2(react-dom@19.2.0)(react@19.2.0)
@@ -7644,7 +7688,7 @@ packages:
     dependencies:
       '@expo/config': 55.0.13(typescript@5.9.3)
       '@expo/env': 2.1.1
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
     transitivePeerDependencies:
       - supports-color
@@ -7656,7 +7700,7 @@ packages:
       expo: '*'
       react-native: '*'
     dependencies:
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
   /expo-font@55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0):
@@ -7666,7 +7710,7 @@ packages:
       react: '*'
       react-native: '*'
     dependencies:
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       fontfaceobserver: 2.3.0
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
@@ -7678,7 +7722,7 @@ packages:
       react: '*'
       react-native: '*'
     dependencies:
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
@@ -7693,7 +7737,7 @@ packages:
       react-native-web:
         optional: true
     dependencies:
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
       react-native-web: 0.21.2(react-dom@19.2.0)(react@19.2.0)
@@ -7705,7 +7749,7 @@ packages:
       expo: '*'
       react: '*'
     dependencies:
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       react: 19.2.0
 
   /expo-linking@55.0.11(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3):
@@ -7729,7 +7773,7 @@ packages:
       expo: '*'
     dependencies:
       '@expo/image-utils': 0.8.12
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
     dev: false
 
   /expo-modules-autolinking@55.0.15(typescript@5.9.3):
@@ -7754,7 +7798,7 @@ packages:
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
-  /expo-router@55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.9)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0):
+  /expo-router@55.0.11(@expo/log-box@55.0.10)(@expo/metro-runtime@55.0.11)(@types/react@19.2.14)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-linking@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native-gesture-handler@2.30.1)(react-native-reanimated@4.2.1)(react-native-safe-area-context@5.6.2)(react-native-screens@4.23.0)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0):
     resolution: {integrity: sha512-LmOLTPPYW9IS9pNqw5RbH2QH+rIxvQ69FHBbtchFIrjrAl9V/cs0cNS1Vn7X6SdyjIvxUOErhg1iUcl1Fdcsmw==}
     peerDependencies:
       '@expo/log-box': 55.0.10
@@ -7789,8 +7833,8 @@ packages:
       react-server-dom-webpack:
         optional: true
     dependencies:
-      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
-      '@expo/metro-runtime': 55.0.9(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)
+      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      '@expo/metro-runtime': 55.0.11(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)
       '@expo/schema-utils': 55.0.3
       '@radix-ui/react-slot': 1.2.4(@types/react@19.2.14)(react@19.2.0)
       '@radix-ui/react-tabs': 1.1.13(@types/react@19.2.14)(react-dom@19.2.0)(react@19.2.0)
@@ -7800,7 +7844,7 @@ packages:
       client-only: 0.0.1
       debug: 4.4.3
       escape-string-regexp: 4.0.0
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-constants: 55.0.12(expo@55.0.12)(react-native@0.83.4)(typescript@5.9.3)
       expo-glass-effect: 55.0.10(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       expo-image: 55.0.8(expo@55.0.12)(react-native-web@0.21.2)(react-native@0.83.4)(react@19.2.0)
@@ -7858,13 +7902,13 @@ packages:
       react-native: '*'
     dependencies:
       '@expo-google-fonts/material-symbols': 0.4.27
-      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      expo: 55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       expo-font: 55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
       sf-symbols-typescript: 2.2.0
 
-  /expo@55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3):
+  /expo@55.0.12(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-router@55.0.11)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3):
     resolution: {integrity: sha512-O3lp+HOydF4LUSbi9gF1c+ly4FkLB9FSyJZ1Zatt12oClraB2FUe/W8J4tq5ERqKLeRzsrVVt319hMTQgwNEUQ==}
     hasBin: true
     peerDependencies:
@@ -7882,17 +7926,17 @@ packages:
         optional: true
     dependencies:
       '@babel/runtime': 7.29.2
-      '@expo/cli': 55.0.22(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
+      '@expo/cli': 55.0.22(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.11)(expo-constants@55.0.12)(expo-font@55.0.6)(expo-router@55.0.11)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)(typescript@5.9.3)
       '@expo/config': 55.0.13(typescript@5.9.3)
       '@expo/config-plugins': 55.0.8
       '@expo/devtools': 55.0.2(react-native@0.83.4)(react@19.2.0)
-      '@expo/dom-webview': 55.0.5(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      '@expo/dom-webview': 55.0.6(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       '@expo/fingerprint': 0.16.6
       '@expo/local-build-cache-provider': 55.0.9(typescript@5.9.3)
-      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
+      '@expo/log-box': 55.0.10(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-native@0.83.4)(react@19.2.0)
       '@expo/metro': 55.0.0
       '@expo/metro-config': 55.0.14(expo@55.0.12)(typescript@5.9.3)
-      '@expo/metro-runtime': 55.0.9(@expo/dom-webview@55.0.5)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)
+      '@expo/metro-runtime': 55.0.11(@expo/dom-webview@55.0.6)(expo@55.0.12)(react-dom@19.2.0)(react-native@0.83.4)(react@19.2.0)
       '@expo/vector-icons': 15.1.1(expo-font@55.0.6)(react-native@0.83.4)(react@19.2.0)
       '@ungap/structured-clone': 1.3.0
       babel-preset-expo: 55.0.16(@babel/core@7.29.0)(@babel/runtime@7.29.2)(expo@55.0.12)(react-refresh@0.14.2)
@@ -8063,6 +8107,10 @@ packages:
 
   /fetch-nodeshim@0.4.10:
     resolution: {integrity: sha512-m6I8ALe4L4XpdETy7MJZWs6L1IVMbjs99bwbpIKphxX+0CTns4IKDWJY0LWfr4YsFjfg+z1TjzTMU8lKl8rG0w==}
+
+  /fetchdts@0.1.7:
+    resolution: {integrity: sha512-YoZjBdafyLIop9lSxXVI33oLD5kN31q4Td+CasofLLYeLXRFeOsuOw0Uo+XNRi9PZlbfdlN2GmRtm4tCEQ9/KA==}
+    dev: false
 
   /figures@6.1.0:
     resolution: {integrity: sha512-d+l3qxjSesT4V7v2fh+QnmFnUWv9lSpjarhShNTgBOfA0ttejbQUAlHLitbjkoRiDulW0OPoQPYIGhIC8ohejg==}
@@ -8281,6 +8329,7 @@ packages:
     resolution: {integrity: sha512-7tN6rFgBlMgpBML5j8typ92BKFi2sFQvIdpAqLA2beia5avZDrMs0FLZiM5etShWq5irVyGcGMEA1jcDaK7A/Q==}
     dependencies:
       resolve-pkg-maps: 1.0.0
+    dev: true
 
   /get-value@2.0.6:
     resolution: {integrity: sha512-Ln0UQDlxH1BapMu3GPtf7CuYNwRZf2gwCuPqbyG6pB8WfmFpzqcy4xtAaAMUhnNqjMKTiCPZG2oMT3YSx8U2NA==}
@@ -8338,20 +8387,6 @@ packages:
     engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
     dev: false
 
-  /h3@2.0.1-rc.16:
-    resolution: {integrity: sha512-h+pjvyujdo9way8qj6FUbhaQcHlR8FEq65EhTX9ViT5pK8aLj68uFl4hBkF+hsTJAH+H1END2Yv6hTIsabGfag==}
-    engines: {node: '>=20.11.1'}
-    hasBin: true
-    peerDependencies:
-      crossws: ^0.4.1
-    peerDependenciesMeta:
-      crossws:
-        optional: true
-    dependencies:
-      rou3: 0.8.1
-      srvx: 0.11.13
-    dev: false
-
   /h3@2.0.1-rc.20(crossws@0.4.4):
     resolution: {integrity: sha512-28ljodXuUp0fZovdiSRq4G9OgrxCztrJe5VdYzXAB7ueRvI7pIUqLU14Xi3XqdYJ/khXjfpUOOD2EQa6CmBgsg==}
     engines: {node: '>=20.11.1'}
@@ -8365,7 +8400,6 @@ packages:
       crossws: 0.4.4(srvx@0.11.13)
       rou3: 0.8.1
       srvx: 0.11.13
-    dev: true
 
   /has-flag@3.0.0:
     resolution: {integrity: sha512-sKJf1+ceQBr4SMkvQnBDNDtf4TXpVhVGateu0t918bl30FnbE2m4vNLX+VWe/dpjlb+HugGYzW7uQXH98HPEYw==}
@@ -8844,6 +8878,11 @@ packages:
     hasBin: true
     dev: true
 
+  /jiti@2.7.0:
+    resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
+    hasBin: true
+    dev: false
+
   /joi@18.2.1:
     resolution: {integrity: sha512-2/OKlogiESf2Nh3TFCrRjrr9z1DRHeW0I+KReF67+4J0Ns+8hBtHRmoWAZ2OFU6I5+TWLEe6sVlSdXPjHm5UbQ==}
     engines: {node: '>= 20'}
@@ -8988,7 +9027,7 @@ packages:
       lodash.isstring: 4.0.1
       lodash.once: 4.1.1
       ms: 2.1.3
-      semver: 7.7.4
+      semver: 7.8.0
 
   /jwa@2.0.1:
     resolution: {integrity: sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==}
@@ -9346,7 +9385,6 @@ packages:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
-    dev: true
 
   /makeerror@1.0.12:
     resolution: {integrity: sha512-JmqCvUhmt43madlpFzG4BQzG2Z3m6tvQDNKdClZnO3VbIudJYmxsT0FNJMeiB2+JTSlTQTSbU8QdesVmwJcmLg==}
@@ -9844,7 +9882,7 @@ packages:
     resolution: {integrity: sha512-MjG9u/IlvSq5txxY0oug1sjrGZ2l37IuhExI1iPuwV4S3RcyRNGoy6xLwznH3ATK6PUAM4fbQVb4Rzy1L1nlzw==}
     dev: true
 
-  /nitro@3.0.260311-beta(@electric-sql/pglite@0.4.2)(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20):
+  /nitro@3.0.260311-beta(@electric-sql/pglite@0.4.2)(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@voidzero-dev/vite-plus-core@0.1.14)(drizzle-orm@1.0.0-beta.20):
     resolution: {integrity: sha512-0o0fJ9LUh4WKUqJNX012jyieUOtMCnadkNDWr0mHzdraoHpJP/1CGNefjRyZyMXSpoJfwoWdNEZu2iGf35TUvQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
@@ -9882,7 +9920,7 @@ packages:
       ocache: 0.1.4
       ofetch: 2.0.0-alpha.3
       ohash: 2.0.11
-      rolldown: 1.0.0-rc.12
+      rolldown: 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
       srvx: 0.11.13
       unenv: 2.0.0-rc.24
       unstorage: 2.0.0-alpha.7(db0@0.3.4)(ofetch@2.0.0-alpha.3)
@@ -9897,6 +9935,8 @@ packages:
       - '@capacitor/preferences'
       - '@deno/kv'
       - '@electric-sql/pglite'
+      - '@emnapi/core'
+      - '@emnapi/runtime'
       - '@libsql/client'
       - '@netlify/blobs'
       - '@planetscale/database'
@@ -10485,7 +10525,7 @@ packages:
     engines: {node: '>=20'}
     dev: false
 
-  /prettier-plugin-tailwindcss@0.5.14(prettier@3.8.1):
+  /prettier-plugin-tailwindcss@0.5.14(prettier@3.8.3):
     resolution: {integrity: sha512-Puaz+wPUAhFp8Lo9HuciYKM2Y2XExESjeT+9NQoVFXZsPPnc9VYss2SpxdQ6vbatmt8/4+SN0oe0I1cPDABg9Q==}
     engines: {node: '>=14.21.3'}
     peerDependencies:
@@ -10537,11 +10577,11 @@ packages:
       prettier-plugin-svelte:
         optional: true
     dependencies:
-      prettier: 3.8.1
+      prettier: 3.8.3
     dev: true
 
-  /prettier@3.8.1:
-    resolution: {integrity: sha512-UOnG6LftzbdaHZcKoPFtOcCKztrQ57WkHDeRD9t/PTQtmT0NHSeWWepj6pS0z/N7+08BHFDQVUrfmfMRcZwbMg==}
+  /prettier@3.8.3:
+    resolution: {integrity: sha512-7igPTM53cGHMW8xWuVTydi2KO233VFiTNyF5hLJqpilHfmn8C8gPf+PS7dUT64YcXFbiMGZxS9pCSxL/Dxm/Jw==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -10785,7 +10825,7 @@ packages:
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
 
-  /react-native-mmkv@4.3.1(react-native-nitro-modules@0.35.4)(react-native@0.83.4)(react@19.2.0):
+  /react-native-mmkv@4.3.1(react-native-nitro-modules@0.35.6)(react-native@0.83.4)(react@19.2.0):
     resolution: {integrity: sha512-APyGGaaHtayVgT18dBM8QGGZKr9pGfSTiBwbbPNzhGGfJQSU7awLGRGq879OqYl31HmVks9hOBLCs+qfgacRZg==}
     peerDependencies:
       react: '*'
@@ -10794,11 +10834,11 @@ packages:
     dependencies:
       react: 19.2.0
       react-native: 0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0)
-      react-native-nitro-modules: 0.35.4(react-native@0.83.4)(react@19.2.0)
+      react-native-nitro-modules: 0.35.6(react-native@0.83.4)(react@19.2.0)
     dev: false
 
-  /react-native-nitro-modules@0.35.4(react-native@0.83.4)(react@19.2.0):
-    resolution: {integrity: sha512-4qZa+1kgR/sPRNZv+UShxyArEPpovWxw76Dfd/DtCVtkQ92wOOxGIzdYvndprabd+t+r8zNYgYEPYE74gzkuVQ==}
+  /react-native-nitro-modules@0.35.6(react-native@0.83.4)(react@19.2.0):
+    resolution: {integrity: sha512-3Cb7s+O5tpZ6RdIiPOB/wi3IMfBxD6tl6VDF8gJ5zvM/BEGTWxwMMLjzmWmsYPKekdbYBznF6qp2d2SxixPy8g==}
     peerDependencies:
       react: '*'
       react-native: '*'
@@ -11120,6 +11160,7 @@ packages:
 
   /resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
+    dev: true
 
   /resolve-protobuf-schema@2.1.0:
     resolution: {integrity: sha512-kI5ffTiZWmJaS/huM8wZfEMer1eRd7oJQhDuxeCLe3t7N7mX3z94CN0xPxBQxFYQTSNz9T0i+v6inKqSdK8xrQ==}
@@ -11172,7 +11213,7 @@ packages:
     dependencies:
       glob: 7.2.3
 
-  /rolldown@1.0.0-rc.12:
+  /rolldown@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     resolution: {integrity: sha512-yP4USLIMYrwpPHEFB5JGH1uxhcslv6/hL0OyvTuY+3qlOSJvZ7ntYnoWpehBxufkgN0cvXxppuTu5hHa/zPh+A==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
@@ -11192,9 +11233,12 @@ packages:
       '@rolldown/binding-linux-x64-gnu': 1.0.0-rc.12
       '@rolldown/binding-linux-x64-musl': 1.0.0-rc.12
       '@rolldown/binding-openharmony-arm64': 1.0.0-rc.12
-      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12
+      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
       '@rolldown/binding-win32-arm64-msvc': 1.0.0-rc.12
       '@rolldown/binding-win32-x64-msvc': 1.0.0-rc.12
+    transitivePeerDependencies:
+      - '@emnapi/core'
+      - '@emnapi/runtime'
     dev: true
 
   /rou3@0.7.12:
@@ -11268,6 +11312,11 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
+  /semver@7.8.0:
+    resolution: {integrity: sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==}
+    engines: {node: '>=10'}
+    hasBin: true
+
   /send@0.19.2:
     resolution: {integrity: sha512-VMbMxbDeehAxpOtWJXlcUS5E8iXh6QmN+BkRX1GARS3wRaXEEgzCcB10gTQazO42tpNIya8xIyNx8fll1OFPrg==}
     engines: {node: '>= 0.8.0'}
@@ -11311,17 +11360,17 @@ packages:
     resolution: {integrity: sha512-ghgmKt5o4Tly5yEG/UJp8qTd0AN7Xalw4XBtDEKP655B699qMEtra1WlXeE6WIvdEG481JvRxULKsInq/iNysw==}
     engines: {node: '>=0.10.0'}
 
-  /seroval-plugins@1.5.1(seroval@1.5.1):
-    resolution: {integrity: sha512-4FbuZ/TMl02sqv0RTFexu0SP6V+ywaIe5bAWCCEik0fk17BhALgwvUDVF7e3Uvf9pxmwCEJsRPmlkUE6HdzLAw==}
+  /seroval-plugins@1.5.4(seroval@1.5.4):
+    resolution: {integrity: sha512-S0xQPhUTefAhNvNWFg0c1J8qJArHt5KdtJ/cFAofo06KD1MVSeFWyl4iiu+ApDIuw0WhjpOfCdgConOfAnLgkw==}
     engines: {node: '>=10'}
     peerDependencies:
       seroval: ^1.0
     dependencies:
-      seroval: 1.5.1
+      seroval: 1.5.4
     dev: false
 
-  /seroval@1.5.1:
-    resolution: {integrity: sha512-OwrZRZAfhHww0WEnKHDY8OM0U/Qs8OTfIDWhUD4BLpNJUfXK4cGmjiagGze086m+mhI+V2nD0gfbHEnJjb9STA==}
+  /seroval@1.5.4:
+    resolution: {integrity: sha512-46uFvgrXTVxZcUorgSSRZ4y+ieqLLQRMlG4bnCZKW3qI6BZm7Rg4ntMW4p1mILEEBZWrFlcpp0AyIIlM6jD9iw==}
     engines: {node: '>=10'}
     dev: false
 
@@ -11589,6 +11638,12 @@ packages:
     engines: {node: '>=20.16.0'}
     hasBin: true
 
+  /srvx@0.11.15:
+    resolution: {integrity: sha512-iXsux0UcOjdvs0LCMa2Ws3WwcDUozA3JN3BquNXkaFPP7TpRqgunKdEgoZ/uwb1J6xaYHfxtz9Twlh6yzwM6Tg==}
+    engines: {node: '>=20.16.0'}
+    hasBin: true
+    dev: false
+
   /stack-utils@2.0.6:
     resolution: {integrity: sha512-XlkWvfIm6RmsWtNJx+uqtKLS8eqFbxUg0ZzLXqY0caEy9l7hruX8IpiDnjsLavoBgqCCR71TqWO8MaXYheJ3RQ==}
     engines: {node: '>=10'}
@@ -11816,7 +11871,7 @@ packages:
       '@azure/identity': 4.13.1
       '@azure/keyvault-keys': 4.10.0(@azure/core-client@1.10.1)
       '@js-joda/core': 5.7.0
-      '@types/node': 25.5.0
+      '@types/node': 22.19.18
       bl: 6.1.6
       iconv-lite: 0.6.3
       js-md4: 0.3.2
@@ -11834,7 +11889,7 @@ packages:
       '@azure/identity': 4.13.1
       '@azure/keyvault-keys': 4.10.0(@azure/core-client@1.10.1)
       '@js-joda/core': 5.7.0
-      '@types/node': 25.5.0
+      '@types/node': 22.19.18
       bl: 6.1.6
       iconv-lite: 0.7.2
       js-md4: 0.3.2
@@ -11902,6 +11957,14 @@ packages:
     dependencies:
       fdir: 6.5.0(picomatch@4.0.4)
       picomatch: 4.0.4
+
+  /tinyglobby@0.2.16:
+    resolution: {integrity: sha512-pn99VhoACYR8nFHhxqix+uvsbXineAasWm5ojXoN8xEwK5Kd3/TrhNn1wByuD52UxWRLy8pu+kRMniEi6Eq9Zg==}
+    engines: {node: '>=12.0.0'}
+    dependencies:
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
+    dev: false
 
   /tinypool@2.1.0:
     resolution: {integrity: sha512-Pugqs6M0m7Lv1I7FtxN4aoyToKg1C4tu+/381vH35y8oENM/Ai7f7C4StcoK4/+BSw9ebcS8jRiVrORFKCALLw==}
@@ -11990,6 +12053,7 @@ packages:
       get-tsconfig: 4.13.7
     optionalDependencies:
       fsevents: 2.3.3
+    dev: true
 
   /tw-animate-css@1.4.0:
     resolution: {integrity: sha512-7bziOlRqH0hJx80h/3mbicLW7o8qLsH5+RaLR2t+OHM3D0JlWGODQKQ4cxbK7WlvmUxpcj6Kgu6EKqjrGFe3QQ==}
@@ -12042,8 +12106,8 @@ packages:
     resolution: {integrity: sha512-LbBDqdIC5s8iROCUjMbW1f5dJQTEFB1+KO9ogbvlb3nm9n4YHa5p4KTvFPWvh2Hs8gZMBuiB1/8+pdfe/tDPug==}
     hasBin: true
 
-  /ufo@1.6.3:
-    resolution: {integrity: sha512-yDJTmhydvl5lJzBmy/hyOAA0d+aqCBuwl818haVdYCRrWV84o7YyeVm4QlVHStqNrrJSTb6jKuFAVqAFsr+K3Q==}
+  /ufo@1.6.4:
+    resolution: {integrity: sha512-JFNbkD1Svwe0KvGi8GOeLcP4kAWQ609twvCdcHxq1oSL8svv39ZuSvajcD8B+5D0eL4+s1Is2D/O6KN3qcTeRA==}
     dev: false
 
   /unconfig-core@7.5.0:
@@ -12069,8 +12133,8 @@ packages:
   /undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  /undici@7.24.6:
-    resolution: {integrity: sha512-Xi4agocCbRzt0yYMZGMA6ApD7gvtUFaxm4ZmeacWI4cZxaF6C+8I8QfofC20NAePiB/IcvZmzkJ7XPa471AEtA==}
+  /undici@7.25.0:
+    resolution: {integrity: sha512-xXnp4kTyor2Zq+J1FfPI6Eq3ew5h6Vl0F/8d9XU5zZQf1tX9s2Su1/3PiMmUANFULpmksxkClamIZcaUqryHsQ==}
     engines: {node: '>=20.18.1'}
     dev: false
 
@@ -12123,12 +12187,11 @@ packages:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
 
-  /unplugin@2.3.11:
-    resolution: {integrity: sha512-5uKD0nqiYVzlmCRs01Fhs2BdkEgBS3SAVP6ndrBsuK42iC2+JHyxM05Rm9G8+5mkmRtzMZGY8Ct5+mliZxU/Ww==}
-    engines: {node: '>=18.12.0'}
+  /unplugin@3.0.0:
+    resolution: {integrity: sha512-0Mqk3AT2TZCXWKdcoaufeXNukv2mTrEZExeXlHIOZXdqYoHHr4n51pymnwV8x2BOVxwXbK2HLlI7usrqMpycdg==}
+    engines: {node: ^20.19.0 || >=22.12.0}
     dependencies:
       '@jridgewell/remapping': 2.3.5
-      acorn: 8.16.0
       picomatch: 4.0.4
       webpack-virtual-modules: 0.6.2
     dev: false
@@ -12287,11 +12350,6 @@ packages:
     resolution: {integrity: sha512-DPSke0pXhTZgoF/d+WSt2QaKMCFSfx7QegxEWT+JOuHF5aWrKEn0G+ztjuJg/gG8/ItK+rbPCD/yNv8yyih6Cg==}
     hasBin: true
 
-  /uuid@8.3.2:
-    resolution: {integrity: sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
   /validate-npm-package-name@5.0.1:
     resolution: {integrity: sha512-OljLrQ9SQdOUqTaQxqL5dEfZWrXExyyWsozYlAWFawPVNuD83igl7uJD2RTkNMbniIYgt8l81eCJGIdQF7avLQ==}
     engines: {node: ^14.17.0 || ^16.13.0 || >=18.0.0}
@@ -12324,7 +12382,7 @@ packages:
     hasBin: true
     dependencies:
       '@oxc-project/types': 0.122.0
-      '@voidzero-dev/vite-plus-core': 0.1.14
+      '@voidzero-dev/vite-plus-core': 0.1.14(@types/node@25.5.0)(typescript@5.9.3)
       '@voidzero-dev/vite-plus-test': 0.1.14
       cac: 7.0.0
       cross-spawn: 7.0.6
@@ -12474,8 +12532,8 @@ packages:
       - yaml
     dev: true
 
-  /vitefu@1.1.2(@voidzero-dev/vite-plus-core@0.1.14):
-    resolution: {integrity: sha512-zpKATdUbzbsycPFBN71nS2uzBUQiVnFoOrr2rvqv34S1lcAgMKKkjWleLGeiJlZ8lwCXvtWaRn7R3ZC16SYRuw==}
+  /vitefu@1.1.3(@voidzero-dev/vite-plus-core@0.1.14):
+    resolution: {integrity: sha512-ub4okH7Z5KLjb6hDyjqrGXqWtWvoYdU3IGm/NorpgHncKoLTCfRIbvlhBm7r0YstIaQRYlp4yEbFqDcKSzXSSg==}
     peerDependencies:
       vite: npm:@voidzero-dev/vite-plus-core@latest
     peerDependenciesMeta:
