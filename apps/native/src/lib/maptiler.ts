@@ -4,8 +4,7 @@
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? "";
 
-// Custom styles designed for canvassing — high contrast streets, muted
-// everything else. Style IDs provided by the project owner.
+// Custom styles from Maptiler account.
 const STYLE_ID_LIGHT = "01968205-0dc7-71df-87a7-8b67f7828379";
 const STYLE_ID_DARK = "019d7ad6-3be3-7b78-86e3-853060587c76";
 
