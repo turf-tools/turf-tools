@@ -353,7 +353,10 @@ function WaterfallPanel({
   }
   return (
     <div className="h-full rounded-lg border border-border bg-card px-2 pb-2 pt-2">
-      <Table containerClassName="h-full overflow-y-auto overflow-x-clip pb-10">
+      <Table
+        containerClassName="h-full overflow-y-auto overflow-x-clip pb-10"
+        className="border-separate border-spacing-y-0.5"
+      >
         <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card [&_th]:h-8">
           <TableRow>
             <TableHead className="!pl-2">Step</TableHead>
@@ -384,7 +387,10 @@ function WaterfallPanel({
               <TableRow
                 key={i}
                 onClick={() => setAnchor(i)}
-                className={cn("cursor-pointer", isAnchor ? "bg-accent/50" : "hover:bg-accent/50")}
+                className={cn(
+                  "cursor-pointer [&>td:first-child]:rounded-l-md [&>td:last-child]:rounded-r-md",
+                  isAnchor ? "[&>td]:bg-accent/50" : "hover:[&>td]:bg-accent/50",
+                )}
               >
                 <TableCell className="!pl-2 px-2 truncate">{label}</TableCell>
                 <TableCell className="px-2">
@@ -411,7 +417,9 @@ function WaterfallPanel({
                   )}
                   style={{ color: delta !== null ? (verbMeta?.color ?? "inherit") : undefined }}
                 >
-                  {delta !== null ? delta.toLocaleString() : "—"}
+                  {delta !== null
+                    ? delta.toLocaleString(undefined, { signDisplay: "exceptZero" })
+                    : "—"}
                 </TableCell>
                 <TableCell className="px-2">
                   <div className="flex items-center gap-2">
