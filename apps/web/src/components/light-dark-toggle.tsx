@@ -4,9 +4,8 @@ import { useEffect } from "react";
 import { darkAtom } from "~/lib/atoms/theme";
 import { cn } from "~/lib/utils";
 
-// Circular theme toggle. A theme-independent icon side-steps an SSR/client
-// icon mismatch (localStorage is client-only). Owns the side effect of
-// mirroring `darkAtom` to the `.dark` class on <html>.
+// Circular theme toggle. Owns the side effect of mirroring `darkAtom` to
+// the `.dark` class on <html>.
 export function LightDarkToggle() {
   const [dark, setDark] = useAtom(darkAtom);
 

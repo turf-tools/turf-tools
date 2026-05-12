@@ -8,8 +8,7 @@ const internal = atom<ActiveTurf | null>(null);
 
 // The (host, turfId) pair that scopes everything the app does. Writes mirror
 // to AsyncStorage so the binding survives app restart; clearing (set to null)
-// removes it. Source of truth for "is the user bound to a turf" — replaces
-// the older in-memory `currentTurfIdAtom`.
+// removes it. Source of truth for "is the user bound to a turf."
 export const activeTurfAtom = atom(
   (get) => get(internal),
   (_get, set, next: ActiveTurf | null) => {
