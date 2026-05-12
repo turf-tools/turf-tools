@@ -398,7 +398,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
         </Button>
       </EditorHeader>
       <div className="flex gap-4 h-[calc(100vh-9rem)]">
-        <div className="w-68 shrink-0 min-h-0">
+        <div className="w-72 shrink-0 min-h-0">
           <TurfList
             turfs={turfRows}
             selectedTurfId={selectedTurfId}

@@ -13,14 +13,14 @@ import { turfsListQuery } from "~/lib/queries/turfs";
 import { useFadeOnce } from "~/lib/use-fade-once";
 
 type TurfsSearch = {
-  campaignId?: string;
+  campaignId: string | null;
 };
 
 export const Route = createFileRoute("/turfs/")({
   validateSearch: (search): TurfsSearch => ({
-    campaignId: typeof search.campaignId === "string" ? search.campaignId : undefined,
+    campaignId: typeof search.campaignId === "string" ? search.campaignId : null,
   }),
-  loaderDeps: ({ search }) => ({ campaignId: search.campaignId ?? null }),
+  loaderDeps: ({ search }) => ({ campaignId: search.campaignId }),
   loader: ({ context: { queryClient }, deps }) =>
     Promise.all([
       queryClient.fetchQuery(turfsListQuery(deps.campaignId)),
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/turfs/")({
 });
 
 function TurfsIndex() {
-  const { campaignId = null } = Route.useSearch();
+  const { campaignId } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/turfs");
 
@@ -38,7 +38,7 @@ function TurfsIndex() {
 
   const onCampaignIdChange = (next: string | null) => {
     void navigate({
-      search: (prev) => ({ ...prev, campaignId: next ?? undefined }),
+      search: (prev) => ({ ...prev, campaignId: next }),
     });
   };
 
@@ -83,20 +83,27 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
   );
 
   return (
-    <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto">
+    <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
-          <TableHead>Turf</TableHead>
-          <TableHead>Code</TableHead>
-          <TableHead>Doors</TableHead>
-          <TableHead>People</TableHead>
-          <TableHead>Campaign</TableHead>
-          <TableHead>Zone</TableHead>
-          <TableHead>Segment</TableHead>
-          <TableHead>Published</TableHead>
+          <TableHead className="w-20">Turf</TableHead>
+          <TableHead className="w-26">Code</TableHead>
+          <TableHead className="w-24">Doors</TableHead>
+          <TableHead className="w-24">People</TableHead>
+          <TableHead className="">Campaign</TableHead>
+          <TableHead className="">Zone</TableHead>
+          <TableHead className="">Segment</TableHead>
+          <TableHead className="w-26">Published</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
+        {rows.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={8}>
+              <Pill>No results</Pill>
+            </TableCell>
+          </TableRow>
+        ) : null}
         {rows.map((t) => (
           <TableRow key={t.turfId}>
             <TableCell>
@@ -118,13 +125,19 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
               </Pill>
             </TableCell>
             <TableCell>
-              <Pill>{t.campaignName}</Pill>
+              <Pill className="min-w-0">
+                <span className="truncate">{t.campaignName}</span>
+              </Pill>
             </TableCell>
             <TableCell>
-              <Pill>{t.zoneName ?? "—"}</Pill>
+              <Pill className="min-w-0">
+                <span className="truncate">{t.zoneName ?? "—"}</span>
+              </Pill>
             </TableCell>
             <TableCell>
-              <Pill>{t.segmentName ?? "—"}</Pill>
+              <Pill className="min-w-0">
+                <span className="truncate">{t.segmentName ?? "—"}</span>
+              </Pill>
             </TableCell>
             <TableCell>
               <Pill variant="number">{formatDate(t.createdAt)}</Pill>
