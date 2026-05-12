@@ -165,10 +165,12 @@ def test_narrow_chain_ands_filters() -> None:
 def test_add_step_compiles_as_or() -> None:
     params: list = []
     where = criteria_to_where(
-        Criteria(steps=[
-            Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-            Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
-        ]),
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
+            ]
+        ),
         None,
         params,
     )
@@ -179,10 +181,12 @@ def test_add_step_compiles_as_or() -> None:
 def test_remove_step_compiles_as_and_not() -> None:
     params: list = []
     where = criteria_to_where(
-        Criteria(steps=[
-            Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-            Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
-        ]),
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
+                Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
+            ]
+        ),
         None,
         params,
     )
@@ -193,9 +197,11 @@ def test_remove_step_compiles_as_and_not() -> None:
 def test_remove_as_first_step_negates() -> None:
     params: list = []
     where = criteria_to_where(
-        Criteria(steps=[
-            Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
-        ]),
+        Criteria(
+            steps=[
+                Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
+            ]
+        ),
         None,
         params,
     )
@@ -218,11 +224,13 @@ def test_mixed_verb_sequence_preserves_order() -> None:
     # narrow D, add R, remove ZIP — final: (D OR R) AND NOT zip
     params: list = []
     where = criteria_to_where(
-        Criteria(steps=[
-            Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-            Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
-            Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
-        ]),
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
+                Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
+            ]
+        ),
         None,
         params,
     )
@@ -289,10 +297,12 @@ def test_cascade_empty_criteria_emits_baseline_only() -> None:
 def test_cascade_emits_one_filter_per_step() -> None:
     params: list = []
     sql = cascade_sql(
-        Criteria(steps=[
-            Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-            Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
-        ]),
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
+            ]
+        ),
         "persons",
         params,
     )

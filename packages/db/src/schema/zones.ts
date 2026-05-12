@@ -1,5 +1,5 @@
 import { jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { users } from "./users";
+import { users } from "./auth/users";
 import { zoneGroups } from "./zone-groups";
 
 // A zone is a named set of administrative-unit keys (e.g. EDs, ZIPs)
@@ -20,5 +20,5 @@ export const zones = pgTable("zones", {
   updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   createdBy: uuid()
     .notNull()
-    .references(() => users.userId),
+    .references(() => users.id),
 });

@@ -8,6 +8,8 @@ import * as schema from "./schema";
 // as this package's schema (avoids type mismatches across pnpm peer-dep variants).
 export { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
+export * from "./ids";
+
 export type Db = PgAsyncDatabase<PgQueryResultHKT, typeof schema>;
 
 const casing = "snake_case" as const;

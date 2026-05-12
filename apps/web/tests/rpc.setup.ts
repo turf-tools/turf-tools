@@ -1,29 +1,37 @@
 import { createRouterClient } from "@orpc/server";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import type { Db } from "@field-tools/db";
+import { SEEDED_ADMIN_USER_ID, SEEDED_ORG_ID, type Db } from "@field-tools/db";
 import { test } from "vite-plus/test";
-import { router } from "../src/rpc";
-import { SEEDED_ADMIN_USER_ID, type User } from "../src/rpc/context";
+import { adminRouter } from "../src/rpc";
+import type { AdminContext, User } from "../src/rpc/context";
 
 export async function getTestClient() {
-  // Each test gets a fresh in-memory database
+  // Each test gets a fresh in-memory database. Tests that need real schema
+  // are responsible for creating/seeding the tables they touch — the setup
+  // here only stands up an empty Postgres-compatible db + an admin context.
   const pglite = new PGlite();
   const db = drizzle({ client: pglite, casing: "snake_case" }) as unknown as Db;
 
   const user: User = {
-    userId: SEEDED_ADMIN_USER_ID,
-    organizationId: "00000000-0000-4000-8000-000000000001",
+    id: SEEDED_ADMIN_USER_ID,
     email: "admin@field.tools",
-    firstName: "Admin",
-    lastName: "User",
-    role: "admin",
+    emailVerified: true,
+    name: "Admin User",
+    image: null,
     createdAt: new Date(),
+    updatedAt: new Date(),
   };
 
-  const caller = createRouterClient(router, {
-    context: { db, user },
-  });
+  const context: AdminContext = {
+    db,
+    user,
+    organizationId: SEEDED_ORG_ID,
+    orgSlug: "default",
+    role: "owner",
+  };
+
+  const caller = createRouterClient(adminRouter, { context });
 
   const stop = async () => {
     await pglite.close();

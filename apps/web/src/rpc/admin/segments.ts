@@ -1,8 +1,8 @@
-import { and, asc, type Db, eq } from "@field-tools/db";
-import { campaigns, organizations, segments } from "@field-tools/db/schema";
+import { and, asc, eq } from "@field-tools/db";
+import { campaigns, segments } from "@field-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { pub } from "./context";
+import { adminPub as pub } from "../context";
 
 // Wire shapes returned by the data service. Kept here (next to the
 // handlers that produce them) rather than at the query layer so the
@@ -54,7 +54,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
   const rows = await context.db
     .select(segmentSelect)
     .from(segments)
-    .where(eq(segments.organizationId, context.user.organizationId))
+    .where(eq(segments.organizationId, context.organizationId))
     .orderBy(asc(segments.createdAt));
   return rows;
 });
@@ -69,7 +69,7 @@ export const getById = pub
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
-          eq(segments.organizationId, context.user.organizationId),
+          eq(segments.organizationId, context.organizationId),
         ),
       );
     return rows[0] ?? null;
@@ -83,10 +83,10 @@ export const create = pub
     const rows = await context.db
       .insert(segments)
       .values({
-        organizationId: context.user.organizationId,
+        organizationId: context.organizationId,
         name: input.name,
         criteria: { steps: [] },
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning({ ...segmentSelect, criteria: segments.criteria });
     return rows[0]!;
@@ -107,7 +107,7 @@ export const rename = pub
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
-          eq(segments.organizationId, context.user.organizationId),
+          eq(segments.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Segment not found");
@@ -134,7 +134,7 @@ export const clone = pub
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
-          eq(segments.organizationId, context.user.organizationId),
+          eq(segments.organizationId, context.organizationId),
         ),
       );
     if (source.length === 0) throw new Error("Segment not found");
@@ -142,12 +142,12 @@ export const clone = pub
     const inserted = await context.db
       .insert(segments)
       .values({
-        organizationId: context.user.organizationId,
+        organizationId: context.organizationId,
         name: input.newName,
         criteria: src.criteria,
         voterFileId: src.voterFileId,
         voterFileVersion: src.voterFileVersion,
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning({ ...segmentSelect, criteria: segments.criteria });
     return inserted[0]!;
@@ -165,7 +165,7 @@ export const remove = pub
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
-          eq(segments.organizationId, context.user.organizationId),
+          eq(segments.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Segment not found");
@@ -195,7 +195,7 @@ export const countCampaigns = pub
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
-          eq(segments.organizationId, context.user.organizationId),
+          eq(segments.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Segment not found");
@@ -224,7 +224,7 @@ export const updateCriteria = pub
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
-          eq(segments.organizationId, context.user.organizationId),
+          eq(segments.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) {
@@ -237,47 +237,32 @@ export const updateCriteria = pub
     return { ok: true as const };
   });
 
-// Resolve the user's org slug from the auth context. The data service
-// uses it to namespace the persons/buildings tables.
-export async function loadOrgSlug(context: {
-  db: Db;
-  user: { organizationId: string };
-}): Promise<string> {
-  const rows = await context.db
-    .select({ slug: organizations.slug })
-    .from(organizations)
-    .where(eq(organizations.organizationId, context.user.organizationId));
-  const slug = rows[0]?.slug;
-  if (!slug) throw new Error("Organization not found");
-  return slug;
-}
-
 // Counts + sample for the segment editor's preview pane.
 export const count = pub
   .input(z.object({ criteria: z.unknown() }))
   .handler(async ({ context, input }): Promise<PersonsCount> => {
-    const orgSlug = await loadOrgSlug(context);
-    return dataPostJson<PersonsCount>("/persons/count", { criteria: input.criteria, orgSlug });
+    return dataPostJson<PersonsCount>("/persons/count", {
+      criteria: input.criteria,
+      orgSlug: context.orgSlug,
+    });
   });
 
 export type CascadeStep = { count: number; delta: number | null };
 export const countCascade = pub
   .input(z.object({ criteria: z.unknown() }))
   .handler(async ({ context, input }): Promise<{ steps: CascadeStep[] }> => {
-    const orgSlug = await loadOrgSlug(context);
     return dataPostJson<{ steps: CascadeStep[] }>("/persons/count-cascade", {
       criteria: input.criteria,
-      orgSlug,
+      orgSlug: context.orgSlug,
     });
   });
 
 export const sample = pub
   .input(z.object({ criteria: z.unknown(), limit: z.number().int().positive().optional() }))
   .handler(async ({ context, input }): Promise<PersonsSample> => {
-    const orgSlug = await loadOrgSlug(context);
     return dataPostJson<PersonsSample>("/persons/sample", {
       criteria: input.criteria,
-      orgSlug,
+      orgSlug: context.orgSlug,
       limit: input.limit ?? 100,
     });
   });
@@ -294,12 +279,11 @@ export const countByKey = pub
     }),
   )
   .handler(async ({ context, input }): Promise<PersonsCountByKey> => {
-    const orgSlug = await loadOrgSlug(context);
     return dataPostJson<PersonsCountByKey>("/persons/count-by-key", {
       criteria: input.criteria,
       keyGroup: input.keyGroup,
       keyFilter: input.keyFilter,
-      orgSlug,
+      orgSlug: context.orgSlug,
     });
   });
 
@@ -313,10 +297,9 @@ export const listBuildings = pub
     }),
   )
   .handler(async ({ context, input }): Promise<BuildingsList> => {
-    const orgSlug = await loadOrgSlug(context);
     return dataPostJson<BuildingsList>("/buildings/list", {
       criteria: input.criteria,
       keyFilter: input.keyFilter,
-      orgSlug,
+      orgSlug: context.orgSlug,
     });
   });
