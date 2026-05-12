@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { RPCHandler } from "@orpc/server/fetch";
 import { db } from "@field-tools/db";
-import { router } from "../../rpc";
-import { loadUser } from "../../rpc/context";
+import { adminRouter } from "../../rpc";
+import { buildAdminContext } from "../../rpc/context";
 
-const handler = new RPCHandler(router);
+const handler = new RPCHandler(adminRouter);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,7 +12,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export const Route = createFileRoute("/api/rpc/$")({
+export const Route = createFileRoute("/api/admin/rpc/$")({
   server: {
     handlers: {
       ANY: async ({ request }) => {
@@ -20,10 +20,10 @@ export const Route = createFileRoute("/api/rpc/$")({
           return new Response(null, { status: 204, headers: corsHeaders });
         }
 
-        const user = await loadUser(db);
+        const context = await buildAdminContext(db, request.headers);
         const { response } = await handler.handle(request, {
-          prefix: "/api/rpc",
-          context: { db, user },
+          prefix: "/api/admin/rpc",
+          context,
         });
 
         const res = response ?? new Response("Not Found", { status: 404 });

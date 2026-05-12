@@ -2,7 +2,7 @@ import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { scripts } from "./scripts";
 import { segments } from "./segments";
-import { users } from "./users";
+import { users } from "./auth/users";
 import { zoneGroups } from "./zone-groups";
 
 // A campaign glues together a script, a segment, and a zone group for a
@@ -23,6 +23,6 @@ export const campaigns = pgTable("campaigns", {
   scriptId: uuid().references(() => scripts.scriptId),
   createdBy: uuid()
     .notNull()
-    .references(() => users.userId),
+    .references(() => users.id),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

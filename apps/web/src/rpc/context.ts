@@ -1,40 +1,73 @@
-import { os } from "@orpc/server";
-import { eq, type Db } from "@field-tools/db";
-import { users } from "@field-tools/db/schema";
-
-// Hardcoded admin user id seeded by packages/db/src/mock.ts. Without real auth
-// every RPC call resolves to this user via loadUser(). Swap this for a
-// real session lookup (cookie, header, etc.) when auth is added.
-export const SEEDED_ADMIN_USER_ID = "00000000-0000-4000-8000-000000000001";
+import { ORPCError, os } from "@orpc/server";
+import { eq, SEEDED_ADMIN_USER_ID, type Db } from "@field-tools/db";
+import { memberships, organizations, users } from "@field-tools/db/schema";
+import { auth } from "~/lib/auth";
 
 export type User = typeof users.$inferSelect;
 
-export type ORPCContext = {
+// --- Admin tier: authenticated, scoped to a single membership/org ---
+
+export type AdminContext = {
   db: Db;
   user: User;
+  organizationId: string;
+  orgSlug: string;
+  role: string;
 };
 
-// Load the user that should be associated with an incoming RPC call. For now
-// hardcode to a seeded admin; with real auth, the auth-derived facts
-// (userId, sessionToken, etc.) will be pre-extracted into the context shape
-// at the request boundary instead of carrying a Request object around.
-// Throws if the seeded user doesn't exist (i.e. `pnpm db:mock` hasn't been run).
-export async function loadUser(db: Db): Promise<User> {
-  const rows = await db.select().from(users).where(eq(users.userId, SEEDED_ADMIN_USER_ID));
-  const user = rows[0];
-  if (!user) {
-    throw new Error(
-      "Seeded admin user not found. Run `pnpm db:mock` to populate default mock data.",
-    );
+// Resolve the (user, org, role) for an incoming admin call. Throws
+// UNAUTHORIZED when no valid session exists or the user has no membership.
+//
+// `AUTH_DISABLED=1` short-circuits to the seeded admin + its owner membership
+// — for local dev when you don't want to exercise the magic-link flow.
+export async function buildAdminContext(db: Db, headers: Headers): Promise<AdminContext> {
+  if (process.env.AUTH_DISABLED === "1") {
+    const ctx = await loadAdminFromUserId(db, SEEDED_ADMIN_USER_ID);
+    if (!ctx) {
+      throw new Error("AUTH_DISABLED=1 but seeded admin not found; run `pnpm db:mock`.");
+    }
+    return ctx;
   }
-  return user;
+
+  const session = await auth.api.getSession({ headers });
+  if (!session) throw new ORPCError("UNAUTHORIZED");
+  const ctx = await loadAdminFromUserId(db, session.user.id);
+  if (!ctx) throw new ORPCError("UNAUTHORIZED");
+  return ctx;
 }
 
-// Base procedure with context — all procedures build on this
-export const base = os.$context<ORPCContext>();
+async function loadAdminFromUserId(db: Db, userId: string): Promise<AdminContext | null> {
+  const userRow = (await db.select().from(users).where(eq(users.id, userId)))[0];
+  if (!userRow) return null;
+  const row = (
+    await db
+      .select({
+        organizationId: memberships.organizationId,
+        role: memberships.role,
+        orgSlug: organizations.slug,
+      })
+      .from(memberships)
+      .innerJoin(organizations, eq(memberships.organizationId, organizations.organizationId))
+      .where(eq(memberships.userId, userId))
+  )[0];
+  if (!row) return null;
+  return {
+    db,
+    user: userRow,
+    organizationId: row.organizationId,
+    orgSlug: row.orgSlug,
+    role: row.role,
+  };
+}
 
-// Public read procedure (no auth required). Method is overridable per-route.
-export const pub = base.route({ method: "GET" });
+export const adminBase = os.$context<AdminContext>();
+export const adminPub = adminBase.route({ method: "GET" });
+export const adminMut = adminBase.route({ method: "POST" });
 
-// Public write procedure — same context, POST method, for mutations.
-export const mut = base.route({ method: "POST" });
+// --- Native tier: anonymous, capability-based per turfId ---
+
+export type NativeContext = { db: Db };
+
+export const nativeBase = os.$context<NativeContext>();
+export const nativePub = nativeBase.route({ method: "GET" });
+export const nativeMut = nativeBase.route({ method: "POST" });

@@ -1,7 +1,7 @@
 import { and, asc, eq, gt } from "@field-tools/db";
 import { canvassEvents } from "@field-tools/db/schema";
 import { z } from "zod";
-import { mut, pub } from "./context";
+import { nativeMut as mut, nativePub as pub } from "../context";
 
 // All ids passed in (doorId, buildingId, personId, surveyQuestionId,
 // surveyResponseOptionId) are the global UUIDs assigned by the DuckLake import
@@ -22,6 +22,7 @@ export const appendDoorResult = mut
       turfId: z.string().uuid(),
       doorId: z.string().uuid(),
       outcome: doorOutcome,
+      createdByName: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
     }),
@@ -32,7 +33,7 @@ export const appendDoorResult = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
-        userId: context.user.userId,
+        createdByName: input.createdByName,
         doorId: input.doorId,
         type: "outcome",
         payload: { kind: "outcome", outcome: input.outcome },
@@ -48,6 +49,7 @@ export const appendBuildingResult = mut
       turfId: z.string().uuid(),
       buildingId: z.string().uuid(),
       outcome: buildingOutcome,
+      createdByName: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
     }),
@@ -58,7 +60,7 @@ export const appendBuildingResult = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
-        userId: context.user.userId,
+        createdByName: input.createdByName,
         buildingId: input.buildingId,
         type: "outcome",
         payload: { kind: "outcome", outcome: input.outcome },
@@ -76,6 +78,7 @@ export const appendPersonResult = mut
       buildingId: z.string().uuid().optional(),
       doorId: z.string().uuid().optional(),
       personId: z.string(),
+      createdByName: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
       payload: z.discriminatedUnion("kind", [
@@ -100,7 +103,7 @@ export const appendPersonResult = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
-        userId: context.user.userId,
+        createdByName: input.createdByName,
         personId: input.personId,
         type: input.payload.kind,
         payload: input.payload,
@@ -120,6 +123,7 @@ export const appendNote = mut
       buildingId: z.string().uuid().optional(),
       text: z.string().min(1),
       canvassedAt: z.string(),
+      createdByName: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
     }),
@@ -130,7 +134,7 @@ export const appendNote = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
-        userId: context.user.userId,
+        createdByName: input.createdByName,
         personId: input.personId,
         doorId: input.doorId,
         buildingId: input.buildingId,

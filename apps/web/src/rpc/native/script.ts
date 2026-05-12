@@ -6,25 +6,11 @@ import {
   surveyResponseOptions,
 } from "@field-tools/db/schema";
 import { z } from "zod";
-import { pub } from "./context";
-
-// List all scripts in the org, oldest first. Used by the campaign
-// editor's script dropdown. Currently org-wide rather than scoped
-// to the user's organization — scripts are global reference data
-// for now; tighten when multi-org support lands.
-export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
-  const rows = await context.db
-    .select({
-      scriptId: scripts.scriptId,
-      name: scripts.name,
-      createdAt: scripts.createdAt,
-    })
-    .from(scripts)
-    .orderBy(asc(scripts.createdAt));
-  return rows;
-});
+import { nativePub as pub } from "../context";
 
 // Fetch a script with its questions and response options, ordered for display.
+// Capability-based on the scriptId — the canvasser app pulls this when the
+// canvasser opens a person's record. The scriptId comes from the turf payload.
 export const get = pub
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {

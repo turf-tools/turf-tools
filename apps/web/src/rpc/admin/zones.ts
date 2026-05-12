@@ -1,7 +1,7 @@
 import { and, asc, eq } from "@field-tools/db";
 import { zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
-import { pub } from "./context";
+import { adminPub as pub } from "../context";
 
 const zoneSelect = {
   zoneId: zones.zoneId,
@@ -25,7 +25,7 @@ export const list = pub
       .where(
         and(
           eq(zones.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       )
       .orderBy(asc(zones.createdAt));
@@ -41,10 +41,7 @@ export const getById = pub
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
-        and(
-          eq(zones.zoneId, input.zoneId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
-        ),
+        and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
     return rows[0] ?? null;
   });
@@ -66,10 +63,7 @@ export const updateKeys = pub
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
-        and(
-          eq(zones.zoneId, input.zoneId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
-        ),
+        and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
     if (owned.length === 0) {
       throw new Error("Zone not found");
@@ -95,10 +89,7 @@ export const rename = pub
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
-        and(
-          eq(zones.zoneId, input.zoneId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
-        ),
+        and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
     if (owned.length === 0) throw new Error("Zone not found");
     await context.db
@@ -123,7 +114,7 @@ export const create = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Zone group not found");
@@ -134,7 +125,7 @@ export const create = pub
         zoneGroupId: input.zoneGroupId,
         name: input.name,
         keys: [],
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning();
     return rows[0]!;
@@ -149,10 +140,7 @@ export const remove = pub
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
-        and(
-          eq(zones.zoneId, input.zoneId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
-        ),
+        and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
     if (owned.length === 0) throw new Error("Zone not found");
     await context.db.delete(zones).where(eq(zones.zoneId, input.zoneId));
@@ -170,7 +158,7 @@ export const removeAllInGroup = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Zone group not found");

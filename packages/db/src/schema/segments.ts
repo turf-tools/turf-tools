@@ -1,6 +1,6 @@
 import { integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
-import { users } from "./users";
+import { users } from "./auth/users";
 
 // A segment is a targeting set defined by criteria over the voter file —
 // e.g., "Swing Voters", "Base Voters", "Bushwick North". Standalone and
@@ -18,7 +18,7 @@ export const segments = pgTable("segments", {
   updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   createdBy: uuid()
     .notNull()
-    .references(() => users.userId),
+    .references(() => users.id),
   doorCount: integer(),
   personCount: integer(),
 });

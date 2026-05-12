@@ -1,6 +1,6 @@
 import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
-import { users } from "./users";
+import { users } from "./auth/users";
 
 export const surveyQuestions = pgTable("survey_questions", {
   surveyQuestionId: uuid().defaultRandom().primaryKey(),
@@ -10,7 +10,7 @@ export const surveyQuestions = pgTable("survey_questions", {
   text: text().notNull(),
   createdBy: uuid()
     .notNull()
-    .references(() => users.userId),
+    .references(() => users.id),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -23,6 +23,6 @@ export const surveyResponseOptions = pgTable("survey_response_options", {
   order: integer().notNull(),
   createdBy: uuid()
     .notNull()
-    .references(() => users.userId),
+    .references(() => users.id),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });

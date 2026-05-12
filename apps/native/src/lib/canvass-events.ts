@@ -7,9 +7,15 @@ import type { StorageAdapter } from "@tanstack/offline-transactions/react-native
 import { getDefaultStore } from "jotai";
 import { useCallback } from "react";
 import type { CanvassEventPayload } from "@field-tools/db/schema";
+import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
 import { queryClient } from "@/lib/query-client";
 import { client } from "@/rpc/client";
+
+// Read at call time so the latest Settings value is used on each append.
+function currentCreatedByName(): string | undefined {
+  return getDefaultStore().get(createdByNameAtom) ?? undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,7 +25,8 @@ type CanvassEvent = {
   sequence: number;
   clientEventId: string | null;
   turfId: string;
-  userId: string;
+  userId: string | null;
+  createdByName: string | null;
   personId: string | null;
   doorId: string | null;
   buildingId: string | null;
@@ -121,6 +128,7 @@ function createCollection_(turfId: string) {
 async function appendEventToServer(turfId: string, event: CanvassEvent) {
   const payload = event.payload as unknown as CanvassEventPayload;
 
+  const createdByName = currentCreatedByName();
   if (payload.kind === "note") {
     await client.canvass.appendNote({
       turfId,
@@ -129,6 +137,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       buildingId: event.buildingId ?? undefined,
       text: payload.text,
       canvassedAt: payload.canvassedAt,
+      createdByName,
       inputType: "mobile",
       clientEventId: event.clientEventId ?? undefined,
     });
@@ -143,6 +152,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
         surveyQuestionId: string;
         surveyResponseOptionId: string;
       },
+      createdByName,
       inputType: "mobile",
       clientEventId: event.clientEventId ?? undefined,
     });
@@ -151,6 +161,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       turfId,
       doorId: event.doorId,
       outcome: (payload as unknown as { outcome: string }).outcome as "address_not_found",
+      createdByName,
       inputType: "mobile",
       clientEventId: event.clientEventId ?? undefined,
     });
@@ -159,6 +170,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       turfId,
       buildingId: event.buildingId,
       outcome: (payload as unknown as { outcome: string }).outcome as "inaccessible",
+      createdByName,
       inputType: "mobile",
       clientEventId: event.clientEventId ?? undefined,
     });
@@ -186,9 +198,11 @@ function createTurfContext(turfId: string): TurfContext {
     mutationFnName: "appendEvent",
     onMutate: (params: RecordEventParams) => {
       collection.insert({
-        // Placeholder values — server assigns sequence, userId comes from auth
+        // Placeholder values — server assigns sequence; userId is always null
+        // for canvasser-flow events (attribution flows through createdByName).
         sequence: 0,
-        userId: "",
+        userId: null,
+        createdByName: currentCreatedByName() ?? null,
         clientEventId: crypto.randomUUID(),
         turfId,
         personId: params.personId ?? null,
