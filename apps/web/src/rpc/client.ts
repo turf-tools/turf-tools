@@ -5,23 +5,23 @@ import { createRouterClient } from "@orpc/server";
 import { createIsomorphicFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import { db } from "@field-tools/db";
-import { adminRouter, type AdminRouter } from ".";
-import { buildAdminContext } from "./context";
+import { webRouter, type WebRouter } from ".";
+import { buildWebContext } from "./context";
 
 const getClient = createIsomorphicFn()
   .server(() =>
-    createRouterClient(adminRouter, {
+    createRouterClient(webRouter, {
       context: async () => {
         const headers = new Headers(getRequestHeaders());
-        return buildAdminContext(db, headers);
+        return buildWebContext(db, headers);
       },
     }),
   )
   .client(() => {
     const link = new RPCLink({
-      url: `${window.location.origin}/api/admin/rpc`,
+      url: `${window.location.origin}/api/web/rpc`,
     });
     return createORPCClient(link);
   });
 
-export const client = getClient() as RouterClient<AdminRouter>;
+export const client = getClient() as RouterClient<WebRouter>;
