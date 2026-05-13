@@ -111,7 +111,7 @@ export default function LandingScreen() {
           Field Tools
         </Text>
         <Text
-          className="mt-6 mb-4 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
+          className="mt-2 mb-4 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
           Enter a server and code to start
