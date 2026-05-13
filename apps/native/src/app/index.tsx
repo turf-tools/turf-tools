@@ -105,13 +105,13 @@ export default function LandingScreen() {
     <Pressable className="flex-1 bg-background dark:bg-background-dark" onPress={Keyboard.dismiss}>
       <View className="flex-1 items-center justify-center p-6">
         <Text
-          className="mb-2 text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
+          className="mb-2 text-5xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
           style={{ fontFamily: "Geist_700Bold" }}
         >
           Field Tools
         </Text>
         <Text
-          className="mt-12 mb-4 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
+          className="mt-6 mb-4 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
           Enter a server and code to start
