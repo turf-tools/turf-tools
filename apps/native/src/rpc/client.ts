@@ -5,8 +5,12 @@ import type { NativeRouter } from "web/rpc";
 
 type Client = RouterClient<NativeRouter>;
 
-let activeHost: string | null = null;
-let activeClient: Client | null = null;
+// Survives HMR — module-level `let` gets reset when the module reloads, which
+// orphans the active client and breaks every RPC call until full reload.
+type RpcGlobal = { host: string | null; client: Client | null };
+const g = globalThis as { __fieldToolsRpc?: RpcGlobal };
+g.__fieldToolsRpc ??= { host: null, client: null };
+const state: RpcGlobal = g.__fieldToolsRpc;
 
 // localhost and common LAN ranges run on http; everything else is https.
 function buildBaseUrl(host: string): string {
@@ -38,17 +42,17 @@ function buildClient(host: string): Client {
 }
 
 export function setHost(host: string) {
-  activeHost = host;
-  activeClient = buildClient(host);
+  state.host = host;
+  state.client = buildClient(host);
 }
 
 export function clearHost() {
-  activeHost = null;
-  activeClient = null;
+  state.host = null;
+  state.client = null;
 }
 
 export function getHost(): string | null {
-  return activeHost;
+  return state.host;
 }
 
 // Proxy that forwards top-level access to the active client. Procedures are
@@ -56,9 +60,9 @@ export function getHost(): string | null {
 // through this trap — switching hosts mid-flight is safe.
 export const client = new Proxy({} as Client, {
   get(_, prop) {
-    if (!activeClient) {
+    if (!state.client) {
       throw new Error("RPC client not initialized — call setHost() first.");
     }
-    return activeClient[prop as keyof Client];
+    return state.client[prop as keyof Client];
   },
 });
