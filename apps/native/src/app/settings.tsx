@@ -89,6 +89,7 @@ export default function SettingsScreen() {
     setActiveTurf(null);
     clearHost();
     router.dismissAll();
+    router.replace("/");
   };
 
   // Dev helper — wipes AsyncStorage (persisted react-query cache + jotai
