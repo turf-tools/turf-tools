@@ -455,13 +455,9 @@ function ZoneGroupEditor() {
           <DropdownMenu {...overlaySegmentDropdown.menu}>
             <DropdownMenuTrigger
               disabled={!showSegmentCounts}
-              className={cn(
-                "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
-                "disabled:cursor-not-allowed disabled:opacity-50",
-                "enabled:hover:border-muted-foreground",
-              )}
+              render={<Button variant="outline" className="w-full justify-between" />}
             >
-              <span className="truncate">
+              <span className="min-w-0 truncate">
                 {segments?.find((s) => s.segmentId === overlaySegmentId)?.name ?? "Pick a segment…"}
               </span>
               <ChevronDown className="size-3.5 shrink-0" />

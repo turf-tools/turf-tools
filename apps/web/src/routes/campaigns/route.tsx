@@ -352,7 +352,7 @@ function CampaignsLayout() {
               </Button>
               <Button variant="outline" onClick={cloneCampaign.open} disabled={!activeCampaign}>
                 <Copy />
-                Duplicate
+                Clone
               </Button>
               <Button
                 variant="outline"
@@ -609,7 +609,7 @@ function SaveAsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Duplicate campaign</DialogTitle>
+        <DialogTitle>Clone campaign</DialogTitle>
         <DialogDescription>
           Creates a copy of the current campaign, including its bindings.
         </DialogDescription>
@@ -633,7 +633,7 @@ function SaveAsDialog({
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
-              Duplicate
+              Clone
             </Button>
           </div>
         </form>

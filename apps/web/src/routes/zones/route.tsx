@@ -171,7 +171,7 @@ function ZonesLayout() {
             </Button>
             <Button variant="outline" onClick={cloneGroup.open} disabled={!activeGroup}>
               <Copy />
-              Duplicate
+              Clone
             </Button>
             <Button variant="outline" onClick={clearZones.open} disabled={!activeGroup}>
               <Eraser />
@@ -442,7 +442,7 @@ function SaveAsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Duplicate group</DialogTitle>
+        <DialogTitle>Clone group</DialogTitle>
         <DialogDescription>
           Creates a copy of the current group, including all zones. The new group uses the same unit
           type.
@@ -467,7 +467,7 @@ function SaveAsDialog({
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
-              Duplicate
+              Clone
             </Button>
           </div>
         </form>

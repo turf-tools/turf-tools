@@ -159,7 +159,7 @@ function SegmentsLayout() {
             </Button>
             <Button variant="outline" onClick={cloneSegment.open} disabled={!activeSegment}>
               <Copy />
-              Duplicate
+              Clone
             </Button>
             <Button
               variant="outline"
@@ -326,7 +326,7 @@ function SaveAsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Duplicate segment</DialogTitle>
+        <DialogTitle>Clone segment</DialogTitle>
         <DialogDescription>
           Creates a copy of the current segment, including its query.
         </DialogDescription>
@@ -350,7 +350,7 @@ function SaveAsDialog({
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
-              Duplicate
+              Clone
             </Button>
           </div>
         </form>
