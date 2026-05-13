@@ -33,6 +33,7 @@ export const auth = betterAuth({
   plugins: [
     magicLink({
       disableSignUp: true,
+      expiresIn: 60 * 60,
       sendMagicLink: async ({ email, url }) => {
         // Membership gate — BA's disableSignUp only fires at verify-time, so
         // without this check the link gets sent first and the user only sees
@@ -55,7 +56,21 @@ export const auth = betterAuth({
           from,
           to: email,
           subject: "Log in to Field Tools",
-          html: `<p>Click to log in: <a href="${url}">${url}</a></p>`,
+          html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #333;">
+  <br/>
+  <h2 style="font-weight: 600;">Welcome to <i>Field Tools</i></h2>
+  <p style="font-size: 16px;">Click the button below to log in securely:</p>
+
+  <p style="text-align: left; margin: 30px 0;">
+    <a href="${url}" style="background-color: #222222; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-size: 16px; display: inline-block;">
+      Log in to Field Tools
+    </a>
+  </p>
+
+  <p style="font-size: 16px;">If you didn't request this email, you can safely ignore it.</p>
+
+  <p style="font-size: 16px; color: #888;">This link will expire in 1 hour.</p>
+</div>`,
         });
       },
     }),
