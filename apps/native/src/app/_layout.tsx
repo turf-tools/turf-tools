@@ -91,7 +91,14 @@ function ThemedStack() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="settings" options={{ headerShown: false, presentation: "modal" }} />
+        <Stack.Screen
+          name="settings"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            contentStyle: { backgroundColor: isDark ? "#0a0a0a" : "#fcfcfc" },
+          }}
+        />
         <Stack.Screen
           name="turfs/[turfId]"
           options={{ headerShown: false, gestureEnabled: false }}
