@@ -8,7 +8,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@field-tools/db";
 import { dataFetch, passthrough } from "~/lib/server/data-proxy";
-import { buildAdminContext } from "~/rpc/context";
+import { buildWebContext } from "~/rpc/context";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,14 +16,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export const Route = createFileRoute("/api/admin/segment-points")({
+export const Route = createFileRoute("/api/web/segment-points")({
   server: {
     handlers: {
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
         let context;
         try {
-          context = await buildAdminContext(db, request.headers);
+          context = await buildWebContext(db, request.headers);
         } catch {
           return new Response("Unauthorized", { status: 401, headers: corsHeaders });
         }

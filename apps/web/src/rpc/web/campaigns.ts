@@ -1,7 +1,7 @@
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns } from "@field-tools/db/schema";
 import { z } from "zod";
-import { adminPub as pub } from "../context";
+import { webPub as pub } from "../context";
 
 const campaignSelect = {
   campaignId: campaigns.campaignId,

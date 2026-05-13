@@ -428,7 +428,7 @@ function ZoneGroupEditor() {
           className="h-full"
           boundariesUrl={
             activeGroup
-              ? `/api/admin/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+              ? `/api/web/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
               : undefined
           }
           coloringByKey={coloringByKey}

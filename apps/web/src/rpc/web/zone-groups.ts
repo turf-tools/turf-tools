@@ -2,7 +2,7 @@ import { and, asc, eq } from "@field-tools/db";
 import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { adminPub as pub } from "../context";
+import { webPub as pub } from "../context";
 
 const zoneGroupSelect = {
   zoneGroupId: zoneGroups.zoneGroupId,

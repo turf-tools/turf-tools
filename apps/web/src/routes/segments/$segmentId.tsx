@@ -47,7 +47,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
-import type { CascadeStep } from "~/rpc/admin/segments";
+import type { CascadeStep } from "~/rpc/web/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 

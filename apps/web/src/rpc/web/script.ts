@@ -1,7 +1,7 @@
 import { asc } from "@field-tools/db";
 import { scripts } from "@field-tools/db/schema";
 import { z } from "zod";
-import { adminPub as pub } from "../context";
+import { webPub as pub } from "../context";
 
 // List all scripts, oldest first. Used by the campaign editor's script
 // dropdown.

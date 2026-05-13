@@ -2,7 +2,7 @@ import { and, asc, eq } from "@field-tools/db";
 import { campaigns, segments } from "@field-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { adminPub as pub } from "../context";
+import { webPub as pub } from "../context";
 
 // Wire shapes returned by the data service. Kept here (next to the
 // handlers that produce them) rather than at the query layer so the

@@ -1,19 +1,19 @@
 import { z } from "zod";
-import { adminPub, nativePub } from "./context";
-import * as campaigns from "./admin/campaigns";
-import * as organizations from "./admin/organizations";
-import * as script from "./admin/script";
-import * as segments from "./admin/segments";
-import * as turfDrafts from "./admin/turf-drafts";
-import * as adminTurfs from "./admin/turfs";
-import * as zoneGroups from "./admin/zone-groups";
-import * as zones from "./admin/zones";
+import { webPub, nativePub } from "./context";
+import * as campaigns from "./web/campaigns";
+import * as organizations from "./web/organizations";
+import * as script from "./web/script";
+import * as segments from "./web/segments";
+import * as turfDrafts from "./web/turf-drafts";
+import * as webTurfs from "./web/turfs";
+import * as zoneGroups from "./web/zone-groups";
+import * as zones from "./web/zones";
 import * as canvass from "./native/canvass";
 import * as nativeScript from "./native/script";
 import * as nativeTurfs from "./native/turfs";
 
-export const adminRouter = {
-  healthcheck: adminPub.input(z.object({}).optional()).handler(async ({ context }) => {
+export const webRouter = {
+  healthcheck: webPub.input(z.object({}).optional()).handler(async ({ context }) => {
     await context.db.execute("SELECT 1 as ok");
     return { status: "ok", db: "connected" };
   }),
@@ -64,10 +64,10 @@ export const adminRouter = {
     removeAllInGroup: zones.removeAllInGroup,
   },
   turfs: {
-    listForOrg: adminTurfs.listForOrg,
-    countForCampaign: adminTurfs.countForCampaign,
-    statsForCampaign: adminTurfs.statsForCampaign,
-    publish: adminTurfs.publish,
+    listForOrg: webTurfs.listForOrg,
+    countForCampaign: webTurfs.countForCampaign,
+    statsForCampaign: webTurfs.statsForCampaign,
+    publish: webTurfs.publish,
   },
   turfDrafts: {
     list: turfDrafts.list,
@@ -100,5 +100,5 @@ export const nativeRouter = {
   },
 };
 
-export type AdminRouter = typeof adminRouter;
+export type WebRouter = typeof webRouter;
 export type NativeRouter = typeof nativeRouter;
