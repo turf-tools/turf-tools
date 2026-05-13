@@ -128,7 +128,8 @@ export default function LandingScreen() {
             keyboardType="url"
             returnKeyType="next"
             onSubmitEditing={() => codeRef.current?.focus()}
-            className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-12"
+            style={{ lineHeight: 20 }}
+            className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
           />
           <TextInput
             ref={codeRef}
@@ -137,7 +138,8 @@ export default function LandingScreen() {
             placeholder="Turf code"
             placeholderTextColor="#999"
             keyboardType="number-pad"
-            className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-12"
+            style={{ lineHeight: 20 }}
+            className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
           />
           <Button title={loading ? "Loading..." : "Open"} onPress={handleSubmit} />
         </View>

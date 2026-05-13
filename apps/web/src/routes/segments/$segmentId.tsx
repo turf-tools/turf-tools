@@ -21,6 +21,7 @@ import {
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
+import { Toggle } from "~/components/toggle";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AgeRangeFilter,
@@ -266,18 +267,18 @@ function SegmentEditor() {
               />
             )}
           </div>
-          <div className="absolute left-3 bottom-3 z-50 rounded-lg border border-border bg-background">
+          <div className="absolute left-3 bottom-3 z-50">
             <ToggleGroup
+              variant="outline"
               value={[view]}
               onValueChange={(values) => {
                 const next = values[0];
                 if (next === "map" || next === "list" || next === "waterfall") setView(next);
               }}
+              className="bg-background"
             >
               <ToggleGroupItem value="map">Map</ToggleGroupItem>
-              <div className="w-px self-stretch bg-border" />
               <ToggleGroupItem value="list">List</ToggleGroupItem>
-              <div className="w-px self-stretch bg-border" />
               <ToggleGroupItem value="waterfall">Steps</ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -634,23 +635,18 @@ function EnumFilterEditor({
   };
   return (
     <div className="flex flex-wrap gap-1.5">
-      {def.values.map((v) => {
-        const selected = filter.values.includes(v.value);
-        return (
-          <button
-            type="button"
-            key={v.value}
-            onClick={() => toggle(v.value)}
-            className={
-              selected
-                ? "rounded-md border border-foreground bg-foreground/10 px-2.5 py-1 text-xs"
-                : "rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:border-muted-foreground"
-            }
-          >
-            {v.label ?? v.value}
-          </button>
-        );
-      })}
+      {def.values.map((v) => (
+        <Toggle
+          key={v.value}
+          size="sm"
+          variant="outline"
+          pressed={filter.values.includes(v.value)}
+          onPressedChange={() => toggle(v.value)}
+          className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+        >
+          {v.label ?? v.value}
+        </Toggle>
+      ))}
     </div>
   );
 }

@@ -14,13 +14,13 @@ export function Button({ title, variant = "primary", icon, onPress }: ButtonProp
   return (
     <Pressable
       onPress={onPress}
-      className={`rounded-lg px-6 py-3 ${
+      className={`h-14 rounded-lg px-6 ${
         isPrimary
           ? "bg-primary dark:bg-primary-dark active:bg-foreground dark:active:bg-foreground-dark"
           : "border border-border bg-surface dark:border-border-dark dark:bg-surface-dark active:bg-faded dark:active:bg-faded-dark"
       }`}
     >
-      <View className="flex-row items-center justify-center gap-3">
+      <View className="flex-1 flex-row items-center justify-center gap-3">
         {icon}
         <Text
           numberOfLines={1}
