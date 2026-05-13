@@ -8,7 +8,7 @@ export type SessionUser = { id: string; email: string; name: string | null };
 
 // Lookup the active session for the incoming request. Returns null when no
 // session exists. `AUTH_DISABLED=1` short-circuits to the seeded admin
-// (loaded from the DB so the values agree with `buildAdminContext`).
+// (loaded from the DB so the values agree with `buildWebContext`).
 //
 // Authenticated SSR responses are marked `Cache-Control: no-store` so the
 // browser opts out of bfcache on these pages.

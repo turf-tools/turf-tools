@@ -1,7 +1,7 @@
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns, turfDrafts } from "@field-tools/db/schema";
 import { z } from "zod";
-import { adminPub as pub } from "../context";
+import { webPub as pub } from "../context";
 
 // GeoJSON Polygon validator. We don't enforce ring-closure here —
 // the cutter naturally produces closed rings, and the publish path
