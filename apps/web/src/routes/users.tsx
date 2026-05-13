@@ -8,8 +8,10 @@ export const Route = createFileRoute("/users")({
 function UsersPage() {
   return (
     <Page>
-      <h1 className="mb-4 text-xl font-extrabold tracking-wide">Users</h1>
-      <p className="text-muted-foreground">User management will live here.</p>
+      <div className="mb-4 flex h-8 items-center justify-between">
+        <h1 className="text-xl font-extrabold tracking-wide">Users</h1>
+      </div>
+      <p className="text-muted-foreground">Coming soon.</p>
     </Page>
   );
 }

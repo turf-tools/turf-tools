@@ -1,7 +1,7 @@
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns, turfDrafts } from "@field-tools/db/schema";
 import { z } from "zod";
-import { pub } from "./context";
+import { adminPub as pub } from "../context";
 
 // GeoJSON Polygon validator. We don't enforce ring-closure here —
 // the cutter naturally produces closed rings, and the publish path
@@ -29,7 +29,7 @@ export const list = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Campaign not found");
@@ -78,7 +78,7 @@ export const replaceAll = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Campaign not found");

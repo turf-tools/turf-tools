@@ -15,7 +15,6 @@ import {
   isRecorded,
   useCanvassEvents,
 } from "@/lib/canvass-events";
-import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { useTurf } from "@/lib/turf-data";
@@ -30,16 +29,6 @@ export default function TurfListScreen() {
   const isDark = theme === "dark";
 
   const { meta, data: turfData, indexes, isLoading, error } = useTurf(turfId);
-
-  // Track the active turf so Settings can enable Sync, foreground-sync knows
-  // which turf to pull, and other consumers can scope to the visible turf.
-  // Cleared on unmount so backgrounding/foregrounding on the index or
-  // distribute screens doesn't trigger a stale pull.
-  const setCurrentTurfId = useSetAtom(currentTurfIdAtom);
-  useEffect(() => {
-    setCurrentTurfId(turfId);
-    return () => setCurrentTurfId(null);
-  }, [turfId, setCurrentTurfId]);
 
   const events = useCanvassEvents(turfId);
   const allResults = useMemo(() => derivePersonSummaries(events), [events]);

@@ -1,90 +1,104 @@
 import { z } from "zod";
-import { pub } from "./context";
-import * as campaignsProcedures from "./campaigns";
-import * as canvassProcedures from "./canvass";
-import * as organizationsProcedures from "./organizations";
-import * as scriptProcedures from "./script";
-import * as segmentsProcedures from "./segments";
-import * as turfDraftsProcedures from "./turf-drafts";
-import * as turfsProcedures from "./turfs";
-import * as zoneGroupsProcedures from "./zone-groups";
-import * as zonesProcedures from "./zones";
+import { adminPub, nativePub } from "./context";
+import * as campaigns from "./admin/campaigns";
+import * as organizations from "./admin/organizations";
+import * as script from "./admin/script";
+import * as segments from "./admin/segments";
+import * as turfDrafts from "./admin/turf-drafts";
+import * as adminTurfs from "./admin/turfs";
+import * as zoneGroups from "./admin/zone-groups";
+import * as zones from "./admin/zones";
+import * as canvass from "./native/canvass";
+import * as nativeScript from "./native/script";
+import * as nativeTurfs from "./native/turfs";
 
-export const router = {
-  healthcheck: pub.input(z.object({}).optional()).handler(async ({ context }) => {
+export const adminRouter = {
+  healthcheck: adminPub.input(z.object({}).optional()).handler(async ({ context }) => {
     await context.db.execute("SELECT 1 as ok");
     return { status: "ok", db: "connected" };
   }),
   organizations: {
-    getCurrent: organizationsProcedures.getCurrent,
+    getCurrent: organizations.getCurrent,
   },
   campaigns: {
-    list: campaignsProcedures.list,
-    getById: campaignsProcedures.getById,
-    create: campaignsProcedures.create,
-    rename: campaignsProcedures.rename,
-    update: campaignsProcedures.update,
-    clone: campaignsProcedures.clone,
-    remove: campaignsProcedures.remove,
+    list: campaigns.list,
+    getById: campaigns.getById,
+    create: campaigns.create,
+    rename: campaigns.rename,
+    update: campaigns.update,
+    clone: campaigns.clone,
+    remove: campaigns.remove,
   },
   segments: {
-    list: segmentsProcedures.list,
-    getById: segmentsProcedures.getById,
-    create: segmentsProcedures.create,
-    rename: segmentsProcedures.rename,
-    clone: segmentsProcedures.clone,
-    remove: segmentsProcedures.remove,
-    countCampaigns: segmentsProcedures.countCampaigns,
-    updateCriteria: segmentsProcedures.updateCriteria,
-    count: segmentsProcedures.count,
-    countCascade: segmentsProcedures.countCascade,
-    sample: segmentsProcedures.sample,
-    countByKey: segmentsProcedures.countByKey,
-    listBuildings: segmentsProcedures.listBuildings,
+    list: segments.list,
+    getById: segments.getById,
+    create: segments.create,
+    rename: segments.rename,
+    clone: segments.clone,
+    remove: segments.remove,
+    countCampaigns: segments.countCampaigns,
+    updateCriteria: segments.updateCriteria,
+    count: segments.count,
+    countCascade: segments.countCascade,
+    sample: segments.sample,
+    countByKey: segments.countByKey,
+    listBuildings: segments.listBuildings,
   },
   zoneGroups: {
-    list: zoneGroupsProcedures.list,
-    getById: zoneGroupsProcedures.getById,
-    create: zoneGroupsProcedures.create,
-    createWithDefaultZone: zoneGroupsProcedures.createWithDefaultZone,
-    rename: zoneGroupsProcedures.rename,
-    clone: zoneGroupsProcedures.clone,
-    remove: zoneGroupsProcedures.remove,
-    countCampaigns: zoneGroupsProcedures.countCampaigns,
+    list: zoneGroups.list,
+    getById: zoneGroups.getById,
+    create: zoneGroups.create,
+    createWithDefaultZone: zoneGroups.createWithDefaultZone,
+    rename: zoneGroups.rename,
+    clone: zoneGroups.clone,
+    remove: zoneGroups.remove,
+    countCampaigns: zoneGroups.countCampaigns,
   },
   zones: {
-    list: zonesProcedures.list,
-    getById: zonesProcedures.getById,
-    updateKeys: zonesProcedures.updateKeys,
-    rename: zonesProcedures.rename,
-    create: zonesProcedures.create,
-    remove: zonesProcedures.remove,
-    removeAllInGroup: zonesProcedures.removeAllInGroup,
+    list: zones.list,
+    getById: zones.getById,
+    updateKeys: zones.updateKeys,
+    rename: zones.rename,
+    create: zones.create,
+    remove: zones.remove,
+    removeAllInGroup: zones.removeAllInGroup,
   },
   turfs: {
-    getById: turfsProcedures.getById,
-    getByCode: turfsProcedures.getByCode,
-    listForOrg: turfsProcedures.listForOrg,
-    getData: turfsProcedures.getData,
-    countForCampaign: turfsProcedures.countForCampaign,
-    statsForCampaign: turfsProcedures.statsForCampaign,
-    publish: turfsProcedures.publish,
+    listForOrg: adminTurfs.listForOrg,
+    countForCampaign: adminTurfs.countForCampaign,
+    statsForCampaign: adminTurfs.statsForCampaign,
+    publish: adminTurfs.publish,
   },
   turfDrafts: {
-    list: turfDraftsProcedures.list,
-    replaceAll: turfDraftsProcedures.replaceAll,
+    list: turfDrafts.list,
+    replaceAll: turfDrafts.replaceAll,
   },
   script: {
-    list: scriptProcedures.list,
-    get: scriptProcedures.get,
-  },
-  canvass: {
-    appendDoorResult: canvassProcedures.appendDoorResult,
-    appendBuildingResult: canvassProcedures.appendBuildingResult,
-    appendPersonResult: canvassProcedures.appendPersonResult,
-    appendNote: canvassProcedures.appendNote,
-    pull: canvassProcedures.pull,
+    list: script.list,
   },
 };
 
-export type Router = typeof router;
+export const nativeRouter = {
+  healthcheck: nativePub.input(z.object({}).optional()).handler(async ({ context }) => {
+    await context.db.execute("SELECT 1 as ok");
+    return { status: "ok", db: "connected" };
+  }),
+  turfs: {
+    getById: nativeTurfs.getById,
+    getByCode: nativeTurfs.getByCode,
+    getData: nativeTurfs.getData,
+  },
+  script: {
+    get: nativeScript.get,
+  },
+  canvass: {
+    appendDoorResult: canvass.appendDoorResult,
+    appendBuildingResult: canvass.appendBuildingResult,
+    appendPersonResult: canvass.appendPersonResult,
+    appendNote: canvass.appendNote,
+    pull: canvass.pull,
+  },
+};
+
+export type AdminRouter = typeof adminRouter;
+export type NativeRouter = typeof nativeRouter;

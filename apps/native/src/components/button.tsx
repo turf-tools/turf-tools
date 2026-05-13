@@ -23,7 +23,9 @@ export function Button({ title, variant = "primary", icon, onPress }: ButtonProp
       <View className="flex-row items-center justify-center gap-3">
         {icon}
         <Text
-          className={`text-center text-lg ${
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          className={`shrink text-center text-lg ${
             isPrimary
               ? "text-primary-foreground dark:text-primary-foreground-dark"
               : "text-foreground dark:text-foreground-dark"

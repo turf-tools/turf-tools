@@ -1,7 +1,7 @@
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns } from "@field-tools/db/schema";
 import { z } from "zod";
-import { pub } from "./context";
+import { adminPub as pub } from "../context";
 
 const campaignSelect = {
   campaignId: campaigns.campaignId,
@@ -19,7 +19,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
   const rows = await context.db
     .select(campaignSelect)
     .from(campaigns)
-    .where(eq(campaigns.organizationId, context.user.organizationId))
+    .where(eq(campaigns.organizationId, context.organizationId))
     .orderBy(asc(campaigns.createdAt));
   return rows;
 });
@@ -34,7 +34,7 @@ export const getById = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     return rows[0] ?? null;
@@ -58,12 +58,12 @@ export const create = pub
     const rows = await context.db
       .insert(campaigns)
       .values({
-        organizationId: context.user.organizationId,
+        organizationId: context.organizationId,
         name: input.name,
         segmentId: input.segmentId ?? null,
         zoneGroupId: input.zoneGroupId ?? null,
         scriptId: input.scriptId ?? null,
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning(campaignSelect);
     return rows[0]!;
@@ -84,7 +84,7 @@ export const rename = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Campaign not found");
@@ -114,7 +114,7 @@ export const update = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Campaign not found");
@@ -143,7 +143,7 @@ export const clone = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     if (source.length === 0) throw new Error("Campaign not found");
@@ -151,14 +151,14 @@ export const clone = pub
     const inserted = await context.db
       .insert(campaigns)
       .values({
-        organizationId: context.user.organizationId,
+        organizationId: context.organizationId,
         name: input.newName,
         startsAt: src.startsAt,
         endsAt: src.endsAt,
         segmentId: src.segmentId,
         zoneGroupId: src.zoneGroupId,
         scriptId: src.scriptId,
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning(campaignSelect);
     return inserted[0]!;
@@ -176,7 +176,7 @@ export const remove = pub
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.user.organizationId),
+          eq(campaigns.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Campaign not found");

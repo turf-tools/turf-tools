@@ -9,8 +9,8 @@
   },
   "scripts": {
     "db": "drizzle-kit",
-    "seed": "tsx src/seed.ts",
-    "mock": "tsx src/mock.ts"
+    "seed": "tsx --env-file-if-exists=.env src/seed.ts",
+    "mock": "tsx --env-file-if-exists=.env src/mock.ts"
   },
   "dependencies": {
     "drizzle-orm": "beta",

@@ -1,6 +1,6 @@
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
-import { users } from "./users";
+import { users } from "./auth/users";
 
 // A zone group is the parent container for a set of zones. Each group is
 // pinned to one key group (e.g. "nyc_eds", "zip5") — the type of
@@ -23,5 +23,5 @@ export const zoneGroups = pgTable("zone_groups", {
   updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   createdBy: uuid()
     .notNull()
-    .references(() => users.userId),
+    .references(() => users.id),
 });

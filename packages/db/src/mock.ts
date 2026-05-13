@@ -1,12 +1,14 @@
 import { eq } from "drizzle-orm";
 import { db } from "./index";
+import { SEEDED_ADMIN_USER_ID, SEEDED_ORG_ID } from "./ids";
 import { seedReferenceData } from "./seed";
 import { campaigns } from "./schema/campaigns";
+import { memberships } from "./schema/memberships";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptQuestions } from "./schema/scripts";
 import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
-import { users } from "./schema/users";
+import { users } from "./schema/auth/users";
 import { zoneGroups } from "./schema/zone-groups";
 import { zones } from "./schema/zones";
 
@@ -14,8 +16,8 @@ import { zones } from "./schema/zones";
 // data service's mock script) can reference them without a lookup. Shaped as
 // valid UUID v4 (version nibble = 4, variant nibble = 8) so Zod's strict
 // `.uuid()` validator accepts them.
-const ORG_ID = "00000000-0000-4000-8000-000000000001";
-const USER_ID = "00000000-0000-4000-8000-000000000001";
+const ORG_ID = SEEDED_ORG_ID;
+const USER_ID = SEEDED_ADMIN_USER_ID;
 const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000002";
 const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
 const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
@@ -63,17 +65,20 @@ async function mock() {
     console.log("Created organization");
   }
 
-  const existingUser = await db.select().from(users).where(eq(users.userId, USER_ID));
+  const existingUser = await db.select().from(users).where(eq(users.id, USER_ID));
   if (existingUser.length === 0) {
     await db.insert(users).values({
+      id: USER_ID,
+      email: process.env.SEED_USER_EMAIL ?? "admin@field.tools",
+      emailVerified: true,
+      name: process.env.SEED_USER_NAME ?? "Admin User",
+    });
+    await db.insert(memberships).values({
       userId: USER_ID,
       organizationId: ORG_ID,
-      email: "admin@field.tools",
-      firstName: "Admin",
-      lastName: "User",
-      role: "admin",
+      role: "owner",
     });
-    console.log("Created user");
+    console.log("Created user and owner membership");
   }
 
   const existingQuestion = await db

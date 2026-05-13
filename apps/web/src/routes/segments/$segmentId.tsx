@@ -12,6 +12,12 @@ import {
   useState,
 } from "react";
 import { Button } from "~/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/dropdown-menu";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
@@ -40,7 +46,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
-import type { CascadeStep } from "~/rpc/segments";
+import type { CascadeStep } from "~/rpc/admin/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -712,66 +718,43 @@ function AddStepMenu({
   isFirstStep: boolean;
   onAdd: (verb: Verb, def: FilterDef) => void;
 }) {
-  const [openVerb, setOpenVerb] = useState<Verb | null>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
   const verbIcons: Record<Verb, ReactNode> = {
     narrow: <FilterIcon className="size-3" strokeWidth={2.5} />,
     add: <Plus className="size-3" strokeWidth={2.5} />,
     remove: <Minus className="size-3" strokeWidth={2.5} />,
   };
 
-  useEffect(() => {
-    if (!openVerb) return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpenVerb(null);
-    };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [openVerb]);
-
   const allVerbs: Verb[] = ["narrow", "remove", "add"];
 
   return (
-    <div className="flex gap-2" ref={wrapRef}>
+    <div className="flex gap-2">
       {allVerbs.map((verb) => {
         const { label } = VERB_META[verb];
         const disabled = isFirstStep && verb === "add"; // add only makes sense after a first step
+        const items = defs.filter((d) => verb !== "narrow" || d.kind !== "all");
         return (
-          <div key={verb} className="relative flex-1">
-            <Button
-              variant="outline"
-              disabled={disabled}
-              onClick={() => setOpenVerb((v) => (v === verb ? null : verb))}
-              className="w-full gap-1.5 text-sm"
-            >
-              {verbIcons[verb]}
-              {label}
-            </Button>
-            {openVerb === verb ? (
-              <div
-                className={cn(
-                  "absolute top-full z-10 mt-1 min-w-48",
-                  verb === "add" ? "right-0" : "left-0",
-                  "flex flex-col rounded-md border border-border bg-background py-1 shadow-md",
-                )}
+          <div key={verb} className="flex-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    disabled={disabled}
+                    className="w-full gap-1.5 text-sm"
+                  />
+                }
               >
-                {defs
-                  .filter((d) => verb !== "narrow" || d.kind !== "all")
-                  .map((def) => (
-                    <button
-                      type="button"
-                      key={def.key}
-                      onClick={() => {
-                        onAdd(verb, def);
-                        setOpenVerb(null);
-                      }}
-                      className="px-3 py-1.5 text-left text-sm hover:bg-muted"
-                    >
-                      {def.label}
-                    </button>
-                  ))}
-              </div>
-            ) : null}
+                {verbIcons[verb]}
+                {label}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align={verb === "add" ? "end" : "start"} className="min-w-48">
+                {items.map((def) => (
+                  <DropdownMenuItem key={def.key} onClick={() => onAdd(verb, def)}>
+                    {def.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         );
       })}
