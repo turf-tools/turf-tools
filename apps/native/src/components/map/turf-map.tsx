@@ -7,7 +7,7 @@ import {
   type ShapeSourceRef,
   SymbolLayer,
 } from "@maplibre/maplibre-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@field-tools/db/schema";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
@@ -53,8 +53,6 @@ export function TurfMap({
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
   const cameraRef = useRef<CameraRef>(null);
   const shapeSourceRef = useRef<ShapeSourceRef>(null);
-  const [mapLoaded, setMapLoaded] = useState(false);
-  const handleMapLoaded = useCallback(() => setMapLoaded(true), []);
 
   // Track the actual camera zoom for tap zoom math.
   const actualZoomRef = useRef(0);
@@ -62,18 +60,6 @@ export function TurfMap({
     const z = event?.properties?.zoomLevel;
     if (typeof z === "number") actualZoomRef.current = z;
   }, []);
-
-  // Imperative bounds fit AFTER the map style finishes loading.
-  useEffect(() => {
-    if (!mapLoaded) return;
-    cameraRef.current?.fitBounds(
-      initialBounds.ne,
-      initialBounds.sw,
-      [60, 40, 60 + bottomInset, 40],
-      0,
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapLoaded]);
 
   const handlePress = useCallback(
     async (e: { features: GeoJSON.Feature[] }) => {
@@ -135,11 +121,22 @@ export function TurfMap({
       attributionEnabled
       logoEnabled={false}
       rotateEnabled={false}
-      onDidFinishLoadingMap={handleMapLoaded}
       onRegionIsChanging={handleRegionEvent}
       onRegionDidChange={handleRegionEvent}
     >
-      <Camera ref={cameraRef} />
+      <Camera
+        ref={cameraRef}
+        defaultSettings={{
+          bounds: {
+            ne: initialBounds.ne,
+            sw: initialBounds.sw,
+            paddingTop: 60,
+            paddingBottom: 60 + bottomInset,
+            paddingLeft: 40,
+            paddingRight: 40,
+          },
+        }}
+      />
 
       <LabelLayers isDark={isDark} />
 
@@ -221,8 +218,8 @@ export function TurfMap({
               isDark ? "#1A3A45" : "hsl(199, 89%, 80%)",
               isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
             ],
-            circleStrokeColor: isDark ? "hsl(0, 0%, 40%)" : "hsl(0, 0%, 20%)",
-            circleStrokeWidth: 2,
+            circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+            circleStrokeWidth: isDark ? 1 : 1.5,
           }}
         />
         <SymbolLayer
@@ -249,8 +246,8 @@ export function TurfMap({
               isDark ? "#1A3A45" : "hsl(199, 89%, 80%)",
               isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
             ],
-            circleStrokeColor: isDark ? "hsl(0, 0%, 40%)" : "hsl(0, 0%, 20%)",
-            circleStrokeWidth: 1.5,
+            circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+            circleStrokeWidth: isDark ? 1 : 1.5,
           }}
         />
         <SymbolLayer
