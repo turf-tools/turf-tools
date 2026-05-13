@@ -57,7 +57,7 @@ export async function fetchSegmentPoints(input: {
   criteria: unknown;
   keyFilter?: { keyGroup: string; keys: string[] } | null;
 }): Promise<Float32Array> {
-  const res = await fetch("/api/admin/segment-points", {
+  const res = await fetch("/api/web/segment-points", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

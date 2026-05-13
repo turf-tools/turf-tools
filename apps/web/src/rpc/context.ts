@@ -5,9 +5,9 @@ import { auth } from "~/lib/auth";
 
 export type User = typeof users.$inferSelect;
 
-// --- Admin tier: authenticated, scoped to a single membership/org ---
+// --- Web tier: authenticated, scoped to a single membership/org ---
 
-export type AdminContext = {
+export type WebContext = {
   db: Db;
   user: User;
   organizationId: string;
@@ -15,14 +15,14 @@ export type AdminContext = {
   role: string;
 };
 
-// Resolve the (user, org, role) for an incoming admin call. Throws
+// Resolve the (user, org, role) for an incoming web call. Throws
 // UNAUTHORIZED when no valid session exists or the user has no membership.
 //
 // `AUTH_DISABLED=1` short-circuits to the seeded admin + its owner membership
 // — for local dev when you don't want to exercise the magic-link flow.
-export async function buildAdminContext(db: Db, headers: Headers): Promise<AdminContext> {
+export async function buildWebContext(db: Db, headers: Headers): Promise<WebContext> {
   if (process.env.AUTH_DISABLED === "1") {
-    const ctx = await loadAdminFromUserId(db, SEEDED_ADMIN_USER_ID);
+    const ctx = await loadFromUserId(db, SEEDED_ADMIN_USER_ID);
     if (!ctx) {
       throw new Error("AUTH_DISABLED=1 but seeded admin not found; run `pnpm db:mock`.");
     }
@@ -31,12 +31,12 @@ export async function buildAdminContext(db: Db, headers: Headers): Promise<Admin
 
   const session = await auth.api.getSession({ headers });
   if (!session) throw new ORPCError("UNAUTHORIZED");
-  const ctx = await loadAdminFromUserId(db, session.user.id);
+  const ctx = await loadFromUserId(db, session.user.id);
   if (!ctx) throw new ORPCError("UNAUTHORIZED");
   return ctx;
 }
 
-async function loadAdminFromUserId(db: Db, userId: string): Promise<AdminContext | null> {
+async function loadFromUserId(db: Db, userId: string): Promise<WebContext | null> {
   const userRow = (await db.select().from(users).where(eq(users.id, userId)))[0];
   if (!userRow) return null;
   const row = (
@@ -60,9 +60,9 @@ async function loadAdminFromUserId(db: Db, userId: string): Promise<AdminContext
   };
 }
 
-export const adminBase = os.$context<AdminContext>();
-export const adminPub = adminBase.route({ method: "GET" });
-export const adminMut = adminBase.route({ method: "POST" });
+export const webBase = os.$context<WebContext>();
+export const webPub = webBase.route({ method: "GET" });
+export const webMut = webBase.route({ method: "POST" });
 
 // --- Native tier: anonymous, capability-based per turfId ---
 

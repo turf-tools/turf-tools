@@ -3,8 +3,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { SEEDED_ADMIN_USER_ID, SEEDED_ORG_ID, type Db } from "@field-tools/db";
 import { test } from "vite-plus/test";
-import { adminRouter } from "../src/rpc";
-import type { AdminContext, User } from "../src/rpc/context";
+import { webRouter } from "../src/rpc";
+import type { WebContext, User } from "../src/rpc/context";
 
 export async function getTestClient() {
   // Each test gets a fresh in-memory database. Tests that need real schema
@@ -23,7 +23,7 @@ export async function getTestClient() {
     updatedAt: new Date(),
   };
 
-  const context: AdminContext = {
+  const context: WebContext = {
     db,
     user,
     organizationId: SEEDED_ORG_ID,
@@ -31,7 +31,7 @@ export async function getTestClient() {
     role: "owner",
   };
 
-  const caller = createRouterClient(adminRouter, { context });
+  const caller = createRouterClient(webRouter, { context });
 
   const stop = async () => {
     await pglite.close();
