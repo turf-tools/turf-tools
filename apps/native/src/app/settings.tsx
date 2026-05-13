@@ -1,37 +1,60 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ActionSheetIOS, Alert, Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   BrushCleaning,
   X,
   MoonStar,
   Sun,
   Download,
-  ListCheck,
   RefreshCw,
   Timer,
+  UserRound,
 } from "lucide-react-native";
 import { useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
-import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
+import { activeTurfAtom } from "@/lib/atoms/active-turf";
+import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { SYNC_OPTIONS, syncIntervalAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
 import { clearPullCache, pullCanvassEvents } from "@/lib/canvass-events";
 import { queryClient } from "@/lib/query-client";
+import { clearHost } from "@/rpc/client";
 
 export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
-  const currentTurfId = useAtomValue(currentTurfIdAtom);
+  const activeTurf = useAtomValue(activeTurfAtom);
+  const setActiveTurf = useSetAtom(activeTurfAtom);
+  const [createdByName, setCreatedByName] = useAtom(createdByNameAtom);
   const [syncInterval, setSyncInterval] = useAtom(syncIntervalAtom);
   const [syncing, setSyncing] = useState(false);
 
+  const handleEditName = () => {
+    Alert.prompt(
+      "Your name",
+      "To be included alongside all canvass results.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Save",
+          onPress: (text?: string) => {
+            const trimmed = text?.trim() ?? "";
+            setCreatedByName(trimmed || null);
+          },
+        },
+      ],
+      "plain-text",
+      createdByName ?? "",
+    );
+  };
+
   const handleSync = async () => {
-    if (!currentTurfId) return;
+    if (!activeTurf) return;
     setSyncing(true);
     try {
-      await pullCanvassEvents(currentTurfId);
+      await pullCanvassEvents(activeTurf.turfId);
       Alert.alert("Done", "Synced with server.");
     } catch {
       Alert.alert(
@@ -63,12 +86,14 @@ export default function SettingsScreen() {
   const syncLabel = SYNC_OPTIONS.find((o) => o.value === syncInterval)?.label ?? "Unknown";
 
   const handleDownloadNewTurf = () => {
+    setActiveTurf(null);
+    clearHost();
     router.dismissAll();
   };
 
-  // Temporary dev helper — wipes AsyncStorage (persisted react-query cache +
-  // jotai atoms) and the in-memory query cache, then returns to the landing
-  // screen. Useful when a schema change leaves stale shapes on disk.
+  // Dev helper — wipes AsyncStorage (persisted react-query cache + jotai
+  // atoms) and the in-memory query cache, then returns to the landing screen.
+  // Useful when a schema change leaves stale shapes on disk.
   const handleResetAppState = () => {
     Alert.alert(
       "Reset app state?",
@@ -82,6 +107,9 @@ export default function SettingsScreen() {
             await AsyncStorage.clear();
             queryClient.clear();
             clearPullCache();
+            setActiveTurf(null);
+            setCreatedByName(null);
+            clearHost();
             router.dismissAll();
             router.replace("/");
           },
@@ -123,31 +151,16 @@ export default function SettingsScreen() {
 
         <View className="gap-3 w-full max-w-xs">
           <Button
-            title={theme === "dark" ? "Light mode" : "Dark mode"}
-            onPress={() => setTheme(theme === "dark" ? "light" : "dark")}
-            variant="outline"
-            icon={
-              theme == "light" ? (
-                <MoonStar size={20} color={"#1b1b1b"} />
-              ) : (
-                <Sun size={20} color={"#ededed"} />
-              )
-            }
-          />
-          <Button
             title="Download new turf"
             variant="outline"
             onPress={handleDownloadNewTurf}
             icon={<Download size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
-            title="Distribute turf"
+            title={createdByName ? `Name: ${createdByName}` : "Set your name"}
             variant="outline"
-            onPress={() => {
-              router.back();
-              router.push("/distribute");
-            }}
-            icon={<ListCheck size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+            onPress={handleEditName}
+            icon={<UserRound size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
             title={`Sync frequency: ${syncLabel}`}
@@ -158,8 +171,20 @@ export default function SettingsScreen() {
           <Button
             title={syncing ? "Syncing..." : "Sync now"}
             variant="outline"
-            onPress={currentTurfId ? handleSync : undefined}
+            onPress={activeTurf ? handleSync : undefined}
             icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+          />
+          <Button
+            title={theme === "dark" ? "Light mode" : "Dark mode"}
+            onPress={() => setTheme(theme === "dark" ? "light" : "dark")}
+            variant="outline"
+            icon={
+              theme == "light" ? (
+                <MoonStar size={20} color={"#1b1b1b"} />
+              ) : (
+                <Sun size={20} color={"#ededed"} />
+              )
+            }
           />
           <Button
             title="Reset app state"

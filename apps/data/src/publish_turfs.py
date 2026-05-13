@@ -83,9 +83,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
 
     scope = _load_publish_scope(conn, req)
     where_params: list = []
-    where_sql = criteria_to_where(
-        scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params
-    )
+    where_sql = criteria_to_where(scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params)
     _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
 
     # Retry budget exists only to swallow the rare turf_code collision

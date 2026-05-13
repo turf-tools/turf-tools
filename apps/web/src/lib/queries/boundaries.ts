@@ -7,7 +7,7 @@ export const boundariesGeoJsonQuery = (keyGroup: string, updatedAt: Date | strin
   queryOptions({
     queryKey: ["boundaries-geojson", keyGroup, updatedAt] as const,
     queryFn: async (): Promise<FeatureCollection> => {
-      const url = `/api/boundaries/${keyGroup}/geojson?v=${new Date(updatedAt).getTime()}`;
+      const url = `/api/admin/boundaries/${keyGroup}/geojson?v=${new Date(updatedAt).getTime()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`boundaries fetch failed: ${res.status}`);
       return (await res.json()) as FeatureCollection;

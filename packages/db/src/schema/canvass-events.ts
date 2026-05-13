@@ -9,7 +9,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { turfs } from "./turfs";
-import { users } from "./users";
+import { users } from "./auth/users";
 
 // Append-only event log for canvass results. Every result change (survey
 // response, unavailable outcome, note, empty mark) is an immutable append.
@@ -34,9 +34,10 @@ export const canvassEvents = pgTable(
     turfId: uuid()
       .notNull()
       .references(() => turfs.turfId),
-    userId: uuid()
-      .notNull()
-      .references(() => users.userId),
+    // Nullable: events from the auth-less canvasser flow have no user; they
+    // attribute via `createdByName` instead. Admin-attributed events set the FK.
+    userId: uuid().references(() => users.id),
+    createdByName: text(),
     personId: text(),
     doorId: uuid(),
     buildingId: uuid(),

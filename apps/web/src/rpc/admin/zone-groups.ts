@@ -2,8 +2,7 @@ import { and, asc, eq } from "@field-tools/db";
 import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { loadOrgSlug } from "./segments";
-import { pub } from "./context";
+import { adminPub as pub } from "../context";
 
 const zoneGroupSelect = {
   zoneGroupId: zoneGroups.zoneGroupId,
@@ -18,7 +17,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
   const rows = await context.db
     .select(zoneGroupSelect)
     .from(zoneGroups)
-    .where(eq(zoneGroups.organizationId, context.user.organizationId))
+    .where(eq(zoneGroups.organizationId, context.organizationId))
     .orderBy(asc(zoneGroups.createdAt));
   return rows;
 });
@@ -36,7 +35,7 @@ export const countCampaigns = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Zone group not found");
@@ -58,7 +57,7 @@ export const getById = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     return rows[0] ?? null;
@@ -77,10 +76,10 @@ export const create = pub
     const rows = await context.db
       .insert(zoneGroups)
       .values({
-        organizationId: context.user.organizationId,
+        organizationId: context.organizationId,
         name: input.name,
         keyGroup: input.keyGroup,
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning(zoneGroupSelect);
     return rows[0]!;
@@ -101,7 +100,7 @@ export const rename = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     return { ok: true as const };
@@ -119,7 +118,7 @@ export const remove = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     if (owned.length === 0) throw new Error("Zone group not found");
@@ -155,7 +154,7 @@ export const clone = pub
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
-          eq(zoneGroups.organizationId, context.user.organizationId),
+          eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
     if (source.length === 0) throw new Error("Zone group not found");
@@ -164,10 +163,10 @@ export const clone = pub
     const inserted = await context.db
       .insert(zoneGroups)
       .values({
-        organizationId: context.user.organizationId,
+        organizationId: context.organizationId,
         name: input.newName,
         keyGroup: src.keyGroup,
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       })
       .returning(zoneGroupSelect);
     const created = inserted[0]!;
@@ -182,7 +181,7 @@ export const clone = pub
           zoneGroupId: created.zoneGroupId,
           name: z.name,
           keys: z.keys,
-          createdBy: context.user.userId,
+          createdBy: context.user.id,
         })),
       );
     }
@@ -222,7 +221,7 @@ export const createWithDefaultZone = pub
       .where(
         and(
           eq(segmentsTable.segmentId, input.segmentId),
-          eq(segmentsTable.organizationId, context.user.organizationId),
+          eq(segmentsTable.organizationId, context.organizationId),
         ),
       );
     const segment = segmentRows[0];
@@ -232,14 +231,13 @@ export const createWithDefaultZone = pub
     // app's per-key counts endpoint — we only care about which keys
     // appear, not the counts. The auto-zone covers every key the
     // segment produces in this key group.
-    const orgSlug = await loadOrgSlug(context);
     const result = await dataPostJson<{
       counts: Record<string, { doors: number; people: number }>;
     }>("/persons/count-by-key", {
       criteria: segment.criteria,
       keyGroup: input.keyGroup,
       keyFilter: null,
-      orgSlug,
+      orgSlug: context.orgSlug,
     });
     const keys = Object.keys(result.counts).sort();
 
@@ -249,10 +247,10 @@ export const createWithDefaultZone = pub
       const inserted = await tx
         .insert(zoneGroups)
         .values({
-          organizationId: context.user.organizationId,
+          organizationId: context.organizationId,
           name: input.name,
           keyGroup: input.keyGroup,
-          createdBy: context.user.userId,
+          createdBy: context.user.id,
         })
         .returning(zoneGroupSelect);
       const zg = inserted[0]!;
@@ -261,7 +259,7 @@ export const createWithDefaultZone = pub
         zoneGroupId: zg.zoneGroupId,
         name: "Default",
         keys,
-        createdBy: context.user.userId,
+        createdBy: context.user.id,
       });
 
       return zg;

@@ -6,17 +6,19 @@ import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client
 import { useFonts } from "expo-font";
 import { router, SplashScreen, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { Provider as JotaiProvider, useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { Menu } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AppState, LogBox, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { currentTurfIdAtom } from "@/lib/atoms/current-turf";
+import { activeTurfAtom, loadActiveTurf } from "@/lib/atoms/active-turf";
+import { createdByNameAtom, loadCreatedByName } from "@/lib/atoms/created-by-name";
 import { themeAtom } from "@/lib/atoms/theme";
 import { pullCanvassEvents } from "@/lib/canvass-events";
 import { persister, queryClient } from "@/lib/query-client";
+import { setHost } from "@/rpc/client";
 
 // Harmless noise silenced to avoid warning popups.
 LogBox.ignoreLogs([
@@ -51,15 +53,15 @@ function GlobalMenuButton() {
 }
 
 function useForegroundSync() {
-  const currentTurfId = useAtomValue(currentTurfIdAtom);
+  const activeTurf = useAtomValue(activeTurfAtom);
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active" && currentTurfId) {
-        pullCanvassEvents(currentTurfId).catch(() => {});
+      if (state === "active" && activeTurf) {
+        pullCanvassEvents(activeTurf.turfId).catch(() => {});
       }
     });
     return () => sub.remove();
-  }, [currentTurfId]);
+  }, [activeTurf]);
 }
 
 function ThemedStack() {
@@ -94,10 +96,31 @@ function ThemedStack() {
           name="turfs/[turfId]"
           options={{ headerShown: false, gestureEnabled: false }}
         />
-        <Stack.Screen name="distribute" options={{ headerShown: false }} />
       </Stack>
     </>
   );
+}
+
+function BootGate({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  const setActiveTurf = useSetAtom(activeTurfAtom);
+  const setCreatedByName = useSetAtom(createdByNameAtom);
+
+  useEffect(() => {
+    void (async () => {
+      const [activeTurf, name] = await Promise.all([loadActiveTurf(), loadCreatedByName()]);
+      if (activeTurf) {
+        setHost(activeTurf.host);
+        setActiveTurf(activeTurf);
+        router.replace(`/turfs/${activeTurf.turfId}`);
+      }
+      if (name) setCreatedByName(name);
+      setReady(true);
+    })();
+  }, [setActiveTurf, setCreatedByName]);
+
+  if (!ready) return null;
+  return <>{children}</>;
 }
 
 export default function RootLayout() {
@@ -127,9 +150,9 @@ export default function RootLayout() {
           },
         }}
       >
-        <JotaiProvider>
+        <BootGate>
           <ThemedStack />
-        </JotaiProvider>
+        </BootGate>
       </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );

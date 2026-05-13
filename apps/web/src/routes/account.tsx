@@ -8,8 +8,10 @@ export const Route = createFileRoute("/account")({
 function AccountPage() {
   return (
     <Page>
-      <h1 className="mb-4 text-xl font-extrabold tracking-wide">Account</h1>
-      <p className="text-muted-foreground">Account settings will live here.</p>
+      <div className="mb-4 flex h-8 items-center justify-between">
+        <h1 className="text-xl font-extrabold tracking-wide">Account</h1>
+      </div>
+      <p className="text-muted-foreground">Coming soon.</p>
     </Page>
   );
 }
