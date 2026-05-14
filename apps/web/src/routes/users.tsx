@@ -52,10 +52,10 @@ type UsersSearch = {
   status: string | null;
 };
 
+// Default (null) hides archived rows.
 const STATUS_OPTIONS = [
-  { value: "active", label: "Active" },
-  { value: "pending", label: "Pending" },
   { value: "archived", label: "Archived" },
+  { value: "all", label: "All statuses" },
 ];
 
 const ROLE_OPTIONS = [
@@ -94,7 +94,7 @@ function UsersIndex() {
       : (ROLE_OPTIONS.find((o) => o.value === roleFilter)?.label ?? null);
   const statusLabel =
     statusFilter === null
-      ? "All statuses"
+      ? "All current"
       : (STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? null);
 
   return (
@@ -113,7 +113,7 @@ function UsersIndex() {
           label={statusLabel}
           value={statusFilter}
           options={STATUS_OPTIONS}
-          allLabel="All statuses"
+          allLabel="All current"
           onChange={onStatusChange}
         />
         <Button onClick={() => setInviteOpen(true)}>
@@ -137,7 +137,8 @@ function UsersTable({
   const { data } = useSuspenseQuery(usersListQuery());
   const rows = data.filter((r) => {
     if (roleFilter && r.role !== roleFilter) return false;
-    if (statusFilter && r.status !== statusFilter) return false;
+    if (statusFilter === null && r.status === "archived") return false;
+    if (statusFilter === "archived" && r.status !== "archived") return false;
     return true;
   });
 
@@ -472,10 +473,18 @@ function InviteDialog({
     }
   };
 
-  const updateRow = (i: number, patch: Partial<InviteRow>) =>
+  const updateRow = (i: number, patch: Partial<InviteRow>) => {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const removeRow = (i: number) => setRows((prev) => prev.filter((_, idx) => idx !== i));
-  const addRow = () => setRows((prev) => [...prev, emptyRow()]);
+    setError(null);
+  };
+  const removeRow = (i: number) => {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+    setError(null);
+  };
+  const addRow = () => {
+    setRows((prev) => [...prev, emptyRow()]);
+    setError(null);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
