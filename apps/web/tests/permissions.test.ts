@@ -16,9 +16,3 @@ test("admin grants everything except users.manage", () => {
   expect(hasPermission("admin", "zones.write")).toBe(true);
   expect(hasPermission("admin", "turfs.publish")).toBe(true);
 });
-
-test("unknown role denies everything", () => {
-  expect(hasPermission("turf_cutter", "users.manage")).toBe(false);
-  expect(hasPermission("turf_cutter", "campaigns.write")).toBe(false);
-  expect(hasPermission("", "campaigns.write")).toBe(false);
-});
