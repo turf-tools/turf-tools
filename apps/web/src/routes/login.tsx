@@ -27,7 +27,9 @@ function LoginPage() {
   useEffect(() => {
     const channel = new BroadcastChannel("auth");
     channel.onmessage = (e) => {
-      if (e.data === "logged-in") window.location.replace("/");
+      if (typeof e.data === "object" && e.data?.type === "logged-in") {
+        window.location.replace("/");
+      }
     };
     return () => channel.close();
   }, []);

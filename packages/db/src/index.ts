@@ -6,7 +6,7 @@ import * as schema from "./schema";
 
 // Re-export drizzle query helpers so consumers share the same drizzle-orm instance
 // as this package's schema (avoids type mismatches across pnpm peer-dep variants).
-export { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+export { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 
 export * from "./ids";
 
@@ -14,14 +14,19 @@ export type Db = PgAsyncDatabase<PgQueryResultHKT, typeof schema>;
 
 const casing = "snake_case" as const;
 
+const DEV_DATABASE_URL = "postgres://postgres:postgres@127.0.0.1:5432/postgres";
+
 function createDb() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error(
-      "DATABASE_URL is required. In dev, run `pnpm dev` (which starts a Postgres container and exports DATABASE_URL).",
-    );
+  // Fall back to the dev Postgres URL outside production so `pnpm db:*`
+  // scripts work cold. Production must set DATABASE_URL explicitly.
+  const url =
+    process.env.DATABASE_URL ??
+    (process.env.NODE_ENV !== "production" ? DEV_DATABASE_URL : undefined);
+  if (!url) {
+    throw new Error("DATABASE_URL is required in production.");
   }
   return drizzlePostgres({
-    client: postgres(process.env.DATABASE_URL),
+    client: postgres(url),
     schema,
     casing,
   });

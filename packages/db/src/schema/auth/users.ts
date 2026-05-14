@@ -10,10 +10,14 @@ export const users = pgTable(
     id: uuid().defaultRandom().primaryKey(),
     email: text().notNull(),
     emailVerified: boolean().notNull().default(false),
-    name: text(),
+    name: text().notNull(),
     image: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    // Set on each successful sign-in via BA's session.create.after
+    // hook (see lib/auth.ts). Independent of sessions, which BA deletes
+    // on sign-out. Read-only from BA's perspective.
+    lastLoginAt: timestamp({ withTimezone: true }),
   },
   (t) => [uniqueIndex("users_email").on(t.email)],
 );
