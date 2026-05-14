@@ -28,7 +28,13 @@
     "db:push": "pnpm db:up && pnpm db push",
     "db:studio": "pnpm db:up && cd packages/db && pnpm exec drizzle-kit studio",
     "db": "pnpm --filter @field-tools/db run db",
-    "prepare": "vp config"
+    "prepare": "vp config",
+    "prod:deploy": "git pull && env -u NODE_ENV pnpm install --frozen-lockfile && pnpm prod:db:push && pnpm prod:web && pnpm prod:data",
+    "prod:web": "(set -a; . /etc/field-tools-web.env; set +a; unset NODE_ENV; pnpm -F web build) && sudo systemctl restart field-tools-web",
+    "prod:data": "(cd apps/data && uv sync) && sudo systemctl restart field-tools-data",
+    "prod:db:push": "(set -a; . /etc/field-tools-web.env; set +a; pnpm db push)",
+    "prod:web:logs": "sudo journalctl -u field-tools-web -f",
+    "prod:data:logs": "sudo journalctl -u field-tools-data -f"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
