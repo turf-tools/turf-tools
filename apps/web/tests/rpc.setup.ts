@@ -21,6 +21,7 @@ export async function getTestClient() {
     image: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    lastLoginAt: null,
   };
 
   const context: WebContext = {

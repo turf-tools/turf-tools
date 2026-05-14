@@ -1,7 +1,8 @@
 import { ORPCError, os } from "@orpc/server";
-import { eq, SEEDED_ADMIN_USER_ID, type Db } from "@field-tools/db";
+import { and, eq, isNull, SEEDED_ADMIN_USER_ID, type Db } from "@field-tools/db";
 import { memberships, organizations, users } from "@field-tools/db/schema";
 import { auth } from "~/lib/auth";
+import { hasPermission, type Permission } from "~/lib/permissions";
 
 export type User = typeof users.$inferSelect;
 
@@ -26,6 +27,11 @@ export async function buildWebContext(db: Db, headers: Headers): Promise<WebCont
     if (!ctx) {
       throw new Error("AUTH_DISABLED=1 but seeded admin not found; run `pnpm db:mock`.");
     }
+    // Dev-only role override — set `AUTH_DISABLED_ROLE=admin` to simulate a
+    // different role without exercising magic-link auth.
+    if (process.env.AUTH_DISABLED_ROLE) {
+      return { ...ctx, role: process.env.AUTH_DISABLED_ROLE };
+    }
     return ctx;
   }
 
@@ -48,7 +54,7 @@ async function loadFromUserId(db: Db, userId: string): Promise<WebContext | null
       })
       .from(memberships)
       .innerJoin(organizations, eq(memberships.organizationId, organizations.organizationId))
-      .where(eq(memberships.userId, userId))
+      .where(and(eq(memberships.userId, userId), isNull(memberships.archivedAt)))
   )[0];
   if (!row) return null;
   return {
@@ -63,6 +69,12 @@ async function loadFromUserId(db: Db, userId: string): Promise<WebContext | null
 export const webBase = os.$context<WebContext>();
 export const webPub = webBase.route({ method: "GET" });
 export const webMut = webBase.route({ method: "POST" });
+
+export function checkPermission(ctx: WebContext, permission: Permission) {
+  if (!hasPermission(ctx.role, permission)) {
+    throw new ORPCError("FORBIDDEN");
+  }
+}
 
 // --- Native tier: anonymous, capability-based per turfId ---
 
