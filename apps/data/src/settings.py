@@ -1,5 +1,14 @@
+import os
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
+
+
+def _default_database_url() -> str:
+    """Dev Postgres fallback — mirrors packages/db/src/index.ts."""
+    if os.environ.get("NODE_ENV") == "production":
+        raise ValueError("DATABASE_URL is required in production.")
+    return "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 
 
 class S3StorageConfig(BaseSettings):
@@ -71,6 +80,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(
+        default_factory=_default_database_url,
         description="PostgreSQL connection URL for operational data shared with the web app.",
     )
 
