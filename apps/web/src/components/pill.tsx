@@ -21,7 +21,7 @@ export function Pill({ variant = "text", className, children }: PillProps) {
         // a touch too thin against the surrounding font weight. Other
         // icons in the app (header buttons, modal triggers, etc.)
         // stay on the lucide default.
-        "flex w-full items-center rounded-md px-2 py-1 text-sm [&_svg]:[stroke-width:2.5]",
+        "flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm [&_svg]:[stroke-width:2.5]",
         variant === "number" ? "bg-muted font-mono tabular-nums" : "bg-muted",
         className,
       )}

@@ -98,9 +98,11 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
       </TableHeader>
       <TableBody>
         {rows.length === 0 ? (
-          <TableRow>
+          <TableRow className="h-10">
             <TableCell colSpan={8}>
-              <Pill>No results</Pill>
+              <Pill>
+                <span>No results</span>
+              </Pill>
             </TableCell>
           </TableRow>
         ) : null}

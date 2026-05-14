@@ -12,9 +12,8 @@ import { cn } from "~/lib/utils";
 
 export function UserBadge() {
   const ctx = useRouteContext({ from: "__root__" });
-  const session = ctx.session ?? null;
-  const email = session?.user.email ?? null;
-  const initials = email ? email[0]!.toUpperCase() : "?";
+  const user = ctx.session?.user ?? null;
+  const initials = user?.name[0]?.toUpperCase() ?? "?";
 
   const onSignOut = async () => {
     await authClient.signOut();
@@ -40,9 +39,12 @@ export function UserBadge() {
         {initials}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        {email ? (
+        {user ? (
           <>
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">{email}</div>
+            <div className="px-2 py-1.5">
+              <div className="truncate text-sm">{user.name}</div>
+              <div className="truncate text-sm text-muted-foreground">{user.email}</div>
+            </div>
             <DropdownMenuSeparator />
           </>
         ) : null}

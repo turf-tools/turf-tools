@@ -8,12 +8,13 @@ import { TopBar } from "./top-bar";
 // standard padded layout, or render directly for full-bleed editor routes).
 type ShellProps = {
   children?: ReactNode;
+  role: string | null;
 };
 
 const EXPANDED_WIDTH = "w-40";
 const COLLAPSED_WIDTH = "w-12";
 
-export function Shell({ children }: ShellProps) {
+export function Shell({ children, role }: ShellProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -29,7 +30,7 @@ export function Shell({ children }: ShellProps) {
             collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH,
           )}
         >
-          <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+          <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} role={role} />
         </aside>
         <main className="flex-1">{children}</main>
       </div>
