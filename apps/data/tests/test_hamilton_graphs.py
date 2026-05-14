@@ -62,16 +62,9 @@ WHERE raw.county_code = '31'
 """
 
 
-# ---------------------------------------------------------------------------
-# Session-scoped TIGER cache directory so the shapefile download only happens
-# once per test session.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def tiger_cache_dir(tmp_path_factory):
-    """Persistent-within-session directory for cached TIGER shapefiles."""
-    return str(tmp_path_factory.mktemp("tiger_cache"))
+# `tiger_cache_dir` comes from tests/conftest.py — a persistent on-disk
+# cache at apps/data/tiger_cache/ so TIGER shapefiles are downloaded once
+# and reused across test runs.
 
 
 # ---------------------------------------------------------------------------
