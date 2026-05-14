@@ -3,8 +3,8 @@ import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { Resend } from "resend";
-import { db, eq } from "@field-tools/db";
-import { accounts, sessions, users, verifications } from "@field-tools/db/schema";
+import { and, db, eq, isNull } from "@field-tools/db";
+import { accounts, memberships, sessions, users, verifications } from "@field-tools/db/schema";
 
 // Resolved lazily so dev can boot without RESEND_API_KEY; magic links print
 // to the server console in that case.
@@ -30,6 +30,21 @@ export const auth = betterAuth({
       generateId: () => crypto.randomUUID(),
     },
   },
+  databaseHooks: {
+    session: {
+      create: {
+        // Bump users.lastLoginAt on each successful sign-in. Best-effort —
+        // a failed UPDATE here shouldn't fail the sign-in itself.
+        after: async (session) => {
+          await db
+            .update(users)
+            .set({ lastLoginAt: new Date() })
+            .where(eq(users.id, session.userId))
+            .catch((err) => console.error("[auth] lastLoginAt update failed", err));
+        },
+      },
+    },
+  },
   plugins: [
     magicLink({
       disableSignUp: true,
@@ -37,11 +52,18 @@ export const auth = betterAuth({
       sendMagicLink: async ({ email, url }) => {
         // Membership gate — BA's disableSignUp only fires at verify-time, so
         // without this check the link gets sent first and the user only sees
-        // the failure after clicking it. Loud rejection up front instead.
-        const userRow = (
-          await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1)
+        // the failure after clicking it. We gate on an *active* (non-archived)
+        // membership rather than just users-row existence, so removed/archived
+        // people get the same rejection as strangers.
+        const row = (
+          await db
+            .select({ id: users.id })
+            .from(users)
+            .innerJoin(memberships, eq(memberships.userId, users.id))
+            .where(and(eq(users.email, email), isNull(memberships.archivedAt)))
+            .limit(1)
         )[0];
-        if (!userRow) {
+        if (!row) {
           throw new APIError("BAD_REQUEST", {
             message: "No account found for this email",
           });

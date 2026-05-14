@@ -6,6 +6,7 @@ import * as script from "./web/script";
 import * as segments from "./web/segments";
 import * as turfDrafts from "./web/turf-drafts";
 import * as webTurfs from "./web/turfs";
+import * as webUsers from "./web/users";
 import * as zoneGroups from "./web/zone-groups";
 import * as zones from "./web/zones";
 import * as canvass from "./native/canvass";
@@ -75,6 +76,15 @@ export const webRouter = {
   },
   script: {
     list: script.list,
+  },
+  users: {
+    list: webUsers.list,
+    invite: webUsers.invite,
+    updateRole: webUsers.updateRole,
+    archive: webUsers.archive,
+    unarchive: webUsers.unarchive,
+    resendInvite: webUsers.resendInvite,
+    updateOwnName: webUsers.updateOwnName,
   },
 };
 

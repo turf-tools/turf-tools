@@ -12,12 +12,14 @@ import {
   Users,
   Waypoints,
 } from "lucide-react";
+import { hasPermission, type Permission } from "~/lib/permissions";
 import { cn } from "~/lib/utils";
 
 type NavItem = {
   to: string;
   label: string;
   icon: LucideIcon;
+  requires?: Permission;
 };
 
 const PRIMARY: NavItem[] = [
@@ -29,7 +31,7 @@ const PRIMARY: NavItem[] = [
 ];
 
 const SECONDARY: NavItem[] = [
-  { to: "/users", label: "Users", icon: Users },
+  { to: "/users", label: "Users", icon: Users, requires: "users.manage" },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/account", label: "Account", icon: CircleUser },
 ];
@@ -37,6 +39,7 @@ const SECONDARY: NavItem[] = [
 type SidebarProps = {
   collapsed: boolean;
   onToggle: () => void;
+  role: string | null;
 };
 
 // Fixed-height rows (h-9) so the icon's vertical position is stable.
@@ -45,12 +48,23 @@ type SidebarProps = {
 // w-12 (48px), which is exactly wide enough that 16px-from-left is also
 // the visual center, so icons stay put through the width transition
 // rather than sliding as the container shrinks around them.
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, role }: SidebarProps) {
+  const visible = (items: NavItem[]) =>
+    items.filter((i) => !i.requires || (role != null && hasPermission(role, i.requires)));
+
   return (
     <nav className="flex h-full flex-col gap-6 px-2 pt-3.5 pb-4">
-      <NavGroup items={PRIMARY} collapsed={collapsed} className="border-b border-border pb-2" />
+      <NavGroup
+        items={visible(PRIMARY)}
+        collapsed={collapsed}
+        className="border-b border-border pb-2"
+      />
       <div className="flex-1" />
-      <NavGroup items={SECONDARY} collapsed={collapsed} className="border-y border-border py-2" />
+      <NavGroup
+        items={visible(SECONDARY)}
+        collapsed={collapsed}
+        className="border-y border-border py-2"
+      />
       <button
         type="button"
         onClick={onToggle}
