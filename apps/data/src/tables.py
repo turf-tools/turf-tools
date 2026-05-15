@@ -53,20 +53,31 @@ class UnknownAbstractTableError(KeyError):
     """A placeholder referenced a name not in `QUERYABLE_TABLES`."""
 
 
-def org_fqn(slug: str, table: str) -> str:
-    """Fully-qualified name for `table` in org `slug`'s schema.
+def org_schema_fqn(slug: str) -> str:
+    """Fully-qualified name for org `slug`'s schema (no table).
 
     Schema is quoted only when necessary (see `models.quote_ident`), so
     plain slugs (`default`) stay readable and slugs with hyphens
     (`nyc-dsa`) still produce valid SQL.
     """
-    return f"{PERSON_CATALOG}.{quote_ident(slug)}.{table}"
+    return f"{PERSON_CATALOG}.{quote_ident(slug)}"
+
+
+def org_fqn(slug: str, table: str) -> str:
+    """Fully-qualified name for `table` in org `slug`'s schema."""
+    return f"{org_schema_fqn(slug)}.{table}"
 
 
 def ensure_org_schema(conn: "duckdb.DuckDBPyConnection", slug: str) -> None:
     """Idempotently create the per-org schema. Call once before any DAG
     node writes to a tenant's tables."""
-    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {PERSON_CATALOG}.{quote_ident(slug)}")
+    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {org_schema_fqn(slug)}")
+
+
+def drop_org_schema(conn: "duckdb.DuckDBPyConnection", slug: str) -> None:
+    """Drop the per-org schema and every table in it. Use after a
+    pipeline schema change forces a rebuild from scratch."""
+    conn.execute(f"DROP SCHEMA IF EXISTS {org_schema_fqn(slug)} CASCADE")
 
 
 def resolve(sql: str, slug: str) -> str:

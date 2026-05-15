@@ -48,7 +48,6 @@ SELECT
     concat_ws(
         ' ',
         nullif(raw.res_house_number, ''),
-        nullif(CAST(raw.res_half_code AS VARCHAR), ''),
         nullif(CAST(raw.res_pre_direction AS VARCHAR), ''),
         nullif(raw.res_street_name, ''),
         nullif(CAST(raw.res_post_direction AS VARCHAR), '')
@@ -62,6 +61,10 @@ SELECT
         )
         ELSE NULL
     END AS address_line_2,
+    -- Kept out of address_line_1 so street-name tokenisation doesn't see
+    -- the "1/2" digits as match material (they'd cross-match "1st St" /
+    -- "2nd St"). Reassembled into the canonical address downstream.
+    nullif(CAST(raw.res_half_code AS VARCHAR), '') AS half_code,
     raw.res_city AS city,
     'NY' AS state,
     raw.res_zip5 AS zip5,
