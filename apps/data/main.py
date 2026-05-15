@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src.abstract_tables import resolve
+from src.tables import resolve
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import get_connection

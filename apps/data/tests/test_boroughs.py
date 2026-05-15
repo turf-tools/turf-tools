@@ -168,7 +168,7 @@ def test_borough_geocoding(borough, county_code, tiger_fips, min_match_pct, dual
 
     # persons_geocoded now contains only matched rows (INNER JOIN), so any
     # NULL or out-of-bounds coordinate is a real bug.
-    geocoded_fqn = f"ducklake.main.{borough}_persons_geocoded"
+    geocoded_fqn = f"ducklake.{borough}.persons_geocoded"
     bad_coords = dual_conn.execute(f"""
         SELECT count(*) FROM {geocoded_fqn}
         WHERE latitude  IS NULL OR longitude IS NULL
