@@ -4,7 +4,13 @@ import { and, db, eq, isNull, SEEDED_ADMIN_USER_ID } from "@field-tools/db";
 import { memberships, users } from "@field-tools/db/schema";
 import { auth } from "~/lib/auth";
 
-export type SessionUser = { id: string; email: string; name: string; role: string };
+export type SessionUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  displayTimezone: string | null;
+};
 
 async function loadActiveRole(userId: string): Promise<string | null> {
   const row = (
@@ -26,9 +32,7 @@ async function loadActiveRole(userId: string): Promise<string | null> {
 // Authenticated SSR responses are marked `Cache-Control: no-store` so the
 // browser opts out of bfcache on these pages.
 export const getSession = createServerFn({ method: "GET" }).handler(
-  async (): Promise<{
-    user: SessionUser;
-  } | null> => {
+  async (): Promise<{ user: SessionUser } | null> => {
     if (process.env.AUTH_DISABLED === "1") {
       const row = (await db.select().from(users).where(eq(users.id, SEEDED_ADMIN_USER_ID)))[0];
       if (!row) {
@@ -37,13 +41,27 @@ export const getSession = createServerFn({ method: "GET" }).handler(
       const role = process.env.AUTH_DISABLED_ROLE ?? (await loadActiveRole(row.id));
       if (!role) return null;
       setResponseHeader("Cache-Control", "no-store");
-      return { user: { id: row.id, email: row.email, name: row.name, role } };
+      return {
+        user: {
+          id: row.id,
+          email: row.email,
+          name: row.name,
+          role,
+          displayTimezone: row.displayTimezone,
+        },
+      };
     }
     const headers = new Headers(getRequestHeaders());
     const session = await auth.api.getSession({ headers });
     if (!session) return null;
     const role = await loadActiveRole(session.user.id);
     if (!role) return null;
+    const userRow = (
+      await db
+        .select({ displayTimezone: users.displayTimezone })
+        .from(users)
+        .where(eq(users.id, session.user.id))
+    )[0];
     setResponseHeader("Cache-Control", "no-store");
     return {
       user: {
@@ -51,6 +69,7 @@ export const getSession = createServerFn({ method: "GET" }).handler(
         email: session.user.email,
         name: session.user.name,
         role,
+        displayTimezone: userRow?.displayTimezone ?? null,
       },
     };
   },

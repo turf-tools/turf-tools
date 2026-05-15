@@ -6,6 +6,7 @@ import {
   HeadContent,
   Scripts,
   redirect,
+  useRouter,
   useRouterState,
 } from "@tanstack/react-router";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -14,6 +15,8 @@ import { Provider as JotaiProvider } from "jotai";
 import { Shell } from "~/components/shell";
 import { Toaster } from "~/components/sonner";
 import { getSession } from "~/lib/server/session";
+import { detectDisplayTimezone } from "~/lib/timezones";
+import { client } from "~/rpc/client";
 import appCss from "~/styles.css?url";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
@@ -72,6 +75,25 @@ function RootComponent() {
     channel.postMessage({ type: "logged-in", userId: session.user.id });
     channel.close();
   }, [session]);
+
+  // First-login TZ detection. session.user.displayTimezone is null until
+  // this runs once and persists the browser-detected zone. Subsequent
+  // sessions read the stored value; user can override on the Settings page.
+  const router = useRouter();
+  const needsTzDetect = session != null && session.user.displayTimezone == null;
+  useEffect(() => {
+    if (!needsTzDetect) return;
+    void (async () => {
+      try {
+        await client.users.updateOwnDisplayTimezone({
+          displayTimezone: detectDisplayTimezone(),
+        });
+        await router.invalidate();
+      } catch (e) {
+        console.error("users.updateOwnDisplayTimezone failed", e);
+      }
+    })();
+  }, [needsTzDetect, router]);
 
   return (
     <QueryClientProvider client={queryClient}>

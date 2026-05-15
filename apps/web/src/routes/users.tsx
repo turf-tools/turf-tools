@@ -39,6 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { Toggle } from "~/components/toggle";
 import { formatDate } from "~/lib/format";
 import { hasPermission, ROLES, type Role } from "~/lib/permissions";
+import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { usersListQuery } from "~/lib/queries/users";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDelayedFlag } from "~/lib/use-delayed-flag";
@@ -179,6 +180,7 @@ function UserRow({ user }: { user: UserRowData }) {
   const queryClient = useQueryClient();
   const { session } = Route.useRouteContext();
   const isSelf = user.userId === session?.user.id;
+  const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["users"] });
 
@@ -227,10 +229,10 @@ function UserRow({ user }: { user: UserRowData }) {
           <Pill className="capitalize">{user.status}</Pill>
         </TableCell>
         <TableCell>
-          <Pill variant="number">{formatDate(user.joinedAt)}</Pill>
+          <Pill variant="number">{formatDate(user.joinedAt, tz)}</Pill>
         </TableCell>
         <TableCell>
-          <Pill variant="number">{formatDate(user.lastLogin)}</Pill>
+          <Pill variant="number">{formatDate(user.lastLogin, tz)}</Pill>
         </TableCell>
         <TableCell>
           <RowMenu
