@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from src.abstract_tables import resolve
 from src.dsl.compile import criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
+from src.tables import resolve
 
 if TYPE_CHECKING:
     import duckdb

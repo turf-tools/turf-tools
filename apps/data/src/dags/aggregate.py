@@ -1,6 +1,6 @@
 """Hamilton graph for aggregating geocoded persons into buildings and doors.
 
-Both outputs derive from `{org}_persons_geocoded` (which already carries
+Both outputs derive from `persons_geocoded` (which already carries
 `building_id`, `door_id`, canonical address fields, and lat/lng):
 
     persons_geocoded ─► buildings_geocoded
@@ -16,15 +16,8 @@ building/door key.
 """
 
 import duckdb
-
 from src.models import TableRef
-
-PERSON_CATALOG = "ducklake"
-PERSON_SCHEMA = "main"
-
-
-def _person_fqn(organization_slug: str, table_suffix: str) -> str:
-    return f"{PERSON_CATALOG}.{PERSON_SCHEMA}.{organization_slug}_{table_suffix}"
+from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -45,8 +38,9 @@ def buildings_geocoded(
     lat/lng = AVG of contained persons' coordinates (they share an address,
     so coordinates differ only by float noise).
     """
-    table_suffix = "buildings_geocoded"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    table = "buildings_geocoded"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table)
     persons_fqn = persons_geocoded.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -69,12 +63,11 @@ def buildings_geocoded(
         GROUP BY building_id, zip5
     """)
 
-    version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
-        version=version,
+        schema=organization_slug,
+        table=table,
+        version=_current_version(conn),
     )
 
 
@@ -95,8 +88,9 @@ def doors_geocoded(
     an empty middle segment in that case). Multi-unit doors carry the
     canonical unit string (e.g. "APT 3B").
     """
-    table_suffix = "doors_geocoded"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    table = "doors_geocoded"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table)
     persons_fqn = persons_geocoded.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -113,10 +107,9 @@ def doors_geocoded(
         GROUP BY door_id
     """)
 
-    version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
-        version=version,
+        schema=organization_slug,
+        table=table,
+        version=_current_version(conn),
     )

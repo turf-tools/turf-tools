@@ -1,20 +1,21 @@
 """Hamilton graph for loading and transforming voter files into DuckLake.
 
 The input is a literal voter file (parquet dump from a state BOE). The output
-is `{organization_slug}_persons_transformed` — Person-shaped rows that
+is `persons_transformed` (in the org's schema) — Person-shaped rows that
 downstream DAGs consume. Naming reflects that split: inputs stay "voter
 file", outputs are "person".
 """
 
 import duckdb
-
 from src.models import Person, TableRef
-
-CATALOG = "ducklake"
-SCHEMA = "main"
+from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
 
 # Expected columns derived from the Person model.
 _EXPECTED_COLUMNS = set(Person.model_fields.keys())
+
+
+def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
+    return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
 def voters_raw(
@@ -23,13 +24,18 @@ def voters_raw(
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Load raw voter data from a parquet file into DuckLake."""
-    table_name = f"{organization_slug}_voters_raw"
-    fqn = f"{CATALOG}.{SCHEMA}.{table_name}"
+    table = "voters_raw"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table)
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     remote = conn.read_parquet(voter_file_url)
     remote.create(fqn)
-    version = conn.sql(f"FROM {CATALOG}.current_snapshot()").fetchone()[0]
-    return TableRef(catalog=CATALOG, schema=SCHEMA, table=table_name, version=version)
+    return TableRef(
+        catalog=PERSON_CATALOG,
+        schema=organization_slug,
+        table=table,
+        version=_current_version(conn),
+    )
 
 
 def persons_transformed(
@@ -43,14 +49,20 @@ def persons_transformed(
 
     The transformation_query should reference the raw table as ``raw``.
     """
-    table_name = f"{organization_slug}_persons_transformed"
+    table = "persons_transformed"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table)
     raw = conn.table(voters_raw.fqn).set_alias("raw")
     raw.query(
         "raw",
-        f"CREATE OR REPLACE TABLE {CATALOG}.{SCHEMA}.{table_name} AS {transformation_query}",
+        f"CREATE OR REPLACE TABLE {fqn} AS {transformation_query}",
     )
-    version = conn.sql(f"FROM {CATALOG}.current_snapshot()").fetchone()[0]
-    return TableRef(catalog=CATALOG, schema=SCHEMA, table=table_name, version=version)
+    return TableRef(
+        catalog=PERSON_CATALOG,
+        schema=organization_slug,
+        table=table,
+        version=_current_version(conn),
+    )
 
 
 def persons_validated(
