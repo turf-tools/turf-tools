@@ -37,7 +37,6 @@ SELECT
     concat_ws(
         ' ',
         nullif(raw.res_house_number, ''),
-        nullif(raw.res_half_code, ''),
         nullif(raw.res_pre_direction, ''),
         nullif(raw.res_street_name, ''),
         nullif(raw.res_post_direction, '')
@@ -47,6 +46,7 @@ SELECT
         THEN concat_ws(' ', nullif(raw.res_apartment_type, ''), raw.res_apartment)
         ELSE NULL
     END AS address_line_2,
+    nullif(raw.res_half_code, '') AS half_code,
     raw.res_city AS city,
     'NY' AS state,
     raw.res_zip5 AS zip5,
