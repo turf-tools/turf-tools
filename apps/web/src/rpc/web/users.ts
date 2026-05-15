@@ -258,3 +258,27 @@ export const updateOwnName = webMut
 
     return { ok: true as const };
   });
+
+// Persist the user's display timezone. Called by the root layout on first
+// authed mount (auto-detect) and by the Account page (manual override).
+// Validates against the curated TIMEZONE_OPTIONS list — IANA strings outside
+// it are rejected to keep storage tidy.
+export const updateOwnDisplayTimezone = webMut
+  .input(
+    z.object({
+      displayTimezone: z.enum([
+        "America/New_York",
+        "America/Chicago",
+        "America/Denver",
+        "America/Los_Angeles",
+      ]),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    await context.db
+      .update(users)
+      .set({ displayTimezone: input.displayTimezone, updatedAt: new Date() })
+      .where(eq(users.id, context.user.id));
+
+    return { ok: true as const };
+  });

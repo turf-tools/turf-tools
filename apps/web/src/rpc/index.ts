@@ -85,6 +85,7 @@ export const webRouter = {
     unarchive: webUsers.unarchive,
     resendInvite: webUsers.resendInvite,
     updateOwnName: webUsers.updateOwnName,
+    updateOwnDisplayTimezone: webUsers.updateOwnDisplayTimezone,
   },
 };
 

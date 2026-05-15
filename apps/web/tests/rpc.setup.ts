@@ -22,6 +22,7 @@ export async function getTestClient() {
     createdAt: new Date(),
     updatedAt: new Date(),
     lastLoginAt: null,
+    displayTimezone: null,
   };
 
   const context: WebContext = {

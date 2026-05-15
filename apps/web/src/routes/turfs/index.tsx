@@ -9,6 +9,7 @@ import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDate } from "~/lib/format";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
+import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { turfsListQuery } from "~/lib/queries/turfs";
 import { useFadeOnce } from "~/lib/use-fade-once";
 
@@ -68,6 +69,8 @@ function TurfsIndex() {
 }
 
 function TurfsTable({ campaignId }: { campaignId: string | null }) {
+  const { session } = Route.useRouteContext();
+  const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
   const { data } = useSuspenseQuery(turfsListQuery(campaignId));
   // Bulk publish writes all rows in a single statement, so they share a
   // created_at; name (natural-numeric) breaks the tie so "Turf 2" stays
@@ -142,7 +145,7 @@ function TurfsTable({ campaignId }: { campaignId: string | null }) {
               </Pill>
             </TableCell>
             <TableCell>
-              <Pill variant="number">{formatDate(t.createdAt)}</Pill>
+              <Pill variant="number">{formatDate(t.createdAt, tz)}</Pill>
             </TableCell>
           </TableRow>
         ))}

@@ -18,6 +18,10 @@ export const users = pgTable(
     // hook (see lib/auth.ts). Independent of sessions, which BA deletes
     // on sign-out. Read-only from BA's perspective.
     lastLoginAt: timestamp({ withTimezone: true }),
+    // IANA TZ string used by the admin UI to render dates in the user's
+    // own clock. Null until the client auto-detects on first authed mount
+    // (see root layout) and persists via users.updateOwnDisplayTimezone.
+    displayTimezone: text(),
   },
   (t) => [uniqueIndex("users_email").on(t.email)],
 );
