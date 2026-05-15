@@ -1,10 +1,19 @@
 """Shared data models for Hamilton graph nodes."""
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator
+
+# A SQL identifier is "safe" to leave unquoted if it starts with a letter
+# or underscore and is followed only by lowercase letters, digits, or
+# underscores. Anything else (hyphens, uppercase, leading digits,
+# spaces, …) must be quoted. We don't try to detect reserved words —
+# the small noise cost when a slug happens to be one is worth not
+# maintaining a keyword list.
+_SAFE_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 def _parse_json_string(v: object) -> object:
@@ -12,6 +21,19 @@ def _parse_json_string(v: object) -> object:
     if isinstance(v, str):
         return json.loads(v)
     return v
+
+
+def quote_ident(name: str) -> str:
+    """Return `name` as a SQL identifier, quoted only when necessary.
+
+    Embedded double quotes are escaped by doubling. Used by `TableRef.fqn`
+    and `tables.org_fqn` to keep generated SQL readable when
+    slugs are plain (`default`, `acme`) and still safe when they aren't
+    (`nyc-dsa`).
+    """
+    if _SAFE_IDENT_RE.match(name):
+        return name
+    return '"' + name.replace('"', '""') + '"'
 
 
 @dataclass(frozen=True)
@@ -29,8 +51,13 @@ class TableRef:
 
     @property
     def fqn(self) -> str:
-        """Fully qualified table name: catalog.schema.table."""
-        return f"{self.catalog}.{self.schema}.{self.table}"
+        """Fully qualified table name: catalog.schema.table.
+
+        Schema is quoted only when it contains characters that aren't
+        valid in a bare SQL identifier (so a plain `default` stays
+        unquoted but `nyc-dsa` becomes `"nyc-dsa"`).
+        """
+        return f"{self.catalog}.{quote_ident(self.schema)}.{self.table}"
 
 
 @dataclass(frozen=True)

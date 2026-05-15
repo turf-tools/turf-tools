@@ -81,7 +81,8 @@ class TestVoterFileLoader:
             conn=dual_conn,
         )
         assert ref.catalog == "ducklake"
-        assert ref.table == "test_voters_raw"
+        assert ref.schema == "test"
+        assert ref.table == "voters_raw"
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
@@ -401,7 +402,8 @@ class TestGeocodeGraph:
             organization_slug="geocode_test",
             conn=dual_conn,
         )
-        assert ref.table == "geocode_test_persons_decomposed"
+        assert ref.schema == "geocode_test"
+        assert ref.table == "persons_decomposed"
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
         cols = set(dual_conn.table(ref.fqn).columns)
@@ -425,7 +427,8 @@ class TestGeocodeGraph:
             organization_slug="geocode_test",
             conn=dual_conn,
         )
-        assert ref.table == "geocode_test_persons_candidates"
+        assert ref.schema == "geocode_test"
+        assert ref.table == "persons_candidates"
         count = dual_conn.table(ref.fqn).aggregate("count(*)").fetchone()[0]
         assert count > 0
 
@@ -466,7 +469,7 @@ class TestGeocodeGraph:
                 "conn": dual_conn,
             },
         )
-        geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
+        geocoded_fqn = "ducklake.geocode_test.persons_geocoded"
         bad_coords = dual_conn.execute(f"""
             SELECT count(*) FROM {geocoded_fqn}
             WHERE latitude  IS NULL OR longitude IS NULL
@@ -492,9 +495,9 @@ class TestGeocodeGraph:
         }
         dr = driver.Builder().with_modules(geocode).build()
         dr.execute(final_vars=["persons_geocoded"], inputs=inputs)
-        count1 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_persons_geocoded").fetchone()[0]
+        count1 = dual_conn.execute('SELECT count(*) FROM ducklake."geocode_test".persons_geocoded').fetchone()[0]
         dr.execute(final_vars=["persons_geocoded"], inputs=inputs)
-        count2 = dual_conn.execute("SELECT count(*) FROM ducklake.main.geocode_test_persons_geocoded").fetchone()[0]
+        count2 = dual_conn.execute('SELECT count(*) FROM ducklake."geocode_test".persons_geocoded').fetchone()[0]
         assert count1 == count2
 
     def test_persons_geocoded_structural_invariants(self, dual_conn, persons_validated, blockfaces, address_tokens):
@@ -515,7 +518,7 @@ class TestGeocodeGraph:
                 "conn": dual_conn,
             },
         )
-        geocoded_fqn = "ducklake.main.geocode_test_persons_geocoded"
+        geocoded_fqn = "ducklake.geocode_test.persons_geocoded"
         validated_count = dual_conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()[0]
         total, distinct = dual_conn.execute(f"""
             SELECT count(*), count(DISTINCT external_id) FROM {geocoded_fqn}
@@ -567,7 +570,8 @@ class TestAggregateGraph:
             organization_slug="agg_test",
             conn=dual_conn,
         )
-        assert ref.table == "agg_test_buildings_geocoded"
+        assert ref.table == "buildings_geocoded"
+        assert ref.schema == "agg_test"
         row = dual_conn.execute(f"""
             SELECT
                 count(*),
@@ -600,7 +604,8 @@ class TestAggregateGraph:
             organization_slug="agg_test",
             conn=dual_conn,
         )
-        assert door_ref.table == "agg_test_doors_geocoded"
+        assert door_ref.table == "doors_geocoded"
+        assert door_ref.schema == "agg_test"
         # Doors >= buildings (multi-unit buildings have multiple doors).
         building_count = dual_conn.execute(f"SELECT count(*) FROM {building_ref.fqn}").fetchone()[0]
         door_count = dual_conn.execute(f"SELECT count(*) FROM {door_ref.fqn}").fetchone()[0]

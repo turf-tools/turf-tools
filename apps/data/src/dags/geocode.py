@@ -36,17 +36,11 @@ match metadata, restricted to the quality-gate set.
 """
 
 import duckdb
-
 from src.models import TableRef
+from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
 
-PERSON_CATALOG = "ducklake"
-PERSON_SCHEMA = "main"
 GEO_CATALOG = "geo_ducklake"
 TIGER_SCHEMA = "tiger"
-
-
-def _person_fqn(organization_slug: str, table_suffix: str) -> str:
-    return f"{PERSON_CATALOG}.{PERSON_SCHEMA}.{organization_slug}_{table_suffix}"
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -80,7 +74,8 @@ def persons_decomposed(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_decomposed"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     source_fqn = persons_validated.fqn
 
     conn.execute(f"""
@@ -149,8 +144,8 @@ def persons_decomposed(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -193,7 +188,8 @@ def persons_candidates(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_candidates"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     persons_fqn = persons_decomposed.fqn
     blockface_fqn = blockface_final.fqn
 
@@ -248,8 +244,8 @@ def persons_candidates(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -280,7 +276,8 @@ def persons_scored(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_scored"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     candidates_fqn = persons_candidates.fqn
     persons_fqn = persons_decomposed.fqn
 
@@ -339,8 +336,8 @@ def persons_scored(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -364,7 +361,8 @@ def persons_best_match(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_best_match"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     scored_fqn = persons_scored.fqn
 
     conn.execute(f"""
@@ -417,8 +415,8 @@ def persons_best_match(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -457,7 +455,8 @@ def interpolated_coords(
     size and the join is keyed on a single column.
     """
     table_suffix = "interpolated_coords"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     match_fqn = persons_best_match.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -553,8 +552,8 @@ def interpolated_coords(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -602,7 +601,8 @@ def canonical_addresses(
       column if it ever matters
     """
     table_suffix = "canonical_addresses"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     match_fqn = persons_best_match.fqn
     decomposed_fqn = persons_decomposed.fqn
 
@@ -635,8 +635,8 @@ def canonical_addresses(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -678,7 +678,8 @@ def quality_matches(
     re-run will re-evaluate them — bounded by the failure rate (~3%).
     """
     table_suffix = "quality_matches"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     canonical_fqn = canonical_addresses.fqn
     decomposed_fqn = persons_decomposed.fqn
     tokens_fqn = address_tokens.fqn
@@ -732,8 +733,8 @@ def quality_matches(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -786,7 +787,8 @@ def persons_geocoded(
     while the canonical-record shape is being settled.
     """
     table_suffix = "persons_geocoded"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     persons_fqn = persons_validated.fqn
     match_fqn = persons_best_match.fqn
     canonical_fqn = canonical_addresses.fqn
@@ -840,8 +842,8 @@ def persons_geocoded(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )
 
@@ -866,7 +868,8 @@ def geocoding_summary(
     current state of both tables.
     """
     table_suffix = "geocoding_summary"
-    fqn = _person_fqn(organization_slug, table_suffix)
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, table_suffix)
     geocoded_fqn = persons_geocoded.fqn
     persons_fqn = persons_validated.fqn
 
@@ -892,7 +895,7 @@ def geocoding_summary(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=PERSON_SCHEMA,
-        table=f"{organization_slug}_{table_suffix}",
+        schema=organization_slug,
+        table=table_suffix,
         version=version,
     )

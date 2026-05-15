@@ -8,6 +8,7 @@ from src.dags import aggregate, boundaries, geocode, quickwit, tiger, voter_file
 from src.duckdb import get_connection
 from src.models import TableRef
 from src.settings import get_settings
+from src.tables import PERSON_CATALOG
 from src.transformations import nys_sboe_transformation_query
 
 
@@ -84,9 +85,9 @@ def seed_boundaries() -> None:
     # (seed_persons output). The persons reference is the same for
     # every key group; only `key_group` and `key_expression` vary.
     persons_ref = TableRef(
-        catalog="ducklake",
-        schema="main",
-        table=f"{_DEFAULT_ORG_SLUG}_persons_geocoded",
+        catalog=PERSON_CATALOG,
+        schema=_DEFAULT_ORG_SLUG,
+        table="persons_geocoded",
         version=0,
     )
 
@@ -138,12 +139,12 @@ def seed_persons() -> None:
     isn't present, prints a download hint and exits — fixtures aren't
     checked into the repo because they're large.
 
-    Final outputs (under ``ducklake.main``):
-    - ``{org}_persons_geocoded`` — canonical "person record": Person fields
+    Final outputs (under ``ducklake."{org}"``):
+    - ``persons_geocoded`` — canonical "person record": Person fields
       with canonicalized addresses, lat/lng, blockface match metadata,
       derived `building_id` and `door_id`.
-    - ``{org}_buildings_geocoded`` — one row per distinct building.
-    - ``{org}_doors_geocoded`` — one row per distinct door.
+    - ``buildings_geocoded`` — one row per distinct building.
+    - ``doors_geocoded`` — one row per distinct door.
 
     TIGER counties pulled from settings (defaults to all 5 NYC boroughs).
     First run downloads the TIGER shapefiles for each county (a few minutes
