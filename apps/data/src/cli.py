@@ -1,5 +1,6 @@
 """CLI entrypoints for the data package."""
 
+import argparse
 from pathlib import Path
 
 from hamilton import driver
@@ -8,7 +9,7 @@ from src.dags import aggregate, boundaries, geocode, quickwit, tiger, voter_file
 from src.duckdb import get_connection
 from src.models import TableRef
 from src.settings import get_settings
-from src.tables import PERSON_CATALOG
+from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema
 from src.transformations import nys_sboe_transformation_query
 
 
@@ -53,13 +54,25 @@ def seed_boundaries() -> None:
     blocks where voters tagged with each distinct key live. Output goes
     to ``geo_ducklake.boundaries.{key_group}``.
 
-    Requires ``seed_persons`` to have run first — we read from the
-    organisation's geocoded persons table for the keys + coordinates.
+    Requires ``seed-persons`` to have run first — we read from
+    ``ducklake.<org>.persons_geocoded`` for the keys + coordinates.
+    Pair `--org-slug` here with whatever you passed to `seed-persons`
+    if you used a non-default schema:
+
+        uv run seed-boundaries --org-slug sample_10k
 
     Add a new entry to ``key_group_sources`` to seed another key group;
     each entry is the destination key-group name plus the SQL expression
     that produces the key from a row of the persons table.
     """
+    parser = argparse.ArgumentParser(prog="seed-boundaries", description=seed_boundaries.__doc__)
+    parser.add_argument(
+        "--org-slug",
+        default=_DEFAULT_ORG_SLUG,
+        help=f"Org schema to read persons from (default: {_DEFAULT_ORG_SLUG!r}).",
+    )
+    args = parser.parse_args()
+
     key_group_sources = [
         {
             "key_group": "nyc_eds",
@@ -86,7 +99,7 @@ def seed_boundaries() -> None:
     # every key group; only `key_group` and `key_expression` vary.
     persons_ref = TableRef(
         catalog=PERSON_CATALOG,
-        schema=_DEFAULT_ORG_SLUG,
+        schema=args.org_slug,
         table="persons_geocoded",
         version=0,
     )
@@ -131,15 +144,36 @@ _DEFAULT_ORG_SLUG = "default"
 
 
 def seed_persons() -> None:
-    """Run voter_file_loader → tiger → geocode → aggregate against the
-    voter file fixture configured in settings.
+    """Run voter_file_loader → tiger → geocode → aggregate against a
+    voter file fixture.
 
-    Fixture path is `{fixtures_dir}/{voter_file_fixture}` (defaults
-    `apps/data/fixtures/ny-voters-2026-03-08-nyc.parquet`). If it
-    isn't present, prints a download hint and exits — fixtures aren't
-    checked into the repo because they're large.
+    Defaults to `{fixtures_dir}/{voter_file_fixture}` (configured in
+    settings — usually `apps/data/fixtures/ny-voters-2026-03-08-nyc.parquet`)
+    and writes into the `default` org schema (matching `slug: "default"`
+    in `packages/db/src/mock.ts` so the web app finds it).
 
-    Final outputs (under ``ducklake."{org}"``):
+    Override either with flags:
+
+        uv run seed-persons --fixture ny-voters-2026-03-08-10k-sample.parquet
+        uv run seed-persons --fixture <sample> --org-slug sample_10k
+
+    Using a non-default org slug writes to a separate DuckLake schema
+    (`ducklake.<slug>.persons_geocoded`), so iterating on samples doesn't
+    overwrite the default schema the web app reads from.
+
+    Most intermediate DAG nodes are incremental (`CREATE TABLE IF NOT
+    EXISTS` + `WHERE external_id NOT IN (...)`), which is fast on
+    re-runs but means schema changes inside the pipeline don't
+    auto-apply. Pass `--reset` to drop the org's DuckLake schema
+    before running so the next pipeline run rebuilds every table from
+    scratch:
+
+        uv run seed-persons --reset
+
+    If the fixture is missing, prints a hint pointing at the source URL
+    and the script that materialises it.
+
+    Final outputs (under ``ducklake.<org>``):
     - ``persons_geocoded`` — canonical "person record": Person fields
       with canonicalized addresses, lat/lng, blockface match metadata,
       derived `building_id` and `door_id`.
@@ -151,16 +185,44 @@ def seed_persons() -> None:
     on a fresh machine); subsequent runs reuse the on-disk cache and are
     fast.
     """
+    parser = argparse.ArgumentParser(prog="seed-persons", description=seed_persons.__doc__)
+    parser.add_argument(
+        "--fixture",
+        default=None,
+        help="Fixture filename inside `fixtures_dir` (default: settings.voter_file_fixture).",
+    )
+    parser.add_argument(
+        "--org-slug",
+        default=_DEFAULT_ORG_SLUG,
+        help=f"Target DuckLake schema (default: {_DEFAULT_ORG_SLUG!r}).",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Drop the org's DuckLake schema before running. Use after a pipeline schema change.",
+    )
+    args = parser.parse_args()
+
     settings = get_settings()
     conn = get_connection(settings)
 
-    fixture_path = _fixtures_dir(settings) / settings.voter_file_fixture
+    if args.reset:
+        print(f"Dropping schema ducklake.{args.org_slug}…")
+        drop_org_schema(conn, args.org_slug)
+        ensure_org_schema(conn, args.org_slug)
+
+    fixture_name = args.fixture or settings.voter_file_fixture
+    fixture_path = _fixtures_dir(settings) / fixture_name
     if not fixture_path.exists():
         print(f"Voter file fixture not found at {fixture_path}.")
-        print(f"Download from {settings.voter_file_url} and place it at that path.")
+        print(
+            f"Materialise it from {settings.voter_file_url} via "
+            "`uv run python scripts/sample_voter_file.py` "
+            "(see the script for sampling options)."
+        )
         return
 
-    print(f"Seeding persons from {fixture_path} (org={_DEFAULT_ORG_SLUG})…")
+    print(f"Seeding persons from {fixture_path} (org={args.org_slug})…")
     print(f"  TIGER counties: {settings.tiger_county_fips} (cache: {settings.tiger_data_dir})")
 
     dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate).build()
@@ -173,7 +235,7 @@ def seed_persons() -> None:
         ],
         inputs={
             "voter_file_url": str(fixture_path),
-            "organization_slug": _DEFAULT_ORG_SLUG,
+            "organization_slug": args.org_slug,
             # Curated transformation: passes all rows in the fixture (no
             # county filter) since the fixture is already NYC-only.
             "transformation_query": nys_sboe_transformation_query(),
