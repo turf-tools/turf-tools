@@ -83,6 +83,7 @@ def persons_decomposed(
             external_id         VARCHAR,
             house_number        INTEGER,
             house_num_prefix    VARCHAR,
+            half_code           VARCHAR,
             street_name_raw     VARCHAR,
             street_name_tokens  VARCHAR[],
             number_type         VARCHAR,
@@ -96,6 +97,7 @@ def persons_decomposed(
             SELECT
                 external_id,
                 zip5,
+                half_code,
                 address_line_1,
                 -- Extract any leading non-numeric prefix from the house number
                 -- e.g. "34-12 Broadway" -> prefix="34-", house_num=12
@@ -124,6 +126,7 @@ def persons_decomposed(
             external_id,
             house_number,
             house_num_prefix,
+            half_code,
             street_name_raw,
             list_distinct(list_sort(list_filter(
                 list_concat(
@@ -238,6 +241,26 @@ def persons_candidates(
             OR p.house_number BETWEEN b.to_house_num   AND b.from_house_num
          )
          AND len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
+         -- Reject blockfaces whose directional contradicts the voter's.
+         -- Voter tokens are raw (so we check both `n` and `north` forms);
+         -- blockface tokens are equivalence-expanded so checking the
+         -- short form alone is sufficient on that side. Voter without a
+         -- directional or blockface without a directional always passes
+         -- through; only opposing cardinal pairs are rejected.
+         AND NOT (
+              ((list_contains(p.street_name_tokens, 'n')
+                OR list_contains(p.street_name_tokens, 'north'))
+               AND list_contains(b.street_name_tokens, 's'))
+           OR ((list_contains(p.street_name_tokens, 's')
+                OR list_contains(p.street_name_tokens, 'south'))
+               AND list_contains(b.street_name_tokens, 'n'))
+           OR ((list_contains(p.street_name_tokens, 'e')
+                OR list_contains(p.street_name_tokens, 'east'))
+               AND list_contains(b.street_name_tokens, 'w'))
+           OR ((list_contains(p.street_name_tokens, 'w')
+                OR list_contains(p.street_name_tokens, 'west'))
+               AND list_contains(b.street_name_tokens, 'e'))
+         )
         WHERE p.external_id NOT IN (SELECT external_id FROM {fqn})
     """)
 
@@ -592,13 +615,13 @@ def canonical_addresses(
     on purpose so an OSM-derived canonical-address node could return the
     same shape and slot in or replace this one.
 
-    Incremental: skips external_ids already present.
+    Half-coded addresses are preserved with the "1/2" in canonical
+    address_line_1, so building_id door_id naturally distinguish them
+    from the non-half neighbour. The half-code is kept out of
+    `persons_decomposed.street_name_tokens` upstream so it can't
+    generate spurious matches.
 
-    Known limitations:
-    - Half-coded addresses ("111 1/2 E 14TH ST") collapse with their
-      non-half neighbors ("111 E 14TH ST"). 0% in current NYC samples;
-      addressable by extending persons_decomposed to surface a half_code
-      column if it ever matters
+    Incremental: skips external_ids already present.
     """
     table_suffix = "canonical_addresses"
     ensure_org_schema(conn, organization_slug)
@@ -619,6 +642,9 @@ def canonical_addresses(
         SELECT
             m.external_id,
             COALESCE(d.house_num_prefix, '') || CAST(d.house_number AS VARCHAR)
+              || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
+                      THEN ' ' || d.half_code
+                      ELSE '' END
               || ' ' || UPPER(m.full_name)                  AS address_line_1,
             list_distinct(list_filter(
               list_concat(

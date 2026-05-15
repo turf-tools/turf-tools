@@ -98,6 +98,7 @@ class Person(BaseModel):
     # Address fields
     address_line_1: str
     address_line_2: str | None = None
+    half_code: str | None = None
     city: str
     state: str
     zip5: str

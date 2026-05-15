@@ -16,11 +16,15 @@ wheels/
 
 # Local DuckLake dev data
 *.ducklake
+*.ducklake.wal
 local_data/
 geo_local_data/
 
 # TIGER shapefile cache
 tiger_cache/
+
+# OSM PBF cache (~700 MB; ad-hoc spike work, regeneratable via Geofabrik).
+osm_cache/
 
 # Large fixture files: only commit the ED-level subsets and the 10k NYC
 # sample. Larger samples (50k, 1M, full statewide) are regeneratable via
@@ -35,7 +39,10 @@ qwdata/
 # Old stuff
 old/**
 
-# Local-only one-off scripts (samplers, fixture generators, ad-hoc
-# diagnostics). Not part of the production pipeline; kept out of git
-# so the commit story stays clean.
+# Local-only one-off scripts (ad-hoc diagnostics, experiments). Not
+# part of the production pipeline; kept out of git so the commit story
+# stays clean. Exception: `sample_voter_file.py` produces the canonical
+# NYC fixture from the remote NYS voter file and is the only documented
+# way to regenerate fixtures — committed so collaborators can run it.
 scripts/
+!scripts/sample_voter_file.py
