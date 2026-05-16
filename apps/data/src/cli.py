@@ -5,7 +5,7 @@ from pathlib import Path
 
 from hamilton import driver
 
-from src.dags import aggregate, boundaries, geocode, osm_refinement, quickwit, tiger, voter_file_loader
+from src.dags import aggregate, boundaries, geocode, osm, quickwit, tiger, voter_file_loader
 from src.duckdb import get_connection
 from src.models import TableRef
 from src.settings import get_settings
@@ -228,7 +228,7 @@ def seed_persons() -> None:
         print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
     dr = driver.Builder().with_modules(
-        voter_file_loader, tiger, geocode, aggregate, osm_refinement,
+        voter_file_loader, tiger, geocode, aggregate, osm,
     ).build()
     result = dr.execute(
         final_vars=[
@@ -236,10 +236,6 @@ def seed_persons() -> None:
             "geocoding_summary",
             "buildings_geocoded",
             "doors_geocoded",
-            # OSM extraction stays as terminal vars because they're not
-            # all reached transitively from persons_geocoded yet
-            # (landuse_residential will be consumed once rule 2 lands).
-            "osm_landuse_residential",
         ],
         inputs={
             "voter_file_url": str(fixture_path),
@@ -264,13 +260,20 @@ def seed_persons() -> None:
     summary_ref = result["geocoding_summary"]
     buildings_ref = result["buildings_geocoded"]
     doors_ref = result["doors_geocoded"]
-    total, matched, unmatched, pct = conn.sql(
-        f"SELECT total_persons, matched, unmatched, match_pct FROM {summary_ref.fqn}"
-    ).fetchone()
+    (total, matched, unmatched, pct, m_road, m_complex, m_tiger_only, m_osm_only) = conn.sql(f"""
+        SELECT total_persons, matched, unmatched, match_pct,
+               matched_osm_road_projected, matched_osm_complex,
+               matched_tiger_only, matched_osm_only
+        FROM {summary_ref.fqn}
+    """).fetchone()
     building_count = conn.sql(f"SELECT count(*) FROM {buildings_ref.fqn}").fetchone()[0]
     door_count = conn.sql(f"SELECT count(*) FROM {doors_ref.fqn}").fetchone()[0]
     print(
         f"  → {matched:,}/{total:,} matched ({pct}%); {unmatched:,} unmatched.\n"
+        f"      OSM road-projected : {m_road:>8,d}\n"
+        f"      OSM complex        : {m_complex:>8,d}\n"
+        f"      TIGER rank fallback: {m_tiger_only:>8,d}\n"
+        f"      OSM-only (TIGER-miss rescue): {m_osm_only:>8,d}\n"
         f"  → {building_count:,} buildings, {door_count:,} doors.\n"
         f"  → Outputs: {geocoded_ref.fqn}, {buildings_ref.fqn}, {doors_ref.fqn}"
     )

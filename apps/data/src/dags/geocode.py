@@ -18,11 +18,14 @@ Node dependency chain:
                                                      │
                                                 persons_best_match
                                                      │
-                          ┌──────────────────────────┴──────────────────────────┐
-                          │                                                     │
-                  interpolated_coords                                  canonical_addresses
-                          │                                                     │
-                          └────────► persons_geocoded ◄────── persons_validated ┘
+                          ┌──────────────────────────┼──────────────────────────┐
+                          │                          │                          │
+                   refined_positions          osm_only_matches         canonical_addresses
+                   (from osm.py)              (from osm.py)              (uses both above)
+                          │                          │                          │
+                          └──────────────────────────┴──────────────────────────┘
+                                                     │
+                                         persons_geocoded ◄── persons_validated
                                                      │
                                              geocoding_summary
 
@@ -614,36 +617,32 @@ def interpolated_coords(
 def canonical_addresses(
     persons_best_match: TableRef,
     persons_decomposed: TableRef,
+    refined_positions: TableRef,
+    osm_only_matches: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Per-person canonical (address_line_1, matched_tokens) derived from
-    the matched TIGER blockface.
+    """Per-person canonical (address_line_1, matched_tokens).
 
-    address_line_1 = decomposed.house_num_prefix + decomposed.house_number
-                     + ' ' + UPPER(blockface.full_name).
-    The TIGER `full_name` (e.g. "E 14th St", "1st Ave") is the
-    authoritative canonical street name — already in USPS-abbreviated
-    ordinal form. Any source spelling that matched the same blockface
-    ("EAST 14 STREET", "E 14TH ST", "1 AVE", "FIRST AVE") collapses to
-    the same canonical address here. No rule maintenance in our code.
-    full_name is carried through `persons_best_match` from the exact
-    blockface row the matcher chose for this person — no re-join, no
-    risk of picking the wrong alias.
-
-    matched_tokens is the tokenization of full_name via the same scheme
-    upstream tokenizers use (split on non-alphanumeric, plus bare digits)
-    so "12th St" yields ["12", "12th", "st"].
-
-    Output schema: (external_id, address_line_1, matched_tokens). Narrow
-    on purpose so an OSM-derived canonical-address node could return the
-    same shape and slot in or replace this one.
+    Street-name source priority — for each voter:
+      1. `refined_positions.osm_street` if non-null (the voter matched
+         an OSM building, regardless of whether they also matched
+         TIGER). Same OSM building → same canonical → same building_id.
+         This prevents the dupe pattern where TIGER-matched voters and
+         osm_only voters at the same physical building end up with
+         different canonical street names ("F D R Dr" vs "FDR Drive").
+      2. `osm_only_matches.osm_street` for TIGER-miss voters rescued
+         via direct OSM lookup.
+      3. `persons_best_match.full_name` (TIGER's authoritative form)
+         for tiger_only voters where no OSM building was found.
 
     Half-coded addresses are preserved with the "1/2" in canonical
-    address_line_1, so building_id door_id naturally distinguish them
-    from the non-half neighbour. The half-code is kept out of
-    `persons_decomposed.street_name_tokens` upstream so it can't
-    generate spurious matches.
+    address_line_1.
+
+    matched_tokens is the tokenization of the canonical street via the
+    same scheme upstream tokenizers use.
+
+    Output schema: (external_id, address_line_1, matched_tokens).
 
     Incremental: skips external_ids already present.
     """
@@ -652,6 +651,8 @@ def canonical_addresses(
     fqn = org_fqn(organization_slug, table_suffix)
     match_fqn = persons_best_match.fqn
     decomposed_fqn = persons_decomposed.fqn
+    refined_fqn = refined_positions.fqn
+    osm_only_fqn = osm_only_matches.fqn
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
@@ -661,25 +662,37 @@ def canonical_addresses(
         )
     """)
 
+    # For TIGER-matched voters, prefer OSM street when the OSM lookup
+    # hit (osm_street IS NOT NULL); fall back to TIGER full_name. For
+    # osm_only voters, always use OSM street.
     conn.execute(f"""
         INSERT INTO {fqn}
+        WITH src AS (
+            SELECT r.external_id,
+                   UPPER(COALESCE(r.osm_street, m.full_name)) AS street_canonical
+            FROM {refined_fqn} r
+            LEFT JOIN {match_fqn} m ON m.external_id = r.external_id
+            UNION ALL
+            SELECT external_id, UPPER(osm_street) AS street_canonical
+            FROM {osm_only_fqn}
+        )
         SELECT
-            m.external_id,
+            s.external_id,
             COALESCE(d.house_num_prefix, '') || CAST(d.house_number AS VARCHAR)
               || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
                       THEN ' ' || d.half_code
                       ELSE '' END
-              || ' ' || UPPER(m.full_name)                  AS address_line_1,
+              || ' ' || s.street_canonical                    AS address_line_1,
             list_distinct(list_filter(
               list_concat(
-                regexp_split_to_array(lower(trim(m.full_name)), '[^a-z0-9]+'),
-                regexp_extract_all(lower(trim(m.full_name)), '[0-9]+')
+                regexp_split_to_array(lower(trim(s.street_canonical)), '[^a-z0-9]+'),
+                regexp_extract_all(lower(trim(s.street_canonical)), '[0-9]+')
               ),
               x -> length(x) > 0
-            ))                                              AS matched_tokens
-        FROM {match_fqn} m
-        INNER JOIN {decomposed_fqn} d ON d.external_id = m.external_id
-        WHERE m.external_id NOT IN (SELECT external_id FROM {fqn})
+            ))                                                AS matched_tokens
+        FROM src s
+        INNER JOIN {decomposed_fqn} d ON d.external_id = s.external_id
+        WHERE s.external_id NOT IN (SELECT external_id FROM {fqn})
     """)
 
     version = _current_version(conn)
@@ -701,21 +714,23 @@ def persons_geocoded(
     persons_best_match: TableRef,
     canonical_addresses: TableRef,
     refined_positions: TableRef,
+    osm_only_matches: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Canonical geocoded persons table — the single "person record" that
-    downstream consumers query against. Contains only persons who matched
-    a TIGER blockface.
+    downstream consumers query against. Contains every voter that ended
+    up with coordinates, whether via TIGER blockface match or via
+    direct OSM lookup (`osm_only_matches`).
 
     Pure assembly node: joins person fields from `persons_validated`,
     canonical address from `canonical_addresses`, lat/lon from
-    `refined_positions`, and match metadata from `persons_best_match`.
-    Wrong-street fallback matches are filtered upstream in
-    `persons_candidates` (distinctive-token-overlap requirement), so by
-    the time we reach this node every voter present has a defensible
-    match. This node only stitches them together and derives
-    address-based stable keys.
+    `refined_positions` OR `osm_only_matches` (coalesced), TIGER
+    metadata from `persons_best_match` (LEFT JOIN — osm-only voters
+    legitimately have no row), and a `blockface_id` that's either the
+    TIGER blockface or the nearest-blockface snap from
+    `osm_only_matches`. `position_source` is `'osm_only'` for the
+    osm-only voters.
 
     address_line_2 normalization (UPPER + TRIM) happens here because it
     comes straight from `persons_validated` with no TIGER/OSM-derived
@@ -723,11 +738,10 @@ def persons_geocoded(
     apartment-type rows. SBOE source data is otherwise already UPPER, so
     line_1/city/state/etc. pass through.
 
-    Persons that didn't match (no blockface candidate) are excluded
-    entirely. They live in `persons_validated` only — queryable for
-    audit/search but cannot be canvassed (no coordinates) or aggregated
-    to a building. Match-rate diagnostics in `geocoding_summary`
-    reconcile counts across both tables.
+    Persons that didn't end up in either `refined_positions` or
+    `osm_only_matches` are excluded entirely — they live in
+    `persons_validated` only. Match-rate diagnostics in
+    `geocoding_summary` reconcile counts across both tables.
 
     Address-derived stable keys (`building_id`, `door_id`) are computed
     here once both `address_line_1` (canonical) and `address_line_2`
@@ -745,6 +759,7 @@ def persons_geocoded(
     match_fqn = persons_best_match.fqn
     canonical_fqn = canonical_addresses.fqn
     coords_fqn = refined_positions.fqn
+    osm_only_fqn = osm_only_matches.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
@@ -762,6 +777,21 @@ def persons_geocoded(
               p.zip4,
               p.other_properties
           FROM {persons_fqn} p
+        ),
+        -- Coordinates come from refined_positions for TIGER-matched
+        -- voters, osm_only_matches for the rule-3 rescues. Each voter
+        -- appears in exactly one (refined_positions excludes voters
+        -- without a TIGER blockface; osm_only_matches excludes those
+        -- with one).
+        positions AS (
+          SELECT external_id, latitude, longitude, position_source,
+                 NULL::VARCHAR AS osm_blockface_id
+          FROM {coords_fqn}
+          UNION ALL
+          SELECT external_id, latitude, longitude,
+                 'osm_only' AS position_source,
+                 blockface_id AS osm_blockface_id
+          FROM {osm_only_fqn}
         )
         SELECT
             np.external_id,
@@ -775,19 +805,19 @@ def persons_geocoded(
             np.zip5,
             np.zip4,
             np.other_properties,
-            ic.latitude,
-            ic.longitude,
-            ic.position_source,
-            m.blockface_id,
+            p.latitude,
+            p.longitude,
+            p.position_source,
+            COALESCE(m.blockface_id, p.osm_blockface_id)                    AS blockface_id,
             m.person_house_number,
             m.match_score,
             (c.address_line_1 || '|' || np.zip5)                            AS building_id,
             (c.address_line_1 || '|' || COALESCE(np.address_line_2, '') || '|' || np.zip5)
                                                                             AS door_id
         FROM normalized_persons np
-        INNER JOIN {canonical_fqn} c   ON c.external_id  = np.external_id
-        INNER JOIN {coords_fqn} ic     ON ic.external_id = np.external_id
-        INNER JOIN {match_fqn} m       ON m.external_id  = np.external_id
+        INNER JOIN {canonical_fqn} c ON c.external_id = np.external_id
+        INNER JOIN positions p       ON p.external_id = np.external_id
+        LEFT  JOIN {match_fqn} m     ON m.external_id = np.external_id
     """)
 
     version = _current_version(conn)
@@ -812,11 +842,13 @@ def geocoding_summary(
 ) -> TableRef:
     """Match-rate diagnostics: total comes from persons_validated (the
     universal "all persons" table), matched comes from persons_geocoded
-    (only contains successfully-matched persons since the canonical-record
-    refactor). Difference = unmatched.
+    (only contains successfully-matched persons). Difference = unmatched.
 
-    Always overwrites (non-incremental) since it is cheap and must reflect the
-    current state of both tables.
+    Broken down by `position_source` so the TIGER pipeline vs OSM-only
+    rescue contributions are visible at a glance.
+
+    Always overwrites (non-incremental) since it is cheap and must reflect
+    the current state of both tables.
     """
     table_suffix = "geocoding_summary"
     ensure_org_schema(conn, organization_slug)
@@ -829,16 +861,32 @@ def geocoding_summary(
         CREATE TABLE {fqn} AS
         WITH counts AS (
             SELECT
-                (SELECT count(*) FROM {persons_fqn})  AS total_persons,
-                (SELECT count(*) FROM {geocoded_fqn}) AS matched
+                (SELECT count(*) FROM {persons_fqn})                              AS total_persons,
+                (SELECT count(*) FROM {geocoded_fqn})                             AS matched,
+                (SELECT count(*) FROM {geocoded_fqn}
+                  WHERE position_source IN ('osm_matched','tiger_only','osm_complex'))
+                                                                                  AS matched_tiger,
+                (SELECT count(*) FROM {geocoded_fqn}
+                  WHERE position_source = 'osm_matched')                          AS matched_osm_road_projected,
+                (SELECT count(*) FROM {geocoded_fqn}
+                  WHERE position_source = 'osm_complex')                          AS matched_osm_complex,
+                (SELECT count(*) FROM {geocoded_fqn}
+                  WHERE position_source = 'tiger_only')                           AS matched_tiger_only,
+                (SELECT count(*) FROM {geocoded_fqn}
+                  WHERE position_source = 'osm_only')                             AS matched_osm_only
         )
         SELECT
             total_persons,
             matched,
             total_persons - matched                                         AS unmatched,
             round(100.0 * matched / NULLIF(total_persons, 0), 2)            AS match_pct,
-            -- All matches are blockface-derived in the current pipeline;
-            -- column is kept for backward-compatible test/RPC consumers.
+            matched_tiger,
+            matched_osm_road_projected,
+            matched_osm_complex,
+            matched_tiger_only,
+            matched_osm_only,
+            -- Backward-compat alias for older test/RPC consumers; counts every
+            -- voter that has any position (including osm_only).
             matched                                                         AS blockface_matches
         FROM counts
     """)

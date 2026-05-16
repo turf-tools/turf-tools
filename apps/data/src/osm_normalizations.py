@@ -2,7 +2,7 @@
 
 Each entry is `(regex_pattern, replacement)`, applied as a chained
 `regexp_replace` on the lowercased street string before
-`osm_refinement._osm_raw_tokens` tokenizes it. Use this when OSM tags
+`osm._osm_raw_tokens` tokenizes it. Use this when OSM tags
 a name in a form that won't tokenize the same way as TIGER's form
 (after `address_tokens` equivalency expansion).
 
