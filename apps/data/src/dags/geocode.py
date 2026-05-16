@@ -18,12 +18,10 @@ Node dependency chain:
                                                      │
                                                 persons_best_match
                                                      │
-                          ┌──────────────────────────┼──────────────────────────┐
-                          │                          │                          │
-                  interpolated_coords      canonical_addresses                  │
-                          │                          │                          │
-                          │                   quality_matches  ◄── address_tokens
-                          │                          │                          │
+                          ┌──────────────────────────┴──────────────────────────┐
+                          │                                                     │
+                  interpolated_coords                                  canonical_addresses
+                          │                                                     │
                           └────────► persons_geocoded ◄────── persons_validated ┘
                                                      │
                                              geocoding_summary
@@ -36,8 +34,11 @@ match metadata, restricted to the quality-gate set.
 """
 
 import duckdb
+from src.address_tokens import GENERIC_STREET_TOKENS
 from src.models import TableRef
 from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
+
+_GENERIC_SQL = "[" + ", ".join(f"'{t}'" for t in GENERIC_STREET_TOKENS) + "]"
 
 GEO_CATALOG = "geo_ducklake"
 TIGER_SCHEMA = "tiger"
@@ -177,10 +178,15 @@ def persons_candidates(
        pile onto whichever one tiebreaks first, leaving entire blocks
        empty on the map.
     4. House number falls within the blockface address range (either direction)
-    5. Street-name token intersection has ≥ 2 overlapping tokens
-       (filters spurious 1-token matches like "Avenue" or "Street" on
-       their own; equivalence groups upstream already expand
-       directionals + ordinals so most real matches comfortably clear 2).
+    5. Street-name token intersection has ≥ 2 overlapping tokens AND
+       (the voter has no distinctive tokens, OR ≥ 1 of those overlaps
+       is *distinctive*, i.e. not in `GENERIC_STREET_TOKENS`). The
+       distinctive check rejects wrong-street fallbacks where every
+       shared token is a directional or street-type word — "East 1
+       Street" and "East 11 Street" both have `[east, street]` in
+       common but aren't the same street. The all-generic exception
+       keeps voters at streets like "WEST DRIVE" where there's nothing
+       distinctive to disambiguate against.
 
     Multiple blockfaces may match a single person — ``persons_scored`` narrows
     these to the best one.
@@ -241,6 +247,18 @@ def persons_candidates(
             OR p.house_number BETWEEN b.to_house_num   AND b.from_house_num
          )
          AND len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
+         AND (
+              -- Voter's street name is all generic (e.g. "WEST DRIVE"):
+              -- no distinctive tokens to disambiguate against, accept.
+              len(list_filter(p.street_name_tokens,
+                              t -> NOT list_contains({_GENERIC_SQL}, t))) = 0
+              -- Otherwise require ≥ 1 distinctive overlap to reject
+              -- wrong-street fallbacks like "EAST 1 ST" → "E 12 ST".
+              OR len(list_filter(
+                     list_intersect(p.street_name_tokens, b.street_name_tokens),
+                     t -> NOT list_contains({_GENERIC_SQL}, t)
+                 )) >= 1
+            )
          -- Reject blockfaces whose directional contradicts the voter's.
          -- Voter tokens are raw (so we check both `n` and `north` forms);
          -- blockface tokens are equivalence-expanded so checking the
@@ -451,16 +469,21 @@ def persons_best_match(
 
 def interpolated_coords(
     persons_best_match: TableRef,
+    persons_decomposed: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Per-person (latitude, longitude) by rank-based interpolation along the
     matched TIGER blockface, with a perpendicular side-of-street offset.
 
-    Voters are sorted by house number within each blockface and placed at
-    evenly-spaced fractions, clamped to [0.05, 0.95] to avoid intersection-
-    node stacking. The point is then offset ~7m perpendicular to the segment
-    onto the correct side of the street.
+    Voters are sorted by (house number, half_code) within each blockface
+    and placed at evenly-spaced fractions, clamped to [0.05, 0.95] to
+    avoid intersection-node stacking. The point is then offset ~7m
+    perpendicular to the segment onto the correct side of the street.
+
+    The half_code in the rank key is what keeps "47" and "47 1/2" (and
+    "11 A" vs "11") at adjacent-but-distinct positions instead of
+    collapsing them onto the same lat/lon.
 
     We do NOT use TIGER's stated address range as the interpolation
     denominator — Census documents those ranges as *potential*, not actual,
@@ -481,27 +504,29 @@ def interpolated_coords(
     ensure_org_schema(conn, organization_slug)
     fqn = org_fqn(organization_slug, table_suffix)
     match_fqn = persons_best_match.fqn
+    decomposed_fqn = persons_decomposed.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         WITH ranked AS (
-          -- DENSE_RANK so two voters at the same house number share a
-          -- rank and end up at the same lat/lng instead of being
-          -- scattered along the segment by an arbitrary tiebreak.
+          -- DENSE_RANK orders by (house_number, half_code) so two voters
+          -- at the same address (modulo apartment) share a rank, while
+          -- "47" and "47 1/2" get adjacent-but-distinct ranks.
           -- blockface_id is already side-specific upstream (TIGER edges
           -- are unpivoted into separate left/right rows in `tiger`), so
           -- partitioning on it alone keeps left and right ranks separate.
           SELECT
-              external_id,
-              blockface_id,
-              geom AS bf_geom,
-              side AS bf_side,
+              m.external_id,
+              m.blockface_id,
+              m.geom AS bf_geom,
+              m.side AS bf_side,
               DENSE_RANK() OVER (
-                PARTITION BY blockface_id
-                ORDER BY person_house_number
+                PARTITION BY m.blockface_id
+                ORDER BY m.person_house_number, COALESCE(d.half_code, '')
               ) AS house_rank
-          FROM {match_fqn}
+          FROM {match_fqn} m
+          JOIN {decomposed_fqn} d ON d.external_id = m.external_id
         ),
         base AS (
           -- frac = house_rank / (1 + max(house_rank) over blockface):
@@ -608,8 +633,7 @@ def canonical_addresses(
 
     matched_tokens is the tokenization of full_name via the same scheme
     upstream tokenizers use (split on non-alphanumeric, plus bare digits)
-    so "12th St" yields ["12", "12th", "st"]. `quality_matches` consumes
-    this to compare against voter tokens.
+    so "12th St" yields ["12", "12th", "st"].
 
     Output schema: (external_id, address_line_1, matched_tokens). Narrow
     on purpose so an OSM-derived canonical-address node could return the
@@ -668,104 +692,6 @@ def canonical_addresses(
 
 
 # ---------------------------------------------------------------------------
-# Node 7 – quality gate: external_ids whose match passes the token check
-# ---------------------------------------------------------------------------
-
-
-def quality_matches(
-    canonical_addresses: TableRef,
-    persons_decomposed: TableRef,
-    address_tokens: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Set of external_ids whose match passes the token-overlap quality gate.
-
-    Drops matches where the voter clearly named a different street than
-    the one they were matched to — specifically, where the voter's
-    "specific" tokens (those not in the equivalence-group stop list of
-    directionals + street types + ordinal-suffix variants) have ZERO
-    overlap with the matched street's specific tokens. Catches cases like
-    voter "EAST 87 STREET" being matched to "E 90th St" because the
-    actual E 87th St didn't have a blockface covering the voter's house
-    number — the matcher's only options were wrong-street fallbacks.
-    Rejecting is more honest than sending canvassers to the wrong address.
-
-    Voters whose entire street name is generic (e.g. "PARK AVENUE",
-    "WEST DRIVE") have no specific tokens to compare; the rule doesn't
-    apply and these matches are accepted. ~0.2% of matches in the NYC
-    sample are filtered.
-
-    Output schema: (external_id). Narrow on purpose so an alternative
-    quality gate could return the same shape and replace this one.
-
-    Incremental: only evaluates external_ids in `canonical_addresses`
-    that haven't been evaluated yet. Failing rows aren't stored, so a
-    re-run will re-evaluate them — bounded by the failure rate (~3%).
-    """
-    table_suffix = "quality_matches"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    canonical_fqn = canonical_addresses.fqn
-    decomposed_fqn = persons_decomposed.fqn
-    tokens_fqn = address_tokens.fqn
-
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id VARCHAR
-        )
-    """)
-
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        WITH stop_words AS (
-          -- Generic tokens: directionals (N/S/E/W), street types
-          -- (St/Ave/...), ordinal variants (1st/first/...). Sourced from
-          -- the same equivalence groups the matcher uses, so this rule
-          -- stays in sync if the groups are extended later.
-          SELECT DISTINCT lower(t) AS token
-          FROM {tokens_fqn}, unnest(equivalent_tokens) AS s(t)
-        ),
-        joined AS (
-          SELECT
-            c.external_id,
-            d.street_name_tokens AS voter_tokens,
-            c.matched_tokens
-          FROM {canonical_fqn} c
-          INNER JOIN {decomposed_fqn} d ON d.external_id = c.external_id
-          WHERE c.external_id NOT IN (SELECT external_id FROM {fqn})
-        )
-        SELECT external_id
-        FROM joined
-        WHERE
-          -- Keep iff voter has no specific tokens (rule doesn't apply,
-          -- e.g. "PARK AVE" is all-generic) OR voter shares at least
-          -- one specific token with the matched street.
-          NOT EXISTS (
-            SELECT 1 FROM unnest(voter_tokens) AS v(t)
-            WHERE lower(v.t) NOT IN (SELECT token FROM stop_words)
-          )
-          OR EXISTS (
-            SELECT 1 FROM unnest(voter_tokens) AS v(t)
-            WHERE lower(v.t) NOT IN (SELECT token FROM stop_words)
-              AND lower(v.t) IN (
-                SELECT lower(m.t)
-                FROM unnest(matched_tokens) AS m(t)
-                WHERE lower(m.t) NOT IN (SELECT token FROM stop_words)
-              )
-          )
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Node 8 – assemble the canonical geocoded persons table
 # ---------------------------------------------------------------------------
 
@@ -774,22 +700,22 @@ def persons_geocoded(
     persons_validated: TableRef,
     persons_best_match: TableRef,
     canonical_addresses: TableRef,
-    interpolated_coords: TableRef,
-    quality_matches: TableRef,
+    refined_positions: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Canonical geocoded persons table — the single "person record" that
     downstream consumers query against. Contains only persons who matched
-    a TIGER blockface AND passed the quality gate.
+    a TIGER blockface.
 
     Pure assembly node: joins person fields from `persons_validated`,
     canonical address from `canonical_addresses`, lat/lon from
-    `interpolated_coords`, and match metadata from `persons_best_match`,
-    restricted to external_ids in `quality_matches`. All the heavy
-    lifting (interpolation, canonical-address derivation, token-overlap
-    gate) lives in those upstream peers; this node only stitches them
-    together and derives address-based stable keys.
+    `refined_positions`, and match metadata from `persons_best_match`.
+    Wrong-street fallback matches are filtered upstream in
+    `persons_candidates` (distinctive-token-overlap requirement), so by
+    the time we reach this node every voter present has a defensible
+    match. This node only stitches them together and derives
+    address-based stable keys.
 
     address_line_2 normalization (UPPER + TRIM) happens here because it
     comes straight from `persons_validated` with no TIGER/OSM-derived
@@ -797,11 +723,11 @@ def persons_geocoded(
     apartment-type rows. SBOE source data is otherwise already UPPER, so
     line_1/city/state/etc. pass through.
 
-    Persons that didn't match (no blockface candidate) or failed the
-    quality gate are excluded entirely. They live in `persons_validated`
-    only — queryable for audit/search but cannot be canvassed (no
-    coordinates) or aggregated to a building. Match-rate diagnostics in
-    `geocoding_summary` reconcile counts across both tables.
+    Persons that didn't match (no blockface candidate) are excluded
+    entirely. They live in `persons_validated` only — queryable for
+    audit/search but cannot be canvassed (no coordinates) or aggregated
+    to a building. Match-rate diagnostics in `geocoding_summary`
+    reconcile counts across both tables.
 
     Address-derived stable keys (`building_id`, `door_id`) are computed
     here once both `address_line_1` (canonical) and `address_line_2`
@@ -818,8 +744,7 @@ def persons_geocoded(
     persons_fqn = persons_validated.fqn
     match_fqn = persons_best_match.fqn
     canonical_fqn = canonical_addresses.fqn
-    coords_fqn = interpolated_coords.fqn
-    quality_fqn = quality_matches.fqn
+    coords_fqn = refined_positions.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
@@ -852,6 +777,7 @@ def persons_geocoded(
             np.other_properties,
             ic.latitude,
             ic.longitude,
+            ic.position_source,
             m.blockface_id,
             m.person_house_number,
             m.match_score,
@@ -862,7 +788,6 @@ def persons_geocoded(
         INNER JOIN {canonical_fqn} c   ON c.external_id  = np.external_id
         INNER JOIN {coords_fqn} ic     ON ic.external_id = np.external_id
         INNER JOIN {match_fqn} m       ON m.external_id  = np.external_id
-        WHERE np.external_id IN (SELECT external_id FROM {quality_fqn})
     """)
 
     version = _current_version(conn)

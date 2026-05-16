@@ -5,6 +5,24 @@ abbreviated and full-form street type tokens are treated as equivalent
 during voter address matching (e.g. "st" matches "street", "ave" matches "avenue").
 """
 
+# Tokens that don't identify a street — directionals, street-type suffixes,
+# and generic words. Two streets sharing only these tokens (e.g. "East 1
+# Street" and "East 11 Street" both share `east, street`) are NOT the same
+# street, so candidate filtering requires at least one *non*-generic token
+# in the overlap.
+GENERIC_STREET_TOKENS: list[str] = [
+    "e", "east", "w", "west", "n", "north", "s", "south",
+    "ne", "northeast", "nw", "northwest", "se", "southeast", "sw", "southwest",
+    "st", "street", "ave", "avenue", "av",
+    "rd", "road", "dr", "drive",
+    "pl", "place", "ct", "court", "ln", "lane",
+    "blvd", "boulevard", "sq", "square", "ter", "terrace",
+    "way", "mews", "saint",
+    "pkwy", "parkway", "expy", "expressway", "hwy", "highway",
+    "cir", "circle", "loop", "run", "walk", "trail", "path",
+    "alley", "aly", "crescent", "cres",
+]
+
 # Each inner list is a group of tokens that should be treated as equivalent
 # when matching voter address strings against TIGER blockface street names.
 EQUIVALENT_TOKEN_GROUPS: list[list[str]] = [
