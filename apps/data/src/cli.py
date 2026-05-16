@@ -5,7 +5,7 @@ from pathlib import Path
 
 from hamilton import driver
 
-from src.dags import aggregate, boundaries, geocode, quickwit, tiger, voter_file_loader
+from src.dags import aggregate, boundaries, geocode, osm_refinement, quickwit, tiger, voter_file_loader
 from src.duckdb import get_connection
 from src.models import TableRef
 from src.settings import get_settings
@@ -224,25 +224,38 @@ def seed_persons() -> None:
 
     print(f"Seeding persons from {fixture_path} (org={args.org_slug})…")
     print(f"  TIGER counties: {settings.tiger_county_fips} (cache: {settings.tiger_data_dir})")
+    if settings.voter_zip5_filter:
+        print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
-    dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate).build()
+    dr = driver.Builder().with_modules(
+        voter_file_loader, tiger, geocode, aggregate, osm_refinement,
+    ).build()
     result = dr.execute(
         final_vars=[
             "persons_geocoded",
             "geocoding_summary",
             "buildings_geocoded",
             "doors_geocoded",
+            # OSM extraction stays as terminal vars because they're not
+            # all reached transitively from persons_geocoded yet
+            # (landuse_residential will be consumed once rule 2 lands).
+            "osm_landuse_residential",
         ],
         inputs={
             "voter_file_url": str(fixture_path),
             "organization_slug": args.org_slug,
-            # Curated transformation: passes all rows in the fixture (no
-            # county filter) since the fixture is already NYC-only.
-            "transformation_query": nys_sboe_transformation_query(),
+            # Fixture is already NYC-only so we skip the county filter.
+            # `voter_zip5_filter` from settings scopes dev runs to a small
+            # geographic slice.
+            "transformation_query": nys_sboe_transformation_query(
+                zip5_filter=settings.voter_zip5_filter,
+            ),
             "tiger_year": settings.tiger_year,
             "tiger_state_fips": settings.tiger_state_fips,
             "tiger_county_fips": settings.tiger_county_fips,
             "tiger_data_dir": settings.tiger_data_dir,
+            "osm_url": settings.osm_url,
+            "osm_data_dir": settings.osm_data_dir,
             "conn": conn,
         },
     )

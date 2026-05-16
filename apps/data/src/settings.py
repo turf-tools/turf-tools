@@ -109,6 +109,25 @@ class Settings(BaseSettings):
         default="./tiger_cache",
         description="Local directory to cache downloaded TIGER shapefiles.",
     )
+    voter_zip5_filter: list[str] | None = Field(
+        default=None,
+        description=(
+            "When set, restrict seed-persons to voters whose residential ZIP5 is in this list. "
+            "Used to scope dev runs to a small set of test areas for fast iteration."
+        ),
+    )
+
+    # OSM refinement layer. Pin a specific Geofabrik daily snapshot
+    # (YYMMDD in the filename) rather than `-latest`, so the cached PBF
+    # filename encodes the version and re-runs are reproducible.
+    osm_url: str = Field(
+        default="https://download.geofabrik.de/north-america/us/new-york-260501.osm.pbf",
+        description="URL of the Geofabrik OSM PBF extract to ingest (date-pinned).",
+    )
+    osm_data_dir: str = Field(
+        default="./osm_cache",
+        description="Local directory to cache the downloaded OSM PBF.",
+    )
 
     quickwit_batch_size: int = Field(
         default=1_000_000,
