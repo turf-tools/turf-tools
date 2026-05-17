@@ -1,29 +1,25 @@
-"""Hamilton graph for assigning lat/lon coordinates to voters.
+"""Assign lat/lon coordinates to voters.
 
-The actual geocoding step: takes voters from `matching.py`
-(`persons_best_match`) and OSM building data from `osm.py`
-(`osm_building_lookup`), and produces a per-voter lat/lon.
+Takes voters from `matching.py` (`persons_best_match`) and OSM building
+data from `osm.py` (`osm_building_lookup`) and produces a per-voter
+position. Two mutually-exclusive paths; `assembly.py` unions them.
 
-Two paths in this module:
+- `refined_positions` — for TIGER-matched voters. Project the OSM
+  building centroid onto the matched blockface (or use the OSM
+  centroid directly when the projection clamps or the building sits
+  inside a residential complex).
 
-  1. `refined_positions` — for TIGER-matched voters: project the OSM
-     building centroid onto the matched TIGER blockface (or use the
-     OSM centroid directly when the building is inside a
-     `landuse=residential` polygon).
+- `osm_only_matches` — for TIGER-miss voters. Look the voter up
+  directly in OSM and snap them to the nearest blockface in their zip
+  for downstream grouping.
 
-  2. `osm_only_matches` — for voters TIGER couldn't match: derive a
-     canonical_key from the voter's raw address, look them up in OSM
-     directly, and snap to the nearest blockface in their zip for
-     downstream grouping.
+`position_source` values, in priority order:
 
-Each voter ends up in exactly one of these two outputs. `assembly.py`
-unions them when building `persons_geocoded`.
-
-`position_source` values:
-  - `osm_matched`  — TIGER + OSM, road-projected
-  - `osm_complex`  — TIGER + OSM, inside landuse=residential (no projection)
-  - `tiger_only`   — TIGER but no OSM, rank-based fallback
-  - `osm_only`     — TIGER-miss, rescued via direct OSM lookup
+  - `osm_matched`     — TIGER + OSM, projected onto the matched blockface
+  - `osm_complex`     — OSM centroid (voter inside a residential complex)
+  - `osm_off_segment` — OSM centroid (projection clamps off the matched blockface)
+  - `tiger_only`      — TIGER blockface, rank-based fallback (no OSM)
+  - `osm_only`        — TIGER-miss voter rescued via direct OSM lookup
 """
 
 import time
@@ -31,6 +27,8 @@ import time
 import duckdb
 from src.addressing import (
     canonical_key_sql,
+    housenumber_display_sql,
+    housenumber_norm_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
@@ -63,9 +61,10 @@ def refined_positions(
          over a node variant when both exist (way = building polygon
          centroid; node = doorway).
       2. If matched AND the building centroid is inside an OSM
-         `landuse=residential` polygon (Co-op City, Stuy Town, …),
-         use the OSM centroid directly — no road projection, no
-         perpendicular offset.
+         `landuse=residential` polygon (large residential complexes
+         where individual buildings sit well off any road), use the
+         OSM centroid directly — no road projection, no perpendicular
+         offset.
       3. Else if matched AND the OSM centroid projects strictly onto
          the matched TIGER blockface (`osm_frac ∈ (0, 1)`):
          `fraction = ST_LineLocatePoint(blockface, OSM)` projects the
@@ -111,22 +110,21 @@ def refined_positions(
 
     print("Refining voter positions…")
     t0 = time.time()
-    # Use `canonical_tokens` for the OSM canonical_key — those are the
-    # tokens of the canonical (frequency-winner) full_name only, not
-    # the alias-merged set. With this, voters using either alias
-    # ("1827 7TH AVE" / "1827 ACP BLVD") produce the same canonical_key
-    # and deterministically hit the same OSM record.
+    # Use `canonical_tokens` (the canonical name's tokens only, not the
+    # alias-merged set) for the OSM canonical_key. Voters at the same
+    # building hit the same OSM record regardless of which alias their
+    # raw address used.
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _bf_for_voters AS
         SELECT DISTINCT ON (blockface_id) blockface_id, canonical_tokens
         FROM {bf_}
         WHERE geom IS NOT NULL
-        -- Deterministic pick when blockface_id appears on multiple rows
-        -- (Queens prefix variants etc). All such rows share canonical_tokens
-        -- after the alias collapse, so the chosen row doesn't change semantics,
+        -- Deterministic pick when blockface_id appears on multiple rows.
+        -- All such rows share canonical_tokens after the alias collapse,
         -- but an explicit ORDER BY keeps the pick stable across runs.
         ORDER BY blockface_id, from_house_num, to_house_num
     """)
+    hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _voter_keyed AS
         SELECT
@@ -137,19 +135,8 @@ def refined_positions(
             COALESCE(d.house_num_prefix, '') AS house_num_prefix,
             d.zip5,
             {canonical_key_sql("b.canonical_tokens")} AS canonical_key,
-            COALESCE(d.house_num_prefix, '')
-              || CAST(d.house_number AS VARCHAR)
-              || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
-                      THEN ' ' || d.half_code ELSE '' END AS housenumber_str,
-            regexp_replace(
-                regexp_replace(
-                    COALESCE(d.house_num_prefix, '')
-                      || CAST(d.house_number AS VARCHAR)
-                      || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
-                              THEN ' ' || d.half_code ELSE '' END,
-                    '(^|-)0*([0-9])', '\\1\\2', 'g'),
-                '-', '', 'g'
-            ) AS housenumber_norm
+            {hn_display} AS housenumber_str,
+            {housenumber_norm_sql(hn_display)} AS housenumber_norm
         FROM {pbm} m
         JOIN {pd_} d        ON d.external_id  = m.external_id
         JOIN _bf_for_voters b ON b.blockface_id = m.blockface_id
@@ -218,20 +205,14 @@ def refined_positions(
         -- geometry doesn't span their OSM building would land them at
         -- a wrong endpoint of a too-short TIGER segment.
         ranked AS (
-            -- Partition by (tiger_line_id, bf_side) so voters across
-            -- multiple address ranges on the same physical TIGER line
-            -- (Queens 219-XX / 220-XX / 221-XX on the same block of
-            -- 121st Ave, where TIGER stores them as separate addrfeat
-            -- rows sharing one geometry) share a ranking partition.
-            -- Ordering by (prefix, house_number, half_code) gives each
-            -- prefix-block its own contiguous chunk of the line —
-            -- 219-* voters in the first slice, 220-* next, etc. —
-            -- instead of all voters at the same house_number collapsing
-            -- onto a single rank.
-            --
-            -- For the non-Queens case (single prefix per tlid:side),
-            -- this partition is identical to PARTITION BY blockface_id,
-            -- so no behavior change.
+            -- Partition by (tiger_line_id, bf_side) so all voters on
+            -- one physical road side share a ranking partition, even
+            -- when TIGER splits the side into multiple addrfeat rows
+            -- (hyphen-prefix address ranges on the same line).
+            -- Ordering by (prefix, house_number, half_code) puts each
+            -- prefix-block's voters in a contiguous chunk of the line.
+            -- For the common case of one prefix per (tlid, side), this
+            -- is equivalent to partitioning by blockface_id.
             SELECT *,
                 DENSE_RANK() OVER (
                     PARTITION BY tiger_line_id, bf_side
@@ -340,8 +321,10 @@ def refined_positions(
         FROM final_geom f
         LEFT JOIN _voter_with_osm v ON v.external_id = f.external_id
         UNION ALL
-        -- in_complex: OSM centroid for voters inside residential
-        -- complex polygons (Stuy Town, Co-op City, …).
+        -- in_complex: OSM centroid for voters inside a
+        -- landuse=residential polygon. Buildings in those polygons
+        -- typically don't have a meaningful relationship to a road
+        -- edge, so we don't project.
         SELECT external_id,
                osm_lat  AS latitude,
                osm_lon  AS longitude,
@@ -353,12 +336,11 @@ def refined_positions(
         UNION ALL
         -- osm_off_segment: OSM centroid for voters whose OSM building
         -- centroid projects strictly outside the matched TIGER
-        -- blockface's geometry (osm_frac clamps to 0.0 or 1.0). This
-        -- happens when TIGER's address range exceeds its physical line
-        -- (e.g., Myrtle Ave 65-XX where 24 houses claim a 43m segment).
-        -- Snapping to the clamp endpoint would put the voter at the
-        -- wrong end of the wrong segment; using the OSM centroid
-        -- places them at their actual building.
+        -- blockface's geometry (osm_frac clamps to 0.0 or 1.0). Happens
+        -- when TIGER's address range claims more houses than the
+        -- physical line can hold. Snapping to the clamp endpoint would
+        -- put the voter at the wrong end of the wrong segment; using
+        -- the OSM centroid places them at their actual building.
         SELECT vof.external_id,
                vof.osm_lat AS latitude,
                vof.osm_lon AS longitude,
@@ -407,9 +389,10 @@ def osm_only_matches(
              blockface_id, snap_distance_m).
 
     The snap is informational — `snap_distance_m` reports how far the
-    voter is from their associated blockface. Far snaps (e.g. deep
-    inside Stuy Town) just mean the building isn't directly on a
-    street; the blockface_id is still useful for grouping.
+    voter is from their associated blockface. Large distances just mean
+    the building isn't directly on a street (residential complexes
+    where buildings sit set back from any road); the blockface_id is
+    still useful for grouping.
 
     Non-incremental: drops + recreates every run.
     """
@@ -429,19 +412,12 @@ def osm_only_matches(
     t0 = time.time()
 
     # Step 1: keyed TIGER-miss voters
+    hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_raw AS
         SELECT d.external_id, d.zip5,
             {street_rewrite_sql("d.street_name_raw")} AS street_norm,
-            regexp_replace(
-                regexp_replace(
-                    COALESCE(d.house_num_prefix, '')
-                      || CAST(d.house_number AS VARCHAR)
-                      || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
-                              THEN ' ' || d.half_code ELSE '' END,
-                    '(^|-)0*([0-9])', '\\1\\2', 'g'),
-                '-', '', 'g'
-            ) AS housenumber_norm
+            {housenumber_norm_sql(hn_display)} AS housenumber_norm
         FROM {pd_} d
         WHERE d.external_id NOT IN (SELECT external_id FROM {pbm})
           AND d.street_name_raw IS NOT NULL

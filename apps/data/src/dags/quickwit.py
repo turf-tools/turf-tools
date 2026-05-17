@@ -1,17 +1,10 @@
-"""Hamilton graph for streaming persons tables into an existing Quickwit index.
+"""Stream a persons table into an existing Quickwit index.
 
-This graph assumes the target Quickwit index already exists, typically having
-been created earlier by a running Quickwit server. The graph then uses the
-Quickwit CLI's ``tool local-ingest`` command to append NDJSON batches over
-stdin, which keeps disk usage bounded and lets the dedicated build machine do
-all indexing work locally.
-
-Node dependency chain:
-    persons_table_ref ─► quickwit_source_persons ─► quickwit_document_count
-             │                                        │
-             └────────────────────────────────────────┴─► quickwit_local_ingest_result
-                                                            │
-                                                            └─► quickwit_build_manifest_stub
+Assumes the target Quickwit index already exists (typically created
+by a running Quickwit server upstream). Uses the Quickwit CLI's
+``tool local-ingest`` command to append NDJSON batches over stdin —
+disk usage stays bounded and indexing runs locally on the build
+machine.
 """
 
 from __future__ import annotations

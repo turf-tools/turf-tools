@@ -1,21 +1,28 @@
-"""Street-name handling primitives shared across the geocoding pipeline.
+"""Address-handling primitives shared across the geocoding pipeline.
 
-A single home for everything used to tokenize, normalize, and compare
-street names — so the rules stay in sync across the voter side
-(`persons_decomposed`, `osm_only_matches`), the TIGER side
-(`blockface_final`), and the OSM side (`osm_building_lookup`).
+A single home for the SQL fragments and lookup tables used to tokenize,
+normalize, and compare street names and house numbers — so the rules
+stay in sync across the voter side (`persons_decomposed`,
+`osm_only_matches`), the TIGER side (`blockface_final`), and the OSM
+side (`osm_building_lookup`).
+
+Each public helper is a callable that returns a SQL fragment. Callers
+embed the fragment in their own queries — no Python-side data movement.
 
 Contents:
 
-- `tokenize_street_sql(col)`           — SQL fragment for tokenizing a
-                                         lowercase alphanumeric token array
-- `GENERIC_STREET_TOKENS`              — non-distinctive tokens to strip
-                                         when building canonical_keys
-- `EQUIVALENT_TOKEN_GROUPS`            — equivalency groups for the
+- `street_rewrite_sql(col)`           — apply `STREET_REWRITES` to a column
+- `tokenize_street_sql(col)`          — tokenize a street name string
+- `canonical_key_sql(tokens_col)`     — sort/join tokens for OSM lookup
+- `housenumber_norm_sql(col)`         — normalize a house-number string for join keys
+- `housenumber_display_sql(prefix, num, half)`
+                                      — assemble a human-readable house-number string
+- `GENERIC_STREET_TOKENS`             — tokens treated as non-distinctive by
+                                         the candidate-matching predicate
+- `EQUIVALENT_TOKEN_GROUPS`           — synonym groups loaded into the
                                          `address_tokens` table
-- `STREET_REWRITES`                    — phrase-level regex rewrites applied
-                                         before tokenization (e.g.
-                                         "fdr" → "f d r")
+- `STREET_REWRITES`                   — phrase rewrites applied uniformly
+                                         to every source before tokenization
 """
 
 
@@ -42,24 +49,63 @@ def street_rewrite_sql(col: str) -> str:
 def canonical_key_sql(tokens_col: str) -> str:
     """SQL fragment producing a `canonical_key` string from a token array.
 
-    Sorts the (already-expanded) tokens and joins them with `|`. No
-    stripping: every token participates so parallel-named streets
-    ("60 Place", "60 Lane", "60 Street") get distinct keys. After
-    `STREET_REWRITES` + equivalency expansion the canonical token set
-    is already the same on every source side, so the strict-equality
-    `(zip, canonical_key, housenumber_norm)` join still works.
+    Sorts the (already-expanded) tokens and joins them with `|`. Every
+    token participates — no stripping. After `STREET_REWRITES` +
+    equivalency expansion, every source side produces the same token
+    set for the same street, so the strict-equality
+    `(zip, canonical_key, housenumber_norm)` join works.
 
-    Stripping generics on top of expansion was the source of a
-    Queens-style cross-street collision: any address whose distinctive
-    tokens reduced to the same set (e.g. just `["60"]` or
-    `["60", "60th"]`) would match an OSM record on a parallel street
-    in the same zip with the same housenumber.
+    Including every token (rather than dropping "generic" suffixes
+    like `place`, `lane`, `avenue`) keeps parallel-named streets
+    distinct: "60 Place" and "60 Lane" produce different keys, so a
+    voter on one doesn't accidentally match an OSM building on the
+    other in the same zip with the same housenumber.
 
-    Caller passes whatever token column it already has — typically the
-    equivalency-expanded `street_name_tokens` from `blockface_final`,
-    or the equivalent expansion built inline for a voter / OSM record.
+    Caller passes whatever token column it already has — typically
+    the equivalency-expanded `street_name_tokens` from
+    `blockface_final`, or the equivalent expansion built inline for a
+    voter / OSM record.
     """
     return f"array_to_string(list_sort({tokens_col}), '|')"
+
+
+def housenumber_norm_sql(col: str) -> str:
+    """SQL fragment producing the normalized house-number form for join keys.
+
+    Two passes:
+      1. Strip leading zeros immediately after `^` or `-` so zero-padded
+         forms (`132-01`, `9-02`) collapse to (`132-1`, `9-2`).
+      2. Strip all hyphens so hyphenated and unhyphenated notations
+         (`132-1` / `1321`, `6-46` / `646`) collapse to the same string.
+
+    Used on both sides of every `(zip, canonical_key, housenumber_norm)`
+    join so voters and OSM records agree regardless of which surface
+    form was stored.
+    """
+    return (
+        f"regexp_replace("
+        f"  regexp_replace({col}, '(^|-)0*([0-9])', '\\1\\2', 'g'),"
+        f"  '-', '', 'g'"
+        f")"
+    )
+
+
+def housenumber_display_sql(prefix_col: str, number_col: str, half_col: str) -> str:
+    """SQL fragment producing the human-readable house-number string.
+
+    Concatenates `prefix || number || ' ' || half_code` (omitting the
+    space + half_code when there's no half-code). This is the string
+    used in `address_line_1` for display and `building_id` derivation,
+    not for joins.
+
+    `prefix_col` and `half_col` are coalesced to `''` so NULLs don't
+    poison the concat; `number_col` is cast to VARCHAR.
+    """
+    return (
+        f"COALESCE({prefix_col}, '') || CAST({number_col} AS VARCHAR)"
+        f" || CASE WHEN {half_col} IS NOT NULL AND {half_col} != ''"
+        f"         THEN ' ' || {half_col} ELSE '' END"
+    )
 
 
 def tokenize_street_sql(col: str) -> str:

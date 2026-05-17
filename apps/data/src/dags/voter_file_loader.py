@@ -1,9 +1,11 @@
-"""Hamilton graph for loading and transforming voter files into DuckLake.
+"""Load and transform a voter file into the Person schema.
 
-The input is a literal voter file (parquet dump from a state BOE). The output
-is `persons_transformed` (in the org's schema) — Person-shaped rows that
-downstream DAGs consume. Naming reflects that split: inputs stay "voter
-file", outputs are "person".
+Reads a state-BOE parquet dump (`voters_raw`), applies a state-specific
+transformation query (`persons_transformed`), and validates the result
+against the `Person` Pydantic model (`persons_validated`).
+
+Naming reflects the split: inputs stay "voter file" (literal source),
+outputs are "person" (canonical schema regardless of source).
 """
 
 import duckdb

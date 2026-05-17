@@ -123,12 +123,26 @@ into two rows (one per side).
 `blockface_final` carries:
 
 - house-number range (from, to) + parity (odd/even/mixed)
-- side (left/right)
-- equivalency-expanded `street_name_tokens` (so `"E 14th St"` tokenizes to
-  `[e, east, 14, 14th, fourteenth, st, street, saint]`)
+- side (left/right) + prefix
+- `full_name` — canonical street name (alias-collapsed; see below)
+- `street_name_tokens` — equivalency-expanded union of all alias rows'
+  tokens (drives the matching predicate so a voter using any spelling
+  matches)
+- `canonical_tokens` — equivalency-expanded tokens of _only_ the canonical
+  full_name (drives the OSM `canonical_key` lookup, so voters at the
+  same building hit the same OSM record regardless of which alias their
+  raw address used)
 - a `GEOMETRY` representing the edge line
 
-The expansion uses `EQUIVALENT_TOKEN_GROUPS` from `src/addressing.py`.
+**Alias collapse.** When TIGER's addrfeat stores the same physical
+blockface under multiple names (a street and its commemorative co-name,
+abbreviation variants of the same name, …), those rows share
+`(tlid, side, prefix, from, to)`. `blockface_final` collapses them into
+one row, picking the canonical `full_name` by global frequency across
+the dataset (alphabetical tiebreak).
+
+Equivalency expansion uses `EQUIVALENT_TOKEN_GROUPS` from
+`src/addressing.py`. Non-incremental: the collapse needs all rows.
 
 ### osm
 
@@ -150,9 +164,17 @@ assignment.
 `(zip_code, canonical_key, housenumber_norm)`, carrying:
 
 - `osm_lat`, `osm_lon` — area-weighted centroid
-- `street` — the raw OSM tag (used as canonical for building_id)
+- `street` — the OSM `addr:street` tag (used as the canonical street for
+  `building_id` when this OSM record matches a voter)
+- `housenumber` — the OSM `addr:housenumber` tag (used by
+  `canonical_addresses` to normalize voter-side surface-form variants)
 - `in_residential_complex` — true if the building's centroid is inside
   a `landuse=residential` polygon
+
+When multiple OSM records share the same `(zip_code, canonical_key,
+housenumber_norm)` (rare; same address tagged on multiple polygons),
+the chosen record is the way (over a node) with the smallest `osm_id`
+— deterministic across runs.
 
 ### matching
 
@@ -174,11 +196,18 @@ per voter; coordinate assignment is downstream in `geocode`.
   applied before tokenization (see "Street-name handling").
 - `persons_candidates` — for each voter, find every TIGER blockface
   where the zip/parity/prefix/range matches and the token overlap
-  clears the "≥ 2 total + ≥ 1 distinctive" bar.
+  clears the "≥ 2 total + ≥ 1 distinctive" bar. Implemented as an
+  inverted-index join (unnest each side to one row per distinctive
+  token, equi-join on token, then DISTINCT to dedupe by pair) — the
+  list-overlap predicate becomes a hash-join key. The hydration step
+  re-applies the range/prefix predicate so multi-row-per-blockface_id
+  cases (multiple address ranges on one TIGER edge) hydrate
+  deterministically.
 - `persons_scored` — score each candidate by token overlap + numeric-
   token bonus.
 - `persons_best_match` — pick the highest-scoring blockface per voter
-  (`ROW_NUMBER` + ranking).
+  (`ROW_NUMBER` ordered by `match_score DESC, blockface_id, full_name`
+  for deterministic tiebreaks).
 
 ### geocode
 
@@ -196,8 +225,12 @@ The actual coordinate-assignment step. Two paths, mutually exclusive
 
 1. **`refined_positions`** — for TIGER-matched voters: project the OSM
    building centroid onto the matched blockface (or use the OSM centroid
-   directly when the building is inside a `landuse=residential` polygon).
-   A 1D shove keeps distinct buildings on the same blockface ≥ 4 m apart.
+   directly when the projection clamps or the building is inside a
+   residential complex). The rank-based fallback partitions by
+   `(tiger_line_id, side)` and orders by `(prefix, house_number,
+half_code)` so voters across multiple address ranges on the same
+   physical TIGER line get distinct ranks. A 1D shove keeps distinct
+   buildings on the same blockface ≥ 4 m apart.
 2. **`osm_only_matches`** — for TIGER-miss voters: derive a
    canonical_key from the raw voter address, look them up directly in
    OSM, and snap to the nearest blockface in their zip for downstream
@@ -205,11 +238,16 @@ The actual coordinate-assignment step. Two paths, mutually exclusive
 
 `position_source` values:
 
-- `osm_matched` — TIGER blockface, with the OSM-projected fraction along it
-  - 7 m perpendicular offset
+- `osm_matched` — TIGER blockface, with the OSM-projected fraction along
+  it + 7 m perpendicular offset
 - `osm_complex` — OSM centroid used directly (no road projection), for
-  voters inside a `landuse=residential` polygon (Co-op City, Stuy Town, …)
-- `tiger_only` — DENSE_RANK rank-ramp fallback when no OSM building matched
+  voters inside a `landuse=residential` polygon
+- `osm_off_segment` — OSM centroid used directly, for voters whose OSM
+  building geometrically projects outside the matched TIGER blockface
+  (TIGER's address range exceeds its physical line length). Avoids
+  snapping the voter to the wrong endpoint of a too-short segment.
+- `tiger_only` — DENSE_RANK rank-ramp fallback when no OSM building
+  matched
 - `osm_only` — TIGER-miss voter rescued via direct OSM lookup
 
 ### assembly
@@ -225,8 +263,12 @@ persons_validated + canonical_addresses + refined_positions + osm_only_matches
 ```
 
 - `canonical_addresses` — produce the canonical `address_line_1` and
-  `matched_tokens` for each voter. Uses OSM street when available, falls
-  back to TIGER `full_name` (see "Street-name handling").
+  `matched_tokens` for each voter. Street: OSM `osm_street` when an OSM
+  match exists, else TIGER `full_name` (see "Street-name handling").
+  Housenumber: OSM `osm_housenumber` when the voter's parsed
+  housenumber and the OSM record's housenumber normalize to the same
+  string (so surface-form variants like `646` ↔ `6-46` unify), else
+  the voter's parsed form.
 - `persons_geocoded` — final canonical Person record: identity fields
   from the voter file, canonical address, lat/lon from
   `refined_positions` OR `osm_only_matches`, `building_id` + `door_id`
@@ -264,97 +306,95 @@ Streams the Person records into a pre-existing Quickwit index for full-text
 search. Uses the Quickwit CLI's `tool local-ingest` command over NDJSON
 stdin.
 
-## Street-name handling
+## Address handling
 
-The hardest part of the pipeline. Three sources, three transforms, three
-uses. Everything lives in `src/addressing.py`.
+The pipeline pulls address strings from three sources, each with its own
+spelling conventions:
 
-### Three sources, three spellings
+| Source     | Example for FDR Drive                                          |
+| ---------- | -------------------------------------------------------------- |
+| Voter file | `"FRANKLIN D ROOSEVELT DRIVE"`, `"FDR DRIVE"`, `"F D R DRIVE"` |
+| TIGER      | `"F D R Dr"`                                                   |
+| OSM        | `"FDR Drive"`                                                  |
 
-| Source               | Example for FDR Drive                                          | Notes                                          |
-| -------------------- | -------------------------------------------------------------- | ---------------------------------------------- |
-| Voter file (NYS BOE) | `"FRANKLIN D ROOSEVELT DRIVE"`, `"FDR DRIVE"`, `"F D R DRIVE"` | All-caps; abbreviations vary; occasional typos |
-| TIGER (US Census)    | `"F D R Dr"`                                                   | USPS-abbreviated, authoritative for spelling   |
-| OSM (community)      | `"FDR Drive"`                                                  | Inconsistent across contributors               |
+The strategy is straightforward: convert each source to a sorted token
+set so the same physical street produces the same tokens regardless of
+spelling, then use those tokens for matching and joining. For
+human-readable output, pick the most authoritative source as the
+display form.
 
-### Three transforms (in order)
+Everything lives in `src/addressing.py`.
 
-1. **`STREET_REWRITES`** — phrase-level regex find/replace before
-   tokenization. Targets known synonyms that nothing else would collapse:
-   `fdr` → `f d r`, `franklin d/delano roosevelt` → `f d r`. Applied
-   uniformly on every source (voter, TIGER, OSM).
+### Building blocks
 
-2. **`tokenize_street_sql`** — lowercase + trim, split on non-alphanumerics,
-   dedupe, sort. Same recipe on every source.
+SQL helpers — each is a function returning a SQL fragment that callers
+embed in their own queries:
 
-3. **`EQUIVALENT_TOKEN_GROUPS`** — a table of synonyms loaded into
-   `geo_ducklake.tiger.address_tokens`. Tokens that mean the same thing
-   join groups: `[st, street, saint]`, `[ave, avenue, av]`, `[1st, first]`,
-   etc. On both TIGER and OSM sides, the raw tokens get _expanded_ with
-   every equivalent token in any joined group. So `"F D R Dr"` ends up
-   with `[f, d, r, dr, drive]` — both forms present.
+| Helper                                          | Purpose                                                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `street_rewrite_sql(col)`                       | Apply phrase-level `STREET_REWRITES` rewrites before tokenizing (e.g. `fdr` → `f d r`).                 |
+| `tokenize_street_sql(col)`                      | Produce a sorted, deduped, lowercase-alphanumeric token array.                                          |
+| `canonical_key_sql(tokens)`                     | Sort + `\|`-join an (expanded) token array into a join-key string.                                      |
+| `housenumber_norm_sql(col)`                     | Normalize a house number: strip leading zeros after `^` or `-`, then strip hyphens. Used as a join key. |
+| `housenumber_display_sql(prefix, number, half)` | Assemble the human-readable house-number string.                                                        |
 
-### Three uses of the tokens
+Lookup tables backing them:
 
-Once everything is tokenized + expanded, the same token set is used for
-three different purposes:
+- **`STREET_REWRITES`** — phrase-level regex rewrites applied
+  uniformly to every source before tokenization (collapsing
+  abbreviations that won't be caught by tokenization alone).
+- **`EQUIVALENT_TOKEN_GROUPS`** — token synonyms (`[st, street, saint]`,
+  `[ave, avenue, av]`, `[1st, first]`, …) materialized into the
+  `address_tokens` table. Used to _expand_ a tokenized set with
+  equivalent tokens so abbreviations and full forms both appear.
+- **`GENERIC_STREET_TOKENS`** — directionals and street-type suffixes
+  (`east`, `street`, `avenue`, …) that don't identify a street on
+  their own. Used only by the matching predicate (see below).
 
-**A. Token-overlap matching** (in `persons_candidates`)
+### The token pipeline
 
-Voter tokens **intersect** TIGER blockface tokens. Passes if there are ≥ 2
-overlapping tokens AND at least one is _distinctive_ (not in
-`GENERIC_STREET_TOKENS`). Generic tokens (`east`, `street`, `avenue`, …)
-don't identify a street on their own; intersect-only on those is
-suspicious.
+The same three-step pipeline runs on every source — voter raw strings
+(`persons_decomposed`), TIGER `full_name` (`blockface_final`), and OSM
+`addr:street` (`osm_building_lookup`):
 
-**B. `canonical_key`** (for OSM lookup)
+```
+raw → street_rewrite_sql → tokenize_street_sql → expand via address_tokens
+```
 
-For strict-equality matching against `osm_building_lookup`. Recipe: take
-expanded tokens, drop generics, sort, join with `|`. So both `"F D R Dr"`
-(TIGER) and `"FDR Drive"` (OSM) produce `canonical_key = "d|f|r"`. The
-lookup is keyed on `(zip_code, canonical_key, housenumber_norm)`.
+After this, the same physical street produces the same token set
+everywhere.
 
-**C. `address_line_1`** (the human-readable display string)
+### Where the tokens get used
 
-This is what users see and what `building_id` is derived from. It is NOT a
-tokenized form — it's a real address string like `"691 FDR DRIVE"`. Two
-possible sources:
+**1. Token-overlap matching** (`persons_candidates`). Voter tokens
+intersect TIGER blockface tokens; passes if ≥ 2 tokens overlap and at
+least one is non-generic. The non-generic requirement keeps voters
+from matching wrong streets that happen to share only directionals or
+street-type words.
 
-- **OSM `street`** (preferred when the voter matched an OSM building)
-- **TIGER `full_name`** (when no OSM match)
+**2. OSM lookup `canonical_key`** (`refined_positions`,
+`osm_only_matches`). `canonical_key_sql(tokens)` produces the join-key
+string. Both sides — voter and OSM record — produce the same
+canonical_key for the same street, so the OSM lookup is a
+strict-equality join on `(zip5, canonical_key, housenumber_norm)`.
+Every token participates: not stripping "generic" suffixes keeps
+parallel streets like `60 Place` and `60 Lane` distinct.
 
-We prefer OSM because OSM tags one street per building. Every voter at a
-given building gets the same `osm_street`, regardless of how they wrote
-the address. TIGER, by contrast, has multiple blockfaces for the same
-physical street with different aliases (`"7th Ave"` vs `"Adam Clayton
-Powell Jr Blvd"`), so voters at one building can get different `full_name`s
-and end up with different `building_id`s. The OSM-canonical choice
-prevents that whole class of dupe.
+**3. Display `address_line_1`** (`canonical_addresses`). The human-
+readable canonical address that drives `building_id`. The street part
+prefers OSM's `addr:street` when an OSM match exists, falling back to
+TIGER's canonical `full_name` otherwise. The housenumber part prefers
+OSM's `addr:housenumber` when it normalizes to the same string as the
+voter's parsed form (so surface-form variants like `646` ↔ `6-46`
+unify); otherwise keeps the voter's form (so OSM subunit suffixes
+like `100A` don't overwrite voter-correct forms like `100`).
 
-### Two different canonical-isms
-
-The word "canonical" gets overloaded. There are two related-but-distinct
-ideas:
-
-- **TIGER is canonical for spelling standardization.** USPS-abbreviated
-  form, used as the equivalency-group source of truth. When we have no
-  better signal, TIGER's `full_name` is the canonical display string.
-- **OSM is canonical for per-building identity.** Once we've matched a
-  voter to a specific OSM building, that building's `osm_street` is the
-  authoritative spelling **for that building**. Used so all voters at the
-  same building share `address_line_1` and `building_id`.
-
-These align most of the time. They diverge for streets that TIGER tags
-under multiple aliases — and that's where the per-building rule wins.
-
-### `housenumber_norm`
-
-Queens hyphens (`132-01`, `132-1`) and OSM leading-zero padding can make
-the same housenumber look different across sources. We normalize: strip
-leading zeros after `^` or `-`, then strip hyphens entirely. So `132-01`,
-`132-1`, and `13201` all become `1321`. Used in
-`osm_building_lookup.housenumber_norm` for join keys; the original
-`housenumber` is kept for display.
+OSM wins when available because OSM tags one canonical street and one
+canonical housenumber per physical building — every voter at that
+building converges on the same `address_line_1` and `building_id`.
+TIGER's canonical `full_name` is itself the most-common alias for the
+matched blockface (picked in `blockface_final`), so the fallback is
+also stable across runs.
 
 ## building_id and door_id
 
@@ -379,22 +419,41 @@ the new data.
 
 The exceptions (drop + recreate every run) are:
 
-- `refined_positions` — window functions partition on `blockface_id`; new
-  voters would change everyone else's rank, so we have to recompute the
-  whole table.
-- `osm_only_matches` — same reason (the snap is keyed on the full set).
+- `blockface_final` — alias collapse + canonical-name pick need to see
+  all rows; non-incremental.
 - `osm_building_lookup` — depends on `STREET_REWRITES` and equivalency
   groups, both of which can change between runs.
-- `canonical_addresses` — `INSERT INTO … WHERE NOT IN` style, but the row
-  set depends on whichever source matched per voter, so a re-run with new
-  source data has to re-evaluate.
+- `refined_positions` — window functions partition on
+  `(tiger_line_id, side)`; new voters would change everyone else's
+  rank.
+- `osm_only_matches` — same reason (the snap is keyed on the full set).
 - `persons_geocoded` — pure assembly, cheap to redo.
+- `buildings_geocoded` / `doors_geocoded` — aggregations over
+  `persons_geocoded`.
 - `geocoding_summary` — cheap diagnostic aggregate, always overwrites.
 
-When you change anything upstream of these (matching rules, token rules,
-OSM rewrites), you should `pnpm data:clear && pnpm data:mock` to fully
-rebuild. Skipping the clear means you'll see the old behavior for already-
-processed voters.
+Other tables (`persons_decomposed`, `persons_candidates`,
+`persons_scored`, `persons_best_match`, `canonical_addresses`) are
+incremental. When you change SQL upstream of these, `pnpm data:clear`
+(or `data:clear:all` if geo references changed too) is required to
+rebuild — skipping the clear means existing rows keep their old values.
+
+## Determinism
+
+Same input + same code should produce byte-identical output across
+runs. To preserve that:
+
+- `arg_max(x, key)` and similar tie-prone aggregates need a tiebreaker
+  in `key` (e.g. include `osm_id` after the primary criterion). The
+  pure form picks arbitrarily on ties.
+- `SELECT DISTINCT ON (k) …` needs an explicit `ORDER BY` that
+  uniquely determines the row to keep.
+- `ROW_NUMBER() OVER (… ORDER BY a, b, …)` is only deterministic when
+  the ORDER BY clause uniquely orders the partition. Include enough
+  columns to break every realistic tie.
+
+When adding any of these constructs, lean on the natural keys
+(`osm_id`, `blockface_id`, `full_name`, …) for the tiebreaker.
 
 ## Graph visualization
 
