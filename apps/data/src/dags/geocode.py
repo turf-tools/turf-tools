@@ -30,14 +30,12 @@ import time
 
 import duckdb
 from src.addressing import (
-    GENERIC_STREET_TOKENS,
+    canonical_key_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
 from src.models import TableRef
 from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
-
-_GENERIC_SQL = "[" + ", ".join(f"'{t}'" for t in GENERIC_STREET_TOKENS) + "]"
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -120,11 +118,7 @@ def refined_positions(
             m.person_house_number,
             COALESCE(d.half_code, '') AS half_code,
             d.zip5,
-            array_to_string(
-                list_sort(list_filter(b.street_name_tokens,
-                    t -> NOT list_contains({_GENERIC_SQL}, t))),
-                '|'
-            ) AS canonical_key,
+            {canonical_key_sql("b.street_name_tokens")} AS canonical_key,
             COALESCE(d.house_num_prefix, '')
               || CAST(d.house_number AS VARCHAR)
               || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
@@ -405,11 +399,7 @@ def osm_only_matches(
             FROM tokens b LEFT JOIN extras e USING (external_id)
         )
         SELECT external_id, zip5, housenumber_norm,
-            array_to_string(
-                list_sort(list_filter(expanded,
-                    t -> NOT list_contains({_GENERIC_SQL}, t))),
-                '|'
-            ) AS canonical_key
+            {canonical_key_sql("expanded")} AS canonical_key
         FROM combined
     """)
     n_miss = conn.execute("SELECT count(*) FROM _miss_keyed").fetchone()[0]

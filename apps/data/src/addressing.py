@@ -39,6 +39,29 @@ def street_rewrite_sql(col: str) -> str:
     return expr
 
 
+def canonical_key_sql(tokens_col: str) -> str:
+    """SQL fragment producing a `canonical_key` string from a token array.
+
+    Sorts the (already-expanded) tokens and joins them with `|`. No
+    stripping: every token participates so parallel-named streets
+    ("60 Place", "60 Lane", "60 Street") get distinct keys. After
+    `STREET_REWRITES` + equivalency expansion the canonical token set
+    is already the same on every source side, so the strict-equality
+    `(zip, canonical_key, housenumber_norm)` join still works.
+
+    Stripping generics on top of expansion was the source of a
+    Queens-style cross-street collision: any address whose distinctive
+    tokens reduced to the same set (e.g. just `["60"]` or
+    `["60", "60th"]`) would match an OSM record on a parallel street
+    in the same zip with the same housenumber.
+
+    Caller passes whatever token column it already has — typically the
+    equivalency-expanded `street_name_tokens` from `blockface_final`,
+    or the equivalent expansion built inline for a voter / OSM record.
+    """
+    return f"array_to_string(list_sort({tokens_col}), '|')"
+
+
 def tokenize_street_sql(col: str) -> str:
     """Return a DuckDB SQL expression that tokenizes a street-name column.
 

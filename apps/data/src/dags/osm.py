@@ -35,7 +35,7 @@ from pathlib import Path
 
 import duckdb
 from src.addressing import (
-    GENERIC_STREET_TOKENS,
+    canonical_key_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
@@ -44,9 +44,6 @@ from src.models import TableRef
 GEO_CATALOG = "geo_ducklake"
 OSM_SCHEMA = "osm"
 
-# Inline SQL list of generic tokens for use in canonical_key derivation
-# (strip generic tokens, sort the rest, join with '|').
-_GENERIC_SQL = "[" + ", ".join(f"'{t}'" for t in GENERIC_STREET_TOKENS) + "]"
 
 
 def _fqn(table: str) -> str:
@@ -494,11 +491,7 @@ def osm_building_lookup(
             FROM _bl_raw_tokens b LEFT JOIN extras e USING (osm_id)
         )
         SELECT osm_id, kind, housenumber, zip_code, lat, lon, street,
-               array_to_string(
-                   list_sort(list_filter(expanded,
-                       t -> NOT list_contains({_GENERIC_SQL}, t))),
-                   '|'
-               ) AS canonical_key
+               {canonical_key_sql("expanded")} AS canonical_key
         FROM combined
         WHERE expanded IS NOT NULL
     """)
