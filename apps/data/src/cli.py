@@ -5,7 +5,17 @@ from pathlib import Path
 
 from hamilton import driver
 
-from src.dags import aggregate, boundaries, geocode, osm, quickwit, tiger, voter_file_loader
+from src.dags import (
+    aggregate,
+    assembly,
+    boundaries,
+    geocode,
+    matching,
+    osm,
+    quickwit,
+    tiger,
+    voter_file_loader,
+)
 from src.duckdb import get_connection
 from src.models import TableRef
 from src.settings import get_settings
@@ -25,12 +35,17 @@ def update_visualizations() -> None:
     """Render all Hamilton graph visualizations into docs/."""
     _render(driver.Builder().with_modules(voter_file_loader).build(), "voter_file_loader_graph.png")
     _render(driver.Builder().with_modules(tiger).build(), "tiger_graph.png")
+    _render(driver.Builder().with_modules(matching).build(), "matching_graph.png")
+    _render(driver.Builder().with_modules(osm).build(), "osm_graph.png")
     _render(driver.Builder().with_modules(geocode).build(), "geocode_graph.png")
+    _render(driver.Builder().with_modules(assembly).build(), "assembly_graph.png")
     _render(driver.Builder().with_modules(aggregate).build(), "aggregate_graph.png")
     _render(driver.Builder().with_modules(quickwit).build(), "quickwit_graph.png")
     _render(driver.Builder().with_modules(boundaries).build(), "boundaries_graph.png")
     _render(
-        driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate, quickwit).build(),
+        driver.Builder().with_modules(
+            voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate, quickwit
+        ).build(),
         "pipeline_graph.png",
     )
 
@@ -144,8 +159,8 @@ _DEFAULT_ORG_SLUG = "default"
 
 
 def seed_persons() -> None:
-    """Run voter_file_loader → tiger → geocode → aggregate against a
-    voter file fixture.
+    """Run voter_file_loader → tiger → osm → matching → geocode → assembly →
+    aggregate against a voter file fixture.
 
     Defaults to `{fixtures_dir}/{voter_file_fixture}` (configured in
     settings — usually `apps/data/fixtures/ny-voters-2026-03-08-nyc.parquet`)
@@ -228,7 +243,7 @@ def seed_persons() -> None:
         print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
     dr = driver.Builder().with_modules(
-        voter_file_loader, tiger, geocode, aggregate, osm,
+        voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate,
     ).build()
     result = dr.execute(
         final_vars=[

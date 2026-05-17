@@ -11,7 +11,7 @@ one unit within a building (`address_line_1 + address_line_2 + zip5`).
 Single-family homes have one door per building. lat/lng is the centroid of
 contained persons — they share an address, so coordinates match within
 float noise. `persons_geocoded` only contains successfully-matched rows
-(see `geocode.py`), so every person here has coordinates and a stable
+(see `assembly.py`), so every person here has coordinates and a stable
 building/door key.
 """
 

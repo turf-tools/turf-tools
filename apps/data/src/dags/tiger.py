@@ -22,32 +22,13 @@ from zipfile import ZipFile
 
 import duckdb
 
-from src.address_tokens import EQUIVALENT_TOKEN_GROUPS
+from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
 from src.models import TableRef
 
 GEO_CATALOG = "geo_ducklake"
 TIGER_SCHEMA = "tiger"
 CENSUS_BASE_URL = "https://www2.census.gov/geo/tiger"
 
-
-def _tokenise(col: str) -> str:
-    """Return a DuckDB SQL expression that tokenises a street name column.
-
-    Produces a sorted, deduplicated array of lowercase alphanumeric tokens,
-    mirroring the approach in old/contracts/tiger.ts.
-    """
-    return (
-        f"list_distinct(list_sort(list_filter("
-        f"  list_concat("
-        f"    list_concat("
-        f"      regexp_split_to_array(lower(trim({col})), '[^a-z0-9]+'),"
-        f"      regexp_extract_all(lower(trim({col})), '[0-9]+')"
-        f"    ),"
-        f"    regexp_extract_all(lower(trim({col})), '\\b[a-z]+')"
-        f"  ),"
-        f"  x -> length(x) > 0"
-        f")))"
-    )
 
 
 def _fqn(table: str) -> str:
@@ -163,7 +144,7 @@ def tiger_addrfeat_raw(
                     RTOHN                                   AS right_to_house_num,
                     ZIPL                                    AS left_zip_code,
                     ZIPR                                    AS right_zip_code,
-                    {_tokenise("FULLNAME")}                AS street_name_tokens,
+                    {tokenize_street_sql("FULLNAME")}                AS street_name_tokens,
                     '{tiger_state_fips}'                   AS state_fips,
                     '{county}'                             AS county_fips,
                     geom
@@ -237,7 +218,7 @@ def tiger_edges_raw(
                     MTFCC                                   AS feature_class_code,
                     TNIDF                                   AS from_node_id,
                     TNIDT                                   AS to_node_id,
-                    {_tokenise("FULLNAME")}                AS street_name_tokens,
+                    {tokenize_street_sql("FULLNAME")}                AS street_name_tokens,
                     '{tiger_state_fips}'                   AS state_fips,
                     '{county}'                             AS county_fips,
                     geom
@@ -621,7 +602,7 @@ def blockface_final(
     blockface with tokens ["broadway", "st"] will also gain "street" so that
     addresses using the full form match correctly.
 
-    This is the stable table that Graph 3 (geocode) reads directly.
+    This is the stable table that the matching pipeline reads directly.
     Incremental: skips blockface_ids already present.
     """
     table = "blockface_final"

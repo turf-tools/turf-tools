@@ -12,7 +12,7 @@ substitutes them at execution time per-tenant. `QUERYABLE_TABLES` is
 the allowlist of placeholder names that are valid in those templates —
 a typo (`{persons_typoed}`) raises loudly instead of producing bad SQL.
 
-DAG writers (`aggregate.py`, `geocode.py`, `voter_file_loader.py`) call
+DAG writers (`matching.py`, `assembly.py`, `aggregate.py`, etc.) call
 `org_fqn` directly with bare string literals; they write many internal
 intermediate tables (`persons_decomposed`, `persons_scored`, etc.) that
 intentionally aren't in `QUERYABLE_TABLES` because the HTTP API
