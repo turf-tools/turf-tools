@@ -75,7 +75,8 @@ def canonical_addresses(
 
     Output schema: (external_id, address_line_1, matched_tokens).
 
-    Incremental: skips external_ids already present.
+    Incremental: skips external_ids already present. Run
+    `data:clear:all` to force a rebuild when this SQL changes.
     """
     table_suffix = "canonical_addresses"
     ensure_org_schema(conn, organization_slug)
@@ -96,23 +97,54 @@ def canonical_addresses(
     # For TIGER-matched voters, prefer OSM street when the OSM lookup
     # hit (osm_street IS NOT NULL); fall back to TIGER full_name. For
     # osm_only voters, always use OSM street.
+    #
+    # Housenumber: prefer OSM's surface form when the voter's parsed
+    # housenumber and the OSM record's housenumber normalize to the
+    # same value (housenumber_norm equality). This unifies Queens
+    # hyphen variants — voter "646 SEAGIRT" and OSM "6-46 SEAGIRT"
+    # both normalize to "646", so we use OSM's "6-46" canonical form
+    # for both, producing a single building_id. When the normalized
+    # forms differ (e.g., voter "100" vs OSM "100A" — subunit
+    # distinction), we keep the voter's parsed form.
     conn.execute(f"""
         INSERT INTO {fqn}
         WITH src AS (
             SELECT r.external_id,
-                   UPPER(COALESCE(r.osm_street, m.full_name)) AS street_canonical
+                   UPPER(COALESCE(r.osm_street, m.full_name)) AS street_canonical,
+                   r.osm_housenumber
             FROM {refined_fqn} r
             LEFT JOIN {match_fqn} m ON m.external_id = r.external_id
             UNION ALL
-            SELECT external_id, UPPER(osm_street) AS street_canonical
+            SELECT external_id, UPPER(osm_street) AS street_canonical, osm_housenumber
             FROM {osm_only_fqn}
+        ),
+        voter_hn AS (
+            SELECT
+                external_id,
+                COALESCE(house_num_prefix, '') || CAST(house_number AS VARCHAR)
+                  || CASE WHEN half_code IS NOT NULL AND half_code != ''
+                          THEN ' ' || half_code ELSE '' END AS hn_str,
+                regexp_replace(
+                    regexp_replace(
+                        COALESCE(house_num_prefix, '') || CAST(house_number AS VARCHAR)
+                          || CASE WHEN half_code IS NOT NULL AND half_code != ''
+                                  THEN ' ' || half_code ELSE '' END,
+                        '(^|-)0*([0-9])', '\\1\\2', 'g'),
+                    '-', '', 'g'
+                ) AS hn_norm
+            FROM {decomposed_fqn}
         )
         SELECT
             s.external_id,
-            COALESCE(d.house_num_prefix, '') || CAST(d.house_number AS VARCHAR)
-              || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
-                      THEN ' ' || d.half_code
-                      ELSE '' END
+            CASE
+                WHEN s.osm_housenumber IS NOT NULL
+                 AND regexp_replace(
+                       regexp_replace(s.osm_housenumber, '(^|-)0*([0-9])', '\\1\\2', 'g'),
+                       '-', '', 'g'
+                     ) = vh.hn_norm
+                THEN UPPER(s.osm_housenumber)
+                ELSE vh.hn_str
+            END
               || ' ' || s.street_canonical                    AS address_line_1,
             list_distinct(list_filter(
               list_concat(
@@ -122,7 +154,7 @@ def canonical_addresses(
               x -> length(x) > 0
             ))                                                AS matched_tokens
         FROM src s
-        INNER JOIN {decomposed_fqn} d ON d.external_id = s.external_id
+        INNER JOIN voter_hn vh ON vh.external_id = s.external_id
         WHERE s.external_id NOT IN (SELECT external_id FROM {fqn})
     """)
 
@@ -295,12 +327,14 @@ def geocoding_summary(
                 (SELECT count(*) FROM {persons_fqn})                              AS total_persons,
                 (SELECT count(*) FROM {geocoded_fqn})                             AS matched,
                 (SELECT count(*) FROM {geocoded_fqn}
-                  WHERE position_source IN ('osm_matched','tiger_only','osm_complex'))
+                  WHERE position_source IN ('osm_matched','tiger_only','osm_complex','osm_off_segment'))
                                                                                   AS matched_tiger,
                 (SELECT count(*) FROM {geocoded_fqn}
                   WHERE position_source = 'osm_matched')                          AS matched_osm_road_projected,
                 (SELECT count(*) FROM {geocoded_fqn}
                   WHERE position_source = 'osm_complex')                          AS matched_osm_complex,
+                (SELECT count(*) FROM {geocoded_fqn}
+                  WHERE position_source = 'osm_off_segment')                      AS matched_osm_off_segment,
                 (SELECT count(*) FROM {geocoded_fqn}
                   WHERE position_source = 'tiger_only')                           AS matched_tiger_only,
                 (SELECT count(*) FROM {geocoded_fqn}
@@ -314,6 +348,7 @@ def geocoding_summary(
             matched_tiger,
             matched_osm_road_projected,
             matched_osm_complex,
+            matched_osm_off_segment,
             matched_tiger_only,
             matched_osm_only,
             -- Backward-compat alias for older test/RPC consumers; counts every

@@ -308,9 +308,17 @@ def persons_candidates(
     """)
 
     # Hydrate the (voter, blockface) ID pairs back into full rows and
-    # apply the remaining filters: overall token overlap ≥ 2, and
-    # opposing-cardinal rejection. Both run on the reduced candidate
-    # set, not the full cross-product.
+    # apply the remaining filters: overall token overlap ≥ 2,
+    # opposing-cardinal rejection, AND re-apply the house-range +
+    # prefix predicate. The last one is critical because
+    # `_blockfaces_for_match` can have multiple rows sharing the same
+    # `blockface_id` when TIGER stores multiple address ranges on the
+    # same `(tlid, side)` (e.g., E 58th St in Brooklyn: range 300-338
+    # and range 340-498 both under `59085878:right`). Without this
+    # filter a voter at house 404 hydrates into both rows, then
+    # `persons_best_match` picks one non-deterministically and
+    # voters at the same building can end up with different
+    # `full_name` → different `building_id`.
     conn.execute(f"""
         INSERT INTO {fqn}
         SELECT
@@ -335,6 +343,11 @@ def persons_candidates(
           AND NOT (
               (p.has_n AND b.has_s) OR (p.has_s AND b.has_n)
               OR (p.has_e AND b.has_w) OR (p.has_w AND b.has_e)
+          )
+          AND COALESCE(b.house_num_prefix, '') = COALESCE(p.house_num_prefix, '')
+          AND (
+                p.house_number BETWEEN b.from_house_num AND b.to_house_num
+             OR p.house_number BETWEEN b.to_house_num   AND b.from_house_num
           )
     """)
 
@@ -501,7 +514,7 @@ def persons_best_match(
                 *,
                 ROW_NUMBER() OVER (
                     PARTITION BY external_id
-                    ORDER BY match_score DESC, blockface_id
+                    ORDER BY match_score DESC, blockface_id, full_name
                 ) AS rn
             FROM {scored_fqn}
             WHERE external_id NOT IN (SELECT external_id FROM {fqn})

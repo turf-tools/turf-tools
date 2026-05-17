@@ -285,9 +285,10 @@ def seed_persons() -> None:
     summary_ref = result["geocoding_summary"]
     buildings_ref = result["buildings_geocoded"]
     doors_ref = result["doors_geocoded"]
-    (total, matched, unmatched, pct, m_road, m_complex, m_tiger_only, m_osm_only) = conn.sql(f"""
+    (total, matched, unmatched, pct, m_road, m_complex, m_off_seg, m_tiger_only, m_osm_only) = conn.sql(f"""
         SELECT total_persons, matched, unmatched, match_pct,
                matched_osm_road_projected, matched_osm_complex,
+               matched_osm_off_segment,
                matched_tiger_only, matched_osm_only
         FROM {summary_ref.fqn}
     """).fetchone()
@@ -297,6 +298,7 @@ def seed_persons() -> None:
         f"  → {matched:,}/{total:,} matched ({pct}%); {unmatched:,} unmatched.\n"
         f"      OSM road-projected : {m_road:>8,d}\n"
         f"      OSM complex        : {m_complex:>8,d}\n"
+        f"      OSM off-segment    : {m_off_seg:>8,d}\n"
         f"      TIGER rank fallback: {m_tiger_only:>8,d}\n"
         f"      OSM-only (TIGER-miss rescue): {m_osm_only:>8,d}\n"
         f"  → {building_count:,} buildings, {door_count:,} doors.\n"
