@@ -609,13 +609,13 @@ def blockface_final(
        rows.
 
     2. **Two token sets.** Every group emits:
-         - ``street_name_tokens`` — the union of every alias row's
+         - ``street_tokens_match`` — the union of every alias row's
            tokens, equivalency-expanded. Used by the matching
            predicate so a voter using any alias spelling matches.
-         - ``canonical_tokens`` — only the canonical name's tokens,
-           equivalency-expanded. Used by ``refined_positions`` for
-           the OSM ``canonical_key`` lookup, so voters at the same
-           building hit the same OSM record regardless of which
+         - ``street_tokens_lookup`` — only the canonical name's
+           tokens, equivalency-expanded. Used by ``refined_positions``
+           for the OSM ``canonical_key`` lookup, so voters at the
+           same building hit the same OSM record regardless of which
            alias their raw address used.
 
     3. **Equivalency expansion.** Applied to both token sets via the
@@ -708,9 +708,9 @@ def blockface_final(
             c.full_name,
             c.tiger_line_id,
             list_distinct(list_concat(c.merged_raw_tokens, COALESCE(m.extras, [])))
-                                                                       AS street_name_tokens,
+                                                                       AS street_tokens_match,
             list_distinct(list_concat(c.canonical_raw_tokens, COALESCE(ce.extras, [])))
-                                                                       AS canonical_tokens,
+                                                                       AS street_tokens_lookup,
             c.from_node_id,
             c.to_node_id,
             c.geom

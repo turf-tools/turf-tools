@@ -125,13 +125,13 @@ into two rows (one per side).
 - house-number range (from, to) + parity (odd/even/mixed)
 - side (left/right) + prefix
 - `full_name` — canonical street name (alias-collapsed; see below)
-- `street_name_tokens` — equivalency-expanded union of all alias rows'
+- `street_tokens_match` — equivalency-expanded union of all alias rows'
   tokens (drives the matching predicate so a voter using any spelling
   matches)
-- `canonical_tokens` — equivalency-expanded tokens of _only_ the canonical
-  full_name (drives the OSM `canonical_key` lookup, so voters at the
-  same building hit the same OSM record regardless of which alias their
-  raw address used)
+- `street_tokens_lookup` — equivalency-expanded tokens of _only_ the
+  canonical full_name (drives the OSM `canonical_key` lookup, so voters
+  at the same building hit the same OSM record regardless of which
+  alias their raw address used)
 - a `GEOMETRY` representing the edge line
 
 **Alias collapse.** When TIGER's addrfeat stores the same physical

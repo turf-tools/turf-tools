@@ -62,9 +62,8 @@ def canonical_key_sql(tokens_col: str) -> str:
     other in the same zip with the same housenumber.
 
     Caller passes whatever token column it already has — typically
-    the equivalency-expanded `street_name_tokens` from
-    `blockface_final`, or the equivalent expansion built inline for a
-    voter / OSM record.
+    `blockface_final.street_tokens_lookup` on the voter side, or an
+    inline equivalency expansion on the OSM side.
     """
     return f"array_to_string(list_sort({tokens_col}), '|')"
 
