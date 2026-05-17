@@ -18,6 +18,7 @@ from src.dags import (
 )
 from src.duckdb import get_connection
 from src.models import TableRef
+from src.perf import TimingHook
 from src.settings import get_settings
 from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema
 from src.transformations import nys_sboe_transformation_query
@@ -216,6 +217,11 @@ def seed_persons() -> None:
         action="store_true",
         help="Drop the org's DuckLake schema before running. Use after a pipeline schema change.",
     )
+    parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="Print per-node wall time as the pipeline runs, plus a sorted summary at the end.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -242,9 +248,13 @@ def seed_persons() -> None:
     if settings.voter_zip5_filter:
         print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
-    dr = driver.Builder().with_modules(
+    timing = TimingHook() if args.timing else None
+    builder = driver.Builder().with_modules(
         voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate,
-    ).build()
+    )
+    if timing is not None:
+        builder = builder.with_adapters(timing)
+    dr = builder.build()
     result = dr.execute(
         final_vars=[
             "persons_geocoded",
@@ -293,5 +303,7 @@ def seed_persons() -> None:
         f"  → Outputs: {geocoded_ref.fqn}, {buildings_ref.fqn}, {doors_ref.fqn}"
     )
 
+    if timing is not None:
+        timing.print_summary()
     conn.close()
     print("Persons seeded.")
