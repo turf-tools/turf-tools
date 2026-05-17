@@ -66,19 +66,29 @@ def refined_positions(
          `landuse=residential` polygon (Co-op City, Stuy Town, …),
          use the OSM centroid directly — no road projection, no
          perpendicular offset.
-      3. Else if matched: `fraction = ST_LineLocatePoint(blockface, OSM)`
-         projects the OSM-known building centroid onto the TIGER
-         blockface to give the position along the road.
-      4. Else: `fraction = rank / (max_rank + 1)` via DENSE_RANK
-         ordering by (housenumber, half_code) — the original TIGER
-         linear-ramp behavior.
-      5. Road-projected positions get a 7 m perpendicular offset and
-         a 1D shove so distinct buildings stay ≥ 4 m apart.
+      3. Else if matched AND the OSM centroid projects strictly onto
+         the matched TIGER blockface (`osm_frac ∈ (0, 1)`):
+         `fraction = ST_LineLocatePoint(blockface, OSM)` projects the
+         OSM-known building centroid onto the TIGER blockface for an
+         along-road position.
+      4. Else if matched but the projection *clamps*
+         (`osm_frac = 0.0 or 1.0` — the OSM building is geometrically
+         beyond the blockface's endpoints, typically because TIGER's
+         address range exceeds its physical geometry): use the OSM
+         centroid directly. This avoids snapping voters to the wrong
+         end of a too-short blockface.
+      5. Else (no OSM match): `fraction = rank / (max_rank + 1)` via
+         DENSE_RANK ordering by (prefix, housenumber, half_code) —
+         the original TIGER linear-ramp behavior.
+      6. Road-projected positions (cases 3 and 5) get a 7 m
+         perpendicular offset and a 1D shove so distinct buildings
+         stay ≥ 4 m apart.
 
     `position_source` is one of:
-      - `osm_complex` — OSM centroid, inside a residential complex
-      - `osm_matched` — fraction from OSM projection onto the blockface
-      - `tiger_only` — fraction from DENSE_RANK fallback
+      - `osm_complex`     — OSM centroid, inside a residential complex
+      - `osm_matched`     — fraction from OSM projection onto the blockface
+      - `osm_off_segment` — OSM centroid (projection clamped on matched blockface)
+      - `tiger_only`      — fraction from DENSE_RANK fallback
 
     `osm_street` is carried through so `canonical_addresses` can pick
     OSM's per-building canonical name (more stable than TIGER's, which
@@ -101,24 +111,32 @@ def refined_positions(
 
     print("Refining voter positions…")
     t0 = time.time()
-    # Use blockface_final.street_name_tokens for the canonical_key —
-    # those are already equivalency-expanded by tiger.address_tokens
-    # upstream (st↔street↔saint, 1↔1st↔first, etc.), so they match
-    # the same canonical form derived on the OSM side.
+    # Use `canonical_tokens` for the OSM canonical_key — those are the
+    # tokens of the canonical (frequency-winner) full_name only, not
+    # the alias-merged set. With this, voters using either alias
+    # ("1827 7TH AVE" / "1827 ACP BLVD") produce the same canonical_key
+    # and deterministically hit the same OSM record.
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _bf_for_voters AS
-        SELECT DISTINCT ON (blockface_id) blockface_id, street_name_tokens
+        SELECT DISTINCT ON (blockface_id) blockface_id, canonical_tokens
         FROM {bf_}
         WHERE geom IS NOT NULL
+        -- Deterministic pick when blockface_id appears on multiple rows
+        -- (Queens prefix variants etc). All such rows share canonical_tokens
+        -- after the alias collapse, so the chosen row doesn't change semantics,
+        -- but an explicit ORDER BY keeps the pick stable across runs.
+        ORDER BY blockface_id, from_house_num, to_house_num
     """)
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _voter_keyed AS
         SELECT
             m.external_id, m.blockface_id, m.geom AS bf_geom, m.side AS bf_side,
+            m.tiger_line_id,
             m.person_house_number,
             COALESCE(d.half_code, '') AS half_code,
+            COALESCE(d.house_num_prefix, '') AS house_num_prefix,
             d.zip5,
-            {canonical_key_sql("b.street_name_tokens")} AS canonical_key,
+            {canonical_key_sql("b.canonical_tokens")} AS canonical_key,
             COALESCE(d.house_num_prefix, '')
               || CAST(d.house_number AS VARCHAR)
               || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
@@ -146,6 +164,7 @@ def refined_positions(
         CREATE OR REPLACE TEMP TABLE _voter_with_osm AS
         SELECT v.*, o.osm_lat, o.osm_lon,
                o.street AS osm_street,
+               o.housenumber AS osm_housenumber,
                COALESCE(o.in_residential_complex, false) AS in_complex
         FROM _voter_keyed v
         LEFT JOIN {obl} o
@@ -167,45 +186,69 @@ def refined_positions(
     # grid skews along-street by up to ~20% of the perpendicular offset.
     conn.execute(f"""
         CREATE TABLE {fqn} AS
-        WITH ranked AS (
-            SELECT v.*,
-                DENSE_RANK() OVER (
-                    PARTITION BY v.blockface_id
-                    ORDER BY v.person_house_number, v.half_code
-                ) AS house_rank
-            FROM _voter_with_osm v
-            WHERE NOT v.in_complex
-        ),
-        fracced AS (
-            SELECT *,
-                MAX(house_rank) OVER (PARTITION BY blockface_id) AS max_rank
-            FROM ranked
-        ),
-        projected AS (
-            SELECT external_id, blockface_id, bf_side,
+        -- Pre-compute the UTM-transformed geometry and OSM projection
+        -- fraction once per voter. Doing this up-front lets us route
+        -- clamping-OSM voters to the OSM-centroid branch before they
+        -- enter the projection/shove pipeline.
+        WITH voter_geo AS (
+            SELECT
+                external_id, blockface_id, bf_side, tiger_line_id,
+                house_num_prefix, person_house_number, half_code,
+                osm_lat, osm_lon, osm_street, osm_housenumber, in_complex,
                 ST_Transform(bf_geom, 'OGC:CRS84', 'EPSG:32618') AS bf_m,
                 CASE WHEN osm_lat IS NOT NULL
                      THEN ST_Transform(ST_Point(osm_lon, osm_lat),
                                        'OGC:CRS84', 'EPSG:32618')
                      ELSE NULL
-                END AS osm_pt_m,
-                house_rank, max_rank
-            FROM fracced
+                END AS osm_pt_m
+            FROM _voter_with_osm
         ),
-        located AS (
-            -- osm_frac = 0 or 1 means the centroid projects beyond the
-            -- blockface endpoints (TIGER fragments streets into short
-            -- segments). Fall back to the rank ramp so adjacent houses
-            -- don't all stack at the clamp point.
+        with_osm_frac AS (
             SELECT *,
                 CASE WHEN osm_pt_m IS NOT NULL
                      THEN ST_LineLocatePoint(bf_m, osm_pt_m)
                      ELSE NULL
                 END AS osm_frac
-            FROM projected
+            FROM voter_geo
+        ),
+        -- Voters going through the projection/shove path: NOT
+        -- in_complex AND NOT off-segment-clamped. The clamped-with-OSM
+        -- voters are routed to the OSM-centroid branch in the final
+        -- UNION below — projecting them onto a blockface whose
+        -- geometry doesn't span their OSM building would land them at
+        -- a wrong endpoint of a too-short TIGER segment.
+        ranked AS (
+            -- Partition by (tiger_line_id, bf_side) so voters across
+            -- multiple address ranges on the same physical TIGER line
+            -- (Queens 219-XX / 220-XX / 221-XX on the same block of
+            -- 121st Ave, where TIGER stores them as separate addrfeat
+            -- rows sharing one geometry) share a ranking partition.
+            -- Ordering by (prefix, house_number, half_code) gives each
+            -- prefix-block its own contiguous chunk of the line —
+            -- 219-* voters in the first slice, 220-* next, etc. —
+            -- instead of all voters at the same house_number collapsing
+            -- onto a single rank.
+            --
+            -- For the non-Queens case (single prefix per tlid:side),
+            -- this partition is identical to PARTITION BY blockface_id,
+            -- so no behavior change.
+            SELECT *,
+                DENSE_RANK() OVER (
+                    PARTITION BY tiger_line_id, bf_side
+                    ORDER BY house_num_prefix, person_house_number, half_code
+                ) AS house_rank
+            FROM with_osm_frac
+            WHERE NOT in_complex
+              AND NOT (osm_lat IS NOT NULL
+                       AND (osm_frac = 0.0 OR osm_frac = 1.0))
+        ),
+        fracced AS (
+            SELECT *,
+                MAX(house_rank) OVER (PARTITION BY tiger_line_id, bf_side) AS max_rank
+            FROM ranked
         ),
         with_frac AS (
-            SELECT external_id, blockface_id, bf_side, bf_m,
+            SELECT external_id, blockface_id, bf_side, tiger_line_id, bf_m,
                 house_rank,
                 CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
                      THEN 'osm_matched' ELSE 'tiger_only'
@@ -217,7 +260,7 @@ def refined_positions(
                     END,
                     0.05
                 ), 0.95) AS frac
-            FROM located
+            FROM fracced
         ),
         shoved AS (
             -- 1D shove in building space: keep distinct buildings at
@@ -237,7 +280,7 @@ def refined_positions(
                 LEAST(GREATEST(
                     LEAST(
                         MAX(frac - rn * sep_frac)
-                            OVER (PARTITION BY blockface_id, bf_side
+                            OVER (PARTITION BY tiger_line_id, bf_side
                                   ORDER BY rn)
                           + rn * sep_frac,
                         0.95 - (n_buildings - rn) * sep_frac
@@ -250,11 +293,11 @@ def refined_positions(
                       / NULLIF(bf_len_m, 0) AS sep_frac
                 FROM (
                     SELECT *,
-                        MAX(rn) OVER (PARTITION BY blockface_id, bf_side)
+                        MAX(rn) OVER (PARTITION BY tiger_line_id, bf_side)
                             AS n_buildings
                     FROM (
                         SELECT *,
-                            DENSE_RANK() OVER (PARTITION BY blockface_id,
+                            DENSE_RANK() OVER (PARTITION BY tiger_line_id,
                                                             bf_side
                                                ORDER BY frac, house_rank) AS rn,
                             ST_Length(bf_m) AS bf_len_m
@@ -292,17 +335,40 @@ def refined_positions(
                ST_Y(f.pt_4326) AS latitude,
                ST_X(f.pt_4326) AS longitude,
                f.position_source,
-               v.osm_street
+               v.osm_street,
+               v.osm_housenumber
         FROM final_geom f
         LEFT JOIN _voter_with_osm v ON v.external_id = f.external_id
         UNION ALL
+        -- in_complex: OSM centroid for voters inside residential
+        -- complex polygons (Stuy Town, Co-op City, …).
         SELECT external_id,
                osm_lat  AS latitude,
                osm_lon  AS longitude,
                'osm_complex' AS position_source,
-               osm_street
+               osm_street,
+               osm_housenumber
         FROM _voter_with_osm
         WHERE in_complex
+        UNION ALL
+        -- osm_off_segment: OSM centroid for voters whose OSM building
+        -- centroid projects strictly outside the matched TIGER
+        -- blockface's geometry (osm_frac clamps to 0.0 or 1.0). This
+        -- happens when TIGER's address range exceeds its physical line
+        -- (e.g., Myrtle Ave 65-XX where 24 houses claim a 43m segment).
+        -- Snapping to the clamp endpoint would put the voter at the
+        -- wrong end of the wrong segment; using the OSM centroid
+        -- places them at their actual building.
+        SELECT vof.external_id,
+               vof.osm_lat AS latitude,
+               vof.osm_lon AS longitude,
+               'osm_off_segment' AS position_source,
+               vof.osm_street,
+               vof.osm_housenumber
+        FROM with_osm_frac vof
+        WHERE NOT vof.in_complex
+          AND vof.osm_lat IS NOT NULL
+          AND (vof.osm_frac = 0.0 OR vof.osm_frac = 1.0)
     """)
     print(f"  done in {time.time()-t0:.1f}s")
 
@@ -412,7 +478,8 @@ def osm_only_matches(
         CREATE OR REPLACE TEMP TABLE _miss_with_osm AS
         SELECT v.external_id, v.zip5,
                o.osm_lat AS latitude, o.osm_lon AS longitude,
-               o.street  AS osm_street
+               o.street  AS osm_street,
+               o.housenumber AS osm_housenumber
         FROM _miss_keyed v
         JOIN {obl} o
           ON o.zip_code         = v.zip5
@@ -451,9 +518,12 @@ def osm_only_matches(
             SELECT DISTINCT ON (zip5, latitude, longitude)
                    zip5, latitude, longitude, blockface_id, d_m AS snap_distance_m
             FROM candidates
-            ORDER BY zip5, latitude, longitude, d_m
+            -- blockface_id tiebreak so equidistant blockfaces resolve
+            -- deterministically; without it the chosen blockface_id can
+            -- vary between runs.
+            ORDER BY zip5, latitude, longitude, d_m, blockface_id
         )
-        SELECT v.external_id, v.latitude, v.longitude, v.osm_street,
+        SELECT v.external_id, v.latitude, v.longitude, v.osm_street, v.osm_housenumber,
                s.blockface_id, s.snap_distance_m
         FROM _miss_with_osm v
         JOIN loc_snaps s

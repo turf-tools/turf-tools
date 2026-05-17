@@ -512,7 +512,7 @@ def osm_building_lookup(
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         WITH keyed_norm AS (
-            SELECT zip_code, canonical_key, housenumber, street, lat, lon, kind,
+            SELECT osm_id, zip_code, canonical_key, housenumber, street, lat, lon, kind,
                    regexp_replace(
                        regexp_replace(housenumber, '(^|-)0*([0-9])', '\\1\\2', 'g'),
                        '-', '', 'g'
@@ -520,14 +520,25 @@ def osm_building_lookup(
             FROM _bl_keyed
             WHERE canonical_key != ''
         ),
+        -- Deterministic pick per (zip, canonical_key, housenumber_norm):
+        -- prefer way over node (way = polygon centroid > doorway point);
+        -- on ties (multiple ways for the same canonical address — rare but
+        -- happens when OSM tags two polygons with the same addr:housenumber),
+        -- break by osm_id ASC. Without the osm_id tiebreaker, arg_max picks
+        -- arbitrarily and the chosen lat/lon can shift between runs.
+        ranked AS (
+            SELECT *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY zip_code, canonical_key, housenumber_norm
+                    ORDER BY (kind = 'way') DESC, osm_id
+                ) AS rn
+            FROM keyed_norm
+        ),
         agg AS (
             SELECT zip_code, canonical_key, housenumber_norm,
-                   arg_max(housenumber, kind = 'way') AS housenumber,
-                   arg_max(lat,         kind = 'way') AS osm_lat,
-                   arg_max(lon,         kind = 'way') AS osm_lon,
-                   arg_max(street,      kind = 'way') AS street
-            FROM keyed_norm
-            GROUP BY 1, 2, 3
+                   housenumber, lat AS osm_lat, lon AS osm_lon, street
+            FROM ranked
+            WHERE rn = 1
         ),
         in_complex AS (
             SELECT DISTINCT a.zip_code, a.canonical_key, a.housenumber_norm
