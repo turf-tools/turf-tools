@@ -40,6 +40,19 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
+# Geometric constants for road-projected positioning (meters, UTM-18N).
+#
+# `MIN_BUILDING_SPACING_M` — minimum desired along-line distance between
+# distinct buildings on the same blockface side. The shove logic tries to
+# keep adjacent buildings at least this far apart along the road.
+MIN_BUILDING_SPACING_M = 4.0
+
+# `ROAD_OFFSET_M` — perpendicular offset from the blockface centerline to
+# the rendered voter position. Puts the dot off the road on the side the
+# building is on, rather than on the road itself.
+ROAD_OFFSET_M = 7.0
+
+
 # ---------------------------------------------------------------------------
 # Node 1 – per-voter refined position (TIGER + OSM)
 # ---------------------------------------------------------------------------
@@ -79,9 +92,9 @@ def refined_positions(
       5. Else (no OSM match): `fraction = rank / (max_rank + 1)` via
          DENSE_RANK ordering by (prefix, housenumber, half_code) —
          the original TIGER linear-ramp behavior.
-      6. Road-projected positions (cases 3 and 5) get a 7 m
-         perpendicular offset and a 1D shove so distinct buildings
-         stay ≥ 4 m apart.
+      6. Road-projected positions (cases 3 and 5) get a perpendicular
+         offset (`ROAD_OFFSET_M`) and a 1D shove so distinct buildings
+         stay ≥ `MIN_BUILDING_SPACING_M` apart.
 
     `position_source` is one of:
       - `osm_complex`     — OSM centroid, inside a residential complex
@@ -110,17 +123,17 @@ def refined_positions(
 
     print("Refining voter positions…")
     t0 = time.time()
-    # Use `canonical_tokens` (the canonical name's tokens only, not the
+    # Use `street_tokens_lookup` (the canonical name's tokens only, not the
     # alias-merged set) for the OSM canonical_key. Voters at the same
     # building hit the same OSM record regardless of which alias their
     # raw address used.
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _bf_for_voters AS
-        SELECT DISTINCT ON (blockface_id) blockface_id, canonical_tokens
+        SELECT DISTINCT ON (blockface_id) blockface_id, street_tokens_lookup
         FROM {bf_}
         WHERE geom IS NOT NULL
         -- Deterministic pick when blockface_id appears on multiple rows.
-        -- All such rows share canonical_tokens after the alias collapse,
+        -- All such rows share street_tokens_lookup after the alias collapse,
         -- but an explicit ORDER BY keeps the pick stable across runs.
         ORDER BY blockface_id, from_house_num, to_house_num
     """)
@@ -134,7 +147,7 @@ def refined_positions(
             COALESCE(d.half_code, '') AS half_code,
             COALESCE(d.house_num_prefix, '') AS house_num_prefix,
             d.zip5,
-            {canonical_key_sql("b.canonical_tokens")} AS canonical_key,
+            {canonical_key_sql("b.street_tokens_lookup")} AS canonical_key,
             {hn_display} AS housenumber_str,
             {housenumber_norm_sql(hn_display)} AS housenumber_norm
         FROM {pbm} m
@@ -244,19 +257,20 @@ def refined_positions(
             FROM fracced
         ),
         shoved AS (
-            -- 1D shove in building space: keep distinct buildings at
-            -- least 4 m apart along the line. DENSE_RANK groups voters
-            -- that share a (frac, house_rank) into one slot so apartment
-            -- buildings stay anchored. The house_rank tiebreak prevents
-            -- two distinct buildings (different housenumbers) whose OSM
-            -- projections coincide at the same frac from collapsing
-            -- onto a single point.
-            -- sep_frac shrinks when there are more buildings than fit
-            -- at 4 m so overflow doesn't pile at the 0.95 cap (Co-op
-            -- City: 16 numbered towers on a 21.7 m blockface).
-            -- The backward cap (0.95 - (n_buildings - rn) * sep_frac)
-            -- prevents buildings clustered near the end of a blockface
-            -- from all piling at 0.95 when the forward pass overshoots.
+            -- 1D shove in building space: keep distinct buildings on
+            -- the same blockface side at least MIN_BUILDING_SPACING_M
+            -- apart along the line. DENSE_RANK groups voters that
+            -- share a (frac, house_rank) into one slot so apartment
+            -- buildings stay anchored. The house_rank tiebreak keeps
+            -- two distinct buildings whose OSM projections coincide
+            -- at the same frac from collapsing onto a single point.
+            -- sep_frac shrinks when more buildings exist than fit at
+            -- the minimum spacing — overflow distributes evenly along
+            -- the line instead of piling at the 0.95 cap. The
+            -- backward cap (0.95 - (n_buildings - rn) * sep_frac)
+            -- prevents buildings clustered near the end of a
+            -- blockface from all piling at 0.95 when the forward
+            -- pass overshoots.
             SELECT external_id, bf_side, bf_m, position_source,
                 LEAST(GREATEST(
                     LEAST(
@@ -270,7 +284,8 @@ def refined_positions(
                 ), 0.95) AS frac
             FROM (
                 SELECT *,
-                    LEAST(4.0, 0.9 * bf_len_m / GREATEST(n_buildings, 1))
+                    LEAST({MIN_BUILDING_SPACING_M},
+                          0.9 * bf_len_m / GREATEST(n_buildings, 1))
                       / NULLIF(bf_len_m, 0) AS sep_frac
                 FROM (
                     SELECT *,
@@ -301,9 +316,9 @@ def refined_positions(
                 ST_Transform(
                   CASE WHEN sqrt(dx_m * dx_m + dy_m * dy_m) > 0 THEN
                     ST_Translate(pt_m,
-                      7.0 * CASE WHEN bf_side = 'left' THEN -dy_m ELSE  dy_m END
+                      {ROAD_OFFSET_M} * CASE WHEN bf_side = 'left' THEN -dy_m ELSE  dy_m END
                             / sqrt(dx_m * dx_m + dy_m * dy_m),
-                      7.0 * CASE WHEN bf_side = 'left' THEN  dx_m ELSE -dx_m END
+                      {ROAD_OFFSET_M} * CASE WHEN bf_side = 'left' THEN  dx_m ELSE -dx_m END
                             / sqrt(dx_m * dx_m + dy_m * dy_m)
                     )
                   ELSE pt_m

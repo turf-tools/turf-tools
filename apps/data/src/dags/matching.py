@@ -171,9 +171,10 @@ def persons_candidates(
         join only emits pairs that already share a distinctive token
         (or the all-generic sentinel) in the same zip. DISTINCT
         collapses pairs sharing multiple distinctive tokens.
-      - The full ``street_name_tokens`` arrays carry through and the
-        ``len(list_intersect(...)) >= 2`` check is applied as a final
-        filter on the much-reduced candidate set.
+      - The full token arrays carry through (voter
+        ``street_name_tokens`` vs blockface ``street_tokens_match``)
+        and the ``len(list_intersect(...)) >= 2`` check is applied as
+        a final filter on the much-reduced candidate set.
 
     Multiple blockfaces may match a single person — ``persons_scored`` narrows
     these to the best one.
@@ -241,14 +242,15 @@ def persons_candidates(
         SELECT
             blockface_id, tiger_line_id, side, from_house_num, to_house_num,
             house_num_prefix, full_name, from_node_id, to_node_id, geom,
-            zip_code, number_type, street_name_tokens,
-            list_filter(street_name_tokens,
+            zip_code, number_type,
+            street_tokens_match,
+            list_filter(street_tokens_match,
                         t -> NOT list_contains({_GENERIC_SQL}, t))
                 AS distinctive_tokens,
-            list_contains(street_name_tokens, 'n')           AS has_n,
-            list_contains(street_name_tokens, 's')           AS has_s,
-            list_contains(street_name_tokens, 'e')           AS has_e,
-            list_contains(street_name_tokens, 'w')           AS has_w
+            list_contains(street_tokens_match, 'n')          AS has_n,
+            list_contains(street_tokens_match, 's')          AS has_s,
+            list_contains(street_tokens_match, 'e')          AS has_e,
+            list_contains(street_tokens_match, 'w')          AS has_w
         FROM {blockface_fqn}
     """)
 
@@ -321,12 +323,12 @@ def persons_candidates(
             b.to_node_id,
             b.geom,
             p.house_number                                              AS person_house_number,
-            len(list_intersect(p.street_name_tokens, b.street_name_tokens))
+            len(list_intersect(p.street_name_tokens, b.street_tokens_match))
                                                                         AS token_overlap
         FROM _candidate_pairs c
         JOIN _persons_for_match  p ON p.external_id = c.external_id
         JOIN _blockfaces_for_match b ON b.blockface_id = c.blockface_id
-        WHERE len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
+        WHERE len(list_intersect(p.street_name_tokens, b.street_tokens_match)) >= 2
           AND NOT (
               (p.has_n AND b.has_s) OR (p.has_s AND b.has_n)
               OR (p.has_e AND b.has_w) OR (p.has_w AND b.has_e)
