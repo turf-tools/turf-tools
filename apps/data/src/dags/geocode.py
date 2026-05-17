@@ -101,7 +101,7 @@ def refined_positions(
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
 
-    print("refined_positions: keying voters + joining…")
+    print("Refining voter positions…")
     t0 = time.time()
     # Use blockface_final.street_name_tokens for the canonical_key —
     # those are already equivalency-expanded by tiger.address_tokens
@@ -365,7 +365,7 @@ def osm_only_matches(
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
 
-    print("osm_only_matches: keying TIGER-miss voters…")
+    print("Rescuing TIGER-miss voters via OSM lookup…")
     t0 = time.time()
 
     # Step 1: keyed TIGER-miss voters
@@ -434,28 +434,42 @@ def osm_only_matches(
     print(f"  {n_osm:,} matched to OSM in {time.time()-t0:.1f}s")
 
     # Step 3: snap each matched voter to nearest blockface in same zip.
-    # ST_Distance in UTM gives metric distance. zip5 prefilter keeps the
-    # search cheap (~1k blockfaces per zip).
+    # Many osm_only voters live in the same building (same osm_lat,
+    # osm_lon) — apartment blocks especially. Dedupe to distinct
+    # (zip, lat, lon), snap each location once, then join back. Cuts
+    # the spatial work by 10-50× on dense urban data.
     print("  snapping to nearest blockface in zip…")
     t0 = time.time()
     conn.execute(f"""
         CREATE TABLE {fqn} AS
-        WITH candidates AS (
-            SELECT v.external_id, v.latitude, v.longitude, v.osm_street,
+        WITH distinct_locs AS (
+            SELECT DISTINCT zip5, latitude, longitude
+            FROM _miss_with_osm
+        ),
+        candidates AS (
+            SELECT v.zip5, v.latitude, v.longitude,
                    b.blockface_id,
                    ST_Distance(
                        ST_Transform(b.geom, 'OGC:CRS84', 'EPSG:32618'),
                        ST_Transform(ST_Point(v.longitude, v.latitude),
                                     'OGC:CRS84', 'EPSG:32618')
                    ) AS d_m
-            FROM _miss_with_osm v
+            FROM distinct_locs v
             JOIN {bf_} b ON b.zip_code = v.zip5
+        ),
+        loc_snaps AS (
+            SELECT DISTINCT ON (zip5, latitude, longitude)
+                   zip5, latitude, longitude, blockface_id, d_m AS snap_distance_m
+            FROM candidates
+            ORDER BY zip5, latitude, longitude, d_m
         )
-        SELECT DISTINCT ON (external_id)
-               external_id, latitude, longitude, osm_street,
-               blockface_id, d_m AS snap_distance_m
-        FROM candidates
-        ORDER BY external_id, d_m
+        SELECT v.external_id, v.latitude, v.longitude, v.osm_street,
+               s.blockface_id, s.snap_distance_m
+        FROM _miss_with_osm v
+        JOIN loc_snaps s
+          ON s.zip5 = v.zip5
+         AND s.latitude = v.latitude
+         AND s.longitude = v.longitude
     """)
     n_out = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
     print(f"  {n_out:,} osm_only voters snapped in {time.time()-t0:.1f}s")

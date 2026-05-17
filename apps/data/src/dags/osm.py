@@ -126,10 +126,21 @@ def osm_buildings_polygons(
     fqn = _fqn(table)
 
     _ensure_schema(conn)
+
+    # Schema migration: older versions stored the full polygon `geom`,
+    # but nothing downstream reads it (osm_addresses only consumes
+    # centroid_lat/centroid_lon). Drop+rebuild without it so the
+    # DuckLake parquet write doesn't serialize ~1M WKB blobs.
+    try:
+        cols = {c[0] for c in conn.execute(f"DESCRIBE {fqn}").fetchall()}
+        if "geom" in cols:
+            conn.execute(f"DROP TABLE {fqn}")
+    except duckdb.CatalogException:
+        pass  # table doesn't exist yet — fresh install
+
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
             osm_id        BIGINT,
-            geom          GEOMETRY,
             centroid_lat  DOUBLE,
             centroid_lon  DOUBLE
         )
@@ -184,26 +195,25 @@ def osm_buildings_polygons(
         size_mb = geojson_path.stat().st_size / (1024 * 1024)
         print(f"Building GeoJSONSeq: {geojson_path.name} ({size_mb:.1f} MB, cached)")
 
-    print(f"Loading polygons + computing centroids → {fqn}…")
+    print("Loading building polygons + computing centroids…")
     conn.execute(f"""
         INSERT INTO {fqn}
         WITH polys AS (
             SELECT TRY_CAST("@id" AS BIGINT) AS osm_id, geom
             FROM ST_Read('{geojson_path}')
             WHERE geom IS NOT NULL
+        ),
+        centroided AS (
+            SELECT osm_id, geom, ST_Centroid(geom) AS c FROM polys
+        ),
+        anchored AS (
+            SELECT osm_id,
+                CASE WHEN ST_Contains(geom, c) THEN c
+                     ELSE ST_PointOnSurface(geom) END AS pt
+            FROM centroided
         )
-        SELECT
-            osm_id,
-            geom,
-            CASE WHEN ST_Contains(geom, ST_Centroid(geom))
-                 THEN ST_Y(ST_Centroid(geom))
-                 ELSE ST_Y(ST_PointOnSurface(geom))
-            END AS centroid_lat,
-            CASE WHEN ST_Contains(geom, ST_Centroid(geom))
-                 THEN ST_X(ST_Centroid(geom))
-                 ELSE ST_X(ST_PointOnSurface(geom))
-            END AS centroid_lon
-        FROM polys
+        SELECT osm_id, ST_Y(pt) AS centroid_lat, ST_X(pt) AS centroid_lon
+        FROM anchored
         WHERE osm_id IS NOT NULL
     """)
     n = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
@@ -435,7 +445,7 @@ def osm_building_lookup(
     _ensure_schema(conn)
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
 
-    print(f"Building {fqn}…")
+    print("Building OSM building lookup…")
     t0 = time.time()
 
     osm = osm_addresses.fqn
@@ -453,13 +463,29 @@ def osm_building_lookup(
         WHERE zip_code IS NOT NULL
           AND street   IS NOT NULL
     """)
+    # Inverted-index equivalency expansion: explode raw_tokens to
+    # (osm_id, token) and address_tokens groups to (group_array, token),
+    # equi-join on token, dedupe by (osm_id, group_array), then flatten
+    # the matched group arrays into `extra`. Replaces a cross-product
+    # filtered by `len(list_intersect(...)) > 0` that doesn't scale.
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _bl_keyed AS
-        WITH extras AS (
-            SELECT b.osm_id, flatten(list(t.equivalent_tokens)) AS extra
-            FROM _bl_raw_tokens b
-            JOIN {tok} t ON len(list_intersect(b.raw_tokens, t.equivalent_tokens)) > 0
-            GROUP BY b.osm_id
+        WITH b_tok AS (
+            SELECT osm_id, t
+            FROM _bl_raw_tokens, UNNEST(raw_tokens) AS u(t)
+        ),
+        g_tok AS (
+            SELECT equivalent_tokens, t
+            FROM {tok}, UNNEST(equivalent_tokens) AS u(t)
+        ),
+        matched AS (
+            SELECT DISTINCT b.osm_id, g.equivalent_tokens
+            FROM b_tok b JOIN g_tok g ON g.t = b.t
+        ),
+        extras AS (
+            SELECT osm_id, flatten(list(equivalent_tokens)) AS extra
+            FROM matched
+            GROUP BY osm_id
         ),
         combined AS (
             SELECT
@@ -486,6 +512,10 @@ def osm_building_lookup(
     # Group by housenumber_norm (not raw housenumber) so OSM variants
     # like "90-02" and "90-2" — same building, different tagging —
     # merge into one row.
+    # Compute in_residential_complex as a one-shot spatial semi-join
+    # rather than per-row correlated EXISTS. The planner can use bbox
+    # pre-filtering on the join predicate; the correlated form
+    # iterated buildings × residential polygons with no index.
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         WITH keyed_norm AS (
@@ -505,14 +535,19 @@ def osm_building_lookup(
                    arg_max(street,      kind = 'way') AS street
             FROM keyed_norm
             GROUP BY 1, 2, 3
+        ),
+        in_complex AS (
+            SELECT DISTINCT a.zip_code, a.canonical_key, a.housenumber_norm
+            FROM agg a
+            JOIN {res} r
+              ON ST_Contains(r.geom, ST_Point(a.osm_lon, a.osm_lat))
         )
-        SELECT zip_code, canonical_key, housenumber, housenumber_norm,
-               street, osm_lat, osm_lon,
-               EXISTS (
-                   SELECT 1 FROM {res} r
-                   WHERE ST_Contains(r.geom, ST_Point(osm_lon, osm_lat))
-               ) AS in_residential_complex
-        FROM agg
+        SELECT a.zip_code, a.canonical_key, a.housenumber, a.housenumber_norm,
+               a.street, a.osm_lat, a.osm_lon,
+               c.zip_code IS NOT NULL AS in_residential_complex
+        FROM agg a
+        LEFT JOIN in_complex c
+          USING (zip_code, canonical_key, housenumber_norm)
     """)
     n = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
     print(f"  {n:,} buildings keyed in {time.time()-t0:.1f}s")

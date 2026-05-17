@@ -168,6 +168,22 @@ def persons_candidates(
        common but aren't the same street. The all-generic exception
        keeps voters at streets like "WEST DRIVE" where there's nothing
        distinctive to disambiguate against.
+    6. Directional tokens compatible: opposing cardinals (N/S or E/W)
+       on the two sides are rejected.
+
+    Implementation: inverted-index join.
+      - Each voter is exploded into one row per distinctive street token
+        (a sentinel token for all-generic voters like "WEST DRIVE").
+      - Each blockface is exploded into one row per distinctive token,
+        plus a sentinel row so all-generic voters match every blockface
+        in their (zip, number_type, prefix, house_range) partition.
+      - The shared token is part of the equi-join key, so the hash
+        join only emits pairs that already share a distinctive token
+        (or the all-generic sentinel) in the same zip. DISTINCT
+        collapses pairs sharing multiple distinctive tokens.
+      - The full ``street_name_tokens`` arrays carry through and the
+        ``len(list_intersect(...)) >= 2`` check is applied as a final
+        filter on the much-reduced candidate set.
 
     Multiple blockfaces may match a single person — ``persons_scored`` narrows
     these to the best one.
@@ -201,6 +217,100 @@ def persons_candidates(
         )
     """)
 
+    # Sentinel value carried through the inverted index so all-generic
+    # voters ("WEST DRIVE" types) get a single join key that every
+    # blockface in their (zip, number_type, prefix, house_range)
+    # partition will match against. Picked to be impossible as a real
+    # token (no real token starts with '__').
+    sentinel = "__all_generic__"
+
+    # Pre-compute distinctive tokens + directional flags once on each
+    # side as temp tables so the inverted-index unnest and the final
+    # hydration both reuse them without recomputing.
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _persons_for_match AS
+        SELECT
+            external_id, zip5, number_type, house_num_prefix, house_number,
+            street_name_tokens,
+            list_filter(street_name_tokens,
+                        t -> NOT list_contains({_GENERIC_SQL}, t))
+                AS distinctive_tokens,
+            (list_contains(street_name_tokens, 'n')
+             OR list_contains(street_name_tokens, 'north'))   AS has_n,
+            (list_contains(street_name_tokens, 's')
+             OR list_contains(street_name_tokens, 'south'))   AS has_s,
+            (list_contains(street_name_tokens, 'e')
+             OR list_contains(street_name_tokens, 'east'))    AS has_e,
+            (list_contains(street_name_tokens, 'w')
+             OR list_contains(street_name_tokens, 'west'))    AS has_w
+        FROM {persons_fqn}
+        WHERE external_id NOT IN (SELECT external_id FROM {fqn})
+    """)
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _blockfaces_for_match AS
+        SELECT
+            blockface_id, tiger_line_id, side, from_house_num, to_house_num,
+            house_num_prefix, full_name, from_node_id, to_node_id, geom,
+            zip_code, number_type, street_name_tokens,
+            list_filter(street_name_tokens,
+                        t -> NOT list_contains({_GENERIC_SQL}, t))
+                AS distinctive_tokens,
+            list_contains(street_name_tokens, 'n')           AS has_n,
+            list_contains(street_name_tokens, 's')           AS has_s,
+            list_contains(street_name_tokens, 'e')           AS has_e,
+            list_contains(street_name_tokens, 'w')           AS has_w
+        FROM {blockface_fqn}
+    """)
+
+    # Inverted index on each side: one row per distinctive token.
+    # Voter side: a single sentinel row when no distinctive tokens
+    # (so "WEST DRIVE" still finds candidates). Blockface side: a
+    # sentinel row on EVERY blockface so it pairs with all-generic
+    # voters. The sentinel rows can't join with anything other than
+    # each other (no real token equals it), so distinctive voters
+    # don't accidentally explode against the blockface sentinels.
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _voter_index AS
+        SELECT external_id, zip5, number_type, house_num_prefix, house_number,
+               t AS dtoken
+        FROM _persons_for_match,
+             UNNEST(CASE WHEN len(distinctive_tokens) = 0
+                         THEN ['{sentinel}']
+                         ELSE distinctive_tokens
+                    END) AS u(t)
+    """)
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _blockface_index AS
+        SELECT blockface_id, zip_code, number_type, house_num_prefix,
+               from_house_num, to_house_num,
+               t AS dtoken
+        FROM _blockfaces_for_match,
+             UNNEST(list_concat(distinctive_tokens, ['{sentinel}'])) AS u(t)
+    """)
+
+    # Equi-join on (zip, dtoken, number_type, prefix) — much more
+    # selective than (zip, number_type, prefix) alone. The DISTINCT
+    # collapses pairs that share multiple distinctive tokens. House
+    # number range still has to be a range predicate (no equi form).
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE _candidate_pairs AS
+        SELECT DISTINCT v.external_id, b.blockface_id
+        FROM _voter_index v
+        JOIN _blockface_index b
+          ON b.zip_code   = v.zip5
+         AND b.dtoken     = v.dtoken
+         AND b.number_type IN (v.number_type, 'mixed')
+         AND COALESCE(b.house_num_prefix, '') = COALESCE(v.house_num_prefix, '')
+         AND (
+               v.house_number BETWEEN b.from_house_num AND b.to_house_num
+            OR v.house_number BETWEEN b.to_house_num   AND b.from_house_num
+         )
+    """)
+
+    # Hydrate the (voter, blockface) ID pairs back into full rows and
+    # apply the remaining filters: overall token overlap ≥ 2, and
+    # opposing-cardinal rejection. Both run on the reduced candidate
+    # set, not the full cross-product.
     conn.execute(f"""
         INSERT INTO {fqn}
         SELECT
@@ -218,49 +328,14 @@ def persons_candidates(
             p.house_number                                              AS person_house_number,
             len(list_intersect(p.street_name_tokens, b.street_name_tokens))
                                                                         AS token_overlap
-        FROM {persons_fqn} p
-        JOIN {blockface_fqn} b
-          ON b.zip_code   = p.zip5
-         AND b.number_type IN (p.number_type, 'mixed')
-         AND COALESCE(b.house_num_prefix, '') = COALESCE(p.house_num_prefix, '')
-         AND (
-               p.house_number BETWEEN b.from_house_num AND b.to_house_num
-            OR p.house_number BETWEEN b.to_house_num   AND b.from_house_num
-         )
-         AND len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
-         AND (
-              -- Voter's street name is all generic (e.g. "WEST DRIVE"):
-              -- no distinctive tokens to disambiguate against, accept.
-              len(list_filter(p.street_name_tokens,
-                              t -> NOT list_contains({_GENERIC_SQL}, t))) = 0
-              -- Otherwise require ≥ 1 distinctive overlap to reject
-              -- wrong-street fallbacks like "EAST 1 ST" → "E 12 ST".
-              OR len(list_filter(
-                     list_intersect(p.street_name_tokens, b.street_name_tokens),
-                     t -> NOT list_contains({_GENERIC_SQL}, t)
-                 )) >= 1
-            )
-         -- Reject blockfaces whose directional contradicts the voter's.
-         -- Voter tokens are raw (so we check both `n` and `north` forms);
-         -- blockface tokens are equivalence-expanded so checking the
-         -- short form alone is sufficient on that side. Voter without a
-         -- directional or blockface without a directional always passes
-         -- through; only opposing cardinal pairs are rejected.
-         AND NOT (
-              ((list_contains(p.street_name_tokens, 'n')
-                OR list_contains(p.street_name_tokens, 'north'))
-               AND list_contains(b.street_name_tokens, 's'))
-           OR ((list_contains(p.street_name_tokens, 's')
-                OR list_contains(p.street_name_tokens, 'south'))
-               AND list_contains(b.street_name_tokens, 'n'))
-           OR ((list_contains(p.street_name_tokens, 'e')
-                OR list_contains(p.street_name_tokens, 'east'))
-               AND list_contains(b.street_name_tokens, 'w'))
-           OR ((list_contains(p.street_name_tokens, 'w')
-                OR list_contains(p.street_name_tokens, 'west'))
-               AND list_contains(b.street_name_tokens, 'e'))
-         )
-        WHERE p.external_id NOT IN (SELECT external_id FROM {fqn})
+        FROM _candidate_pairs c
+        JOIN _persons_for_match  p ON p.external_id = c.external_id
+        JOIN _blockfaces_for_match b ON b.blockface_id = c.blockface_id
+        WHERE len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
+          AND NOT (
+              (p.has_n AND b.has_s) OR (p.has_s AND b.has_n)
+              OR (p.has_e AND b.has_w) OR (p.has_w AND b.has_e)
+          )
     """)
 
     version = _current_version(conn)
