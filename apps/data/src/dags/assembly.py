@@ -1,37 +1,26 @@
-"""Hamilton graph for assembling the canonical Person record.
+"""Assemble the canonical Person record.
 
-The matching + position-assignment work is done upstream
-(`matching.py` picks the TIGER blockface; `geocode.py` assigns lat/lon
-for TIGER-matched and TIGER-miss voters). This module synthesizes
-those into the single canonical `persons_geocoded` record that
-downstream consumers query.
+Matching (`matching.py`) and position assignment (`geocode.py`)
+produce intermediate per-voter outputs. This module synthesizes them
+into the single canonical `persons_geocoded` record that downstream
+consumers query.
 
-Node dependency chain:
+    persons_best_match ─┐
+    refined_positions ──┼─► canonical_addresses ─┐
+    osm_only_matches ───┘                        │
+                                                 ├─► persons_geocoded ─► geocoding_summary
+                            persons_validated ───┘
 
-    persons_best_match (matching.py)
-              │
-              │       refined_positions (geocode.py)     osm_only_matches (geocode.py)
-              │              │                                    │
-              └──────────────┴───────────┬────────────────────────┘
-                                         │
-                                canonical_addresses
-                                         │
-                                persons_geocoded ◄── persons_validated
-                                         │
-                                  geocoding_summary
-
-`canonical_addresses` picks the street name: OSM-derived if either OSM
-source matched, TIGER `full_name` otherwise (Option B — per-building
-identity wins for `building_id` stability).
-
-`persons_geocoded` is a pure assembly node: joins person fields,
-canonical address, coords, and (when available) TIGER match metadata.
-
-`geocoding_summary` reports match-rate diagnostics broken down by
-`position_source`.
+- `canonical_addresses` produces the human-readable `address_line_1`
+  per voter (see "Address handling" in AGENTS.md for source priority).
+- `persons_geocoded` is a pure assembly node: joins person fields,
+  canonical address, coords, and TIGER match metadata.
+- `geocoding_summary` reports match-rate diagnostics broken down by
+  `position_source`.
 """
 
 import duckdb
+from src.addressing import housenumber_display_sql, housenumber_norm_sql
 from src.models import TableRef
 from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
 
@@ -57,15 +46,15 @@ def canonical_addresses(
 
     Street-name source priority — for each voter:
       1. `refined_positions.osm_street` if non-null (the voter matched
-         an OSM building, regardless of whether they also matched
-         TIGER). Same OSM building → same canonical → same building_id.
-         This prevents the dupe pattern where TIGER-matched voters and
-         osm_only voters at the same physical building end up with
-         different canonical street names ("F D R Dr" vs "FDR Drive").
+         an OSM building). Same OSM building → same canonical → same
+         building_id, so voters at the same physical building always
+         share a building_id regardless of which TIGER alias they
+         matched on.
       2. `osm_only_matches.osm_street` for TIGER-miss voters rescued
          via direct OSM lookup.
-      3. `persons_best_match.full_name` (TIGER's authoritative form)
-         for tiger_only voters where no OSM building was found.
+      3. `persons_best_match.full_name` (TIGER's canonical form for
+         the matched blockface) for voters where no OSM building was
+         found.
 
     Half-coded addresses are preserved with the "1/2" in canonical
     address_line_1.
@@ -94,18 +83,16 @@ def canonical_addresses(
         )
     """)
 
-    # For TIGER-matched voters, prefer OSM street when the OSM lookup
-    # hit (osm_street IS NOT NULL); fall back to TIGER full_name. For
-    # osm_only voters, always use OSM street.
+    # Street: prefer OSM's surface form when an OSM match exists;
+    # fall back to TIGER's canonical full_name otherwise.
     #
     # Housenumber: prefer OSM's surface form when the voter's parsed
     # housenumber and the OSM record's housenumber normalize to the
-    # same value (housenumber_norm equality). This unifies Queens
-    # hyphen variants — voter "646 SEAGIRT" and OSM "6-46 SEAGIRT"
-    # both normalize to "646", so we use OSM's "6-46" canonical form
-    # for both, producing a single building_id. When the normalized
-    # forms differ (e.g., voter "100" vs OSM "100A" — subunit
-    # distinction), we keep the voter's parsed form.
+    # same string. This unifies surface-form variants for the same
+    # physical housenumber (`646` ↔ `6-46`, `67-3` ↔ `67-03`) under
+    # the form OSM uses, so they share a building_id. When the
+    # normalized forms differ (e.g., voter `100` vs OSM `100A`, where
+    # OSM is encoding a subunit), we keep the voter's parsed form.
     conn.execute(f"""
         INSERT INTO {fqn}
         WITH src AS (
@@ -121,27 +108,15 @@ def canonical_addresses(
         voter_hn AS (
             SELECT
                 external_id,
-                COALESCE(house_num_prefix, '') || CAST(house_number AS VARCHAR)
-                  || CASE WHEN half_code IS NOT NULL AND half_code != ''
-                          THEN ' ' || half_code ELSE '' END AS hn_str,
-                regexp_replace(
-                    regexp_replace(
-                        COALESCE(house_num_prefix, '') || CAST(house_number AS VARCHAR)
-                          || CASE WHEN half_code IS NOT NULL AND half_code != ''
-                                  THEN ' ' || half_code ELSE '' END,
-                        '(^|-)0*([0-9])', '\\1\\2', 'g'),
-                    '-', '', 'g'
-                ) AS hn_norm
+                {housenumber_display_sql("house_num_prefix", "house_number", "half_code")} AS hn_str,
+                {housenumber_norm_sql(housenumber_display_sql("house_num_prefix", "house_number", "half_code"))} AS hn_norm
             FROM {decomposed_fqn}
         )
         SELECT
             s.external_id,
             CASE
                 WHEN s.osm_housenumber IS NOT NULL
-                 AND regexp_replace(
-                       regexp_replace(s.osm_housenumber, '(^|-)0*([0-9])', '\\1\\2', 'g'),
-                       '-', '', 'g'
-                     ) = vh.hn_norm
+                 AND {housenumber_norm_sql("s.osm_housenumber")} = vh.hn_norm
                 THEN UPPER(s.osm_housenumber)
                 ELSE vh.hn_str
             END

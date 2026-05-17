@@ -1,23 +1,13 @@
-"""Hamilton graph for matching voter addresses to TIGER blockfaces.
+"""Match voter addresses to TIGER blockfaces.
 
-Takes the validated persons from `voter_file_loader` and the blockface
-reference data from `tiger`, and produces a single best-matching blockface
-per voter. Coordinate assignment happens downstream in `geocode.py`
-(`refined_positions` for TIGER-matched voters, `osm_only_matches` for
-TIGER-miss voters). Canonical address derivation + final assembly into
-`persons_geocoded` happen in `assembly.py`.
+Picks the single best-scoring blockface per voter. Coordinate assignment
+runs downstream in `geocode.py`; canonical address derivation in
+`assembly.py`. Cross-catalog joins (org-side `ducklake` to shared
+`geo_ducklake`) work on the single shared DuckDB connection.
 
-Cross-catalog joins (person data in ``ducklake``, blockfaces in
-``geo_ducklake``) run on the single shared DuckDB connection.
-
-Node dependency chain:
-    persons_validated → persons_decomposed → persons_candidates
-                                                   │
-    blockface_final ──────────────────────────────┘
-                                                   │
-                                            persons_scored
-                                                   │
-                                            persons_best_match
+    persons_validated ─► persons_decomposed ─► persons_candidates ─► persons_scored ─► persons_best_match
+                                                       ▲
+    blockface_final ───────────────────────────────────┘
 """
 
 import duckdb
@@ -151,13 +141,13 @@ def persons_candidates(
     Matching criteria (all must hold):
     1. ZIP code equality (fast partition filter)
     2. number_type parity match (odd/even)
-    3. House-number prefix equality. The prefix is the non-numeric stem
-       of hyphenated Queens addresses ("34-12 Broadway" → prefix="34-").
-       Both pipelines normalize plain integer addresses to ``''``, so this
-       is a no-op outside Queens; without it, every "34-12 Broadway" voter
-       could match every "NN-12 Broadway" blockface in the same zip and
-       pile onto whichever one tiebreaks first, leaving entire blocks
-       empty on the map.
+    3. House-number prefix equality. For hyphen-prefix addresses
+       (`34-12 Broadway` → prefix `34-`, house 12), the prefix
+       identifies which block a voter lives on within a street. Plain
+       integer addresses normalize to ``''`` so this is a no-op for
+       non-hyphenated forms; without it, voters across different
+       blocks of the same prefix-style street would all pile onto
+       whichever blockface tiebreaks first.
     4. House number falls within the blockface address range (either direction)
     5. Street-name token intersection has ≥ 2 overlapping tokens AND
        (the voter has no distinctive tokens, OR ≥ 1 of those overlaps
@@ -309,16 +299,13 @@ def persons_candidates(
 
     # Hydrate the (voter, blockface) ID pairs back into full rows and
     # apply the remaining filters: overall token overlap ≥ 2,
-    # opposing-cardinal rejection, AND re-apply the house-range +
-    # prefix predicate. The last one is critical because
-    # `_blockfaces_for_match` can have multiple rows sharing the same
-    # `blockface_id` when TIGER stores multiple address ranges on the
-    # same `(tlid, side)` (e.g., E 58th St in Brooklyn: range 300-338
-    # and range 340-498 both under `59085878:right`). Without this
-    # filter a voter at house 404 hydrates into both rows, then
-    # `persons_best_match` picks one non-deterministically and
-    # voters at the same building can end up with different
-    # `full_name` → different `building_id`.
+    # opposing-cardinal rejection, and the house-range + prefix
+    # predicate. Re-applying the range/prefix predicate is critical
+    # because `_blockfaces_for_match` can have multiple rows sharing
+    # the same `blockface_id` when TIGER stores multiple address
+    # ranges on the same `(tlid, side)`. Without this filter a voter
+    # would hydrate into every row, and downstream selection of one
+    # row would be non-deterministic.
     conn.execute(f"""
         INSERT INTO {fqn}
         SELECT

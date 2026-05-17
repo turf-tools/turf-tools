@@ -1,18 +1,16 @@
-"""Hamilton graph for aggregating geocoded persons into buildings and doors.
+"""Aggregate geocoded persons into buildings and doors.
 
-Both outputs derive from `persons_geocoded` (which already carries
-`building_id`, `door_id`, canonical address fields, and lat/lng):
+`persons_geocoded` already carries `building_id`, `door_id`, canonical
+address fields, and lat/lng. This module rolls those up:
 
-    persons_geocoded ─► buildings_geocoded
-                    └─► doors_geocoded
+    persons_geocoded ─┬─► buildings_geocoded
+                      └─► doors_geocoded
 
-A building is one physical structure (`address_line_1 + zip5`). A door is
-one unit within a building (`address_line_1 + address_line_2 + zip5`).
-Single-family homes have one door per building. lat/lng is the centroid of
-contained persons — they share an address, so coordinates match within
-float noise. `persons_geocoded` only contains successfully-matched rows
-(see `assembly.py`), so every person here has coordinates and a stable
-building/door key.
+A **building** is one physical structure (`address_line_1 + zip5`).
+A **door** is one unit within a building
+(`address_line_1 + address_line_2 + zip5`); single-family homes get
+one door per building. lat/lng is the centroid of contained persons
+— they share an address, so coordinates differ only by float noise.
 """
 
 import duckdb

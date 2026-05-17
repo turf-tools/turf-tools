@@ -1,29 +1,18 @@
-"""Hamilton graph for preparing OSM-derived geographic reference data.
+"""Prepare OSM reference data for address matching.
 
-Parallels `tiger.py` — both modules write reference tables into
-`geo_ducklake` that the downstream geocoding pipeline reads. This
-module owns everything OSM-specific (extraction, parsing, building
-lookup keying). The actual lat/lon assignment using both TIGER
-blockfaces and OSM buildings happens in `geocode.py`.
+Parallels `tiger.py`: extracts OSM-derived data into `geo_ducklake`
+for the geocoding pipeline. The actual lat/lon assignment (using
+both TIGER blockfaces and OSM buildings) lives in `geocode.py`.
 
-Pipeline:
-
-    osm_pbf  ─►  osm_buildings_polygons    (osmium-derived area centroids)
-              ─►  osm_addresses             (raw OSM addressed elements)
-              ─►  osm_landuse_residential   (assembled landuse polygons)
+                ┌─► osm_buildings_polygons   (building polygon centroids)
+    osm_pbf ────┼─► osm_addresses            (addressed OSM elements)
+                └─► osm_landuse_residential  (residential land-use polygons)
 
     osm_addresses + osm_landuse_residential + address_tokens
-        ─►  osm_building_lookup            (per-building keyed for join)
+        ─► osm_building_lookup               (per-building, keyed for join)
 
-Output: `geo_ducklake.osm.building_lookup` — one row per OSM-known
-building, keyed on `(zip_code, canonical_key, housenumber_norm)`, with
-the centroid lat/lon, raw `street` (canonical for display), and an
-`in_residential_complex` flag.
-
-Canonical key shape on both voter and OSM sides: sorted distinctive
-(non-generic) street-name tokens after equivalency expansion via
-`address_tokens`, joined with '|'. Same key on both sides → strict
-text match → no cross-street collisions.
+`osm_building_lookup` is the consumer-facing output — one row per
+OSM-known building, keyed on `(zip_code, canonical_key, housenumber_norm)`.
 """
 
 import json
@@ -36,6 +25,7 @@ from pathlib import Path
 import duckdb
 from src.addressing import (
     canonical_key_sql,
+    housenumber_norm_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
@@ -496,27 +486,22 @@ def osm_building_lookup(
         WHERE expanded IS NOT NULL
     """)
 
-    # If both a way and a node exist for the same building, prefer the
-    # way (polygon centroid > doorway point). Flag buildings whose
-    # centroid is inside a landuse=residential polygon — those voters
-    # get the OSM centroid directly without road projection.
-    # housenumber_norm: strip leading zeros after hyphens (Queens
-    # "132-01" → "132-1") then strip hyphens (Manhattan "11-15" → "1115").
-    # Group by housenumber_norm (not raw housenumber) so OSM variants
-    # like "90-02" and "90-2" — same building, different tagging —
-    # merge into one row.
-    # Compute in_residential_complex as a one-shot spatial semi-join
-    # rather than per-row correlated EXISTS. The planner can use bbox
-    # pre-filtering on the join predicate; the correlated form
-    # iterated buildings × residential polygons with no index.
+    # Group by housenumber_norm (not the raw `housenumber` string) so
+    # OSM tagging variants for the same physical building — `90-2` /
+    # `90-02`, `1115` / `11-15` — merge into one row.
+    #
+    # Pick the OSM record per group via ROW_NUMBER: prefer way (polygon
+    # centroid) over node (doorway point); break ties on osm_id ASC for
+    # deterministic output.
+    #
+    # in_residential_complex is computed as a one-shot spatial
+    # semi-join rather than per-row correlated EXISTS so DuckDB's
+    # spatial bbox pre-filter applies.
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         WITH keyed_norm AS (
             SELECT osm_id, zip_code, canonical_key, housenumber, street, lat, lon, kind,
-                   regexp_replace(
-                       regexp_replace(housenumber, '(^|-)0*([0-9])', '\\1\\2', 'g'),
-                       '-', '', 'g'
-                   ) AS housenumber_norm
+                   {housenumber_norm_sql("housenumber")} AS housenumber_norm
             FROM _bl_keyed
             WHERE canonical_key != ''
         ),

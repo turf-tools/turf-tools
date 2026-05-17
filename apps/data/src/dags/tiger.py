@@ -1,17 +1,13 @@
-"""Hamilton graph for preparing TIGER geographic reference data into geo DuckLake.
+"""Prepare TIGER reference data for address matching.
 
-This graph downloads US Census TIGER/Line shapefiles for a given state/county
-selection, loads them into geo_ducklake, and produces a normalized blockface
-table optimised for address matching.
+Downloads TIGER/Line shapefiles for the configured state/county
+selection and produces a normalized, query-ready blockface table.
+All output lives in the ``geo_ducklake`` catalog, shared across orgs.
 
-All nodes write to the ``geo_ducklake`` catalog so that the resulting blockface
-data is reusable across multiple client voter files without duplication.
-
-Node dependency chain:
-    tiger_addrfeat_raw ──┐
-                          ├─► blockface_unpivoted ─► blockface_normalized ─► blockface_final
-    tiger_edges_raw ─────┘
-    address_tokens ─────────────────────────────────────────────────► blockface_final
+    tiger_addrfeat_raw ─┐
+                        ├─► blockface_unpivoted ─► blockface_normalized ─► blockface_final
+    tiger_edges_raw    ─┘                                                   ▲
+    address_tokens ─────────────────────────────────────────────────────────┘
 """
 
 import json
@@ -599,39 +595,34 @@ def blockface_final(
 
     Three transforms on top of ``blockface_normalized``:
 
-    1. **Alias collapse.** TIGER addrfeat stores some streets under
-       multiple names (Manhattan's "7th Ave" / "Adam Clayton Powell Jr
-       Blvd", "8th Ave" / "Frederick Douglass Blvd", "Lenox Ave" /
-       "Malcolm X Blvd") — same ``tiger_line_id``, same ``side``,
-       same prefix, same address range, different ``full_name`` rows.
-       We ``GROUP BY (tlid, side, prefix, from, to)`` to collapse
-       those alias rows into one. Canonical ``full_name`` per group is
-       picked by global frequency across the dataset — common-name
-       wins ("7th Ave" beats "ACP Blvd" because 7th Ave shows up on
-       many more TIGER lines), tiebroken alphabetically.
+    1. **Alias collapse.** TIGER addrfeat sometimes stores the same
+       physical blockface under multiple street names (e.g. a street
+       and its commemorative co-name) — same ``tiger_line_id``,
+       ``side``, prefix, and address range, different ``full_name``.
+       ``GROUP BY (tlid, side, prefix, from, to)`` merges these into
+       one row. The canonical ``full_name`` is the one that appears
+       most often across the dataset (alphabetical tiebreak).
 
-       Note: this does *not* collapse Queens-prefix variants on a
-       shared TIGER line (219-XX / 220-XX / 221-XX on the same
-       physical block of 121st Ave). Those have different prefix
-       ranges and remain distinct rows.
+       Note: this does *not* collapse rows that share a TIGER line but
+       legitimately represent distinct address ranges — those have
+       different ``(prefix, from, to)`` triples and stay as separate
+       rows.
 
     2. **Two token sets.** Every group emits:
          - ``street_name_tokens`` — the union of every alias row's
            tokens, equivalency-expanded. Used by the matching
-           predicate so voters using either alias still match.
+           predicate so a voter using any alias spelling matches.
          - ``canonical_tokens`` — only the canonical name's tokens,
            equivalency-expanded. Used by ``refined_positions`` for
-           the OSM ``canonical_key`` lookup. With this, voters from
-           the ACP-form and 7th-Ave-form addresses produce the same
-           canonical_key (7th Ave tokens) and hit the same OSM
-           record deterministically.
+           the OSM ``canonical_key`` lookup, so voters at the same
+           building hit the same OSM record regardless of which
+           alias their raw address used.
 
     3. **Equivalency expansion.** Applied to both token sets via the
-       ``address_tokens`` lookup, so abbreviations match full forms
-       across sources (st↔street, ave↔avenue, 1st↔first, etc.).
+       ``address_tokens`` lookup so abbreviations match full forms
+       (st↔street, ave↔avenue, 1st↔first, …).
 
     Non-incremental: the collapse needs to see all rows at once.
-    Re-runs are cheap (~290K rows in NYC).
     """
     table = "blockface_final"
     fqn = _fqn(table)
@@ -691,9 +682,9 @@ def blockface_final(
             GROUP BY blockface_id, side, from_house_num, to_house_num,
                      house_num_prefix, number_type, zip_code, tiger_line_id
         ),
-        -- Equivalency expansion runs per bf_row (the synthetic group id) —
-        -- not per blockface_id, since Queens-prefix variants share the
-        -- same blockface_id but need their own expansion buckets.
+        -- Equivalency expansion runs per bf_row (the synthetic group id)
+        -- so each `(tlid, side, prefix, from, to)` group gets its own
+        -- extras bucket, even when multiple groups share `blockface_id`.
         merged_extras AS (
             SELECT c.bf_row, flatten(list(t.equivalent_tokens)) AS extras
             FROM collapsed c JOIN {tokens_fqn} t
