@@ -52,6 +52,24 @@ export type AddressFilter = {
   zip: string;
 };
 
+// Reference to another segment by id. Authored form — what the user
+// composes and what we persist. Resolved to NestedFilter (below) by
+// `expandSegmentRefs` before any query reaches the data server.
+export type SegmentFilter = {
+  kind: "segment";
+  key: "segment";
+  segmentId: string | null;
+};
+
+// Result of expanding a SegmentFilter: carries the referenced
+// segment's full criteria inline. The data server compiles this as a
+// parenthesized boolean expression (see apps/data/src/dsl/compile.py).
+// Never persisted — only on the wire.
+export type NestedFilter = {
+  kind: "nested";
+  criteria: Criteria;
+};
+
 export type Filter =
   | AllFilter
   | EnumFilter
@@ -59,7 +77,9 @@ export type Filter =
   | TextFilter
   | DateRangeFilter
   | VotingHistoryFilter
-  | AddressFilter;
+  | AddressFilter
+  | SegmentFilter
+  | NestedFilter;
 
 // Criteria — ordered sequence of steps with verbs.
 export type Verb = "add" | "narrow" | "remove";
@@ -108,13 +128,19 @@ export type FilterDef =
       kind: "address";
       key: "address";
       label: string;
+    }
+  | {
+      kind: "segment";
+      key: "segment";
+      label: string;
     };
 
 // Catalog organized into sections — the editor's "add filter" dropdown
 // renders a separator between each group. Keep the flat FILTERS export
 // derived from this so other consumers (definitionFor, etc.) don't care.
 export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
-  // Special — only `narrow` shows this section (handled in the dropdown).
+  // Universal — the empty / "everyone" filter, useful under every verb
+  // (narrow to universe, add everyone, or remove everyone to start fresh).
   [{ kind: "all", key: "all", label: "Everyone" }],
   // Identity + demographics
   [
@@ -215,13 +241,17 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
       source: "column",
     },
   ],
+  // Composite — reference another segment by id.
+  [{ kind: "segment", key: "segment", label: "Segment" }],
 ] as const;
 
 export const FILTERS: ReadonlyArray<FilterDef> = FILTER_SECTIONS.flatMap((s) => s);
 
 // Helpers
 export function filterKey(f: Filter): string {
-  return f.kind === "all" ? "all" : f.key;
+  if (f.kind === "all") return "all";
+  if (f.kind === "nested") return "nested";
+  return f.key;
 }
 
 export function definitionFor(key: string): FilterDef | undefined {
@@ -236,6 +266,7 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "date-range") return { kind: "date-range", key: def.key, min: null, max: null };
   if (def.kind === "address")
     return { kind: "address", key: "address", line1: "", city: "", state: "", zip: "" };
+  if (def.kind === "segment") return { kind: "segment", key: "segment", segmentId: null };
   // Voting history default: "voted in 1+ recent primaries" (single prime).
   return {
     kind: "voting-history-count",
@@ -261,6 +292,8 @@ export function isActiveFilter(f: Filter): boolean {
       f.state.trim().length > 0 ||
       f.zip.trim().length > 0
     );
+  if (f.kind === "segment") return f.segmentId != null;
+  if (f.kind === "nested") return f.criteria.steps.length > 0;
   // voting-history-count: active when window and count are non-degenerate.
   return f.windowYears > 0 && f.count >= 0;
 }

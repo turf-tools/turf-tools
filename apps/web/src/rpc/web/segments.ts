@@ -1,6 +1,8 @@
-import { and, asc, eq } from "@field-tools/db";
+import { and, asc, eq, ne } from "@field-tools/db";
 import { campaigns, segments } from "@field-tools/db/schema";
 import { z } from "zod";
+import { expandSegmentRefs, SegmentRefError, type SegmentLike } from "~/lib/expand-segment-refs";
+import type { Criteria } from "~/lib/filters";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
 
@@ -50,9 +52,11 @@ const segmentSelect = {
 };
 
 // List segments in the current user's organization, oldest first.
+// Criteria is included so the segment-ref filter editor can resolve
+// references and detect cycles without an extra round trip.
 export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
   const rows = await context.db
-    .select(segmentSelect)
+    .select({ ...segmentSelect, criteria: segments.criteria })
     .from(segments)
     .where(eq(segments.organizationId, context.organizationId))
     .orderBy(asc(segments.createdAt));
@@ -208,8 +212,9 @@ export const countCampaigns = pub
   });
 
 // Replace a segment's criteria. Used by the segment editor's save flow.
-// The criteria shape is opaque at this layer — the editor and the data
-// service interpret it; the web RPC just stores and returns it.
+// The criteria shape is otherwise opaque at this layer, but segment
+// references are walked here to reject cycles before they persist —
+// the editor prevents them in the UI, this is a backstop.
 export const updateCriteria = pub
   .input(
     z.object({
@@ -230,6 +235,44 @@ export const updateCriteria = pub
     if (owned.length === 0) {
       throw new Error("Segment not found");
     }
+
+    const incoming = input.criteria as Criteria;
+    const others = await context.db
+      .select({
+        segmentId: segments.segmentId,
+        name: segments.name,
+        criteria: segments.criteria,
+      })
+      .from(segments)
+      .where(
+        and(
+          eq(segments.organizationId, context.organizationId),
+          ne(segments.segmentId, input.segmentId),
+        ),
+      );
+    // Build an org map containing the incoming criteria for the segment
+    // being saved (in place of its stored criteria). Expanding the
+    // incoming criteria then walks all transitive refs, and any path
+    // that loops back to the segment under edit trips the cycle check.
+    const segmentsById = new Map<string, SegmentLike>(
+      others.map((s) => [
+        s.segmentId,
+        { segmentId: s.segmentId, name: s.name, criteria: s.criteria as Criteria },
+      ]),
+    );
+    segmentsById.set(input.segmentId, {
+      segmentId: input.segmentId,
+      name: "(self)",
+      criteria: incoming,
+    });
+    try {
+      expandSegmentRefs(incoming, segmentsById);
+    } catch (err) {
+      if (err instanceof SegmentRefError)
+        throw new Error(`Invalid segment references: ${err.message}`);
+      throw err;
+    }
+
     await context.db
       .update(segments)
       .set({ criteria: input.criteria as object, updatedAt: new Date() })

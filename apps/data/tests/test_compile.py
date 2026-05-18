@@ -17,6 +17,7 @@ from src.dsl.criteria import (
     DateRangeFilter,
     EnumFilter,
     KeyFilter,
+    NestedFilter,
     Step,
     TextFilter,
     VotingHistoryFilter,
@@ -500,3 +501,128 @@ def test_column_expr_for_promoted_field() -> None:
 def test_boundary_key_expr_for_known_groups() -> None:
     assert boundary_key_expr_for("nyc_zips") == "zip5"
     assert boundary_key_expr_for("nyc_eds") == "precinct"
+
+
+# ---------------------------------------------------------------------------
+# NestedFilter — produced by the web layer when expanding segment refs.
+# Compiles to a parenthesised boolean of the inner criteria; the outer
+# step's verb composes it like any other filter.
+# ---------------------------------------------------------------------------
+
+
+def _inner_dem() -> NestedFilter:
+    return NestedFilter(
+        kind="nested",
+        criteria=_narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+    )
+
+
+def test_nested_filter_narrow_composes_as_and() -> None:
+    params: list = []
+    where = criteria_to_where(
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="narrow", filter=_inner_dem()),
+            ],
+        ),
+        None,
+        params,
+    )
+    assert where == "WHERE (zip5 = ?) AND ((enrollment IN (?)))"
+    assert params == ["11201", "democratic"]
+
+
+def test_nested_filter_add_composes_as_or() -> None:
+    params: list = []
+    where = criteria_to_where(
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="add", filter=_inner_dem()),
+            ],
+        ),
+        None,
+        params,
+    )
+    assert where == "WHERE (zip5 = ?) OR ((enrollment IN (?)))"
+    assert params == ["11201", "democratic"]
+
+
+def test_nested_filter_remove_composes_as_and_not() -> None:
+    params: list = []
+    where = criteria_to_where(
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="remove", filter=_inner_dem()),
+            ],
+        ),
+        None,
+        params,
+    )
+    assert where == "WHERE (zip5 = ?) AND NOT ((enrollment IN (?)))"
+    assert params == ["11201", "democratic"]
+
+
+def test_empty_nested_filter_matches_universe() -> None:
+    # An empty segment matches everyone standalone (no WHERE), so an
+    # empty NestedFilter must compile to 1=1 — letting "add: empty-seg"
+    # after "remove: Everyone" correctly produce everyone.
+    params: list = []
+    where = criteria_to_where(
+        Criteria(
+            steps=[
+                Step(verb="remove", filter=AllFilter(kind="all")),
+                Step(verb="add", filter=NestedFilter(kind="nested", criteria=Criteria())),
+            ],
+        ),
+        None,
+        params,
+    )
+    assert where == "WHERE (NOT (1=1)) OR (1=1)"
+    assert params == []
+
+
+def test_nested_filter_with_internal_verbs_preserves_composition() -> None:
+    # Inner criteria uses both narrow and add internally; the parenthesised
+    # OR group must be wrapped intact when the outer step ANDs it in.
+    inner = Criteria(
+        steps=[
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+            Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["working_families"])),
+        ],
+    )
+    params: list = []
+    where = criteria_to_where(
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="narrow", filter=NestedFilter(kind="nested", criteria=inner)),
+            ],
+        ),
+        None,
+        params,
+    )
+    assert where == "WHERE (zip5 = ?) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
+    assert params == ["11201", "democratic", "working_families"]
+
+
+def test_nested_filter_compiles_recursively() -> None:
+    # Nested-inside-nested — what a chain of segment references produces.
+    leaf = NestedFilter(
+        kind="nested",
+        criteria=_narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+    )
+    middle = NestedFilter(
+        kind="nested",
+        criteria=Criteria(steps=[Step(verb="narrow", filter=leaf)]),
+    )
+    params: list = []
+    where = criteria_to_where(
+        Criteria(steps=[Step(verb="narrow", filter=middle)]),
+        None,
+        params,
+    )
+    assert where == "WHERE ((enrollment IN (?)))"
+    assert params == ["democratic"]

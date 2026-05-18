@@ -24,6 +24,8 @@ import { campaignDetailQuery } from "~/lib/queries/campaigns";
 import { cutterBuildingsQuery, segmentDetailQuery } from "~/lib/queries/segments";
 import { turfDraftsQuery } from "~/lib/queries/turf-drafts";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import { useExpandedCriteria } from "~/lib/use-expanded-criteria";
+import type { Criteria } from "~/lib/filters";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { parseHexRgb } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
@@ -87,13 +89,16 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
     enabled: !!zoneGroup,
   });
 
+  const expandedSegmentCriteria = useExpandedCriteria(
+    segmentDetail?.criteria as Criteria | null | undefined,
+  );
   const { data: buildingsResult } = useQuery({
     ...cutterBuildingsQuery(
       zoneId,
-      segmentDetail?.criteria,
+      expandedSegmentCriteria,
       zoneGroup && zone ? { keyGroup: zoneGroup.keyGroup, keys: zone.keys } : undefined,
     ),
-    enabled: !!segmentDetail?.criteria && !!zone,
+    enabled: !!expandedSegmentCriteria && !!zone,
   });
   const buildings = buildingsResult?.buildings;
 
