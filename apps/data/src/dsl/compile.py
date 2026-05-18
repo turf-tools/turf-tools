@@ -27,6 +27,7 @@ from .criteria import (
     FieldDef,
     Filter,
     KeyFilter,
+    NestedFilter,
     TextFieldDef,
     TextFilter,
     VotingHistoryFieldDef,
@@ -179,6 +180,10 @@ def _filter_clause(f: Filter, params: list[Any]) -> str:
         if field_def is None:
             raise CriteriaError(f"Unknown field: {f.key}")
         return _address_clause(f, field_def, params)
+    if isinstance(f, NestedFilter):
+        # Empty inner → 1=1 to match the standalone "empty segment matches everyone" semantic.
+        inner = _criteria_bool_expr(f.criteria, params)
+        return f"({inner})" if inner else "1=1"
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 
