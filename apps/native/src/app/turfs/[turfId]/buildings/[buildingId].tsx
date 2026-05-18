@@ -19,7 +19,8 @@ import {
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { formatAge, formatGender, formatParty, useTurf } from "@/lib/turf-data";
+import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
+import { useTurf } from "@/lib/turf-data";
 
 export default function BuildingScreen() {
   const { turfId, buildingId } = useLocalSearchParams<{
@@ -227,7 +228,7 @@ function PersonRow({
           <View className="flex-row items-center gap-1.5 mt-1">
             <Pill>{formatAge(person)}</Pill>
             <Pill>{formatGender(person)}</Pill>
-            <Pill>{formatParty(person)}</Pill>
+            <Pill>{formatEnrollment(person)}</Pill>
             <View className="flex-1" />
             {note && <Pill icon={<Scroll size={18} color={iconColor} />} />}
             {survey && <Pill icon={<Speech size={18} color={iconColor} />} />}

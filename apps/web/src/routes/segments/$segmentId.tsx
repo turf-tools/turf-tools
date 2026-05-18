@@ -1,10 +1,17 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
-import { Filter as FilterIcon, GripVertical, Minus, Plus, X } from "lucide-react";
+import {
+  Calendar as CalendarIcon,
+  Filter as FilterIcon,
+  GripVertical,
+  Minus,
+  Plus,
+  X,
+} from "lucide-react";
 import {
   type ComponentProps,
-  type KeyboardEvent,
+  Fragment,
   type ReactNode,
   useEffect,
   useMemo,
@@ -16,27 +23,34 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
+import { Calendar } from "~/components/calendar";
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
+import { NumberInput } from "~/components/number-input";
+import { Popover, PopoverContent, PopoverTrigger } from "~/components/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { Toggle } from "~/components/toggle";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
+  type AddressFilter,
   type AgeRangeFilter,
+  type DateRangeFilter,
   definitionFor,
   emptyFilterFor,
   type EnumFilter,
   type Filter,
   type FilterDef,
   filterKey,
-  FILTERS,
+  FILTER_SECTIONS,
   isActiveStep,
   type Criteria,
   type Step,
   type TextFilter,
   type Verb,
+  type VotingHistoryFilter,
   VERB_META,
 } from "~/lib/filters";
 import {
@@ -205,8 +219,6 @@ function SegmentEditor() {
     prevStepsLengthRef.current = steps.length;
   }, [steps.length]);
 
-  const availableDefs = FILTERS;
-
   return (
     <div className="flex gap-4 h-full">
       <div ref={stepsContainerRef} className="w-86 shrink-0 flex flex-col gap-3 overflow-y-auto">
@@ -219,7 +231,11 @@ function SegmentEditor() {
                 "after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-2 after:bg-background after:-z-10",
               )}
             >
-              <AddStepMenu defs={availableDefs} isFirstStep={steps.length === 0} onAdd={addStep} />
+              <AddStepMenu
+                sections={FILTER_SECTIONS}
+                isFirstStep={steps.length === 0}
+                onAdd={addStep}
+              />
             </div>
             <Reorder.Group
               axis="y"
@@ -577,6 +593,15 @@ function StepRow({
       {filter.kind === "text" && def?.kind === "text" ? (
         <TextFilterEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
+      {filter.kind === "date-range" && def?.kind === "date-range" ? (
+        <DateRangeFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {filter.kind === "voting-history-count" && def?.kind === "voting-history-count" ? (
+        <VotingHistoryFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {filter.kind === "address" && def?.kind === "address" ? (
+        <AddressFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
     </div>
   );
 }
@@ -668,35 +693,25 @@ function AgeRangeFilterEditor({
     const max = localMax === "" ? null : Number(localMax);
     if (min !== filter.min || max !== filter.max) onChange({ ...filter, min, max });
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commit();
-    }
-  };
   return (
     <div className="flex items-center gap-2 text-sm">
       <span className="text-muted-foreground">Between</span>
-      <Input
-        type="number"
+      <NumberInput
+        value={localMin}
+        onChange={setLocalMin}
+        onCommit={commit}
         min={0}
         max={120}
-        value={localMin}
-        onChange={(e) => setLocalMin(e.target.value)}
-        onBlur={commit}
-        onKeyDown={onKeyDown}
         className="h-7 w-16 px-2"
         placeholder="min"
       />
       <span className="text-muted-foreground">and</span>
-      <Input
-        type="number"
+      <NumberInput
+        value={localMax}
+        onChange={setLocalMax}
+        onCommit={commit}
         min={0}
         max={120}
-        value={localMax}
-        onChange={(e) => setLocalMax(e.target.value)}
-        onBlur={commit}
-        onKeyDown={onKeyDown}
         className="h-7 w-16 px-2"
         placeholder="max"
       />
@@ -705,12 +720,271 @@ function AgeRangeFilterEditor({
   );
 }
 
+// ISO 8601 YYYY-MM-DD ↔ Date helpers. Treat the string as a *local* date —
+// date-only values are inherently timezone-naïve. Round-trip stays consistent
+// with what react-day-picker shows the user.
+function isoToDate(s: string | null): Date | undefined {
+  if (!s) return undefined;
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return undefined;
+  return new Date(y, m - 1, d);
+}
+function dateToIso(d: Date | undefined): string | null {
+  if (!d) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function formatHuman(s: string | null): string {
+  const d = isoToDate(s);
+  if (!d) return "";
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function DatePickerInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string | null;
+  onChange: (next: string | null) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex items-center gap-1">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button variant="outline" size="sm" className="h-7 px-2 font-normal">
+              <CalendarIcon className="size-3.5" />
+              <span className={cn(!value && "text-muted-foreground")}>
+                {value ? formatHuman(value) : placeholder}
+              </span>
+            </Button>
+          }
+        />
+        <PopoverContent
+          align="start"
+          className="w-auto p-0"
+          // Skip the fade/zoom animation so the close doesn't visually
+          // overlap the map refetch that follows a date selection.
+          style={{ animationDuration: "0s", transitionDuration: "0s" }}
+        >
+          <Calendar
+            mode="single"
+            selected={isoToDate(value)}
+            onSelect={(d) => {
+              onChange(dateToIso(d));
+              setOpen(false);
+            }}
+            captionLayout="dropdown"
+          />
+        </PopoverContent>
+      </Popover>
+      {value ? (
+        <Button
+          variant="outline"
+          size="icon-sm"
+          onClick={() => onChange(null)}
+          aria-label="Clear date"
+        >
+          <X className="size-4" />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function AddressFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: AddressFilter;
+  onChange: (next: Filter) => void;
+}) {
+  // Commit-on-blur for each sub-field — same pattern as TextFilterEditor.
+  // All fields optional; each non-empty one ANDs into the WHERE clause.
+  type SubKey = "line1" | "city" | "state" | "zip";
+  const subField = (key: SubKey, placeholder: string, width: string) => (
+    <SubTextInput
+      value={filter[key]}
+      placeholder={placeholder}
+      className={cn("h-7 px-2", width)}
+      onCommit={(v) => {
+        if (v !== filter[key]) onChange({ ...filter, [key]: v });
+      }}
+    />
+  );
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      {subField("line1", "street", "w-full")}
+      <div className="flex items-center gap-2">
+        {subField("city", "city", "flex-1")}
+        {subField("state", "state", "w-14")}
+        {subField("zip", "zip", "w-20")}
+      </div>
+    </div>
+  );
+}
+
+// Small local helper — text input with commit-on-blur/Enter.
+function SubTextInput({
+  value,
+  placeholder,
+  className,
+  onCommit,
+}: {
+  value: string;
+  placeholder: string;
+  className?: string;
+  onCommit: (next: string) => void;
+}) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  const commit = () => onCommit(local);
+  return (
+    <Input
+      value={local}
+      placeholder={placeholder}
+      className={className}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+      }}
+    />
+  );
+}
+
+function DateRangeFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: DateRangeFilter;
+  onChange: (next: Filter) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground">Between</span>
+        <DatePickerInput
+          value={filter.min}
+          onChange={(min) => onChange({ ...filter, min })}
+          placeholder="any date"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground">and</span>
+        <DatePickerInput
+          value={filter.max}
+          onChange={(max) => onChange({ ...filter, max })}
+          placeholder="any date"
+        />
+      </div>
+    </div>
+  );
+}
+
+function VotingHistoryFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: VotingHistoryFilter;
+  onChange: (next: Filter) => void;
+}) {
+  const [localCount, setLocalCount] = useState(String(filter.count));
+  const [localWindow, setLocalWindow] = useState(String(filter.windowYears));
+  useEffect(() => setLocalCount(String(filter.count)), [filter.count]);
+  useEffect(() => setLocalWindow(String(filter.windowYears)), [filter.windowYears]);
+  const commitCount = () => {
+    const n = Number(localCount);
+    if (Number.isFinite(n) && n !== filter.count) onChange({ ...filter, count: n });
+  };
+  const commitWindow = () => {
+    const n = Number(localWindow);
+    if (Number.isFinite(n) && n !== filter.windowYears) onChange({ ...filter, windowYears: n });
+  };
+  // Radio-style toggles: clicking an already-pressed item is a no-op (we
+  // never want zero selected). Mirrors EnumFilterEditor styling so these
+  // read as the same kind of choice control.
+  const radioClass = "aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground";
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">Voted in</span>
+        <Toggle
+          size="sm"
+          variant="outline"
+          pressed={filter.comparator === "at_least"}
+          onPressedChange={(p) => p && onChange({ ...filter, comparator: "at_least" })}
+          className={radioClass}
+        >
+          At least
+        </Toggle>
+        <Toggle
+          size="sm"
+          variant="outline"
+          pressed={filter.comparator === "exactly"}
+          onPressedChange={(p) => p && onChange({ ...filter, comparator: "exactly" })}
+          className={radioClass}
+        >
+          Exactly
+        </Toggle>
+        <NumberInput
+          value={localCount}
+          onChange={setLocalCount}
+          onCommit={commitCount}
+          min={0}
+          className="h-7 w-12 px-2"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">of</span>
+        <Toggle
+          size="sm"
+          variant="outline"
+          pressed={filter.type === "primary"}
+          onPressedChange={(p) => p && onChange({ ...filter, type: "primary" })}
+          className={radioClass}
+        >
+          Primaries
+        </Toggle>
+        <Toggle
+          size="sm"
+          variant="outline"
+          pressed={filter.type === "general"}
+          onPressedChange={(p) => p && onChange({ ...filter, type: "general" })}
+          className={radioClass}
+        >
+          Generals
+        </Toggle>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">in last</span>
+        <NumberInput
+          value={localWindow}
+          onChange={setLocalWindow}
+          onCommit={commitWindow}
+          min={1}
+          className="h-7 w-12 px-2"
+        />
+        <span className="text-muted-foreground">years</span>
+      </div>
+    </div>
+  );
+}
+
 function AddStepMenu({
-  defs,
+  sections,
   isFirstStep,
   onAdd,
 }: {
-  defs: ReadonlyArray<FilterDef>;
+  sections: ReadonlyArray<ReadonlyArray<FilterDef>>;
   isFirstStep: boolean;
   onAdd: (verb: Verb, def: FilterDef) => void;
 }) {
@@ -727,7 +1001,10 @@ function AddStepMenu({
       {allVerbs.map((verb) => {
         const { label } = VERB_META[verb];
         const disabled = isFirstStep && verb === "add"; // add only makes sense after a first step
-        const items = defs.filter((d) => verb !== "narrow" || d.kind !== "all");
+        // `Everyone` (kind:"all") only makes sense for `narrow` — hide it for add/remove.
+        const visibleSections = sections
+          .map((s) => s.filter((d) => verb === "narrow" || d.kind !== "all"))
+          .filter((s) => s.length > 0);
         return (
           <div key={verb} className="flex-1">
             <DropdownMenu>
@@ -744,10 +1021,15 @@ function AddStepMenu({
                 {label}
               </DropdownMenuTrigger>
               <DropdownMenuContent align={verb === "add" ? "end" : "start"} className="min-w-48">
-                {items.map((def) => (
-                  <DropdownMenuItem key={def.key} onClick={() => onAdd(verb, def)}>
-                    {def.label}
-                  </DropdownMenuItem>
+                {visibleSections.map((section, sectionIdx) => (
+                  <Fragment key={sectionIdx}>
+                    {sectionIdx > 0 ? <DropdownMenuSeparator /> : null}
+                    {section.map((def) => (
+                      <DropdownMenuItem key={def.key} onClick={() => onAdd(verb, def)}>
+                        {def.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </Fragment>
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>

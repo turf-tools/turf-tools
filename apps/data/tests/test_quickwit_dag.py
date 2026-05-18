@@ -63,12 +63,21 @@ SELECT
     'NY' AS state,
     raw.res_zip5 AS zip5,
     nullif(raw.res_zip4, '') AS zip4,
-    to_json(
-        {
-            county_code: raw.county_code,
-            status: raw.status
-        }
-    ) AS other_properties
+    -- Canonical voter-file scalars (see models.Person). Test only needs
+    -- county_code populated; the rest are NULL placeholders.
+    NULL::VARCHAR AS enrollment,
+    NULL::VARCHAR AS gender,
+    NULL::VARCHAR AS date_of_birth,
+    NULL::VARCHAR AS registration_date,
+    raw.status AS registration_status,
+    NULL::VARCHAR AS last_voted_date,
+    raw.county_code AS county_code,
+    NULL::VARCHAR AS precinct,
+    NULL::VARCHAR AS assembly_district,
+    NULL::VARCHAR AS senate_district,
+    NULL::VARCHAR AS congressional_district,
+    NULL::VARCHAR AS voter_history,
+    '{}'::JSON AS other_properties
 FROM raw
 """
 

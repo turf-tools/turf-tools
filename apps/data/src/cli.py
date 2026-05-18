@@ -44,9 +44,9 @@ def update_visualizations() -> None:
     _render(driver.Builder().with_modules(quickwit).build(), "quickwit_graph.png")
     _render(driver.Builder().with_modules(boundaries).build(), "boundaries_graph.png")
     _render(
-        driver.Builder().with_modules(
-            voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate, quickwit
-        ).build(),
+        driver.Builder()
+        .with_modules(voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate, quickwit)
+        .build(),
         "pipeline_graph.png",
     )
 
@@ -250,7 +250,13 @@ def seed_persons() -> None:
 
     timing = TimingHook() if args.timing else None
     builder = driver.Builder().with_modules(
-        voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate,
+        voter_file_loader,
+        tiger,
+        osm,
+        matching,
+        geocode,
+        assembly,
+        aggregate,
     )
     if timing is not None:
         builder = builder.with_adapters(timing)

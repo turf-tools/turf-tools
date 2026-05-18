@@ -188,8 +188,10 @@ def refined_positions(
         SELECT count(*) FROM _voter_with_osm WHERE osm_lat IS NOT NULL
     """).fetchone()[0]
     n_total = conn.execute("SELECT count(*) FROM _voter_with_osm").fetchone()[0]
-    print(f"  {n_matched:,}/{n_total:,} voters got an OSM match "
-          f"({100.0 * n_matched / max(n_total, 1):.1f}%) in {time.time()-t0:.1f}s")
+    print(
+        f"  {n_matched:,}/{n_total:,} voters got an OSM match "
+        f"({100.0 * n_matched / max(n_total, 1):.1f}%) in {time.time() - t0:.1f}s"
+    )
 
     print("  computing fractions + final positions…")
     t0 = time.time()
@@ -379,7 +381,7 @@ def refined_positions(
           AND vof.osm_lat IS NOT NULL
           AND (vof.osm_frac = 0.0 OR vof.osm_frac = 1.0)
     """)
-    print(f"  done in {time.time()-t0:.1f}s")
+    print(f"  done in {time.time() - t0:.1f}s")
 
     return TableRef(
         catalog=PERSON_CATALOG,
@@ -472,7 +474,7 @@ def osm_only_matches(
         FROM combined
     """)
     n_miss = conn.execute("SELECT count(*) FROM _miss_keyed").fetchone()[0]
-    print(f"  {n_miss:,} TIGER-miss voters keyed in {time.time()-t0:.1f}s")
+    print(f"  {n_miss:,} TIGER-miss voters keyed in {time.time() - t0:.1f}s")
 
     # Step 2: lookup each in OSM
     print("  joining to osm_building_lookup…")
@@ -491,7 +493,7 @@ def osm_only_matches(
         WHERE v.canonical_key != ''
     """)
     n_osm = conn.execute("SELECT count(*) FROM _miss_with_osm").fetchone()[0]
-    print(f"  {n_osm:,} matched to OSM in {time.time()-t0:.1f}s")
+    print(f"  {n_osm:,} matched to OSM in {time.time() - t0:.1f}s")
 
     # Step 3: snap each matched voter to nearest blockface in same zip.
     # Many osm_only voters live in the same building (same osm_lat,
@@ -535,7 +537,7 @@ def osm_only_matches(
          AND s.longitude = v.longitude
     """)
     n_out = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    print(f"  {n_out:,} osm_only voters snapped in {time.time()-t0:.1f}s")
+    print(f"  {n_out:,} osm_only voters snapped in {time.time() - t0:.1f}s")
 
     return TableRef(
         catalog=PERSON_CATALOG,

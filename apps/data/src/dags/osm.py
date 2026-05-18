@@ -35,7 +35,6 @@ GEO_CATALOG = "geo_ducklake"
 OSM_SCHEMA = "osm"
 
 
-
 def _fqn(table: str) -> str:
     return f"{GEO_CATALOG}.{OSM_SCHEMA}.{table}"
 
@@ -151,12 +150,16 @@ def osm_buildings_polygons(
     #     property column. Avoids GDAL's case-insensitive collision
     #     between `fixme` / `FIXME` etc. when loading the geojsonseq.
     # Always rewrite so config edits take effect on next run.
-    config_path.write_text(json.dumps({
-        "attributes": {"id": True, "type": True},
-        "linear_tags": False,
-        "area_tags": True,
-        "include_tags": ["building"],
-    }))
+    config_path.write_text(
+        json.dumps(
+            {
+                "attributes": {"id": True, "type": True},
+                "linear_tags": False,
+                "area_tags": True,
+                "include_tags": ["building"],
+            }
+        )
+    )
 
     if not filtered_pbf.exists():
         print(f"Filtering buildings from {osm_pbf.name}…")
@@ -170,10 +173,7 @@ def osm_buildings_polygons(
     if not geojson_path.exists():
         print("Exporting building polygons to GeoJSONSeq…")
         subprocess.run(
-            [osmium, "export", str(filtered_pbf),
-             "-c", str(config_path),
-             "-f", "geojsonseq",
-             "-o", str(geojson_path)],
+            [osmium, "export", str(filtered_pbf), "-c", str(config_path), "-f", "geojsonseq", "-o", str(geojson_path)],
             check=True,
         )
         size_mb = geojson_path.stat().st_size / (1024 * 1024)
@@ -539,8 +539,6 @@ def osm_building_lookup(
           USING (zip_code, canonical_key, housenumber_norm)
     """)
     n = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    print(f"  {n:,} buildings keyed in {time.time()-t0:.1f}s")
+    print(f"  {n:,} buildings keyed in {time.time() - t0:.1f}s")
 
-    return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table,
-                    version=_current_version(conn))
-
+    return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))

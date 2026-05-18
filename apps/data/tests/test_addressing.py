@@ -14,9 +14,9 @@ voter / TIGER / OSM token pipelines:
      60 Lane) — no generic-token stripping.
 """
 
-import duckdb
 import pytest
 
+import duckdb
 from src.addressing import (
     canonical_key_sql,
     housenumber_display_sql,
@@ -108,9 +108,9 @@ class TestCanonicalKeySql:
         place = conn.execute(
             f"SELECT {canonical_key_sql('toks')} FROM (VALUES (['60','place'])) AS t(toks)"
         ).fetchone()[0]
-        lane = conn.execute(
-            f"SELECT {canonical_key_sql('toks')} FROM (VALUES (['60','lane'])) AS t(toks)"
-        ).fetchone()[0]
+        lane = conn.execute(f"SELECT {canonical_key_sql('toks')} FROM (VALUES (['60','lane'])) AS t(toks)").fetchone()[
+            0
+        ]
         assert place != lane
         assert place == "60|place"
         assert lane == "60|lane"

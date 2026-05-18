@@ -17,7 +17,6 @@ This file constructs synthetic upstream tables — `persons_best_match`,
 `address_tokens` — and asserts each branch is exercised correctly.
 """
 
-import duckdb
 import pytest
 
 from src.addressing import (
@@ -98,8 +97,7 @@ def _create_blockface_final(conn) -> TableRef:
             geom                  GEOMETRY
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="tiger",
-                    table="blockface_final", version=0)
+    return TableRef(catalog="geo_ducklake", schema="tiger", table="blockface_final", version=0)
 
 
 def _create_osm_building_lookup(conn) -> TableRef:
@@ -117,14 +115,11 @@ def _create_osm_building_lookup(conn) -> TableRef:
             in_residential_complex BOOLEAN
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="osm",
-                    table="building_lookup", version=0)
+    return TableRef(catalog="geo_ducklake", schema="osm", table="building_lookup", version=0)
 
 
 def _tokens(conn, s):
-    return conn.execute(
-        f"SELECT {tokenize_street_sql('s')} FROM (VALUES (?)) AS t(s)", [s]
-    ).fetchone()[0]
+    return conn.execute(f"SELECT {tokenize_street_sql('s')} FROM (VALUES (?)) AS t(s)", [s]).fetchone()[0]
 
 
 def _expanded_tokens(conn, street):
@@ -193,20 +188,26 @@ def synth(dual_conn):
     return dual_conn, pd, pbm, bf, obl, tokens
 
 
-def _insert_decomposed(conn, eid, hn, street, zip5="10001",
-                       prefix="", half_code=""):
+def _insert_decomposed(conn, eid, hn, street, zip5="10001", prefix="", half_code=""):
     toks = _tokens(conn, street)
     nt = "odd" if hn % 2 == 1 else "even"
     conn.execute(
-        f"INSERT INTO {org_fqn(ORG, 'persons_decomposed')} VALUES "
-        "(?, ?, ?, ?, ?, ?, ?, ?)",
+        f"INSERT INTO {org_fqn(ORG, 'persons_decomposed')} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [eid, hn, prefix, half_code, street, toks, nt, zip5],
     )
 
 
-def _insert_best_match(conn, eid, blockface_id, full_name, hn,
-                       prefix="", side="left", tiger_line_id=None,
-                       bf_geom="LINESTRING(0 0, 0 0.01)"):
+def _insert_best_match(
+    conn,
+    eid,
+    blockface_id,
+    full_name,
+    hn,
+    prefix="",
+    side="left",
+    tiger_line_id=None,
+    bf_geom="LINESTRING(0 0, 0 0.01)",
+):
     if tiger_line_id is None:
         tiger_line_id = blockface_id.split(":")[0]
     conn.execute(
@@ -217,9 +218,9 @@ def _insert_best_match(conn, eid, blockface_id, full_name, hn,
     )
 
 
-def _insert_blockface(conn, blockface_id, full_name, zip_code="10001",
-                       side="left", tiger_line_id=None,
-                       geom="LINESTRING(0 0, 0 0.01)"):
+def _insert_blockface(
+    conn, blockface_id, full_name, zip_code="10001", side="left", tiger_line_id=None, geom="LINESTRING(0 0, 0 0.01)"
+):
     if tiger_line_id is None:
         tiger_line_id = blockface_id.split(":")[0]
     # Production's blockface_final expands tokens via address_tokens. Both
@@ -231,19 +232,24 @@ def _insert_blockface(conn, blockface_id, full_name, zip_code="10001",
         "INSERT INTO geo_ducklake.tiger.blockface_final VALUES "
         "(?, ?, 1, 199, '', 'odd', ?, ?, ?, ?, ?, 'n1', 'n2', "
         f"ST_GeomFromText('{geom}'))",
-        [blockface_id, side, zip_code, full_name, tiger_line_id,
-         expanded, expanded],
+        [blockface_id, side, zip_code, full_name, tiger_line_id, expanded, expanded],
     )
 
 
-def _insert_osm_building(conn, canonical_key, housenumber_norm, lat, lon,
-                          zip_code="10001", street="Broadway",
-                          housenumber="100", in_complex=False):
+def _insert_osm_building(
+    conn,
+    canonical_key,
+    housenumber_norm,
+    lat,
+    lon,
+    zip_code="10001",
+    street="Broadway",
+    housenumber="100",
+    in_complex=False,
+):
     conn.execute(
-        "INSERT INTO geo_ducklake.osm.building_lookup VALUES "
-        "(?, ?, ?, ?, ?, ?, ?, ?)",
-        [zip_code, canonical_key, housenumber, housenumber_norm, street,
-         lat, lon, in_complex],
+        "INSERT INTO geo_ducklake.osm.building_lookup VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [zip_code, canonical_key, housenumber, housenumber_norm, street, lat, lon, in_complex],
     )
 
 
@@ -279,12 +285,9 @@ class TestRefinedPositionsBranches:
         _insert_blockface(conn, "T1:left", "West 42 Street")
         # OSM record at a distinctive coordinate, in_complex=True.
         canonical_key = _canonical_key(conn, "West 42 Street")
-        _insert_osm_building(conn, canonical_key, "100", lat=40.7777, lon=-73.8888,
-                              in_complex=True)
+        _insert_osm_building(conn, canonical_key, "100", lat=40.7777, lon=-73.8888, in_complex=True)
         ref = self._run(conn, pd, pbm, bf, obl)
-        row = conn.execute(
-            f"SELECT position_source, latitude, longitude FROM {ref.fqn}"
-        ).fetchone()
+        row = conn.execute(f"SELECT position_source, latitude, longitude FROM {ref.fqn}").fetchone()
         assert row[0] == "osm_complex"
         # Coords ARE the OSM centroid, not a road projection.
         assert row[1] == pytest.approx(40.7777, abs=1e-6)
@@ -297,18 +300,13 @@ class TestRefinedPositionsBranches:
         conn, pd, pbm, bf, obl, _ = synth
         _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
         # Blockface is a tiny segment near (0,0).
-        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100,
-                            bf_geom="LINESTRING(-74 40.75, -73.999 40.75)")
-        _insert_blockface(conn, "T1:left", "West 42 Street",
-                           geom="LINESTRING(-74 40.75, -73.999 40.75)")
+        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100, bf_geom="LINESTRING(-74 40.75, -73.999 40.75)")
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom="LINESTRING(-74 40.75, -73.999 40.75)")
         # OSM building sits FAR from the blockface — projection will clamp.
         canonical_key = _canonical_key(conn, "West 42 Street")
-        _insert_osm_building(conn, canonical_key, "100", lat=40.85, lon=-73.85,
-                              in_complex=False)
+        _insert_osm_building(conn, canonical_key, "100", lat=40.85, lon=-73.85, in_complex=False)
         ref = self._run(conn, pd, pbm, bf, obl)
-        row = conn.execute(
-            f"SELECT position_source, latitude, longitude FROM {ref.fqn}"
-        ).fetchone()
+        row = conn.execute(f"SELECT position_source, latitude, longitude FROM {ref.fqn}").fetchone()
         assert row[0] == "osm_off_segment"
         # Coords ARE the OSM centroid (not the blockface).
         assert row[1] == pytest.approx(40.85, abs=1e-6)
@@ -322,17 +320,13 @@ class TestRefinedPositionsBranches:
         _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
         # Long enough blockface that the OSM point projects in its middle.
         bf_geom = "LINESTRING(-74.01 40.75, -73.99 40.75)"
-        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100,
-                            bf_geom=bf_geom)
+        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100, bf_geom=bf_geom)
         _insert_blockface(conn, "T1:left", "West 42 Street", geom=bf_geom)
         # OSM near the middle of the blockface.
         canonical_key = _canonical_key(conn, "West 42 Street")
-        _insert_osm_building(conn, canonical_key, "100", lat=40.7501, lon=-74.0,
-                              in_complex=False)
+        _insert_osm_building(conn, canonical_key, "100", lat=40.7501, lon=-74.0, in_complex=False)
         ref = self._run(conn, pd, pbm, bf, obl)
-        row = conn.execute(
-            f"SELECT position_source, latitude, longitude FROM {ref.fqn}"
-        ).fetchone()
+        row = conn.execute(f"SELECT position_source, latitude, longitude FROM {ref.fqn}").fetchone()
         assert row[0] == "osm_matched"
         # Coords land on/near the blockface (latitude ≈ 40.75 +/- offset).
         assert abs(row[1] - 40.75) < 0.001
@@ -343,14 +337,11 @@ class TestRefinedPositionsBranches:
         conn, pd, pbm, bf, obl, _ = synth
         _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
         bf_geom = "LINESTRING(-74.01 40.75, -73.99 40.75)"
-        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100,
-                            bf_geom=bf_geom)
+        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100, bf_geom=bf_geom)
         _insert_blockface(conn, "T1:left", "West 42 Street", geom=bf_geom)
         # No OSM record inserted → no match.
         ref = self._run(conn, pd, pbm, bf, obl)
-        row = conn.execute(
-            f"SELECT position_source, latitude, longitude FROM {ref.fqn}"
-        ).fetchone()
+        row = conn.execute(f"SELECT position_source, latitude, longitude FROM {ref.fqn}").fetchone()
         assert row[0] == "tiger_only"
         # Coords still land on the blockface.
         assert abs(row[1] - 40.75) < 0.001
@@ -367,10 +358,8 @@ class TestRefinedPositionsRankPartition:
         _insert_decomposed(conn, "v1", 101, "WEST 42 STREET")
         _insert_decomposed(conn, "v2", 103, "WEST 42 STREET")
         bf_geom = "LINESTRING(-74.01 40.75, -73.99 40.75)"
-        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 101,
-                            bf_geom=bf_geom)
-        _insert_best_match(conn, "v2", "T1:left", "West 42 Street", 103,
-                            bf_geom=bf_geom)
+        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 101, bf_geom=bf_geom)
+        _insert_best_match(conn, "v2", "T1:left", "West 42 Street", 103, bf_geom=bf_geom)
         _insert_blockface(conn, "T1:left", "West 42 Street", geom=bf_geom)
         # No OSM → DENSE_RANK fallback path.
         ref = geocode.refined_positions(
@@ -382,9 +371,8 @@ class TestRefinedPositionsRankPartition:
             conn=conn,
         )
         rows = {
-            r[0]: (r[1], r[2]) for r in conn.execute(
-                f"SELECT external_id, latitude, longitude FROM {ref.fqn}"
-            ).fetchall()
+            r[0]: (r[1], r[2])
+            for r in conn.execute(f"SELECT external_id, latitude, longitude FROM {ref.fqn}").fetchall()
         }
         assert rows["v1"] != rows["v2"], "voters with distinct house numbers should get distinct positions"
 
@@ -403,12 +391,10 @@ class TestOsmOnlyMatches:
         # Voter exists in persons_decomposed but NOT in persons_best_match.
         _insert_decomposed(conn, "v1", 100, "WEST 42 STREET", zip5="10001")
         # A blockface in the same zip for the snap target.
-        _insert_blockface(conn, "T1:left", "West 42 Street",
-                          geom="LINESTRING(-74.01 40.75, -73.99 40.75)")
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom="LINESTRING(-74.01 40.75, -73.99 40.75)")
         # OSM record keyed on the same tokens.
         canonical_key = _canonical_key(conn, "West 42 Street")
-        _insert_osm_building(conn, canonical_key, "100",
-                              lat=40.7501, lon=-73.999)
+        _insert_osm_building(conn, canonical_key, "100", lat=40.7501, lon=-73.999)
         ref = geocode.osm_only_matches(
             persons_decomposed=pd,
             persons_best_match=pbm,
@@ -418,10 +404,7 @@ class TestOsmOnlyMatches:
             organization_slug=ORG,
             conn=conn,
         )
-        row = conn.execute(
-            f"SELECT external_id, latitude, longitude, blockface_id "
-            f"FROM {ref.fqn}"
-        ).fetchone()
+        row = conn.execute(f"SELECT external_id, latitude, longitude, blockface_id FROM {ref.fqn}").fetchone()
         assert row is not None, "TIGER-miss voter not rescued"
         eid, lat, lon, bf_id = row
         assert eid == "v1"
@@ -436,11 +419,9 @@ class TestOsmOnlyMatches:
         conn, pd, pbm, bf, obl, tokens = synth
         _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
         _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100)
-        _insert_blockface(conn, "T1:left", "West 42 Street",
-                          geom="LINESTRING(-74.01 40.75, -73.99 40.75)")
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom="LINESTRING(-74.01 40.75, -73.99 40.75)")
         canonical_key = _canonical_key(conn, "West 42 Street")
-        _insert_osm_building(conn, canonical_key, "100",
-                              lat=40.7501, lon=-73.999)
+        _insert_osm_building(conn, canonical_key, "100", lat=40.7501, lon=-73.999)
         ref = geocode.osm_only_matches(
             persons_decomposed=pd,
             persons_best_match=pbm,
