@@ -5,9 +5,20 @@ from pathlib import Path
 
 from hamilton import driver
 
-from src.dags import aggregate, boundaries, geocode, quickwit, tiger, voter_file_loader
+from src.dags import (
+    aggregate,
+    assembly,
+    boundaries,
+    geocode,
+    matching,
+    osm,
+    quickwit,
+    tiger,
+    voter_file_loader,
+)
 from src.duckdb import get_connection
 from src.models import TableRef
+from src.perf import TimingHook
 from src.settings import get_settings
 from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema
 from src.transformations import nys_sboe_transformation_query
@@ -25,12 +36,17 @@ def update_visualizations() -> None:
     """Render all Hamilton graph visualizations into docs/."""
     _render(driver.Builder().with_modules(voter_file_loader).build(), "voter_file_loader_graph.png")
     _render(driver.Builder().with_modules(tiger).build(), "tiger_graph.png")
+    _render(driver.Builder().with_modules(matching).build(), "matching_graph.png")
+    _render(driver.Builder().with_modules(osm).build(), "osm_graph.png")
     _render(driver.Builder().with_modules(geocode).build(), "geocode_graph.png")
+    _render(driver.Builder().with_modules(assembly).build(), "assembly_graph.png")
     _render(driver.Builder().with_modules(aggregate).build(), "aggregate_graph.png")
     _render(driver.Builder().with_modules(quickwit).build(), "quickwit_graph.png")
     _render(driver.Builder().with_modules(boundaries).build(), "boundaries_graph.png")
     _render(
-        driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate, quickwit).build(),
+        driver.Builder().with_modules(
+            voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate, quickwit
+        ).build(),
         "pipeline_graph.png",
     )
 
@@ -144,8 +160,8 @@ _DEFAULT_ORG_SLUG = "default"
 
 
 def seed_persons() -> None:
-    """Run voter_file_loader → tiger → geocode → aggregate against a
-    voter file fixture.
+    """Run voter_file_loader → tiger → osm → matching → geocode → assembly →
+    aggregate against a voter file fixture.
 
     Defaults to `{fixtures_dir}/{voter_file_fixture}` (configured in
     settings — usually `apps/data/fixtures/ny-voters-2026-03-08-nyc.parquet`)
@@ -201,6 +217,11 @@ def seed_persons() -> None:
         action="store_true",
         help="Drop the org's DuckLake schema before running. Use after a pipeline schema change.",
     )
+    parser.add_argument(
+        "--timing",
+        action="store_true",
+        help="Print per-node wall time as the pipeline runs, plus a sorted summary at the end.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -224,8 +245,16 @@ def seed_persons() -> None:
 
     print(f"Seeding persons from {fixture_path} (org={args.org_slug})…")
     print(f"  TIGER counties: {settings.tiger_county_fips} (cache: {settings.tiger_data_dir})")
+    if settings.voter_zip5_filter:
+        print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
-    dr = driver.Builder().with_modules(voter_file_loader, tiger, geocode, aggregate).build()
+    timing = TimingHook() if args.timing else None
+    builder = driver.Builder().with_modules(
+        voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate,
+    )
+    if timing is not None:
+        builder = builder.with_adapters(timing)
+    dr = builder.build()
     result = dr.execute(
         final_vars=[
             "persons_geocoded",
@@ -236,13 +265,18 @@ def seed_persons() -> None:
         inputs={
             "voter_file_url": str(fixture_path),
             "organization_slug": args.org_slug,
-            # Curated transformation: passes all rows in the fixture (no
-            # county filter) since the fixture is already NYC-only.
-            "transformation_query": nys_sboe_transformation_query(),
+            # Fixture is already NYC-only so we skip the county filter.
+            # `voter_zip5_filter` from settings scopes dev runs to a small
+            # geographic slice.
+            "transformation_query": nys_sboe_transformation_query(
+                zip5_filter=settings.voter_zip5_filter,
+            ),
             "tiger_year": settings.tiger_year,
             "tiger_state_fips": settings.tiger_state_fips,
             "tiger_county_fips": settings.tiger_county_fips,
             "tiger_data_dir": settings.tiger_data_dir,
+            "osm_url": settings.osm_url,
+            "osm_data_dir": settings.osm_data_dir,
             "conn": conn,
         },
     )
@@ -251,16 +285,27 @@ def seed_persons() -> None:
     summary_ref = result["geocoding_summary"]
     buildings_ref = result["buildings_geocoded"]
     doors_ref = result["doors_geocoded"]
-    total, matched, unmatched, pct = conn.sql(
-        f"SELECT total_persons, matched, unmatched, match_pct FROM {summary_ref.fqn}"
-    ).fetchone()
+    (total, matched, unmatched, pct, m_road, m_complex, m_off_seg, m_tiger_only, m_osm_only) = conn.sql(f"""
+        SELECT total_persons, matched, unmatched, match_pct,
+               matched_osm_road_projected, matched_osm_complex,
+               matched_osm_off_segment,
+               matched_tiger_only, matched_osm_only
+        FROM {summary_ref.fqn}
+    """).fetchone()
     building_count = conn.sql(f"SELECT count(*) FROM {buildings_ref.fqn}").fetchone()[0]
     door_count = conn.sql(f"SELECT count(*) FROM {doors_ref.fqn}").fetchone()[0]
     print(
         f"  → {matched:,}/{total:,} matched ({pct}%); {unmatched:,} unmatched.\n"
+        f"      OSM road-projected : {m_road:>8,d}\n"
+        f"      OSM complex        : {m_complex:>8,d}\n"
+        f"      OSM off-segment    : {m_off_seg:>8,d}\n"
+        f"      TIGER rank fallback: {m_tiger_only:>8,d}\n"
+        f"      OSM-only (TIGER-miss rescue): {m_osm_only:>8,d}\n"
         f"  → {building_count:,} buildings, {door_count:,} doors.\n"
         f"  → Outputs: {geocoded_ref.fqn}, {buildings_ref.fqn}, {doors_ref.fqn}"
     )
 
+    if timing is not None:
+        timing.print_summary()
     conn.close()
     print("Persons seeded.")

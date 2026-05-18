@@ -1,927 +1,545 @@
-"""Hamilton graph for geocoding person addresses against TIGER blockface data.
+"""Assign lat/lon coordinates to voters.
 
-Takes the validated persons produced by Graph 1 (`voter_file_loader`) and the
-blockface reference data produced by Graph 2 (`tiger`) and produces a
-geocoded persons table with lat/lon coordinates derived from linear
-interpolation along the matching TIGER edge geometry.
+Takes voters from `matching.py` (`persons_best_match`) and OSM building
+data from `osm.py` (`osm_building_lookup`) and produces a per-voter
+position. Two mutually-exclusive paths; `assembly.py` unions them.
 
-Cross-catalog joins are performed on the single shared DuckDB connection
-which has both ``ducklake`` (person data) and ``geo_ducklake`` (TIGER
-blockfaces) attached.
+- `refined_positions` — for TIGER-matched voters. Project the OSM
+  building centroid onto the matched blockface (or use the OSM
+  centroid directly when the projection clamps or the building sits
+  inside a residential complex).
 
-Node dependency chain:
-    persons_validated ─► persons_decomposed ─► persons_candidates
-                                                     │
-    blockface_final ────────────────────────────────┘
-                                                     │
-                                              persons_scored
-                                                     │
-                                                persons_best_match
-                                                     │
-                          ┌──────────────────────────┼──────────────────────────┐
-                          │                          │                          │
-                  interpolated_coords      canonical_addresses                  │
-                          │                          │                          │
-                          │                   quality_matches  ◄── address_tokens
-                          │                          │                          │
-                          └────────► persons_geocoded ◄────── persons_validated ┘
-                                                     │
-                                             geocoding_summary
+- `osm_only_matches` — for TIGER-miss voters. Look the voter up
+  directly in OSM and snap them to the nearest blockface in their zip
+  for downstream grouping.
 
-The three peer nodes off `persons_best_match` each own one orthogonal
-aspect of geocoding (coords / canonical street / quality gate) with narrow
-output schemas keyed on `external_id`. `persons_geocoded` is a pure
-assembly node that joins person fields, canonical address, coords, and
-match metadata, restricted to the quality-gate set.
+`position_source` values, in priority order:
+
+  - `osm_matched`     — TIGER + OSM, projected onto the matched blockface
+  - `osm_complex`     — OSM centroid (voter inside a residential complex)
+  - `osm_off_segment` — OSM centroid (projection clamps off the matched blockface)
+  - `tiger_only`      — TIGER blockface, rank-based fallback (no OSM)
+  - `osm_only`        — TIGER-miss voter rescued via direct OSM lookup
 """
 
+import time
+
 import duckdb
+from src.addressing import (
+    canonical_key_sql,
+    housenumber_display_sql,
+    housenumber_norm_sql,
+    street_rewrite_sql,
+    tokenize_street_sql,
+)
 from src.models import TableRef
 from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
-
-GEO_CATALOG = "geo_ducklake"
-TIGER_SCHEMA = "tiger"
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
-# ---------------------------------------------------------------------------
-# Node 1 – decompose address_line_1 into matchable parts
-# ---------------------------------------------------------------------------
+# Geometric constants for road-projected positioning (meters, UTM-18N).
+#
+# `MIN_BUILDING_SPACING_M` — minimum desired along-line distance between
+# distinct buildings on the same blockface side. The shove logic tries to
+# keep adjacent buildings at least this far apart along the road.
+MIN_BUILDING_SPACING_M = 4.0
 
-
-def persons_decomposed(
-    persons_validated: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Parse person address strings into structured fields for blockface matching.
-
-    ``address_line_1`` from the Person schema (e.g. "123 N Broadway") is
-    split into:
-    - ``house_number``      — the leading integer portion
-    - ``house_num_prefix``  — any non-numeric prefix preceding the trailing
-                              integer (mirrors the TIGER prefix normalisation)
-    - ``street_name_raw``   — everything after the house number
-    - ``street_name_tokens``— lowercase alphanumeric token array
-    - ``number_type``       — "odd" / "even" derived from house_number parity
-
-    ``zip5`` is carried through from the Person schema for the blockface ZIP
-    filter.
-
-    Incremental: skips external_ids already present.
-    """
-    table_suffix = "persons_decomposed"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    source_fqn = persons_validated.fqn
-
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id         VARCHAR,
-            house_number        INTEGER,
-            house_num_prefix    VARCHAR,
-            half_code           VARCHAR,
-            street_name_raw     VARCHAR,
-            street_name_tokens  VARCHAR[],
-            number_type         VARCHAR,
-            zip5                VARCHAR
-        )
-    """)
-
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        WITH parsed AS (
-            SELECT
-                external_id,
-                zip5,
-                half_code,
-                address_line_1,
-                -- Extract any leading non-numeric prefix from the house number
-                -- e.g. "34-12 Broadway" -> prefix="34-", house_num=12
-                CASE
-                    WHEN regexp_extract(
-                            regexp_extract(address_line_1, '^([^\\s]+)'), '(\\d+)$'
-                         ) != ''
-                    THEN regexp_replace(
-                            regexp_extract(address_line_1, '^([^\\s]+)'), '\\d+$', ''
-                         )
-                    ELSE ''
-                END AS house_num_prefix,
-                TRY_CAST(
-                    regexp_extract(
-                        regexp_extract(address_line_1, '^([^\\s]+)'),
-                        '(\\d+)$'
-                    ) AS INTEGER
-                ) AS house_number,
-                -- Street name is everything after the first whitespace-delimited token
-                trim(substr(address_line_1, length(regexp_extract(address_line_1, '^\\S+')) + 1))
-                    AS street_name_raw
-            FROM {source_fqn}
-            WHERE external_id NOT IN (SELECT external_id FROM {fqn})
-        )
-        SELECT
-            external_id,
-            house_number,
-            house_num_prefix,
-            half_code,
-            street_name_raw,
-            list_distinct(list_sort(list_filter(
-                list_concat(
-                    list_concat(
-                        regexp_split_to_array(lower(trim(street_name_raw)), '[^a-z0-9]+'),
-                        regexp_extract_all(lower(trim(street_name_raw)), '[0-9]+')
-                    ),
-                    regexp_extract_all(lower(trim(street_name_raw)), '\\b[a-z]+')
-                ),
-                x -> length(x) > 0
-            ))) AS street_name_tokens,
-            CASE WHEN house_number % 2 = 1 THEN 'odd' ELSE 'even' END AS number_type,
-            zip5
-        FROM parsed
-        WHERE house_number IS NOT NULL
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
+# `ROAD_OFFSET_M` — perpendicular offset from the blockface centerline to
+# the rendered voter position. Puts the dot off the road on the side the
+# building is on, rather than on the road itself.
+ROAD_OFFSET_M = 7.0
 
 
 # ---------------------------------------------------------------------------
-# Node 2 – join persons to candidate blockfaces
+# Node 1 – per-voter refined position (TIGER + OSM)
 # ---------------------------------------------------------------------------
 
 
-def persons_candidates(
+def refined_positions(
+    persons_best_match: TableRef,
     persons_decomposed: TableRef,
     blockface_final: TableRef,
+    osm_building_lookup: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Match each decomposed person address to candidate blockfaces.
+    """Per-voter (latitude, longitude, position_source, osm_street).
 
-    Matching criteria (all must hold):
-    1. ZIP code equality (fast partition filter)
-    2. number_type parity match (odd/even)
-    3. House-number prefix equality. The prefix is the non-numeric stem
-       of hyphenated Queens addresses ("34-12 Broadway" → prefix="34-").
-       Both pipelines normalize plain integer addresses to ``''``, so this
-       is a no-op outside Queens; without it, every "34-12 Broadway" voter
-       could match every "NN-12 Broadway" blockface in the same zip and
-       pile onto whichever one tiebreaks first, leaving entire blocks
-       empty on the map.
-    4. House number falls within the blockface address range (either direction)
-    5. Street-name token intersection has ≥ 2 overlapping tokens
-       (filters spurious 1-token matches like "Avenue" or "Street" on
-       their own; equivalence groups upstream already expand
-       directionals + ordinals so most real matches comfortably clear 2).
+    Position rule:
+      1. Match the voter to an OSM address by exact
+         `(zip5, canonical_key, housenumber)`. Pick the way variant
+         over a node variant when both exist (way = building polygon
+         centroid; node = doorway).
+      2. If matched AND the building centroid is inside an OSM
+         `landuse=residential` polygon (large residential complexes
+         where individual buildings sit well off any road), use the
+         OSM centroid directly — no road projection, no perpendicular
+         offset.
+      3. Else if matched AND the OSM centroid projects strictly onto
+         the matched TIGER blockface (`osm_frac ∈ (0, 1)`):
+         `fraction = ST_LineLocatePoint(blockface, OSM)` projects the
+         OSM-known building centroid onto the TIGER blockface for an
+         along-road position.
+      4. Else if matched but the projection *clamps*
+         (`osm_frac = 0.0 or 1.0` — the OSM building is geometrically
+         beyond the blockface's endpoints, typically because TIGER's
+         address range exceeds its physical geometry): use the OSM
+         centroid directly. This avoids snapping voters to the wrong
+         end of a too-short blockface.
+      5. Else (no OSM match): `fraction = rank / (max_rank + 1)` via
+         DENSE_RANK ordering by (prefix, housenumber, half_code) —
+         the original TIGER linear-ramp behavior.
+      6. Road-projected positions (cases 3 and 5) get a perpendicular
+         offset (`ROAD_OFFSET_M`) and a 1D shove so distinct buildings
+         stay ≥ `MIN_BUILDING_SPACING_M` apart.
 
-    Multiple blockfaces may match a single person — ``persons_scored`` narrows
-    these to the best one.
+    `position_source` is one of:
+      - `osm_complex`     — OSM centroid, inside a residential complex
+      - `osm_matched`     — fraction from OSM projection onto the blockface
+      - `osm_off_segment` — OSM centroid (projection clamped on matched blockface)
+      - `tiger_only`      — fraction from DENSE_RANK fallback
 
-    Cross-catalog join: person data in ``ducklake``, blockfaces in
-    ``geo_ducklake``. Both catalogs are attached on the same connection.
+    `osm_street` is carried through so `canonical_addresses` can pick
+    OSM's per-building canonical name (more stable than TIGER's, which
+    has aliases for the same physical street).
 
-    Incremental: skips external_ids already present.
+    Non-incremental: drops + recreates every run. DENSE_RANK is a
+    window over the full blockface, so new voters would shift everyone
+    else's rank.
     """
-    table_suffix = "persons_candidates"
+    table_suffix = "refined_positions"
     ensure_org_schema(conn, organization_slug)
     fqn = org_fqn(organization_slug, table_suffix)
-    persons_fqn = persons_decomposed.fqn
-    blockface_fqn = blockface_final.fqn
 
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id         VARCHAR,
-            blockface_id        VARCHAR,
-            tiger_line_id       VARCHAR,
-            side                VARCHAR,
-            from_house_num      INTEGER,
-            to_house_num        INTEGER,
-            house_num_prefix    VARCHAR,
-            full_name           VARCHAR,
-            from_node_id        VARCHAR,
-            to_node_id          VARCHAR,
-            geom                GEOMETRY,
-            person_house_number INTEGER,
-            token_overlap       INTEGER
-        )
-    """)
-
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        SELECT
-            p.external_id,
-            b.blockface_id,
-            b.tiger_line_id,
-            b.side,
-            b.from_house_num,
-            b.to_house_num,
-            b.house_num_prefix,
-            b.full_name,
-            b.from_node_id,
-            b.to_node_id,
-            b.geom,
-            p.house_number                                              AS person_house_number,
-            len(list_intersect(p.street_name_tokens, b.street_name_tokens))
-                                                                        AS token_overlap
-        FROM {persons_fqn} p
-        JOIN {blockface_fqn} b
-          ON b.zip_code   = p.zip5
-         AND b.number_type IN (p.number_type, 'mixed')
-         AND COALESCE(b.house_num_prefix, '') = COALESCE(p.house_num_prefix, '')
-         AND (
-               p.house_number BETWEEN b.from_house_num AND b.to_house_num
-            OR p.house_number BETWEEN b.to_house_num   AND b.from_house_num
-         )
-         AND len(list_intersect(p.street_name_tokens, b.street_name_tokens)) >= 2
-         -- Reject blockfaces whose directional contradicts the voter's.
-         -- Voter tokens are raw (so we check both `n` and `north` forms);
-         -- blockface tokens are equivalence-expanded so checking the
-         -- short form alone is sufficient on that side. Voter without a
-         -- directional or blockface without a directional always passes
-         -- through; only opposing cardinal pairs are rejected.
-         AND NOT (
-              ((list_contains(p.street_name_tokens, 'n')
-                OR list_contains(p.street_name_tokens, 'north'))
-               AND list_contains(b.street_name_tokens, 's'))
-           OR ((list_contains(p.street_name_tokens, 's')
-                OR list_contains(p.street_name_tokens, 'south'))
-               AND list_contains(b.street_name_tokens, 'n'))
-           OR ((list_contains(p.street_name_tokens, 'e')
-                OR list_contains(p.street_name_tokens, 'east'))
-               AND list_contains(b.street_name_tokens, 'w'))
-           OR ((list_contains(p.street_name_tokens, 'w')
-                OR list_contains(p.street_name_tokens, 'west'))
-               AND list_contains(b.street_name_tokens, 'e'))
-         )
-        WHERE p.external_id NOT IN (SELECT external_id FROM {fqn})
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Node 3 – score each candidate match
-# ---------------------------------------------------------------------------
-
-
-def persons_scored(
-    persons_candidates: TableRef,
-    persons_decomposed: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Score each person–blockface candidate pair for match quality.
-
-    Score components:
-    - ``token_overlap``      — raw count of shared street name tokens (already
-                               expanded with equivalency groups in blockface_final)
-    - ``numeric_token_bonus``— extra point when the overlapping tokens include at
-                               least one purely numeric token (e.g. "42" in
-                               "42nd St"), reducing false matches on numbered streets
-
-    The combined ``match_score`` is used by ``persons_best_match`` to select the single
-    best blockface per person.
-
-    Incremental: skips external_ids already present.
-    """
-    table_suffix = "persons_scored"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    candidates_fqn = persons_candidates.fqn
-    persons_fqn = persons_decomposed.fqn
-
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id         VARCHAR,
-            blockface_id        VARCHAR,
-            tiger_line_id       VARCHAR,
-            side                VARCHAR,
-            from_house_num      INTEGER,
-            to_house_num        INTEGER,
-            house_num_prefix    VARCHAR,
-            full_name           VARCHAR,
-            from_node_id        VARCHAR,
-            to_node_id          VARCHAR,
-            geom                GEOMETRY,
-            person_house_number INTEGER,
-            token_overlap       INTEGER,
-            numeric_token_bonus INTEGER,
-            match_score         INTEGER
-        )
-    """)
-
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        SELECT
-            c.external_id,
-            c.blockface_id,
-            c.tiger_line_id,
-            c.side,
-            c.from_house_num,
-            c.to_house_num,
-            c.house_num_prefix,
-            c.full_name,
-            c.from_node_id,
-            c.to_node_id,
-            c.geom,
-            c.person_house_number,
-            c.token_overlap,
-            -- Bonus when the address contains a purely numeric token (e.g. "42"
-            -- in "42nd St"). This increases score for numbered-street matches,
-            -- reducing false positives from short token overlaps on plain street names.
-            CASE WHEN len(list_filter(
-                p.street_name_tokens,
-                t -> regexp_matches(t, '^[0-9]+$')
-            )) > 0 THEN 1 ELSE 0 END                                    AS numeric_token_bonus,
-            c.token_overlap + CASE WHEN len(list_filter(
-                p.street_name_tokens,
-                t -> regexp_matches(t, '^[0-9]+$')
-            )) > 0 THEN 1 ELSE 0 END                                    AS match_score
-        FROM {candidates_fqn} c
-        JOIN {persons_fqn} p ON c.external_id = p.external_id
-        WHERE c.external_id NOT IN (SELECT external_id FROM {fqn})
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Node 4 – select best blockface per person
-# ---------------------------------------------------------------------------
-
-
-def persons_best_match(
-    persons_scored: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Select the single highest-scoring blockface candidate per person.
-
-    Uses ROW_NUMBER() partitioned by external_id ordered by match_score DESC.
-    Ties are broken arbitrarily (stable within a run via DuckDB's deterministic
-    ordering on blockface_id).
-
-    Incremental: skips external_ids already present.
-    """
-    table_suffix = "persons_best_match"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    scored_fqn = persons_scored.fqn
-
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id         VARCHAR,
-            blockface_id        VARCHAR,
-            tiger_line_id       VARCHAR,
-            side                VARCHAR,
-            from_house_num      INTEGER,
-            to_house_num        INTEGER,
-            house_num_prefix    VARCHAR,
-            full_name           VARCHAR,
-            from_node_id        VARCHAR,
-            to_node_id          VARCHAR,
-            geom                GEOMETRY,
-            person_house_number INTEGER,
-            match_score         INTEGER
-        )
-    """)
-
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        SELECT
-            external_id,
-            blockface_id,
-            tiger_line_id,
-            side,
-            from_house_num,
-            to_house_num,
-            house_num_prefix,
-            full_name,
-            from_node_id,
-            to_node_id,
-            geom,
-            person_house_number,
-            match_score
-        FROM (
-            SELECT
-                *,
-                ROW_NUMBER() OVER (
-                    PARTITION BY external_id
-                    ORDER BY match_score DESC, blockface_id
-                ) AS rn
-            FROM {scored_fqn}
-            WHERE external_id NOT IN (SELECT external_id FROM {fqn})
-        ) ranked
-        WHERE rn = 1
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Node 5 – interpolated coordinates along TIGER blockface geometry
-# ---------------------------------------------------------------------------
-
-
-def interpolated_coords(
-    persons_best_match: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Per-person (latitude, longitude) by rank-based interpolation along the
-    matched TIGER blockface, with a perpendicular side-of-street offset.
-
-    Voters are sorted by house number within each blockface and placed at
-    evenly-spaced fractions, clamped to [0.05, 0.95] to avoid intersection-
-    node stacking. The point is then offset ~7m perpendicular to the segment
-    onto the correct side of the street.
-
-    We do NOT use TIGER's stated address range as the interpolation
-    denominator — Census documents those ranges as *potential*, not actual,
-    and the mismatch ("squeeze effect", Zandbergen 2008) visibly compresses
-    voters into the lower portion of every segment.
-
-    Output schema: (external_id, latitude, longitude).
-
-    Non-incremental (drops + recreates every run): the rank/frac window
-    functions partition on `blockface_id`, not `external_id`. New voters
-    landing on a blockface that already has rows would shift everyone's
-    fraction along the segment, so any new arrivals require a full
-    recompute of all rows on the affected blockfaces. Easiest path is to
-    recompute everything; the cost is bounded by `persons_best_match`
-    size and the join is keyed on a single column.
-    """
-    table_suffix = "interpolated_coords"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    match_fqn = persons_best_match.fqn
+    pbm = persons_best_match.fqn
+    pd_ = persons_decomposed.fqn
+    bf_ = blockface_final.fqn
+    obl = osm_building_lookup.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
+
+    print("Refining voter positions…")
+    t0 = time.time()
+    # Dedup blockface_final to one row per (blockface_id, prefix). The
+    # prefix bucket matters: a single TIGER line can carry multiple
+    # address ranges with different prefixes (Queens hyphen-prefix
+    # blocks), and those ranges sometimes correspond to *different
+    # streets* (e.g. "Astoria Blvd" and "Astoria Blvd S" share a TIGER
+    # line). Keying dedup on `blockface_id` alone non-deterministically
+    # picked a row from the wrong sibling street, producing the wrong
+    # `street_tokens_lookup` and silently routing voters off the OSM
+    # lookup.
+    #
+    # ORDER BY trails out to zip_code so zip-boundary blockfaces (one
+    # physical face, two zip rows, same full_name and tokens) resolve
+    # deterministically too.
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _bf_for_voters AS
+        SELECT DISTINCT ON (blockface_id, COALESCE(house_num_prefix, ''))
+            blockface_id,
+            COALESCE(house_num_prefix, '') AS house_num_prefix,
+            street_tokens_lookup
+        FROM {bf_}
+        WHERE geom IS NOT NULL
+        ORDER BY blockface_id, COALESCE(house_num_prefix, ''),
+                 from_house_num, to_house_num, zip_code
+    """)
+    hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _voter_keyed AS
+        SELECT
+            m.external_id, m.blockface_id, m.geom AS bf_geom, m.side AS bf_side,
+            m.tiger_line_id,
+            m.person_house_number,
+            COALESCE(d.half_code, '') AS half_code,
+            COALESCE(d.house_num_prefix, '') AS house_num_prefix,
+            d.zip5,
+            {canonical_key_sql("b.street_tokens_lookup")} AS canonical_key,
+            {hn_display} AS housenumber_str,
+            {housenumber_norm_sql(hn_display)} AS housenumber_norm
+        FROM {pbm} m
+        JOIN {pd_} d ON d.external_id = m.external_id
+        JOIN _bf_for_voters b
+            ON b.blockface_id = m.blockface_id
+           AND b.house_num_prefix = COALESCE(m.house_num_prefix, '')
+    """)
+
+    # Hash join on (zip, canonical_key, housenumber_norm) — strict equality.
+    # When the voter has a half_code, the joined OSM housenumber must also
+    # carry that suffix; OSM rarely tags half-codes, so half-coded voters
+    # mostly fall back to the DENSE_RANK ramp (which orders by half_code,
+    # so 47 and 47-1/2 still get distinct positions).
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _voter_with_osm AS
+        SELECT v.*, o.osm_lat, o.osm_lon,
+               o.street AS osm_street,
+               o.housenumber AS osm_housenumber,
+               COALESCE(o.in_residential_complex, false) AS in_complex
+        FROM _voter_keyed v
+        LEFT JOIN {obl} o
+          ON o.zip_code         = v.zip5
+         AND o.canonical_key    = v.canonical_key
+         AND o.housenumber_norm = v.housenumber_norm
+    """)
+    n_matched = conn.execute("""
+        SELECT count(*) FROM _voter_with_osm WHERE osm_lat IS NOT NULL
+    """).fetchone()[0]
+    n_total = conn.execute("SELECT count(*) FROM _voter_with_osm").fetchone()[0]
+    print(f"  {n_matched:,}/{n_total:,} voters got an OSM match "
+          f"({100.0 * n_matched / max(n_total, 1):.1f}%) in {time.time()-t0:.1f}s")
+
+    print("  computing fractions + final positions…")
+    t0 = time.time()
+    # All math in UTM-18N. ST_LineLocatePoint in geographic degrees gives
+    # a non-perpendicular foot on non-cardinal streets — the rotated
+    # grid skews along-street by up to ~20% of the perpendicular offset.
     conn.execute(f"""
         CREATE TABLE {fqn} AS
-        WITH ranked AS (
-          -- DENSE_RANK so two voters at the same house number share a
-          -- rank and end up at the same lat/lng instead of being
-          -- scattered along the segment by an arbitrary tiebreak.
-          -- blockface_id is already side-specific upstream (TIGER edges
-          -- are unpivoted into separate left/right rows in `tiger`), so
-          -- partitioning on it alone keeps left and right ranks separate.
-          SELECT
-              external_id,
-              blockface_id,
-              geom AS bf_geom,
-              side AS bf_side,
-              DENSE_RANK() OVER (
-                PARTITION BY blockface_id
-                ORDER BY person_house_number
-              ) AS house_rank
-          FROM {match_fqn}
+        -- Pre-compute the UTM-transformed geometry and OSM projection
+        -- fraction once per voter. Doing this up-front lets us route
+        -- clamping-OSM voters to the OSM-centroid branch before they
+        -- enter the projection/shove pipeline.
+        WITH voter_geo AS (
+            SELECT
+                external_id, blockface_id, bf_side, tiger_line_id,
+                house_num_prefix, person_house_number, half_code,
+                osm_lat, osm_lon, osm_street, osm_housenumber, in_complex,
+                ST_Transform(bf_geom, 'OGC:CRS84', 'EPSG:32618') AS bf_m,
+                CASE WHEN osm_lat IS NOT NULL
+                     THEN ST_Transform(ST_Point(osm_lon, osm_lat),
+                                       'OGC:CRS84', 'EPSG:32618')
+                     ELSE NULL
+                END AS osm_pt_m
+            FROM _voter_with_osm
         ),
-        base AS (
-          -- frac = house_rank / (1 + max(house_rank) over blockface):
-          -- one distinct house → 0.5 (midpoint); N distinct houses →
-          -- 1/(N+1) … N/(N+1). Sample-density dependent: sparse fixtures
-          -- cluster mid-block, full statewide data spreads naturally —
-          -- fine because canvassers walk blocks in address order and
-          -- don't need precise per-voter coords. Clamped so house N at
-          -- the end of one blockface and house N+2 at the start of the
-          -- next don't both snap to the shared intersection node.
-          -- (PostGIS Tiger Geocoder uses the same trick.)
-          SELECT
-              external_id,
-              bf_geom,
-              bf_side,
-              LEAST(GREATEST(
-                  house_rank::DOUBLE
-                  / (1 + MAX(house_rank) OVER (PARTITION BY blockface_id)),
-                  0.05
-              ), 0.95) AS frac
-          FROM ranked
+        with_osm_frac AS (
+            SELECT *,
+                CASE WHEN osm_pt_m IS NOT NULL
+                     THEN ST_LineLocatePoint(bf_m, osm_pt_m)
+                     ELSE NULL
+                END AS osm_frac
+            FROM voter_geo
+        ),
+        -- Voters going through the projection/shove path: NOT
+        -- in_complex AND NOT off-segment-clamped. The clamped-with-OSM
+        -- voters are routed to the OSM-centroid branch in the final
+        -- UNION below — projecting them onto a blockface whose
+        -- geometry doesn't span their OSM building would land them at
+        -- a wrong endpoint of a too-short TIGER segment.
+        ranked AS (
+            -- Partition by (tiger_line_id, bf_side) so all voters on
+            -- one physical road side share a ranking partition, even
+            -- when TIGER splits the side into multiple addrfeat rows
+            -- (hyphen-prefix address ranges on the same line).
+            -- Ordering by (prefix, house_number, half_code) puts each
+            -- prefix-block's voters in a contiguous chunk of the line.
+            -- For the common case of one prefix per (tlid, side), this
+            -- is equivalent to partitioning by blockface_id.
+            SELECT *,
+                DENSE_RANK() OVER (
+                    PARTITION BY tiger_line_id, bf_side
+                    ORDER BY house_num_prefix, person_house_number, half_code
+                ) AS house_rank
+            FROM with_osm_frac
+            WHERE NOT in_complex
+              AND NOT (osm_lat IS NOT NULL
+                       AND (osm_frac = 0.0 OR osm_frac = 1.0))
+        ),
+        fracced AS (
+            SELECT *,
+                MAX(house_rank) OVER (PARTITION BY tiger_line_id, bf_side) AS max_rank
+            FROM ranked
+        ),
+        with_frac AS (
+            SELECT external_id, blockface_id, bf_side, tiger_line_id, bf_m,
+                house_rank,
+                CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
+                     THEN 'osm_matched' ELSE 'tiger_only'
+                END AS position_source,
+                LEAST(GREATEST(
+                    CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
+                         THEN osm_frac
+                         ELSE house_rank::DOUBLE / (1 + max_rank)
+                    END,
+                    0.05
+                ), 0.95) AS frac
+            FROM fracced
+        ),
+        shoved AS (
+            -- 1D shove in building space: keep distinct buildings on
+            -- the same blockface side at least MIN_BUILDING_SPACING_M
+            -- apart along the line. DENSE_RANK groups voters that
+            -- share a (frac, house_rank) into one slot so apartment
+            -- buildings stay anchored. The house_rank tiebreak keeps
+            -- two distinct buildings whose OSM projections coincide
+            -- at the same frac from collapsing onto a single point.
+            -- sep_frac shrinks when more buildings exist than fit at
+            -- the minimum spacing — overflow distributes evenly along
+            -- the line instead of piling at the 0.95 cap. The
+            -- backward cap (0.95 - (n_buildings - rn) * sep_frac)
+            -- prevents buildings clustered near the end of a
+            -- blockface from all piling at 0.95 when the forward
+            -- pass overshoots.
+            SELECT external_id, bf_side, bf_m, position_source,
+                LEAST(GREATEST(
+                    LEAST(
+                        MAX(frac - rn * sep_frac)
+                            OVER (PARTITION BY tiger_line_id, bf_side
+                                  ORDER BY rn)
+                          + rn * sep_frac,
+                        0.95 - (n_buildings - rn) * sep_frac
+                    ),
+                    0.05
+                ), 0.95) AS frac
+            FROM (
+                SELECT *,
+                    LEAST({MIN_BUILDING_SPACING_M},
+                          0.9 * bf_len_m / GREATEST(n_buildings, 1))
+                      / NULLIF(bf_len_m, 0) AS sep_frac
+                FROM (
+                    SELECT *,
+                        MAX(rn) OVER (PARTITION BY tiger_line_id, bf_side)
+                            AS n_buildings
+                    FROM (
+                        SELECT *,
+                            DENSE_RANK() OVER (PARTITION BY tiger_line_id,
+                                                            bf_side
+                                               ORDER BY frac, house_rank) AS rn,
+                            ST_Length(bf_m) AS bf_len_m
+                        FROM with_frac
+                    )
+                )
+            )
         ),
         offset_geom AS (
-          -- Side-of-street offset computed in a metric CRS (NYC =
-          -- UTM 18N = EPSG:32618). Without this every building sits on
-          -- the street centerline and opposite sides of the same street
-          -- collapse onto a single line on the map. NYC streets are
-          -- ~12-20m wide, so 7m places points roughly on the curb.
-          SELECT
-              external_id,
-              bf_side,
-              ST_Transform(ST_LineInterpolatePoint(bf_geom, frac), 'OGC:CRS84', 'EPSG:32618') AS pt_m,
-              ST_X(ST_Transform(ST_LineInterpolatePoint(bf_geom, LEAST(frac + 0.01, 1.0)), 'OGC:CRS84', 'EPSG:32618'))
-                - ST_X(ST_Transform(ST_LineInterpolatePoint(bf_geom, frac), 'OGC:CRS84', 'EPSG:32618')) AS dx_m,
-              ST_Y(ST_Transform(ST_LineInterpolatePoint(bf_geom, LEAST(frac + 0.01, 1.0)), 'OGC:CRS84', 'EPSG:32618'))
-                - ST_Y(ST_Transform(ST_LineInterpolatePoint(bf_geom, frac), 'OGC:CRS84', 'EPSG:32618')) AS dy_m
-          FROM base
+            SELECT external_id, bf_side, position_source,
+                ST_LineInterpolatePoint(bf_m, frac) AS pt_m,
+                ST_X(ST_LineInterpolatePoint(bf_m, LEAST(frac + 0.01, 1.0)))
+                  - ST_X(ST_LineInterpolatePoint(bf_m, frac)) AS dx_m,
+                ST_Y(ST_LineInterpolatePoint(bf_m, LEAST(frac + 0.01, 1.0)))
+                  - ST_Y(ST_LineInterpolatePoint(bf_m, frac)) AS dy_m
+            FROM shoved
         ),
         final_geom AS (
-          -- Translate ±7m along the perpendicular: rotate the segment's
-          -- direction-of-travel vector 90° CCW for "left of direction"
-          -- → (-dy, dx). For TIGER blockfaces this matches the `side`
-          -- field semantics (verified against AD-65 building positions).
-          -- Falls back to the un-offset point if the direction vector
-          -- is zero-length (degenerate; rare but possible at exact
-          -- segment endpoints).
-          SELECT
-              external_id,
-              ST_Transform(
-                CASE WHEN sqrt(dx_m * dx_m + dy_m * dy_m) > 0 THEN
-                  ST_Translate(
-                    pt_m,
-                    7.0 * CASE WHEN bf_side = 'left' THEN -dy_m ELSE  dy_m END
-                          / sqrt(dx_m * dx_m + dy_m * dy_m),
-                    7.0 * CASE WHEN bf_side = 'left' THEN  dx_m ELSE -dx_m END
-                          / sqrt(dx_m * dx_m + dy_m * dy_m)
-                  )
-                ELSE pt_m
-                END,
-                'EPSG:32618', 'OGC:CRS84'
-              ) AS pt_4326
-          FROM offset_geom
+            SELECT external_id, position_source,
+                ST_Transform(
+                  CASE WHEN sqrt(dx_m * dx_m + dy_m * dy_m) > 0 THEN
+                    ST_Translate(pt_m,
+                      {ROAD_OFFSET_M} * CASE WHEN bf_side = 'left' THEN -dy_m ELSE  dy_m END
+                            / sqrt(dx_m * dx_m + dy_m * dy_m),
+                      {ROAD_OFFSET_M} * CASE WHEN bf_side = 'left' THEN  dx_m ELSE -dx_m END
+                            / sqrt(dx_m * dx_m + dy_m * dy_m)
+                    )
+                  ELSE pt_m
+                  END,
+                  'EPSG:32618', 'OGC:CRS84'
+                ) AS pt_4326
+            FROM offset_geom
         )
-        SELECT
-            external_id,
-            ST_Y(pt_4326) AS latitude,
-            ST_X(pt_4326) AS longitude
-        FROM final_geom
+        SELECT f.external_id,
+               ST_Y(f.pt_4326) AS latitude,
+               ST_X(f.pt_4326) AS longitude,
+               f.position_source,
+               v.osm_street,
+               v.osm_housenumber
+        FROM final_geom f
+        LEFT JOIN _voter_with_osm v ON v.external_id = f.external_id
+        UNION ALL
+        -- in_complex: OSM centroid for voters inside a
+        -- landuse=residential polygon. Buildings in those polygons
+        -- typically don't have a meaningful relationship to a road
+        -- edge, so we don't project.
+        SELECT external_id,
+               osm_lat  AS latitude,
+               osm_lon  AS longitude,
+               'osm_complex' AS position_source,
+               osm_street,
+               osm_housenumber
+        FROM _voter_with_osm
+        WHERE in_complex
+        UNION ALL
+        -- osm_off_segment: OSM centroid for voters whose OSM building
+        -- centroid projects strictly outside the matched TIGER
+        -- blockface's geometry (osm_frac clamps to 0.0 or 1.0). Happens
+        -- when TIGER's address range claims more houses than the
+        -- physical line can hold. Snapping to the clamp endpoint would
+        -- put the voter at the wrong end of the wrong segment; using
+        -- the OSM centroid places them at their actual building.
+        SELECT vof.external_id,
+               vof.osm_lat AS latitude,
+               vof.osm_lon AS longitude,
+               'osm_off_segment' AS position_source,
+               vof.osm_street,
+               vof.osm_housenumber
+        FROM with_osm_frac vof
+        WHERE NOT vof.in_complex
+          AND vof.osm_lat IS NOT NULL
+          AND (vof.osm_frac = 0.0 OR vof.osm_frac = 1.0)
     """)
+    print(f"  done in {time.time()-t0:.1f}s")
 
-    version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
         schema=organization_slug,
         table=table_suffix,
-        version=version,
+        version=_current_version(conn),
     )
 
 
 # ---------------------------------------------------------------------------
-# Node 6 – canonical address strings from the matched TIGER full_name
+# Node 2 – OSM-only matches for voters TIGER couldn't place
 # ---------------------------------------------------------------------------
 
 
-def canonical_addresses(
+def osm_only_matches(
+    persons_decomposed: TableRef,
     persons_best_match: TableRef,
-    persons_decomposed: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Per-person canonical (address_line_1, matched_tokens) derived from
-    the matched TIGER blockface.
-
-    address_line_1 = decomposed.house_num_prefix + decomposed.house_number
-                     + ' ' + UPPER(blockface.full_name).
-    The TIGER `full_name` (e.g. "E 14th St", "1st Ave") is the
-    authoritative canonical street name — already in USPS-abbreviated
-    ordinal form. Any source spelling that matched the same blockface
-    ("EAST 14 STREET", "E 14TH ST", "1 AVE", "FIRST AVE") collapses to
-    the same canonical address here. No rule maintenance in our code.
-    full_name is carried through `persons_best_match` from the exact
-    blockface row the matcher chose for this person — no re-join, no
-    risk of picking the wrong alias.
-
-    matched_tokens is the tokenization of full_name via the same scheme
-    upstream tokenizers use (split on non-alphanumeric, plus bare digits)
-    so "12th St" yields ["12", "12th", "st"]. `quality_matches` consumes
-    this to compare against voter tokens.
-
-    Output schema: (external_id, address_line_1, matched_tokens). Narrow
-    on purpose so an OSM-derived canonical-address node could return the
-    same shape and slot in or replace this one.
-
-    Half-coded addresses are preserved with the "1/2" in canonical
-    address_line_1, so building_id door_id naturally distinguish them
-    from the non-half neighbour. The half-code is kept out of
-    `persons_decomposed.street_name_tokens` upstream so it can't
-    generate spurious matches.
-
-    Incremental: skips external_ids already present.
-    """
-    table_suffix = "canonical_addresses"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    match_fqn = persons_best_match.fqn
-    decomposed_fqn = persons_decomposed.fqn
-
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id     VARCHAR,
-            address_line_1  VARCHAR,
-            matched_tokens  VARCHAR[]
-        )
-    """)
-
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        SELECT
-            m.external_id,
-            COALESCE(d.house_num_prefix, '') || CAST(d.house_number AS VARCHAR)
-              || CASE WHEN d.half_code IS NOT NULL AND d.half_code != ''
-                      THEN ' ' || d.half_code
-                      ELSE '' END
-              || ' ' || UPPER(m.full_name)                  AS address_line_1,
-            list_distinct(list_filter(
-              list_concat(
-                regexp_split_to_array(lower(trim(m.full_name)), '[^a-z0-9]+'),
-                regexp_extract_all(lower(trim(m.full_name)), '[0-9]+')
-              ),
-              x -> length(x) > 0
-            ))                                              AS matched_tokens
-        FROM {match_fqn} m
-        INNER JOIN {decomposed_fqn} d ON d.external_id = m.external_id
-        WHERE m.external_id NOT IN (SELECT external_id FROM {fqn})
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Node 7 – quality gate: external_ids whose match passes the token check
-# ---------------------------------------------------------------------------
-
-
-def quality_matches(
-    canonical_addresses: TableRef,
-    persons_decomposed: TableRef,
+    osm_building_lookup: TableRef,
+    blockface_final: TableRef,
     address_tokens: TableRef,
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Set of external_ids whose match passes the token-overlap quality gate.
+    """Voters TIGER couldn't match, rescued by direct OSM lookup.
 
-    Drops matches where the voter clearly named a different street than
-    the one they were matched to — specifically, where the voter's
-    "specific" tokens (those not in the equivalence-group stop list of
-    directionals + street types + ordinal-suffix variants) have ZERO
-    overlap with the matched street's specific tokens. Catches cases like
-    voter "EAST 87 STREET" being matched to "E 90th St" because the
-    actual E 87th St didn't have a blockface covering the voter's house
-    number — the matcher's only options were wrong-street fallbacks.
-    Rejecting is more honest than sending canvassers to the wrong address.
+    For each voter without a `persons_best_match` row, derive a
+    canonical_key from their raw address (same STREET_REWRITES +
+    equivalency expansion as the OSM side), join to
+    `osm_building_lookup` to find their building, then snap to the
+    nearest blockface in the same zip5 for downstream consumers that
+    need a `blockface_id` (e.g. turf assignment).
 
-    Voters whose entire street name is generic (e.g. "PARK AVENUE",
-    "WEST DRIVE") have no specific tokens to compare; the rule doesn't
-    apply and these matches are accepted. ~0.2% of matches in the NYC
-    sample are filtered.
+    Schema: (external_id, latitude, longitude, osm_street,
+             blockface_id, snap_distance_m).
 
-    Output schema: (external_id). Narrow on purpose so an alternative
-    quality gate could return the same shape and replace this one.
+    The snap is informational — `snap_distance_m` reports how far the
+    voter is from their associated blockface. Large distances just mean
+    the building isn't directly on a street (residential complexes
+    where buildings sit set back from any road); the blockface_id is
+    still useful for grouping.
 
-    Incremental: only evaluates external_ids in `canonical_addresses`
-    that haven't been evaluated yet. Failing rows aren't stored, so a
-    re-run will re-evaluate them — bounded by the failure rate (~3%).
+    Non-incremental: drops + recreates every run.
     """
-    table_suffix = "quality_matches"
+    table_suffix = "osm_only_matches"
     ensure_org_schema(conn, organization_slug)
     fqn = org_fqn(organization_slug, table_suffix)
-    canonical_fqn = canonical_addresses.fqn
-    decomposed_fqn = persons_decomposed.fqn
-    tokens_fqn = address_tokens.fqn
 
+    pd_ = persons_decomposed.fqn
+    pbm = persons_best_match.fqn
+    obl = osm_building_lookup.fqn
+    bf_ = blockface_final.fqn
+    tok = address_tokens.fqn
+
+    conn.execute(f"DROP TABLE IF EXISTS {fqn}")
+
+    print("Rescuing TIGER-miss voters via OSM lookup…")
+    t0 = time.time()
+
+    # Step 1: keyed TIGER-miss voters
+    hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
     conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            external_id VARCHAR
-        )
+        CREATE OR REPLACE TEMP TABLE _miss_raw AS
+        SELECT d.external_id, d.zip5,
+            {street_rewrite_sql("d.street_name_raw")} AS street_norm,
+            {housenumber_norm_sql(hn_display)} AS housenumber_norm
+        FROM {pd_} d
+        WHERE d.external_id NOT IN (SELECT external_id FROM {pbm})
+          AND d.street_name_raw IS NOT NULL
     """)
-
     conn.execute(f"""
-        INSERT INTO {fqn}
-        WITH stop_words AS (
-          -- Generic tokens: directionals (N/S/E/W), street types
-          -- (St/Ave/...), ordinal variants (1st/first/...). Sourced from
-          -- the same equivalence groups the matcher uses, so this rule
-          -- stays in sync if the groups are extended later.
-          SELECT DISTINCT lower(t) AS token
-          FROM {tokens_fqn}, unnest(equivalent_tokens) AS s(t)
+        CREATE OR REPLACE TEMP TABLE _miss_keyed AS
+        WITH tokens AS (
+            SELECT external_id, zip5, housenumber_norm,
+                {tokenize_street_sql("street_norm")} AS raw_tokens
+            FROM _miss_raw
         ),
-        joined AS (
-          SELECT
-            c.external_id,
-            d.street_name_tokens AS voter_tokens,
-            c.matched_tokens
-          FROM {canonical_fqn} c
-          INNER JOIN {decomposed_fqn} d ON d.external_id = c.external_id
-          WHERE c.external_id NOT IN (SELECT external_id FROM {fqn})
+        extras AS (
+            SELECT b.external_id, flatten(list(t.equivalent_tokens)) AS extra
+            FROM tokens b
+            JOIN {tok} t ON len(list_intersect(b.raw_tokens, t.equivalent_tokens)) > 0
+            GROUP BY b.external_id
+        ),
+        combined AS (
+            SELECT b.external_id, b.zip5, b.housenumber_norm,
+                list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, []))) AS expanded
+            FROM tokens b LEFT JOIN extras e USING (external_id)
         )
-        SELECT external_id
-        FROM joined
-        WHERE
-          -- Keep iff voter has no specific tokens (rule doesn't apply,
-          -- e.g. "PARK AVE" is all-generic) OR voter shares at least
-          -- one specific token with the matched street.
-          NOT EXISTS (
-            SELECT 1 FROM unnest(voter_tokens) AS v(t)
-            WHERE lower(v.t) NOT IN (SELECT token FROM stop_words)
-          )
-          OR EXISTS (
-            SELECT 1 FROM unnest(voter_tokens) AS v(t)
-            WHERE lower(v.t) NOT IN (SELECT token FROM stop_words)
-              AND lower(v.t) IN (
-                SELECT lower(m.t)
-                FROM unnest(matched_tokens) AS m(t)
-                WHERE lower(m.t) NOT IN (SELECT token FROM stop_words)
-              )
-          )
+        SELECT external_id, zip5, housenumber_norm,
+            {canonical_key_sql("expanded")} AS canonical_key
+        FROM combined
     """)
+    n_miss = conn.execute("SELECT count(*) FROM _miss_keyed").fetchone()[0]
+    print(f"  {n_miss:,} TIGER-miss voters keyed in {time.time()-t0:.1f}s")
 
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
-    )
+    # Step 2: lookup each in OSM
+    print("  joining to osm_building_lookup…")
+    t0 = time.time()
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _miss_with_osm AS
+        SELECT v.external_id, v.zip5,
+               o.osm_lat AS latitude, o.osm_lon AS longitude,
+               o.street  AS osm_street,
+               o.housenumber AS osm_housenumber
+        FROM _miss_keyed v
+        JOIN {obl} o
+          ON o.zip_code         = v.zip5
+         AND o.canonical_key    = v.canonical_key
+         AND o.housenumber_norm = v.housenumber_norm
+        WHERE v.canonical_key != ''
+    """)
+    n_osm = conn.execute("SELECT count(*) FROM _miss_with_osm").fetchone()[0]
+    print(f"  {n_osm:,} matched to OSM in {time.time()-t0:.1f}s")
 
-
-# ---------------------------------------------------------------------------
-# Node 8 – assemble the canonical geocoded persons table
-# ---------------------------------------------------------------------------
-
-
-def persons_geocoded(
-    persons_validated: TableRef,
-    persons_best_match: TableRef,
-    canonical_addresses: TableRef,
-    interpolated_coords: TableRef,
-    quality_matches: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Canonical geocoded persons table — the single "person record" that
-    downstream consumers query against. Contains only persons who matched
-    a TIGER blockface AND passed the quality gate.
-
-    Pure assembly node: joins person fields from `persons_validated`,
-    canonical address from `canonical_addresses`, lat/lon from
-    `interpolated_coords`, and match metadata from `persons_best_match`,
-    restricted to external_ids in `quality_matches`. All the heavy
-    lifting (interpolation, canonical-address derivation, token-overlap
-    gate) lives in those upstream peers; this node only stitches them
-    together and derives address-based stable keys.
-
-    address_line_2 normalization (UPPER + TRIM) happens here because it
-    comes straight from `persons_validated` with no TIGER/OSM-derived
-    equivalent — SBOE has a small number of mixed-case "Num 1"-style
-    apartment-type rows. SBOE source data is otherwise already UPPER, so
-    line_1/city/state/etc. pass through.
-
-    Persons that didn't match (no blockface candidate) or failed the
-    quality gate are excluded entirely. They live in `persons_validated`
-    only — queryable for audit/search but cannot be canvassed (no
-    coordinates) or aggregated to a building. Match-rate diagnostics in
-    `geocoding_summary` reconcile counts across both tables.
-
-    Address-derived stable keys (`building_id`, `door_id`) are computed
-    here once both `address_line_1` (canonical) and `address_line_2`
-    (validated) are in scope. See docs/product-model.md for the keying
-    convention. Single-family doors get a double-pipe in door_id (empty
-    middle segment) so building_id and door_id never collide.
-
-    Schema: drops and recreates on every run. Tolerates schema iteration
-    while the canonical-record shape is being settled.
-    """
-    table_suffix = "persons_geocoded"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    persons_fqn = persons_validated.fqn
-    match_fqn = persons_best_match.fqn
-    canonical_fqn = canonical_addresses.fqn
-    coords_fqn = interpolated_coords.fqn
-    quality_fqn = quality_matches.fqn
-
-    conn.execute(f"DROP TABLE IF EXISTS {fqn}")
+    # Step 3: snap each matched voter to nearest blockface in same zip.
+    # Many osm_only voters live in the same building (same osm_lat,
+    # osm_lon) — apartment blocks especially. Dedupe to distinct
+    # (zip, lat, lon), snap each location once, then join back. Cuts
+    # the spatial work by 10-50× on dense urban data.
+    print("  snapping to nearest blockface in zip…")
+    t0 = time.time()
     conn.execute(f"""
         CREATE TABLE {fqn} AS
-        WITH normalized_persons AS (
-          SELECT
-              p.external_id,
-              p.external_id_type,
-              p.first_name,
-              p.last_name,
-              TRIM(UPPER(p.address_line_2)) AS address_line_2,
-              p.city,
-              p.state,
-              p.zip5,
-              p.zip4,
-              p.other_properties
-          FROM {persons_fqn} p
+        WITH distinct_locs AS (
+            SELECT DISTINCT zip5, latitude, longitude
+            FROM _miss_with_osm
+        ),
+        candidates AS (
+            SELECT v.zip5, v.latitude, v.longitude,
+                   b.blockface_id,
+                   ST_Distance(
+                       ST_Transform(b.geom, 'OGC:CRS84', 'EPSG:32618'),
+                       ST_Transform(ST_Point(v.longitude, v.latitude),
+                                    'OGC:CRS84', 'EPSG:32618')
+                   ) AS d_m
+            FROM distinct_locs v
+            JOIN {bf_} b ON b.zip_code = v.zip5
+        ),
+        loc_snaps AS (
+            SELECT DISTINCT ON (zip5, latitude, longitude)
+                   zip5, latitude, longitude, blockface_id, d_m AS snap_distance_m
+            FROM candidates
+            -- blockface_id tiebreak so equidistant blockfaces resolve
+            -- deterministically; without it the chosen blockface_id can
+            -- vary between runs.
+            ORDER BY zip5, latitude, longitude, d_m, blockface_id
         )
-        SELECT
-            np.external_id,
-            np.external_id_type,
-            np.first_name,
-            np.last_name,
-            c.address_line_1,
-            np.address_line_2,
-            np.city,
-            np.state,
-            np.zip5,
-            np.zip4,
-            np.other_properties,
-            ic.latitude,
-            ic.longitude,
-            m.blockface_id,
-            m.person_house_number,
-            m.match_score,
-            (c.address_line_1 || '|' || np.zip5)                            AS building_id,
-            (c.address_line_1 || '|' || COALESCE(np.address_line_2, '') || '|' || np.zip5)
-                                                                            AS door_id
-        FROM normalized_persons np
-        INNER JOIN {canonical_fqn} c   ON c.external_id  = np.external_id
-        INNER JOIN {coords_fqn} ic     ON ic.external_id = np.external_id
-        INNER JOIN {match_fqn} m       ON m.external_id  = np.external_id
-        WHERE np.external_id IN (SELECT external_id FROM {quality_fqn})
+        SELECT v.external_id, v.latitude, v.longitude, v.osm_street, v.osm_housenumber,
+               s.blockface_id, s.snap_distance_m
+        FROM _miss_with_osm v
+        JOIN loc_snaps s
+          ON s.zip5 = v.zip5
+         AND s.latitude = v.latitude
+         AND s.longitude = v.longitude
     """)
+    n_out = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
+    print(f"  {n_out:,} osm_only voters snapped in {time.time()-t0:.1f}s")
 
-    version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
         schema=organization_slug,
         table=table_suffix,
-        version=version,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Node 9 – summary diagnostics
-# ---------------------------------------------------------------------------
-
-
-def geocoding_summary(
-    persons_geocoded: TableRef,
-    persons_validated: TableRef,
-    organization_slug: str,
-    conn: duckdb.DuckDBPyConnection,
-) -> TableRef:
-    """Match-rate diagnostics: total comes from persons_validated (the
-    universal "all persons" table), matched comes from persons_geocoded
-    (only contains successfully-matched persons since the canonical-record
-    refactor). Difference = unmatched.
-
-    Always overwrites (non-incremental) since it is cheap and must reflect the
-    current state of both tables.
-    """
-    table_suffix = "geocoding_summary"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
-    geocoded_fqn = persons_geocoded.fqn
-    persons_fqn = persons_validated.fqn
-
-    conn.execute(f"DROP TABLE IF EXISTS {fqn}")
-    conn.execute(f"""
-        CREATE TABLE {fqn} AS
-        WITH counts AS (
-            SELECT
-                (SELECT count(*) FROM {persons_fqn})  AS total_persons,
-                (SELECT count(*) FROM {geocoded_fqn}) AS matched
-        )
-        SELECT
-            total_persons,
-            matched,
-            total_persons - matched                                         AS unmatched,
-            round(100.0 * matched / NULLIF(total_persons, 0), 2)            AS match_pct,
-            -- All matches are blockface-derived in the current pipeline;
-            -- column is kept for backward-compatible test/RPC consumers.
-            matched                                                         AS blockface_matches
-        FROM counts
-    """)
-
-    version = _current_version(conn)
-    return TableRef(
-        catalog=PERSON_CATALOG,
-        schema=organization_slug,
-        table=table_suffix,
-        version=version,
+        version=_current_version(conn),
     )

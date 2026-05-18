@@ -1,17 +1,13 @@
-"""Hamilton graph for preparing TIGER geographic reference data into geo DuckLake.
+"""Prepare TIGER reference data for address matching.
 
-This graph downloads US Census TIGER/Line shapefiles for a given state/county
-selection, loads them into geo_ducklake, and produces a normalized blockface
-table optimised for address matching.
+Downloads TIGER/Line shapefiles for the configured state/county
+selection and produces a normalized, query-ready blockface table.
+All output lives in the ``geo_ducklake`` catalog, shared across orgs.
 
-All nodes write to the ``geo_ducklake`` catalog so that the resulting blockface
-data is reusable across multiple client voter files without duplication.
-
-Node dependency chain:
-    tiger_addrfeat_raw ──┐
-                          ├─► blockface_unpivoted ─► blockface_normalized ─► blockface_final
-    tiger_edges_raw ─────┘
-    address_tokens ─────────────────────────────────────────────────► blockface_final
+    tiger_addrfeat_raw ─┐
+                        ├─► blockface_unpivoted ─► blockface_normalized ─► blockface_final
+    tiger_edges_raw    ─┘                                                   ▲
+    address_tokens ─────────────────────────────────────────────────────────┘
 """
 
 import json
@@ -22,32 +18,13 @@ from zipfile import ZipFile
 
 import duckdb
 
-from src.address_tokens import EQUIVALENT_TOKEN_GROUPS
+from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
 from src.models import TableRef
 
 GEO_CATALOG = "geo_ducklake"
 TIGER_SCHEMA = "tiger"
 CENSUS_BASE_URL = "https://www2.census.gov/geo/tiger"
 
-
-def _tokenise(col: str) -> str:
-    """Return a DuckDB SQL expression that tokenises a street name column.
-
-    Produces a sorted, deduplicated array of lowercase alphanumeric tokens,
-    mirroring the approach in old/contracts/tiger.ts.
-    """
-    return (
-        f"list_distinct(list_sort(list_filter("
-        f"  list_concat("
-        f"    list_concat("
-        f"      regexp_split_to_array(lower(trim({col})), '[^a-z0-9]+'),"
-        f"      regexp_extract_all(lower(trim({col})), '[0-9]+')"
-        f"    ),"
-        f"    regexp_extract_all(lower(trim({col})), '\\b[a-z]+')"
-        f"  ),"
-        f"  x -> length(x) > 0"
-        f")))"
-    )
 
 
 def _fqn(table: str) -> str:
@@ -163,7 +140,7 @@ def tiger_addrfeat_raw(
                     RTOHN                                   AS right_to_house_num,
                     ZIPL                                    AS left_zip_code,
                     ZIPR                                    AS right_zip_code,
-                    {_tokenise("FULLNAME")}                AS street_name_tokens,
+                    {tokenize_street_sql("FULLNAME")}                AS street_name_tokens,
                     '{tiger_state_fips}'                   AS state_fips,
                     '{county}'                             AS county_fips,
                     geom
@@ -237,7 +214,7 @@ def tiger_edges_raw(
                     MTFCC                                   AS feature_class_code,
                     TNIDF                                   AS from_node_id,
                     TNIDT                                   AS to_node_id,
-                    {_tokenise("FULLNAME")}                AS street_name_tokens,
+                    {tokenize_street_sql("FULLNAME")}                AS street_name_tokens,
                     '{tiger_state_fips}'                   AS state_fips,
                     '{county}'                             AS county_fips,
                     geom
@@ -614,15 +591,38 @@ def blockface_final(
     address_tokens: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Produce the query-ready blockface table with expanded street name tokens.
+    """Query-ready blockface table.
 
-    For each blockface whose ``street_name_tokens`` array intersects any
-    equivalency group, the full group's tokens are merged in. For example, a
-    blockface with tokens ["broadway", "st"] will also gain "street" so that
-    addresses using the full form match correctly.
+    Three transforms on top of ``blockface_normalized``:
 
-    This is the stable table that Graph 3 (geocode) reads directly.
-    Incremental: skips blockface_ids already present.
+    1. **Alias collapse.** TIGER addrfeat sometimes stores the same
+       physical blockface under multiple street names (e.g. a street
+       and its commemorative co-name) — same ``tiger_line_id``,
+       ``side``, prefix, and address range, different ``full_name``.
+       ``GROUP BY (tlid, side, prefix, from, to)`` merges these into
+       one row. The canonical ``full_name`` is the one that appears
+       most often across the dataset (alphabetical tiebreak).
+
+       Note: this does *not* collapse rows that share a TIGER line but
+       legitimately represent distinct address ranges — those have
+       different ``(prefix, from, to)`` triples and stay as separate
+       rows.
+
+    2. **Two token sets.** Every group emits:
+         - ``street_tokens_match`` — the union of every alias row's
+           tokens, equivalency-expanded. Used by the matching
+           predicate so a voter using any alias spelling matches.
+         - ``street_tokens_lookup`` — only the canonical name's
+           tokens, equivalency-expanded. Used by ``refined_positions``
+           for the OSM ``canonical_key`` lookup, so voters at the
+           same building hit the same OSM record regardless of which
+           alias their raw address used.
+
+    3. **Equivalency expansion.** Applied to both token sets via the
+       ``address_tokens`` lookup so abbreviations match full forms
+       (st↔street, ave↔avenue, 1st↔first, …).
+
+    Non-incremental: the collapse needs to see all rows at once.
     """
     table = "blockface_final"
     fqn = _fqn(table)
@@ -630,78 +630,93 @@ def blockface_final(
     tokens_fqn = address_tokens.fqn
 
     _ensure_schema(conn)
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            blockface_id        VARCHAR,
-            side                VARCHAR,
-            from_house_num      INTEGER,
-            to_house_num        INTEGER,
-            house_num_prefix    VARCHAR,
-            number_type         VARCHAR,
-            zip_code            VARCHAR,
-            full_name           VARCHAR,
-            tiger_line_id       VARCHAR,
-            street_name_tokens  VARCHAR[],
-            from_node_id        VARCHAR,
-            to_node_id          VARCHAR,
-            geom                GEOMETRY
-        )
-    """)
+    conn.execute(f"DROP TABLE IF EXISTS {fqn}")
 
     conn.execute(f"""
-        INSERT INTO {fqn}
-        WITH new_rows AS (
-            SELECT * FROM {norm_fqn}
-            WHERE blockface_id NOT IN (SELECT blockface_id FROM {fqn})
+        CREATE TABLE {fqn} AS
+        WITH name_freq AS (
+            SELECT full_name, count(*) AS freq
+            FROM {norm_fqn}
+            WHERE full_name IS NOT NULL
+            GROUP BY full_name
         ),
-        -- Collect all extra tokens per blockface_id (one row per blockface regardless
-        -- of how many equivalency groups matched).
-        extra_by_blockface AS (
+        -- Each blockface_normalized row enriched with the frequency of its
+        -- full_name. Used both to rank within a group and to attach the
+        -- canonical row's tokens to every member of the group.
+        normalized_ranked AS (
             SELECT
-                n.blockface_id,
-                flatten(list(t.equivalent_tokens)) AS extra_tokens
-            FROM new_rows n
-            JOIN {tokens_fqn} t
-              ON len(list_intersect(n.street_name_tokens, t.equivalent_tokens)) > 0
-            GROUP BY n.blockface_id
+                n.tiger_line_id || ':' || n.side                       AS blockface_id,
+                n.side, n.from_house_num, n.to_house_num,
+                n.house_num_prefix, n.number_type, n.zip_code,
+                n.tiger_line_id, n.full_name, n.street_name_tokens,
+                n.from_node_id, n.to_node_id, n.geom,
+                COALESCE(f.freq, 0)                                    AS name_freq,
+                ROW_NUMBER() OVER (
+                    PARTITION BY n.tiger_line_id, n.side,
+                                 COALESCE(n.house_num_prefix, ''),
+                                 n.from_house_num, n.to_house_num
+                    ORDER BY COALESCE(f.freq, 0) DESC,
+                             n.full_name ASC NULLS LAST
+                )                                                       AS canonical_rank
+            FROM {norm_fqn} n
+            LEFT JOIN name_freq f USING (full_name)
+        ),
+        -- Collapse alias rows by (tlid, side, prefix, from, to). Each
+        -- (tlid, side, prefix, range) is one logical blockface; multiple
+        -- full_name rows describing it merge here.
+        collapsed AS (
+            SELECT
+                blockface_id, side, from_house_num, to_house_num,
+                house_num_prefix, number_type, zip_code, tiger_line_id,
+                -- Canonical name = the row with canonical_rank = 1.
+                arg_max(full_name, -canonical_rank)                    AS full_name,
+                -- Union of every alias row's pre-expansion tokens.
+                list_distinct(flatten(list(street_name_tokens)))       AS merged_raw_tokens,
+                -- Pre-expansion tokens of just the canonical row.
+                arg_max(street_name_tokens, -canonical_rank)           AS canonical_raw_tokens,
+                ANY_VALUE(from_node_id)                                AS from_node_id,
+                ANY_VALUE(to_node_id)                                  AS to_node_id,
+                ANY_VALUE(geom)                                        AS geom,
+                ROW_NUMBER() OVER ()                                   AS bf_row
+            FROM normalized_ranked
+            GROUP BY blockface_id, side, from_house_num, to_house_num,
+                     house_num_prefix, number_type, zip_code, tiger_line_id
+        ),
+        -- Equivalency expansion runs per bf_row (the synthetic group id)
+        -- so each `(tlid, side, prefix, from, to)` group gets its own
+        -- extras bucket, even when multiple groups share `blockface_id`.
+        merged_extras AS (
+            SELECT c.bf_row, flatten(list(t.equivalent_tokens)) AS extras
+            FROM collapsed c JOIN {tokens_fqn} t
+              ON len(list_intersect(c.merged_raw_tokens, t.equivalent_tokens)) > 0
+            GROUP BY c.bf_row
+        ),
+        canonical_extras AS (
+            SELECT c.bf_row, flatten(list(t.equivalent_tokens)) AS extras
+            FROM collapsed c JOIN {tokens_fqn} t
+              ON len(list_intersect(c.canonical_raw_tokens, t.equivalent_tokens)) > 0
+            GROUP BY c.bf_row
         )
-        -- Rows that matched at least one token group: merge in the extra tokens.
         SELECT
-            n.blockface_id,
-            n.side,
-            n.from_house_num,
-            n.to_house_num,
-            n.house_num_prefix,
-            n.number_type,
-            n.zip_code,
-            n.full_name,
-            n.tiger_line_id,
-            list_distinct(list_concat(n.street_name_tokens, e.extra_tokens)) AS street_name_tokens,
-            n.from_node_id,
-            n.to_node_id,
-            n.geom
-        FROM new_rows n
-        JOIN extra_by_blockface e ON n.blockface_id = e.blockface_id
-
-        UNION ALL
-
-        -- Rows with no token group overlap keep their original tokens unchanged.
-        SELECT
-            n.blockface_id,
-            n.side,
-            n.from_house_num,
-            n.to_house_num,
-            n.house_num_prefix,
-            n.number_type,
-            n.zip_code,
-            n.full_name,
-            n.tiger_line_id,
-            n.street_name_tokens,
-            n.from_node_id,
-            n.to_node_id,
-            n.geom
-        FROM new_rows n
-        WHERE n.blockface_id NOT IN (SELECT blockface_id FROM extra_by_blockface)
+            c.blockface_id,
+            c.side,
+            c.from_house_num,
+            c.to_house_num,
+            c.house_num_prefix,
+            c.number_type,
+            c.zip_code,
+            c.full_name,
+            c.tiger_line_id,
+            list_distinct(list_concat(c.merged_raw_tokens, COALESCE(m.extras, [])))
+                                                                       AS street_tokens_match,
+            list_distinct(list_concat(c.canonical_raw_tokens, COALESCE(ce.extras, [])))
+                                                                       AS street_tokens_lookup,
+            c.from_node_id,
+            c.to_node_id,
+            c.geom
+        FROM collapsed c
+        LEFT JOIN merged_extras   m  ON m.bf_row = c.bf_row
+        LEFT JOIN canonical_extras ce ON ce.bf_row = c.bf_row
     """)
 
     version = _current_version(conn)

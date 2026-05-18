@@ -55,3 +55,15 @@ def tiger_cache_dir() -> str:
     path = Path(__file__).parent.parent / "tiger_cache"
     path.mkdir(parents=True, exist_ok=True)
     return str(path)
+
+
+@pytest.fixture(scope="session")
+def osm_cache_dir() -> str:
+    """Shared on-disk OSM PBF cache reused across pipeline tests.
+
+    Points at apps/data/osm_cache by default so the dev seed-persons cache
+    is reused. First run downloads ~500MB; subsequent runs are cache hits.
+    """
+    path = Path(__file__).parent.parent / "osm_cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
