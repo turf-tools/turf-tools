@@ -1,31 +1,27 @@
-"""Hamilton graph for loading geographic boundary polygons into DuckLake.
+"""Load administrative boundary polygons into DuckLake.
 
-A "boundary" here is a polygon that names an administrative unit — an NYC
-Election District, a ZIP code area, a Census tract, etc. The same destination
-table is populated regardless of source:
+A "boundary" is a polygon naming an administrative unit (Election
+Districts, ZIP areas, Census tracts, …). All loaders write to the
+same destination shape:
 
     geo_ducklake.boundaries.{key_group}
-        key   VARCHAR    -- unique id within the key group (e.g. "65039")
+        key   VARCHAR    -- unique id within the key group
         name  VARCHAR    -- nullable display label
-        geom  GEOMETRY   -- polygon, simplified for map rendering
+        geom  GEOMETRY   -- polygon, pre-simplified for map rendering
 
-Three flavours of loader, same destination contract:
+Three loaders share that contract:
 
-- ``boundary_from_blocks`` — preferred. Derives polygons from the voter
-  file: per key, union the census blocks that voters with that key live
-  in. No external boundary shapefile required, and the polygons match
-  the voter file by construction (no MODZCTA/ZIP5 mismatch and no "ED
-  exists in shapefile but no voters live in it").
-- ``boundary_from_geojson`` — for external sources (NYC Open Data,
-  custom exports). Reads a GeoJSON file/URL via DuckDB's spatial
-  ``ST_Read``. Kept around as an escape hatch for key groups that
-  don't have voter coverage.
-- ``boundary_from_table`` — for sources already in DuckLake (TIGER
-  ZCTAs, TIGER tracts, etc.). Pure SQL projection, no file fetch.
+- `boundary_from_blocks` (preferred) — derive polygons from the voter
+  file by unioning the TIGER census blocks that voters with each key
+  live in. No external shapefile needed; polygons match the voter
+  file by construction.
+- `boundary_from_geojson` — read an external GeoJSON file/URL via
+  `ST_Read`. Escape hatch for key groups without voter coverage.
+- `boundary_from_table` — project from a table already in DuckLake
+  (TIGER ZCTAs, tracts, …). Pure SQL, no file fetch.
 
-All variants pre-simplify the geometry so the served file stays small.
-The simplification tolerance is in degrees (EPSG:4326), so 0.0001 ≈ 11 m
-at the equator — invisible at city zoom levels but cuts file size ~5x.
+Geometry is pre-simplified at `DEFAULT_SIMPLIFY_TOLERANCE` (0.0001° ≈
+11 m at the equator — invisible at city zoom but ~5× smaller file).
 """
 
 import duckdb

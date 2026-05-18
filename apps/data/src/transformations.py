@@ -18,20 +18,27 @@ in lockstep.
 from __future__ import annotations
 
 
-def nys_sboe_transformation_query(county_codes: list[str] | None = None) -> str:
+def nys_sboe_transformation_query(
+    county_codes: list[str] | None = None,
+    zip5_filter: list[str] | None = None,
+) -> str:
     """SQL transformation from NYS SBOE raw voter file → Person schema.
 
     Args:
         county_codes: optional list of NYS BOE county codes (e.g. ``['31']``
             for Manhattan). When provided, the query restricts to those
-            counties and to active voters (status = 'A'). When None,
-            returns all rows.
+            counties and to active voters (status = 'A').
+        zip5_filter: optional list of residential ZIP5 codes to keep. Used to
+            scope dev runs to a small geographic slice.
     """
     where_clauses = []
     if county_codes:
         joined = ", ".join(f"'{c}'" for c in county_codes)
         where_clauses.append(f"raw.county_code IN ({joined})")
         where_clauses.append("raw.status = 'A'")
+    if zip5_filter:
+        joined = ", ".join(f"'{z}'" for z in zip5_filter)
+        where_clauses.append(f"raw.res_zip5 IN ({joined})")
     where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
     return f"""
