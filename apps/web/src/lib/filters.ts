@@ -130,10 +130,10 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
       source: "column",
       values: [
         { value: "03", label: "Bronx" },
-        { value: "24", label: "Brooklyn" },
-        { value: "31", label: "Manhattan" },
+        { value: "24", label: "Kings" },
+        { value: "31", label: "New York" },
         { value: "41", label: "Queens" },
-        { value: "43", label: "Staten Island" },
+        { value: "43", label: "Richmond" },
       ],
     },
     {
