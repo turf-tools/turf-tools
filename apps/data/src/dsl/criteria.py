@@ -81,8 +81,26 @@ class AddressFilter(BaseModel):
     zip: str  # noqa: A003
 
 
+class NestedFilter(BaseModel):
+    """Wraps a complete sub-criteria as a single filter. Produced by the
+    web layer when expanding segment references; the data server never
+    sees segment ids — only resolved nested criteria. Compiles to a
+    parenthesised boolean expression that the outer step's verb composes
+    in the usual way."""
+
+    kind: Literal["nested"]
+    criteria: "Criteria"
+
+
 Filter = Annotated[
-    AllFilter | EnumFilter | AgeRangeFilter | TextFilter | DateRangeFilter | VotingHistoryFilter | AddressFilter,
+    AllFilter
+    | EnumFilter
+    | AgeRangeFilter
+    | TextFilter
+    | DateRangeFilter
+    | VotingHistoryFilter
+    | AddressFilter
+    | NestedFilter,
     Field(discriminator="kind"),
 ]
 
@@ -111,6 +129,10 @@ class Step(BaseModel):
 
 class Criteria(BaseModel):
     steps: list[Step] = []
+
+
+# NestedFilter forward-references Criteria; resolve once both exist.
+NestedFilter.model_rebuild()
 
 
 # ---------------------------------------------------------------------------

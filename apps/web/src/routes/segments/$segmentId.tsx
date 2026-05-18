@@ -1,8 +1,10 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
+import { toast } from "sonner";
 import {
   Calendar as CalendarIcon,
+  ChevronDown,
   Filter as FilterIcon,
   GripVertical,
   Minus,
@@ -47,12 +49,14 @@ import {
   FILTER_SECTIONS,
   isActiveStep,
   type Criteria,
+  type SegmentFilter,
   type Step,
   type TextFilter,
   type Verb,
   type VotingHistoryFilter,
   VERB_META,
 } from "~/lib/filters";
+import { findCyclicSegmentIds, type SegmentLike } from "~/lib/expand-segment-refs";
 import {
   segmentCascadeQuery,
   segmentCountsQuery,
@@ -61,6 +65,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import { useExpandedCriteria } from "~/lib/use-expanded-criteria";
 import type { CascadeStep } from "~/rpc/web/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -86,6 +91,11 @@ function SegmentEditor() {
     ...segmentDetailQuery(segmentId),
   });
 
+  // The full org segments list — already prefetched in the loader. The
+  // segment-ref filter editor reads this both to populate its dropdown
+  // and to detect cycles transitively.
+  const { data: allSegments } = useQuery(segmentsListQuery());
+
   const stepsRaw = (activeSegmentDetail?.criteria as Criteria | null)?.steps ?? [];
   const stepsIdRef = useRef<string[]>([]);
   while (stepsIdRef.current.length < stepsRaw.length) stepsIdRef.current.push(crypto.randomUUID());
@@ -98,10 +108,30 @@ function SegmentEditor() {
   const displaySteps = draft ?? steps;
 
   // Only steps with active filters drive queries — adding an empty step
-  // doesn't trigger a refetch.
-  const effectiveCriteria = useMemo<Criteria>(
+  // doesn't trigger a refetch. Segment-ref filters are resolved here so
+  // queries hit the cache as authored-form changes flow through.
+  const authoredCriteria = useMemo<Criteria>(
     () => ({ steps: steps.filter(isActiveStep) }),
     [steps],
+  );
+  const effectiveCriteria = useExpandedCriteria(authoredCriteria) ?? authoredCriteria;
+
+  // Segment id -> row lookup, used by the cascade panel to render
+  // segment refs as "Segment: <name>" and to mirror the expansion's
+  // drop-on-missing behaviour so the panel's steps align 1:1 with the
+  // count-cascade response.
+  const segmentsById = useMemo(
+    () => new globalThis.Map((allSegments ?? []).map((s) => [s.segmentId, s])),
+    [allSegments],
+  );
+  const displayCriteriaSteps = useMemo(
+    () =>
+      authoredCriteria.steps.filter(
+        (s) =>
+          s.filter.kind !== "segment" ||
+          (s.filter.segmentId != null && segmentsById.has(s.filter.segmentId)),
+      ),
+    [authoredCriteria.steps, segmentsById],
   );
 
   const [view, setView] = useState<"map" | "list" | "waterfall">("map");
@@ -162,23 +192,37 @@ function SegmentEditor() {
     stableCascadeRef.current = cascade ?? stableCascadeRef.current;
 
   const stableCriteriaStepsRef = useRef<Step[]>([]);
-  if (!stale && view === "waterfall") stableCriteriaStepsRef.current = effectiveCriteria.steps;
+  if (!stale && view === "waterfall") stableCriteriaStepsRef.current = displayCriteriaSteps;
 
-  // Optimistic update: write Criteria into the ["segment", id] cache.
+  // Optimistic update: write Criteria into both the detail cache and the
+  // list cache. The list carries criteria for every org segment so the
+  // segment-ref filter editor can resolve cross-references; without
+  // syncing the list, edits to X show up in X's own queries but referrers
+  // (Y → Segment: X) keep expanding against the stale list copy until a
+  // refetch lands.
   const updateCriteriaMutation = useMutation({
     mutationFn: (input: { segmentId: string; criteria: Criteria }) =>
       client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.criteria }),
     onMutate: async ({ segmentId: id, criteria }) => {
       await queryClient.cancelQueries({ queryKey: ["segment", id] });
-      const previous = queryClient.getQueryData(["segment", id]);
+      await queryClient.cancelQueries({ queryKey: ["segments"] });
+      const previousDetail = queryClient.getQueryData(["segment", id]);
+      const previousList = queryClient.getQueryData(["segments"]);
       queryClient.setQueryData(["segment", id], (old: { criteria: unknown } | null | undefined) =>
         old ? { ...old, criteria } : old,
       );
-      return { previous };
+      queryClient.setQueryData(
+        ["segments"],
+        (old: ReadonlyArray<{ segmentId: string; criteria: unknown }> | undefined) =>
+          old?.map((s) => (s.segmentId === id ? { ...s, criteria } : s)),
+      );
+      return { previousDetail, previousList };
     },
     onError: (e, { segmentId: id }, ctx) => {
       console.error("segments.updateCriteria failed", e);
-      if (ctx?.previous) queryClient.setQueryData(["segment", id], ctx.previous);
+      toast.error(e.message);
+      if (ctx?.previousDetail) queryClient.setQueryData(["segment", id], ctx.previousDetail);
+      if (ctx?.previousList) queryClient.setQueryData(["segments"], ctx.previousList);
     },
   });
 
@@ -254,6 +298,8 @@ function SegmentEditor() {
                     onChange={(next) => updateStep(serverIdx, { ...step, filter: next })}
                     onRemove={() => removeStep(serverIdx)}
                     onDragEnd={handleDragEnd}
+                    currentSegmentId={segmentId}
+                    allSegments={allSegments ?? []}
                   />
                 );
               })}
@@ -279,6 +325,7 @@ function SegmentEditor() {
               <WaterfallPanel
                 steps={stableCascadeRef.current?.steps ?? []}
                 criteriaSteps={stableCriteriaStepsRef.current}
+                segmentsById={segmentsById}
                 firstLoad={stableCascadeRef.current === undefined}
               />
             )}
@@ -361,10 +408,12 @@ function SamplePanel({
 function WaterfallPanel({
   steps,
   criteriaSteps,
+  segmentsById,
   firstLoad,
 }: {
   steps: CascadeStep[];
   criteriaSteps: Step[];
+  segmentsById: ReadonlyMap<string, { name: string }>;
   firstLoad: boolean;
 }) {
   const [anchor, setAnchor] = useState(0);
@@ -394,12 +443,17 @@ function WaterfallPanel({
             const criteriaStep = criteriaSteps[i - 1];
             const verb = criteriaStep?.verb;
             const verbMeta = verb ? VERB_META[verb] : null;
-            const filterDef = criteriaStep
-              ? criteriaStep.filter.kind === "all"
-                ? { label: "Everyone" }
-                : definitionFor(filterKey(criteriaStep.filter))
-              : null;
-            const label = i === 0 ? "All" : (filterDef?.label ?? "—");
+            const stepLabel = (() => {
+              if (!criteriaStep) return null;
+              const f = criteriaStep.filter;
+              if (f.kind === "all") return "Everyone";
+              if (f.kind === "segment") {
+                const name = f.segmentId ? segmentsById.get(f.segmentId)?.name : null;
+                return name ? `Segment: ${name}` : "Segment";
+              }
+              return definitionFor(filterKey(f))?.label ?? null;
+            })();
+            const label = i === 0 ? "All" : (stepLabel ?? "—");
             const isAnchor = i === effectiveAnchor;
             const above = i < effectiveAnchor;
             const prevCount = steps[i - 1]?.count ?? 0;
@@ -536,19 +590,23 @@ function StepRow({
   onChange,
   onRemove,
   dragControls,
+  currentSegmentId,
+  allSegments,
 }: {
   number: number;
   step: Step;
   onChange: (next: Filter) => void;
   onRemove: () => void;
   dragControls?: ReturnType<typeof useDragControls>;
+  currentSegmentId: string;
+  allSegments: ReadonlyArray<{ segmentId: string; name: string; criteria: unknown }>;
 }) {
   const { filter, verb } = step;
   const { color, label: verbLabel } = VERB_META[verb];
   const def =
     filter.kind === "all"
       ? { kind: "all" as const, key: "all", label: "Everyone" }
-      : definitionFor((filter as Exclude<Filter, { kind: "all" }>).key);
+      : definitionFor(filterKey(filter));
 
   return (
     <div className="rounded-md border border-border bg-card p-3">
@@ -601,6 +659,14 @@ function StepRow({
       ) : null}
       {filter.kind === "address" && def?.kind === "address" ? (
         <AddressFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {filter.kind === "segment" && def?.kind === "segment" ? (
+        <SegmentFilterEditor
+          filter={filter}
+          onChange={onChange}
+          currentSegmentId={currentSegmentId}
+          allSegments={allSegments}
+        />
       ) : null}
     </div>
   );
@@ -979,6 +1045,68 @@ function VotingHistoryFilterEditor({
   );
 }
 
+function SegmentFilterEditor({
+  filter,
+  onChange,
+  currentSegmentId,
+  allSegments,
+}: {
+  filter: SegmentFilter;
+  onChange: (next: Filter) => void;
+  currentSegmentId: string;
+  allSegments: ReadonlyArray<{ segmentId: string; name: string; criteria: unknown }>;
+}) {
+  // Segments that would form a cycle if selected — current segment plus
+  // any that transitively reference it. The set is content-dependent;
+  // re-derive whenever the segments list changes.
+  const cyclic = useMemo<Set<string>>(() => {
+    const entries: Array<[string, SegmentLike]> = allSegments.map((s) => [
+      s.segmentId,
+      { segmentId: s.segmentId, name: s.name, criteria: s.criteria as Criteria },
+    ]);
+    return findCyclicSegmentIds(currentSegmentId, new globalThis.Map(entries));
+  }, [allSegments, currentSegmentId]);
+
+  const selectable = [...allSegments]
+    .filter((s) => !cyclic.has(s.segmentId))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const selected = filter.segmentId
+    ? allSegments.find((s) => s.segmentId === filter.segmentId)
+    : null;
+  const triggerLabel = selected
+    ? selected.name
+    : filter.segmentId
+      ? "(deleted)"
+      : "Select segment…";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="outline" className="w-full justify-between font-normal" />}
+      >
+        <span className={cn("truncate", !selected ? "text-muted-foreground" : null)}>
+          {triggerLabel}
+        </span>
+        <ChevronDown className="text-muted-foreground" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="min-w-48 max-h-[291px] overflow-y-auto">
+        {selectable.length === 0 ? (
+          <DropdownMenuItem disabled>No other segments available</DropdownMenuItem>
+        ) : (
+          selectable.map((s) => (
+            <DropdownMenuItem
+              key={s.segmentId}
+              onClick={() => onChange({ ...filter, segmentId: s.segmentId })}
+            >
+              {s.name}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function AddStepMenu({
   sections,
   isFirstStep,
@@ -1001,10 +1129,7 @@ function AddStepMenu({
       {allVerbs.map((verb) => {
         const { label } = VERB_META[verb];
         const disabled = isFirstStep && verb === "add"; // add only makes sense after a first step
-        // `Everyone` (kind:"all") only makes sense for `narrow` — hide it for add/remove.
-        const visibleSections = sections
-          .map((s) => s.filter((d) => verb === "narrow" || d.kind !== "all"))
-          .filter((s) => s.length > 0);
+        const visibleSections = sections;
         return (
           <div key={verb} className="flex-1">
             <DropdownMenu>
@@ -1026,7 +1151,7 @@ function AddStepMenu({
                     {sectionIdx > 0 ? <DropdownMenuSeparator /> : null}
                     {section.map((def) => (
                       <DropdownMenuItem key={def.key} onClick={() => onAdd(verb, def)}>
-                        {def.label}
+                        {def.kind === "segment" ? "Other Segment" : def.label}
                       </DropdownMenuItem>
                     ))}
                   </Fragment>
