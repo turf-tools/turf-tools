@@ -49,6 +49,7 @@ select = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = ["integration: full-pipeline run on the NYC voter fixture (slow; ~1 min)"]
 
 [tool.ty.environment]
 python-version = "3.13"
