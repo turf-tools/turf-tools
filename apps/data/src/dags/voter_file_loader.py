@@ -15,9 +15,11 @@ from src.models import Person, TableRef
 from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
 from src.voting_history import parse_voting_history
 
+
 # Pandas NaN comes back here for SQL NULL columns, so guard before splitting.
 def _parse_or_empty(raw: object) -> list[dict]:
     return parse_voting_history(raw if isinstance(raw, str) else None)
+
 
 # Expected columns derived from the Person model.
 _EXPECTED_COLUMNS = set(Person.model_fields.keys())
@@ -89,9 +91,7 @@ def persons_voting_history(
         SELECT external_id, voter_history AS raw_vh
         FROM {persons_transformed.fqn}
     """).df()
-    df["voting_history_json"] = df["raw_vh"].map(
-        lambda raw: json.dumps(_parse_or_empty(raw))
-    )
+    df["voting_history_json"] = df["raw_vh"].map(lambda raw: json.dumps(_parse_or_empty(raw)))
     df = df[["external_id", "voting_history_json"]]
 
     conn.register("_parsed_voting_history_df", df)

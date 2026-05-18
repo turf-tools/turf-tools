@@ -81,12 +81,7 @@ def housenumber_norm_sql(col: str) -> str:
     join so voters and OSM records agree regardless of which surface
     form was stored.
     """
-    return (
-        f"regexp_replace("
-        f"  regexp_replace({col}, '(^|-)0*([0-9])', '\\1\\2', 'g'),"
-        f"  '-', '', 'g'"
-        f")"
-    )
+    return f"regexp_replace(  regexp_replace({col}, '(^|-)0*([0-9])', '\\1\\2', 'g'),  '-', '', 'g')"
 
 
 def housenumber_display_sql(prefix_col: str, number_col: str, half_col: str) -> str:
@@ -145,16 +140,63 @@ def tokenize_street_sql(col: str) -> str:
 # street, so candidate filtering requires at least one *non*-generic token
 # in the overlap.
 GENERIC_STREET_TOKENS: list[str] = [
-    "e", "east", "w", "west", "n", "north", "s", "south",
-    "ne", "northeast", "nw", "northwest", "se", "southeast", "sw", "southwest",
-    "st", "street", "ave", "avenue", "av",
-    "rd", "road", "dr", "drive",
-    "pl", "place", "ct", "court", "ln", "lane",
-    "blvd", "boulevard", "sq", "square", "ter", "terrace",
-    "way", "mews", "saint",
-    "pkwy", "parkway", "expy", "expressway", "hwy", "highway",
-    "cir", "circle", "loop", "run", "walk", "trail", "path",
-    "alley", "aly", "crescent", "cres",
+    "e",
+    "east",
+    "w",
+    "west",
+    "n",
+    "north",
+    "s",
+    "south",
+    "ne",
+    "northeast",
+    "nw",
+    "northwest",
+    "se",
+    "southeast",
+    "sw",
+    "southwest",
+    "st",
+    "street",
+    "ave",
+    "avenue",
+    "av",
+    "rd",
+    "road",
+    "dr",
+    "drive",
+    "pl",
+    "place",
+    "ct",
+    "court",
+    "ln",
+    "lane",
+    "blvd",
+    "boulevard",
+    "sq",
+    "square",
+    "ter",
+    "terrace",
+    "way",
+    "mews",
+    "saint",
+    "pkwy",
+    "parkway",
+    "expy",
+    "expressway",
+    "hwy",
+    "highway",
+    "cir",
+    "circle",
+    "loop",
+    "run",
+    "walk",
+    "trail",
+    "path",
+    "alley",
+    "aly",
+    "crescent",
+    "cres",
 ]
 
 

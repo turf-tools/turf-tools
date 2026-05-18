@@ -13,8 +13,7 @@ import math
 import subprocess
 import time
 
-import duckdb  # noqa: TC002  # Hamilton resolves annotations at runtime via typing.get_type_hints
-
+import duckdb  # noqa: TC001  # Hamilton resolves annotations at runtime via typing.get_type_hints
 from src.models import QuickwitBuildManifestStub, QuickwitIngestResult, TableRef
 
 _REQUIRED_COLUMNS = [

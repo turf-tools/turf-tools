@@ -26,10 +26,10 @@ Caches:
 import tempfile
 from pathlib import Path
 
-import duckdb
 import pytest
 from hamilton import driver
 
+import duckdb
 from src.dags import aggregate, assembly, geocode, matching, osm, tiger, voter_file_loader
 from src.transformations import nys_sboe_transformation_query
 
@@ -40,17 +40,17 @@ VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-
 # Re-baseline (with an explanation in the PR description) when an
 # intentional pipeline change shifts them.
 GOLDEN = {
-    "total_persons":               5_360_017,
-    "matched":                     5_281_714,
-    "unmatched":                       78_303,
-    "match_pct":                       98.54,
-    "matched_osm_road_projected":   3_811_666,
-    "matched_osm_complex":            709_962,
-    "matched_osm_off_segment":        110_021,
-    "matched_tiger_only":             564_019,
-    "matched_osm_only":                86_046,
-    "buildings":                      763_527,
-    "doors":                        3_026_868,
+    "total_persons": 5_360_017,
+    "matched": 5_281_714,
+    "unmatched": 78_303,
+    "match_pct": 98.54,
+    "matched_osm_road_projected": 3_811_666,
+    "matched_osm_complex": 709_962,
+    "matched_osm_off_segment": 110_021,
+    "matched_tiger_only": 564_019,
+    "matched_osm_only": 86_046,
+    "buildings": 763_527,
+    "doors": 3_026_868,
 }
 
 # Widened NYC envelope. The narrower commonly-cited bbox (-74.3 to -73.7)
@@ -60,7 +60,11 @@ NYC_LAT_MIN, NYC_LAT_MAX = 40.4, 41.0
 NYC_LON_MIN, NYC_LON_MAX = -74.3, -73.5
 
 ALLOWED_POSITION_SOURCES = {
-    "osm_matched", "osm_complex", "osm_off_segment", "tiger_only", "osm_only",
+    "osm_matched",
+    "osm_complex",
+    "osm_off_segment",
+    "tiger_only",
+    "osm_only",
 }
 
 
@@ -81,22 +85,25 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.install_extension("spatial")
         conn.load_extension("spatial")
         # Isolated tempdir DuckLakes — never touch the dev catalog.
-        conn.execute(
-            f"ATTACH 'ducklake:{tmpdir}/voter.ducklake' AS ducklake "
-            f"(DATA_PATH '{tmpdir}/voter_data/')"
-        )
-        conn.execute(
-            f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake "
-            f"(DATA_PATH '{tmpdir}/geo_data/')"
-        )
+        conn.execute(f"ATTACH 'ducklake:{tmpdir}/voter.ducklake' AS ducklake (DATA_PATH '{tmpdir}/voter_data/')")
+        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute("USE ducklake")
 
-        dr = driver.Builder().with_modules(
-            voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate,
-        ).build()
+        dr = (
+            driver.Builder()
+            .with_modules(
+                voter_file_loader,
+                tiger,
+                osm,
+                matching,
+                geocode,
+                assembly,
+                aggregate,
+            )
+            .build()
+        )
         dr.execute(
-            final_vars=["persons_geocoded", "geocoding_summary",
-                        "buildings_geocoded", "doors_geocoded"],
+            final_vars=["persons_geocoded", "geocoding_summary", "buildings_geocoded", "doors_geocoded"],
             inputs={
                 "voter_file_url": str(VOTER_FILE),
                 "organization_slug": "default",
@@ -106,10 +113,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
                 # All five NYC counties — matches the seed-persons default.
                 "tiger_county_fips": ["061", "005", "047", "081", "085"],
                 "tiger_data_dir": tiger_cache_dir,
-                "osm_url": (
-                    "https://download.geofabrik.de/north-america/us/"
-                    "new-york-260501.osm.pbf"
-                ),
+                "osm_url": ("https://download.geofabrik.de/north-america/us/new-york-260501.osm.pbf"),
                 "osm_data_dir": osm_cache_dir,
                 "conn": conn,
             },
@@ -136,34 +140,27 @@ def test_geocoding_summary_matches_baseline(nyc_pipeline):
                matched_osm_off_segment, matched_tiger_only, matched_osm_only
         FROM ducklake."default".geocoding_summary
     """).fetchone()
-    (total, matched, unmatched, match_pct,
-     m_road, m_complex, m_off, m_tiger, m_osm_only) = row
-    assert total      == GOLDEN["total_persons"]
-    assert matched    == GOLDEN["matched"]
-    assert unmatched  == GOLDEN["unmatched"]
-    assert match_pct  == GOLDEN["match_pct"]
-    assert m_road     == GOLDEN["matched_osm_road_projected"]
-    assert m_complex  == GOLDEN["matched_osm_complex"]
-    assert m_off      == GOLDEN["matched_osm_off_segment"]
-    assert m_tiger    == GOLDEN["matched_tiger_only"]
+    (total, matched, unmatched, match_pct, m_road, m_complex, m_off, m_tiger, m_osm_only) = row
+    assert total == GOLDEN["total_persons"]
+    assert matched == GOLDEN["matched"]
+    assert unmatched == GOLDEN["unmatched"]
+    assert match_pct == GOLDEN["match_pct"]
+    assert m_road == GOLDEN["matched_osm_road_projected"]
+    assert m_complex == GOLDEN["matched_osm_complex"]
+    assert m_off == GOLDEN["matched_osm_off_segment"]
+    assert m_tiger == GOLDEN["matched_tiger_only"]
     assert m_osm_only == GOLDEN["matched_osm_only"]
 
 
 def test_table_row_counts_match_baseline(nyc_pipeline):
     """`persons_geocoded`, `buildings_geocoded`, `doors_geocoded` row
     counts match the baseline."""
-    persons = nyc_pipeline.execute(
-        'SELECT count(*) FROM ducklake."default".persons_geocoded'
-    ).fetchone()[0]
-    buildings = nyc_pipeline.execute(
-        'SELECT count(*) FROM ducklake."default".buildings_geocoded'
-    ).fetchone()[0]
-    doors = nyc_pipeline.execute(
-        'SELECT count(*) FROM ducklake."default".doors_geocoded'
-    ).fetchone()[0]
-    assert persons   == GOLDEN["matched"]      # persons_geocoded == matched
+    persons = nyc_pipeline.execute('SELECT count(*) FROM ducklake."default".persons_geocoded').fetchone()[0]
+    buildings = nyc_pipeline.execute('SELECT count(*) FROM ducklake."default".buildings_geocoded').fetchone()[0]
+    doors = nyc_pipeline.execute('SELECT count(*) FROM ducklake."default".doors_geocoded').fetchone()[0]
+    assert persons == GOLDEN["matched"]  # persons_geocoded == matched
     assert buildings == GOLDEN["buildings"]
-    assert doors     == GOLDEN["doors"]
+    assert doors == GOLDEN["doors"]
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +204,8 @@ def test_every_person_has_position_source(nyc_pipeline):
 
 def test_position_source_values_in_allowed_enum(nyc_pipeline):
     sources = {
-        r[0] for r in nyc_pipeline.execute("""
+        r[0]
+        for r in nyc_pipeline.execute("""
             SELECT DISTINCT position_source
             FROM ducklake."default".persons_geocoded
         """).fetchall()
@@ -263,10 +261,10 @@ def test_address_line_1_is_well_formed(nyc_pipeline):
         FROM ducklake."default".persons_geocoded
     """).fetchone()
     null_or_empty, not_upper, no_leading_digit, no_letter = counts
-    assert null_or_empty    == 0, f"{null_or_empty} address_line_1 rows are null/empty"
-    assert not_upper        == 0, f"{not_upper} address_line_1 rows are not fully uppercase"
+    assert null_or_empty == 0, f"{null_or_empty} address_line_1 rows are null/empty"
+    assert not_upper == 0, f"{not_upper} address_line_1 rows are not fully uppercase"
     assert no_leading_digit == 0, f"{no_leading_digit} address_line_1 rows don't start with a digit"
-    assert no_letter        == 0, f"{no_letter} address_line_1 rows contain no letters"
+    assert no_letter == 0, f"{no_letter} address_line_1 rows contain no letters"
 
 
 def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
@@ -324,11 +322,15 @@ def test_other_properties_is_empty_for_nys(nyc_pipeline):
 
 def test_dates_are_iso_8601(nyc_pipeline):
     """date_of_birth, registration_date, last_voted_date all match YYYY-MM-DD."""
-    bad = nyc_pipeline.execute(r"""
+    iso = r"'^\d{4}-\d{2}-\d{2}$'"
+    bad = nyc_pipeline.execute(f"""
         SELECT
-          count(*) FILTER (WHERE date_of_birth     IS NOT NULL AND date_of_birth     !~ '^\d{4}-\d{2}-\d{2}$') AS bad_dob,
-          count(*) FILTER (WHERE registration_date IS NOT NULL AND registration_date !~ '^\d{4}-\d{2}-\d{2}$') AS bad_reg,
-          count(*) FILTER (WHERE last_voted_date   IS NOT NULL AND last_voted_date   !~ '^\d{4}-\d{2}-\d{2}$') AS bad_last_voted
+          count(*) FILTER (WHERE date_of_birth IS NOT NULL
+                             AND date_of_birth !~ {iso}) AS bad_dob,
+          count(*) FILTER (WHERE registration_date IS NOT NULL
+                             AND registration_date !~ {iso}) AS bad_reg,
+          count(*) FILTER (WHERE last_voted_date IS NOT NULL
+                             AND last_voted_date !~ {iso}) AS bad_last_voted
         FROM ducklake."default".persons_geocoded
     """).fetchone()
     assert bad == (0, 0, 0)
@@ -337,9 +339,16 @@ def test_dates_are_iso_8601(nyc_pipeline):
 def test_enrollment_values_in_canonical_enum(nyc_pipeline):
     """enrollment only takes documented canonical labels."""
     allowed = {
-        "democratic", "republican", "conservative", "working_families",
-        "independence", "green", "libertarian", "reform",
-        "unaffiliated", "other",
+        "democratic",
+        "republican",
+        "conservative",
+        "working_families",
+        "independence",
+        "green",
+        "libertarian",
+        "reform",
+        "unaffiliated",
+        "other",
     }
     rows = nyc_pipeline.execute("""
         SELECT DISTINCT enrollment
@@ -349,5 +358,3 @@ def test_enrollment_values_in_canonical_enum(nyc_pipeline):
     seen = {r[0] for r in rows}
     unexpected = seen - allowed
     assert not unexpected, f"unexpected enrollment values: {unexpected}"
-
-

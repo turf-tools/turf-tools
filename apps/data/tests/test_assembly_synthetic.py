@@ -161,16 +161,16 @@ class TestCanonicalAddresses:
         all voters at the same OSM building converge on the same address."""
         conn, refs = synth
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v1', 123, '', '', 'BROADWAY', ['broadway'], 'odd', '10001')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['best_match'].fqn} VALUES
+            INSERT INTO {refs["best_match"].fqn} VALUES
             ('v1', 'bf1', 'T1', 'left', 1, 999, '', 'BROADWAY',
              'n1', 'n2', NULL, 123, 2)
         """)
         conn.execute(f"""
-            INSERT INTO {refs['refined'].fqn} VALUES
+            INSERT INTO {refs["refined"].fqn} VALUES
             ('v1', 40.75, -73.99, 'osm_matched', 'Broadway', '123')
         """)
         ref = assembly.canonical_addresses(
@@ -181,9 +181,7 @@ class TestCanonicalAddresses:
             organization_slug=ORG,
             conn=conn,
         )
-        line1 = conn.execute(
-            f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
         # Street comes from OSM (UPPER applied).
         assert "BROADWAY" in line1
 
@@ -191,16 +189,16 @@ class TestCanonicalAddresses:
         """`646` ↔ `6-46` should unify under the OSM form when OSM tags it."""
         conn, refs = synth
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v1', 646, '', '', 'BROADWAY', ['broadway'], 'even', '10001')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['best_match'].fqn} VALUES
+            INSERT INTO {refs["best_match"].fqn} VALUES
             ('v1', 'bf1', 'T1', 'left', 1, 999, '', 'BROADWAY',
              'n1', 'n2', NULL, 646, 2)
         """)
         conn.execute(f"""
-            INSERT INTO {refs['refined'].fqn} VALUES
+            INSERT INTO {refs["refined"].fqn} VALUES
             ('v1', 40.75, -73.99, 'osm_matched', 'Broadway', '6-46')
         """)
         ref = assembly.canonical_addresses(
@@ -211,9 +209,7 @@ class TestCanonicalAddresses:
             organization_slug=ORG,
             conn=conn,
         )
-        line1 = conn.execute(
-            f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
         # Voter wrote 646; OSM uses 6-46; both normalize to "646", so OSM wins.
         assert line1.startswith("6-46 "), f"expected OSM hyphenated form, got {line1!r}"
 
@@ -223,16 +219,16 @@ class TestCanonicalAddresses:
         subunit suffixes don't overwrite voter-correct housenumbers."""
         conn, refs = synth
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v1', 100, '', '', 'BROADWAY', ['broadway'], 'even', '10001')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['best_match'].fqn} VALUES
+            INSERT INTO {refs["best_match"].fqn} VALUES
             ('v1', 'bf1', 'T1', 'left', 1, 999, '', 'BROADWAY',
              'n1', 'n2', NULL, 100, 2)
         """)
         conn.execute(f"""
-            INSERT INTO {refs['refined'].fqn} VALUES
+            INSERT INTO {refs["refined"].fqn} VALUES
             ('v1', 40.75, -73.99, 'osm_matched', 'Broadway', '100A')
         """)
         ref = assembly.canonical_addresses(
@@ -243,9 +239,7 @@ class TestCanonicalAddresses:
             organization_slug=ORG,
             conn=conn,
         )
-        line1 = conn.execute(
-            f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
         # Voter's "100" should stay; OSM's "100A" shouldn't replace it.
         assert line1.startswith("100 "), f"voter form should win when norms differ: {line1!r}"
 
@@ -254,17 +248,17 @@ class TestCanonicalAddresses:
         canonical street falls back to TIGER's `full_name`."""
         conn, refs = synth
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v1', 50, '', '', 'WEST 42 ST', ['42','st','west'], 'even', '10001')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['best_match'].fqn} VALUES
+            INSERT INTO {refs["best_match"].fqn} VALUES
             ('v1', 'bf1', 'T1', 'left', 1, 999, '', 'W 42nd St',
              'n1', 'n2', NULL, 50, 2)
         """)
         # NULL osm_street → fall back to TIGER full_name.
         conn.execute(f"""
-            INSERT INTO {refs['refined'].fqn} VALUES
+            INSERT INTO {refs["refined"].fqn} VALUES
             ('v1', 40.75, -73.99, 'tiger_only', NULL, NULL)
         """)
         ref = assembly.canonical_addresses(
@@ -275,9 +269,7 @@ class TestCanonicalAddresses:
             organization_slug=ORG,
             conn=conn,
         )
-        line1 = conn.execute(
-            f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert "W 42ND ST" in line1.upper(), f"expected TIGER fallback in {line1!r}"
 
     def test_osm_only_voter_produces_canonical_row(self, synth):
@@ -285,12 +277,12 @@ class TestCanonicalAddresses:
         should still get a canonical_addresses row using OSM data."""
         conn, refs = synth
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v1', 200, '', '', 'AMSTERDAM AVE', ['amsterdam','ave'], 'even', '10024')
         """)
         # No persons_best_match row, no refined_positions row.
         conn.execute(f"""
-            INSERT INTO {refs['osm_only'].fqn} VALUES
+            INSERT INTO {refs["osm_only"].fqn} VALUES
             ('v1', 40.78, -73.98, 'Amsterdam Avenue', '200', 'bf42', 12.3)
         """)
         ref = assembly.canonical_addresses(
@@ -301,9 +293,7 @@ class TestCanonicalAddresses:
             organization_slug=ORG,
             conn=conn,
         )
-        line1 = conn.execute(
-            f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert "AMSTERDAM AVENUE" in line1
 
 
@@ -315,7 +305,7 @@ class TestCanonicalAddresses:
 class TestPersonsGeocoded:
     def _seed_validated(self, conn, refs):
         conn.execute(f"""
-            INSERT INTO {refs['validated'].fqn}
+            INSERT INTO {refs["validated"].fqn}
                 (external_id, external_id_type, first_name, last_name,
                  address_line_1, address_line_2, city, state, zip5,
                  voting_history, other_properties)
@@ -334,11 +324,11 @@ class TestPersonsGeocoded:
         self._seed_validated(conn, refs)
         # v2 has only osm_only_matches — no best_match, no refined.
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v2', 200, '', '', 'AMSTERDAM AVE', ['amsterdam','ave'], 'even', '10024')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['osm_only'].fqn} VALUES
+            INSERT INTO {refs["osm_only"].fqn} VALUES
             ('v2', 40.78, -73.98, 'Amsterdam Avenue', '200', 'bf42', 12.3)
         """)
         canon = assembly.canonical_addresses(
@@ -358,12 +348,8 @@ class TestPersonsGeocoded:
             organization_slug=ORG,
             conn=conn,
         )
-        rows = conn.execute(
-            f"SELECT external_id, position_source, blockface_id FROM {ref.fqn}"
-        ).fetchall()
-        assert ('v2', 'osm_only', 'bf42') in rows, (
-            f"osm_only voter missing or mis-tagged: {rows}"
-        )
+        rows = conn.execute(f"SELECT external_id, position_source, blockface_id FROM {ref.fqn}").fetchall()
+        assert ("v2", "osm_only", "bf42") in rows, f"osm_only voter missing or mis-tagged: {rows}"
 
     def test_unmatched_voter_excluded(self, synth):
         """A voter that ended up in neither refined_positions nor
@@ -390,7 +376,7 @@ class TestPersonsGeocoded:
             conn=conn,
         )
         ids = {r[0] for r in conn.execute(f"SELECT external_id FROM {ref.fqn}").fetchall()}
-        assert 'v1' not in ids
+        assert "v1" not in ids
 
     def test_building_id_and_door_id_format(self, synth):
         """building_id = address_line_1|zip5; door_id = address_line_1|address_line_2|zip5.
@@ -400,25 +386,25 @@ class TestPersonsGeocoded:
         self._seed_validated(conn, refs)
         # v1 = single-family (address_line_2 NULL)
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v1', 123, '', '', 'BROADWAY', ['broadway'], 'odd', '10001')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['best_match'].fqn} VALUES
+            INSERT INTO {refs["best_match"].fqn} VALUES
             ('v1', 'bf1', 'T1', 'left', 1, 999, '', 'BROADWAY',
              'n1', 'n2', NULL, 123, 2)
         """)
         conn.execute(f"""
-            INSERT INTO {refs['refined'].fqn} VALUES
+            INSERT INTO {refs["refined"].fqn} VALUES
             ('v1', 40.75, -73.99, 'osm_matched', 'Broadway', '123')
         """)
         # v2 = apartment (address_line_2 = 'APT 3B')
         conn.execute(f"""
-            INSERT INTO {refs['decomposed'].fqn} VALUES
+            INSERT INTO {refs["decomposed"].fqn} VALUES
             ('v2', 200, '', '', 'AMSTERDAM AVE', ['amsterdam','ave'], 'even', '10024')
         """)
         conn.execute(f"""
-            INSERT INTO {refs['osm_only'].fqn} VALUES
+            INSERT INTO {refs["osm_only"].fqn} VALUES
             ('v2', 40.78, -73.98, 'Amsterdam Avenue', '200', 'bf42', 12.3)
         """)
         canon = assembly.canonical_addresses(
@@ -439,18 +425,18 @@ class TestPersonsGeocoded:
             conn=conn,
         )
         rows = {
-            r[0]: r for r in conn.execute(
-                f"SELECT external_id, building_id, door_id, address_line_1, zip5 "
-                f"FROM {ref.fqn}"
+            r[0]: r
+            for r in conn.execute(
+                f"SELECT external_id, building_id, door_id, address_line_1, zip5 FROM {ref.fqn}"
             ).fetchall()
         }
         # Single-family door: middle segment is empty → ends in `||{zip5}`.
-        v1 = rows['v1']
+        v1 = rows["v1"]
         assert v1[1] == f"{v1[3]}|{v1[4]}"
         assert v1[2] == f"{v1[3]}||{v1[4]}"
         assert v1[1] != v1[2]
         # Apartment: middle segment carries the unit string.
-        v2 = rows['v2']
+        v2 = rows["v2"]
         assert v2[1] == f"{v2[3]}|{v2[4]}"
         assert "APT 3B" in v2[2]
         assert v2[1] != v2[2]
