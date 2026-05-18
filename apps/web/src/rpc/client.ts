@@ -24,4 +24,34 @@ const getClient = createIsomorphicFn()
     return createORPCClient(link);
   });
 
-export const client = getClient() as RouterClient<WebRouter>;
+// Dev-only RPC timing. Wraps every client level as a Proxy that traps both
+// property access (to keep `client.segments.list` chaining intact, since oRPC
+// returns callable proxies at every level) and invocation (to time the call).
+// Filter the console by "[rpc]" to see what's running during a user
+// interaction and how long each call took.
+function timedRpc<T extends object>(target: T, path: string[] = []): T {
+  return new Proxy(target, {
+    get(t, prop, receiver) {
+      const value = Reflect.get(t, prop, receiver);
+      if (typeof prop === "symbol" || prop === "then" || value == null) return value;
+      if (typeof value === "function" || typeof value === "object") {
+        return timedRpc(value as object, [...path, String(prop)]);
+      }
+      return value;
+    },
+    apply(t, thisArg, args) {
+      const t0 = performance.now();
+      const result = Reflect.apply(t as (...a: unknown[]) => unknown, thisArg, args);
+      if (result instanceof Promise) {
+        return result.finally(() => {
+          const ms = performance.now() - t0;
+          console.log(`[rpc] ${path.join(".")} ${ms.toFixed(0)}ms`);
+        });
+      }
+      return result;
+    },
+  }) as T;
+}
+
+const rawClient = getClient() as RouterClient<WebRouter>;
+export const client = import.meta.env.DEV ? timedRpc(rawClient) : rawClient;

@@ -310,8 +310,12 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
             assignment.polygon_idx,
             p.external_id, p.first_name, p.last_name,
             p.address_line_2 AS unit,
-            p.other_properties,
+            p.enrollment, p.gender, p.date_of_birth,
+            p.registration_date, p.registration_status, p.last_voted_date,
+            p.county_code, p.precinct, p.assembly_district,
+            p.senate_district, p.congressional_district,
             p.voting_history,
+            p.other_properties,
             p.building_id, p.door_id,
             b.latitude, b.longitude,
             b.address_line_1 AS street, b.city, b.state, b.zip5 AS zip
@@ -329,14 +333,26 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
             any_value(latitude) AS latitude, any_value(longitude) AS longitude,
             any_value(street) AS street, any_value(city) AS city,
             any_value(state) AS state, any_value(zip) AS zip,
+            -- Per-person wire payload mirrors the typed Person schema:
+            -- voter-file scalars as first-class fields; other_properties
+            -- carries genuinely state-specific extras only.
             json_group_array(json_object(
                 'personId', external_id,
                 'firstName', first_name,
                 'lastName', last_name,
-                'otherProperties',
-                    coalesce(json(other_properties::VARCHAR), json('{{}}')),
-                'votingHistory',
-                    coalesce(to_json(voting_history), json('[]'))
+                'enrollment', enrollment,
+                'gender', gender,
+                'dateOfBirth', date_of_birth,
+                'registrationDate', registration_date,
+                'registrationStatus', registration_status,
+                'lastVotedDate', last_voted_date,
+                'countyCode', county_code,
+                'precinct', precinct,
+                'assemblyDistrict', assembly_district,
+                'senateDistrict', senate_district,
+                'congressionalDistrict', congressional_district,
+                'votingHistory', coalesce(to_json(voting_history), json('[]')),
+                'otherProperties', coalesce(json(other_properties::VARCHAR), json('{{}}'))
             )) AS persons
         FROM assigned
         GROUP BY polygon_idx, building_id, door_id, unit

@@ -33,17 +33,30 @@ def _create_persons_validated(conn) -> TableRef:
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
-            external_id     VARCHAR,
-            external_id_type VARCHAR,
-            first_name      VARCHAR,
-            last_name       VARCHAR,
-            address_line_1  VARCHAR,
-            address_line_2  VARCHAR,
-            city            VARCHAR,
-            state           VARCHAR,
-            zip5            VARCHAR,
-            zip4            VARCHAR,
-            other_properties JSON
+            external_id            VARCHAR,
+            external_id_type       VARCHAR,
+            first_name             VARCHAR,
+            last_name              VARCHAR,
+            address_line_1         VARCHAR,
+            address_line_2         VARCHAR,
+            half_code              VARCHAR,
+            city                   VARCHAR,
+            state                  VARCHAR,
+            zip5                   VARCHAR,
+            zip4                   VARCHAR,
+            enrollment             VARCHAR,
+            gender                 VARCHAR,
+            date_of_birth          VARCHAR,
+            registration_date      VARCHAR,
+            registration_status    VARCHAR,
+            last_voted_date        VARCHAR,
+            county_code            VARCHAR,
+            precinct               VARCHAR,
+            assembly_district      VARCHAR,
+            senate_district        VARCHAR,
+            congressional_district VARCHAR,
+            voting_history         STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[],
+            other_properties       JSON
         )
     """)
     return _ref("persons_validated")
@@ -302,14 +315,15 @@ class TestCanonicalAddresses:
 class TestPersonsGeocoded:
     def _seed_validated(self, conn, refs):
         conn.execute(f"""
-            INSERT INTO {refs['validated'].fqn} VALUES
+            INSERT INTO {refs['validated'].fqn}
+                (external_id, external_id_type, first_name, last_name,
+                 address_line_1, address_line_2, city, state, zip5,
+                 voting_history, other_properties)
+            VALUES
             ('v1', 'ny_sboe', 'Alice', 'Smith', '123 BROADWAY', NULL,
-             'NEW YORK', 'NY', '10001', NULL, '{{}}')
-        """)
-        conn.execute(f"""
-            INSERT INTO {refs['validated'].fqn} VALUES
+             'NEW YORK', 'NY', '10001', [], '{{}}'),
             ('v2', 'ny_sboe', 'Bob',   'Jones', '200 AMSTERDAM AVE', 'APT 3B',
-             'NEW YORK', 'NY', '10024', NULL, '{{}}')
+             'NEW YORK', 'NY', '10024', [], '{{}}')
         """)
 
     def test_osm_only_voter_included_in_persons_geocoded(self, synth):

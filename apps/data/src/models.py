@@ -96,7 +96,12 @@ class QuickwitBuildManifestStub:
 
 class Person(BaseModel):
     """A person to be canvassed. This is the canonical output schema
-    that every voter file transformation query must produce."""
+    that every voter file transformation query must produce.
+
+    Each state's transformation populates whatever canonical fields it
+    has and leaves the rest None. Anything genuinely state-specific
+    that doesn't fit the canonical fields goes in `other_properties`.
+    """
 
     external_id: str
     external_id_type: str
@@ -104,7 +109,7 @@ class Person(BaseModel):
     first_name: str
     last_name: str
 
-    # Address fields
+    # Address
     address_line_1: str
     address_line_2: str | None = None
     half_code: str | None = None
@@ -113,11 +118,22 @@ class Person(BaseModel):
     zip5: str
     zip4: str | None = None
 
-    # Flat string-valued bag of filter primitives (party, districts, dates).
-    # Richer records live in dedicated top-level columns (e.g. voting_history)
-    # so they don't bloat the JSON column that scalar filters scan.
-    other_properties: Annotated[dict[str, str | None], BeforeValidator(_parse_json_string)] = {}
+    # Canonical filterable scalar properties
+    enrollment: str | None = None             # party affiliation, canonical labels
+    gender: str | None = None
+    date_of_birth: str | None = None          # ISO 8601 YYYY-MM-DD
+    registration_date: str | None = None      # ISO 8601
+    registration_status: str | None = None    # canonical: active|inactive|federal_only|preregistered|unknown
+    last_voted_date: str | None = None        # ISO 8601
+    county_code: str | None = None            # opaque state-specific code
+    precinct: str | None = None               # smallest unit; NYC uses "AA-EEE"
+    assembly_district: str | None = None      # state lower chamber
+    senate_district: str | None = None        # state senate (no federal senate has districts)
+    congressional_district: str | None = None # US House
 
     voting_history: Annotated[
         list[VotingHistoryEntry], BeforeValidator(_parse_json_string)
     ] = []
+
+    # State-specific extras
+    other_properties: Annotated[dict[str, str | None], BeforeValidator(_parse_json_string)] = {}

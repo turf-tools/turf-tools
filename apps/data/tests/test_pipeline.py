@@ -288,45 +288,48 @@ def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
 
 
 # ---------------------------------------------------------------------------
-# voting-history extraction — shape/content sanity
+# voter-file extraction — shape/content sanity for the promoted columns
 # ---------------------------------------------------------------------------
 
 
-def test_new_voter_fields_present_and_well_shaped(nyc_pipeline):
-    """Scalars live in other_properties; voting_history is a top-level column."""
+def test_promoted_voter_fields_present(nyc_pipeline):
+    """The canonical voter-file scalars and voting_history are top-level
+    columns on persons_geocoded, not inside other_properties."""
     row = nyc_pipeline.execute("""
         SELECT
-          count(*) FILTER (WHERE json_extract(other_properties, '$.enrollment') IS NOT NULL)             AS has_enrollment,
-          count(*) FILTER (WHERE json_extract(other_properties, '$.registration_status') IS NOT NULL)    AS has_reg_status,
-          count(*) FILTER (WHERE json_extract(other_properties, '$.registration_date') IS NOT NULL)      AS has_reg_date,
-          count(*) FILTER (WHERE voting_history IS NOT NULL)                                             AS has_voting_history,
-          count(*) FILTER (WHERE json_extract(other_properties, '$.voting_history') IS NOT NULL)         AS leaked_into_other,
-          count(*)                                                                                       AS total
+          count(*) FILTER (WHERE enrollment           IS NOT NULL) AS has_enrollment,
+          count(*) FILTER (WHERE registration_status  IS NOT NULL) AS has_reg_status,
+          count(*) FILTER (WHERE registration_date    IS NOT NULL) AS has_reg_date,
+          count(*) FILTER (WHERE voting_history       IS NOT NULL) AS has_voting_history,
+          count(*) AS total
         FROM ducklake."default".persons_geocoded
     """).fetchone()
-    has_enrollment, has_reg_status, has_reg_date, has_voting_history, leaked_into_other, total = row
+    has_enrollment, has_reg_status, has_reg_date, has_voting_history, total = row
     assert has_enrollment > 0.99 * total, f"{has_enrollment}/{total} have enrollment"
     assert has_reg_status == total
     assert has_reg_date == total
     assert has_voting_history == total  # empty list also counts as present
-    assert leaked_into_other == 0, "voting_history should not be inside other_properties"
+
+
+def test_other_properties_is_empty_for_nys(nyc_pipeline):
+    """Every NYS field has a canonical column home; other_properties is
+    a forward-compat empty bag for this state."""
+    non_empty = nyc_pipeline.execute("""
+        SELECT count(*)
+        FROM ducklake."default".persons_geocoded
+        WHERE other_properties IS DISTINCT FROM '{}'::JSON
+    """).fetchone()[0]
+    assert non_empty == 0
 
 
 def test_dates_are_iso_8601(nyc_pipeline):
     """date_of_birth, registration_date, last_voted_date all match YYYY-MM-DD."""
     bad = nyc_pipeline.execute(r"""
-        WITH x AS (
-          SELECT
-            json_extract_string(other_properties, '$.date_of_birth')     AS dob,
-            json_extract_string(other_properties, '$.registration_date') AS reg,
-            json_extract_string(other_properties, '$.last_voted_date')   AS lv
-          FROM ducklake."default".persons_geocoded
-        )
         SELECT
-          count(*) FILTER (WHERE dob IS NOT NULL AND dob !~ '^\d{4}-\d{2}-\d{2}$') AS bad_dob,
-          count(*) FILTER (WHERE reg IS NOT NULL AND reg !~ '^\d{4}-\d{2}-\d{2}$') AS bad_reg,
-          count(*) FILTER (WHERE lv  IS NOT NULL AND lv  !~ '^\d{4}-\d{2}-\d{2}$') AS bad_last_voted
-        FROM x
+          count(*) FILTER (WHERE date_of_birth     IS NOT NULL AND date_of_birth     !~ '^\d{4}-\d{2}-\d{2}$') AS bad_dob,
+          count(*) FILTER (WHERE registration_date IS NOT NULL AND registration_date !~ '^\d{4}-\d{2}-\d{2}$') AS bad_reg,
+          count(*) FILTER (WHERE last_voted_date   IS NOT NULL AND last_voted_date   !~ '^\d{4}-\d{2}-\d{2}$') AS bad_last_voted
+        FROM ducklake."default".persons_geocoded
     """).fetchone()
     assert bad == (0, 0, 0)
 
@@ -339,9 +342,9 @@ def test_enrollment_values_in_canonical_enum(nyc_pipeline):
         "unaffiliated", "other",
     }
     rows = nyc_pipeline.execute("""
-        SELECT DISTINCT json_extract_string(other_properties, '$.enrollment')
+        SELECT DISTINCT enrollment
         FROM ducklake."default".persons_geocoded
-        WHERE json_extract_string(other_properties, '$.enrollment') IS NOT NULL
+        WHERE enrollment IS NOT NULL
     """).fetchall()
     seen = {r[0] for r in rows}
     unexpected = seen - allowed

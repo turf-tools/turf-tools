@@ -112,19 +112,19 @@ FieldDef = EnumFieldDef | AgeRangeFieldDef | TextFieldDef
 #
 # Keep in sync with FILTERS in `apps/web/src/lib/filters.ts`.
 FIELDS: dict[str, FieldDef] = {
-    # Top-level Person columns.
+    # All filterable voter-file fields are top-level columns on `persons_geocoded`.
+    # Storage is shredded for filter perf (Parquet column pruning + Bloom filters).
     "first_name": TextFieldDef(kind="text", key="first_name", source="column", op="contains"),
     "last_name": TextFieldDef(kind="text", key="last_name", source="column", op="contains"),
     "zip5": TextFieldDef(kind="text", key="zip5", source="column", op="equals"),
-    # other_properties JSONB.
-    "enrollment": EnumFieldDef(kind="enum", key="enrollment", source="other_properties"),
-    "gender": EnumFieldDef(kind="enum", key="gender", source="other_properties"),
-    "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="other_properties"),
-    "ad_ed": TextFieldDef(kind="text", key="ad_ed", source="other_properties", op="equals"),
-    "assembly_district": TextFieldDef(kind="text", key="assembly_district", source="other_properties", op="equals"),
-    "senate_district": TextFieldDef(kind="text", key="senate_district", source="other_properties", op="equals"),
+    "enrollment": EnumFieldDef(kind="enum", key="enrollment", source="column"),
+    "gender": EnumFieldDef(kind="enum", key="gender", source="column"),
+    "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="column"),
+    "precinct": TextFieldDef(kind="text", key="precinct", source="column", op="equals"),
+    "assembly_district": TextFieldDef(kind="text", key="assembly_district", source="column", op="equals"),
+    "senate_district": TextFieldDef(kind="text", key="senate_district", source="column", op="equals"),
     "congressional_district": TextFieldDef(
-        kind="text", key="congressional_district", source="other_properties", op="equals"
+        kind="text", key="congressional_district", source="column", op="equals"
     ),
 }
 
@@ -140,6 +140,6 @@ FIELDS: dict[str, FieldDef] = {
 # region key. Used to compose `keyFilter` clauses and per-key
 # aggregation GROUP BYs.
 KEY_GROUPS: dict[str, str] = {
-    "nyc_eds": "ad_ed",
+    "nyc_eds": "precinct",
     "nyc_zips": "zip5",
 }

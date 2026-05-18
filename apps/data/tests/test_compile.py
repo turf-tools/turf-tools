@@ -58,14 +58,14 @@ def test_step_with_inactive_filter_drops_out() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_enum_filter_on_other_properties() -> None:
+def test_enum_filter_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
         _narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic", "working_families"])),
         None,
         params,
     )
-    assert where == "WHERE (other_properties->>'enrollment') IN (?, ?)"
+    assert where == "WHERE enrollment IN (?, ?)"
     assert params == ["democratic", "working_families"]
 
 
@@ -100,7 +100,7 @@ def test_age_range_with_both_bounds() -> None:
     )
     # Compiled SQL is messy by necessity (try_strptime + age + extract);
     # what matters is the structure and the param order.
-    assert "try_strptime((other_properties->>'date_of_birth')" in where
+    assert "try_strptime(date_of_birth" in where
     assert ">= ?" in where
     assert "<= ?" in where
     assert params == [18, 64]
@@ -157,7 +157,7 @@ def test_narrow_chain_ands_filters() -> None:
         params,
     )
     assert " AND " in where
-    assert "(other_properties->>'enrollment') IN (?)" in where
+    assert "enrollment IN (?)" in where
     assert "zip5 = ?" in where
     assert params == ["democratic", "10001"]
 
@@ -264,8 +264,8 @@ def test_key_filter_combines_with_criteria() -> None:
         params,
     )
     assert " AND " in where
-    assert "(other_properties->>'enrollment') IN (?)" in where
-    assert "(other_properties->>'ad_ed') IN (?)" in where
+    assert "enrollment IN (?)" in where
+    assert "precinct IN (?)" in where
     assert params == ["democratic", "75-001"]
 
 
@@ -352,10 +352,10 @@ def test_column_expr_for_top_level() -> None:
     assert column_expr_for("zip5") == "zip5"
 
 
-def test_column_expr_for_other_properties() -> None:
-    assert column_expr_for("enrollment") == "(other_properties->>'enrollment')"
+def test_column_expr_for_promoted_field() -> None:
+    assert column_expr_for("enrollment") == "enrollment"
 
 
 def test_boundary_key_expr_for_known_groups() -> None:
     assert boundary_key_expr_for("nyc_zips") == "zip5"
-    assert boundary_key_expr_for("nyc_eds") == "(other_properties->>'ad_ed')"
+    assert boundary_key_expr_for("nyc_eds") == "precinct"

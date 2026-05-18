@@ -45,17 +45,17 @@ const ENROLLMENT_BY_VALUE = new Map(ENROLLMENT_LABELS.map((e) => [e.value, e]));
 // Each formatter renders a single property as a short label fit for a
 // pill. Returns "?" for null/missing.
 export function formatAge(p: TurfDataPerson): string {
-  const age = ageFromDob(p.otherProperties.date_of_birth);
+  const age = ageFromDob(p.dateOfBirth);
   return age != null ? String(age) : "?";
 }
 
 export function formatGender(p: TurfDataPerson): string {
-  const g = (p.otherProperties.gender ?? "").trim();
+  const g = (p.gender ?? "").trim();
   if (!g) return "?";
   return g.charAt(0).toUpperCase();
 }
 
 export function formatEnrollment(p: TurfDataPerson): string {
-  const v = (p.otherProperties.enrollment ?? "").trim();
+  const v = (p.enrollment ?? "").trim();
   return ENROLLMENT_BY_VALUE.get(v)?.short ?? "?";
 }
