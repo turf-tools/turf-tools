@@ -68,12 +68,12 @@ export const FILTERS: ReadonlyArray<FilterDef> = [
   { kind: "text", key: "last_name", label: "Last name", source: "column", op: "contains" },
   { kind: "text", key: "zip5", label: "ZIP", source: "column", op: "equals" },
 
-  // other_properties JSONB
+  // Canonical voter-file fields — all top-level columns on persons_geocoded.
   {
     kind: "enum",
     key: "enrollment",
     label: "Party",
-    source: "other_properties",
+    source: "column",
     values: [
       { value: "democratic", label: "Democratic" },
       { value: "republican", label: "Republican" },
@@ -91,43 +91,40 @@ export const FILTERS: ReadonlyArray<FilterDef> = [
     kind: "enum",
     key: "gender",
     label: "Gender",
-    source: "other_properties",
+    source: "column",
     values: [
       { value: "M", label: "Male" },
       { value: "F", label: "Female" },
       { value: "U", label: "Unknown" },
     ],
   },
-  { kind: "age-range", key: "date_of_birth", label: "Age", source: "other_properties" },
+  { kind: "age-range", key: "date_of_birth", label: "Age", source: "column" },
   {
-    // Composite (assembly_district + election_district) key. Bare ED
-    // is repeated across ADs and meaningless on its own; this is what
-    // people mean when they say "ED 23-001". Format: "AA-EEE".
     kind: "text",
-    key: "ad_ed",
-    label: "Election District",
-    source: "other_properties",
+    key: "precinct",
+    label: "Precint",
+    source: "column",
     op: "equals",
   },
   {
     kind: "text",
     key: "assembly_district",
     label: "Assembly District",
-    source: "other_properties",
+    source: "column",
     op: "equals",
   },
   {
     kind: "text",
     key: "senate_district",
     label: "Senate District",
-    source: "other_properties",
+    source: "column",
     op: "equals",
   },
   {
     kind: "text",
     key: "congressional_district",
     label: "Congressional District",
-    source: "other_properties",
+    source: "column",
     op: "equals",
   },
 ] as const;

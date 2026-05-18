@@ -5,8 +5,8 @@ the canonical `Person` schema (see `src/models.py`). State-specific raw
 codes are normalized to canonical cross-state labels via the maps defined
 in this module.
 
-Curation rule: anything that's a filter primitive in the admin UI's
-filters catalog (apps/web/src/lib/voter-properties.ts) goes into
+Fields that have a canonical home on `Person` (enrollment, dates, districts,
+etc.) become typed top-level columns. Genuinely state-specific extras go in
 ``other_properties``.
 """
 
@@ -150,26 +150,29 @@ SELECT
     'NY' AS state,
     raw.res_zip5 AS zip5,
     nullif(raw.res_zip4, '') AS zip4,
-    -- `voting_history` lands here as a raw string and is parsed into a
-    -- structured list by the downstream `persons_voting_history` node.
-    -- `ad_ed` is the canonical NYC "AA-EEE" form; bare ED is meaningless
-    -- without AD since ED numbers repeat across assembly districts.
-    to_json({{
-        enrollment: {enrollment_sql},
-        gender: raw.gender,
-        date_of_birth: {_iso_date_sql('raw.date_of_birth')},
-        registration_date: {_iso_date_sql('raw.registration_date')},
-        registration_status: {_case_from_map('raw.status', NYS_REGISTRATION_STATUS_LABELS, default='unknown')},
-        last_voted_date: {_iso_date_sql('raw.last_voted_date')},
-        voting_history: raw.voter_history,
-        county_code: raw.county_code,
-        election_district: raw.election_district,
-        assembly_district: raw.assembly_district,
-        ad_ed: lpad(CAST(raw.assembly_district AS VARCHAR), 2, '0')
-            || '-' || lpad(CAST(raw.election_district AS VARCHAR), 3, '0'),
-        senate_district: raw.senate_district,
-        congressional_district: raw.congressional_district
-    }}) AS other_properties
+    -- Canonical voter-file scalars. Top-level columns so filters on them
+    -- hit Parquet column pruning + Bloom filters.
+    {enrollment_sql} AS enrollment,
+    raw.gender AS gender,
+    {_iso_date_sql('raw.date_of_birth')} AS date_of_birth,
+    {_iso_date_sql('raw.registration_date')} AS registration_date,
+    {_case_from_map('raw.status', NYS_REGISTRATION_STATUS_LABELS, default='unknown')} AS registration_status,
+    {_iso_date_sql('raw.last_voted_date')} AS last_voted_date,
+    raw.county_code AS county_code,
+    -- `precinct` is the smallest political unit. NYC uses the
+    -- "AA-EEE" assembly+election composite; bare election_district is
+    -- meaningless across assembly districts.
+    (lpad(CAST(raw.assembly_district AS VARCHAR), 2, '0')
+        || '-' || lpad(CAST(raw.election_district AS VARCHAR), 3, '0')) AS precinct,
+    raw.assembly_district AS assembly_district,
+    raw.senate_district AS senate_district,
+    raw.congressional_district AS congressional_district,
+    -- Transient raw column consumed by the downstream `persons_voting_history`
+    -- node, which parses it into the structured `voting_history` STRUCT[].
+    raw.voter_history AS voter_history,
+    -- Empty for NYS — every field has a canonical column. Forward-compat
+    -- slot for future state-specific extras.
+    '{{}}'::JSON AS other_properties
 FROM raw
 {where}
 """

@@ -79,21 +79,14 @@ def persons_voting_history(
     organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Parse the raw voting_history string out of `other_properties` and
-    materialize it as a top-level `STRUCT(...)[]` column.
-
-    Living outside the JSON column means filters on the remaining
-    `other_properties` keys (enrollment, districts, dates) scan a much
-    smaller payload, and voting_history itself becomes a typed column
-    that downstream filters can unnest without per-row JSON parsing.
-    """
+    """Parse the transient raw `voter_history` column into a typed
+    `voting_history` STRUCT[] column, then drop the transient column."""
     table = "persons_voting_history"
     ensure_org_schema(conn, organization_slug)
     fqn = org_fqn(organization_slug, table)
 
     df = conn.sql(f"""
-        SELECT external_id,
-               json_extract_string(other_properties, '$.voting_history') AS raw_vh
+        SELECT external_id, voter_history AS raw_vh
         FROM {persons_transformed.fqn}
     """).df()
     df["voting_history_json"] = df["raw_vh"].map(
@@ -102,14 +95,10 @@ def persons_voting_history(
     df = df[["external_id", "voting_history_json"]]
 
     conn.register("_parsed_voting_history_df", df)
-    # json_merge_patch with a `null` value at a key removes that key (RFC 7396).
     conn.execute(f"""
         CREATE OR REPLACE TABLE {fqn} AS
         SELECT
-          p.* REPLACE (
-            json_merge_patch(p.other_properties, '{{"voting_history": null}}'::JSON)
-              AS other_properties
-          ),
+          p.* EXCLUDE (voter_history),
           CAST(v.voting_history_json::JSON
                AS STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]
               ) AS voting_history

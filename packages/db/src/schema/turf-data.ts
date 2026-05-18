@@ -44,13 +44,23 @@ export type TurfDataPerson = {
   personId: string;
   firstName: string | null;
   lastName: string | null;
-  // Flat scalar voter-file fields (enrollment, gender, date_of_birth,
-  // AD/ED, etc.). Consumers unpack the keys they need; adding a new
-  // scalar upstream doesn't require a schema change.
-  otherProperties: Record<string, string | null>;
-  // Voting history lives outside `otherProperties` as a typed column on
-  // `_persons_geocoded` so filters on the scalar bag scan a smaller payload.
+  // Canonical voter-file scalars. Top-level fields so storage is shredded
+  // (column pruning + Bloom filters server-side) and the wire shape mirrors
+  // the canonical Person schema.
+  enrollment: string | null;
+  gender: string | null;
+  dateOfBirth: string | null; // ISO 8601 YYYY-MM-DD
+  registrationDate: string | null; // ISO 8601
+  registrationStatus: string | null; // active|inactive|federal_only|preregistered|unknown
+  lastVotedDate: string | null; // ISO 8601
+  countyCode: string | null;
+  precinct: string | null; // NYC: "AA-EEE"
+  assemblyDistrict: string | null; // state lower chamber
+  senateDistrict: string | null; // state senate
+  congressionalDistrict: string | null;
   votingHistory: VotingHistoryEntry[];
+  // Forward-compat slot for genuinely state-specific extras. Empty for NYS.
+  otherProperties: Record<string, string | null>;
 };
 
 export type TurfDataDoor = {
