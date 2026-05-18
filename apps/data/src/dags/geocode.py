@@ -123,19 +123,29 @@ def refined_positions(
 
     print("Refining voter positions…")
     t0 = time.time()
-    # Use `street_tokens_lookup` (the canonical name's tokens only, not the
-    # alias-merged set) for the OSM canonical_key. Voters at the same
-    # building hit the same OSM record regardless of which alias their
-    # raw address used.
+    # Dedup blockface_final to one row per (blockface_id, prefix). The
+    # prefix bucket matters: a single TIGER line can carry multiple
+    # address ranges with different prefixes (Queens hyphen-prefix
+    # blocks), and those ranges sometimes correspond to *different
+    # streets* (e.g. "Astoria Blvd" and "Astoria Blvd S" share a TIGER
+    # line). Keying dedup on `blockface_id` alone non-deterministically
+    # picked a row from the wrong sibling street, producing the wrong
+    # `street_tokens_lookup` and silently routing voters off the OSM
+    # lookup.
+    #
+    # ORDER BY trails out to zip_code so zip-boundary blockfaces (one
+    # physical face, two zip rows, same full_name and tokens) resolve
+    # deterministically too.
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _bf_for_voters AS
-        SELECT DISTINCT ON (blockface_id) blockface_id, street_tokens_lookup
+        SELECT DISTINCT ON (blockface_id, COALESCE(house_num_prefix, ''))
+            blockface_id,
+            COALESCE(house_num_prefix, '') AS house_num_prefix,
+            street_tokens_lookup
         FROM {bf_}
         WHERE geom IS NOT NULL
-        -- Deterministic pick when blockface_id appears on multiple rows.
-        -- All such rows share street_tokens_lookup after the alias collapse,
-        -- but an explicit ORDER BY keeps the pick stable across runs.
-        ORDER BY blockface_id, from_house_num, to_house_num
+        ORDER BY blockface_id, COALESCE(house_num_prefix, ''),
+                 from_house_num, to_house_num, zip_code
     """)
     hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
     conn.execute(f"""
@@ -151,8 +161,10 @@ def refined_positions(
             {hn_display} AS housenumber_str,
             {housenumber_norm_sql(hn_display)} AS housenumber_norm
         FROM {pbm} m
-        JOIN {pd_} d        ON d.external_id  = m.external_id
-        JOIN _bf_for_voters b ON b.blockface_id = m.blockface_id
+        JOIN {pd_} d ON d.external_id = m.external_id
+        JOIN _bf_for_voters b
+            ON b.blockface_id = m.blockface_id
+           AND b.house_num_prefix = COALESCE(m.house_num_prefix, '')
     """)
 
     # Hash join on (zip, canonical_key, housenumber_norm) — strict equality.
