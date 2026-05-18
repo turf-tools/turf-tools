@@ -119,21 +119,19 @@ class Person(BaseModel):
     zip4: str | None = None
 
     # Canonical filterable scalar properties
-    enrollment: str | None = None             # party affiliation, canonical labels
+    enrollment: str | None = None  # party affiliation, canonical labels
     gender: str | None = None
-    date_of_birth: str | None = None          # ISO 8601 YYYY-MM-DD
-    registration_date: str | None = None      # ISO 8601
-    registration_status: str | None = None    # canonical: active|inactive|federal_only|preregistered|unknown
-    last_voted_date: str | None = None        # ISO 8601
-    county_code: str | None = None            # opaque state-specific code
-    precinct: str | None = None               # smallest unit; NYC uses "AA-EEE"
-    assembly_district: str | None = None      # state lower chamber
-    senate_district: str | None = None        # state senate (no federal senate has districts)
-    congressional_district: str | None = None # US House
+    date_of_birth: str | None = None  # ISO 8601 YYYY-MM-DD
+    registration_date: str | None = None  # ISO 8601
+    registration_status: str | None = None  # canonical: active|inactive|federal_only|preregistered|unknown
+    last_voted_date: str | None = None  # ISO 8601
+    county_code: str | None = None  # opaque state-specific code
+    precinct: str | None = None  # smallest unit; NYC uses "AA-EEE"
+    assembly_district: str | None = None  # state lower chamber
+    senate_district: str | None = None  # state senate (no federal senate has districts)
+    congressional_district: str | None = None  # US House
 
-    voting_history: Annotated[
-        list[VotingHistoryEntry], BeforeValidator(_parse_json_string)
-    ] = []
+    voting_history: Annotated[list[VotingHistoryEntry], BeforeValidator(_parse_json_string)] = []
 
     # State-specific extras
     other_properties: Annotated[dict[str, str | None], BeforeValidator(_parse_json_string)] = {}

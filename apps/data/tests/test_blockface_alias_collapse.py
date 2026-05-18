@@ -19,12 +19,11 @@ These tests build a small synthetic blockface_normalized table by hand
 and run `tiger.blockface_final` against it.
 """
 
-import duckdb
 import pytest
 
+import duckdb
 from src.addressing import tokenize_street_sql
 from src.dags import tiger
-
 
 # Schema mirrors `tiger.blockface_normalized`. We write rows by hand and let
 # `tiger.blockface_final` consume them.
@@ -59,8 +58,10 @@ def _insert_row(
 ) -> None:
     """Insert one synthetic blockface_normalized row."""
     bf_id = f"{tlid}:{side}"
-    number_type = "odd" if (hn_from % 2 == 1 and hn_to % 2 == 1) else (
-        "even" if (hn_from % 2 == 0 and hn_to % 2 == 0) else "mixed"
+    number_type = (
+        "odd"
+        if (hn_from % 2 == 1 and hn_to % 2 == 1)
+        else ("even" if (hn_from % 2 == 0 and hn_to % 2 == 0) else "mixed")
     )
     # Compute tokens via the same SQL helper the pipeline uses, so this
     # test mirrors production tokenization exactly.
@@ -73,8 +74,7 @@ def _insert_row(
         INSERT INTO geo_ducklake.tiger.blockface_normalized VALUES
         (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText('LINESTRING(0 0, 1 1)'))
         """,
-        [bf_id, side, hn_from, hn_to, prefix, number_type, zip_code,
-         full_name, tlid, tokens, "n1", "n2"],
+        [bf_id, side, hn_from, hn_to, prefix, number_type, zip_code, full_name, tlid, tokens, "n1", "n2"],
     )
 
 
@@ -96,11 +96,13 @@ def bf_conn(dual_conn):
 
 def _run_blockface_final(conn):
     norm_ref = type(
-        "Ref", (),
+        "Ref",
+        (),
         {"fqn": "geo_ducklake.tiger.blockface_normalized"},
     )()
     tokens_ref = type(
-        "Ref", (),
+        "Ref",
+        (),
         {"fqn": "geo_ducklake.tiger.address_tokens"},
     )()
     return tiger.blockface_final(
@@ -115,10 +117,10 @@ class TestAliasCollapse:
         """Two TIGER rows with the same (tlid, side, prefix, range) but
         different full_name should collapse into one blockface_final row."""
         # Same physical blockface, two name forms:
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="7 Av")
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="Adam Clayton Powell Jr Blvd")
+        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="7 Av")
+        _insert_row(
+            bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="Adam Clayton Powell Jr Blvd"
+        )
 
         ref = _run_blockface_final(bf_conn)
         count = bf_conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0]
@@ -130,21 +132,18 @@ class TestAliasCollapse:
         # T1 + T2 both have "7 Av" / "Adam Clayton Powell Jr Blvd" pairings.
         # Add a third T3 also using "7 Av" so it appears 3× total; "Adam
         # Clayton Powell Jr Blvd" appears 2× total → canonical = "7 Av".
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="7 Av")
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="Adam Clayton Powell Jr Blvd")
-        _insert_row(bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199,
-                    full_name="7 Av")
-        _insert_row(bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199,
-                    full_name="Adam Clayton Powell Jr Blvd")
-        _insert_row(bf_conn, tlid="T3", side="left", prefix="", hn_from=201, hn_to=299,
-                    full_name="7 Av")
+        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="7 Av")
+        _insert_row(
+            bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="Adam Clayton Powell Jr Blvd"
+        )
+        _insert_row(bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199, full_name="7 Av")
+        _insert_row(
+            bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199, full_name="Adam Clayton Powell Jr Blvd"
+        )
+        _insert_row(bf_conn, tlid="T3", side="left", prefix="", hn_from=201, hn_to=299, full_name="7 Av")
 
         ref = _run_blockface_final(bf_conn)
-        names = {
-            r[0] for r in bf_conn.execute(f"SELECT full_name FROM {ref.fqn}").fetchall()
-        }
+        names = {r[0] for r in bf_conn.execute(f"SELECT full_name FROM {ref.fqn}").fetchall()}
         # Every collapsed group's canonical_name should be "7 Av".
         assert names == {"7 Av"}
 
@@ -152,10 +151,8 @@ class TestAliasCollapse:
         """Two rows with the same TIGER line + side but different address
         ranges represent legitimately separate blockfaces; they MUST NOT
         be collapsed."""
-        _insert_row(bf_conn, tlid="T9", side="left", prefix="", hn_from=1, hn_to=49,
-                    full_name="Broadway")
-        _insert_row(bf_conn, tlid="T9", side="left", prefix="", hn_from=51, hn_to=99,
-                    full_name="Broadway")
+        _insert_row(bf_conn, tlid="T9", side="left", prefix="", hn_from=1, hn_to=49, full_name="Broadway")
+        _insert_row(bf_conn, tlid="T9", side="left", prefix="", hn_from=51, hn_to=99, full_name="Broadway")
         ref = _run_blockface_final(bf_conn)
         count = bf_conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0]
         assert count == 2
@@ -163,14 +160,12 @@ class TestAliasCollapse:
     def test_street_tokens_match_is_union_of_alias_rows(self, bf_conn):
         """`street_tokens_match` should contain tokens from EVERY alias of
         the blockface, so a voter using any of the aliases matches."""
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="7 Av")
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="Adam Clayton Powell Jr Blvd")
+        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="7 Av")
+        _insert_row(
+            bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="Adam Clayton Powell Jr Blvd"
+        )
         ref = _run_blockface_final(bf_conn)
-        toks = bf_conn.execute(
-            f"SELECT street_tokens_match FROM {ref.fqn} LIMIT 1"
-        ).fetchone()[0]
+        toks = bf_conn.execute(f"SELECT street_tokens_match FROM {ref.fqn} LIMIT 1").fetchone()[0]
         # From "7 Av": "7", "av" (and "avenue" via equivalency expansion).
         # From "Adam Clayton Powell Jr Blvd": "adam", "clayton", "powell",
         # "jr", "blvd" (+ "boulevard" via expansion).
@@ -187,21 +182,16 @@ class TestAliasCollapse:
         building should all hit the same OSM record regardless of which
         alias they wrote on their voter registration."""
         # "7 Av" wins as canonical (more global occurrences).
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="7 Av")
-        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99,
-                    full_name="Adam Clayton Powell Jr Blvd")
-        _insert_row(bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199,
-                    full_name="7 Av")
+        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="7 Av")
+        _insert_row(
+            bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="Adam Clayton Powell Jr Blvd"
+        )
+        _insert_row(bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199, full_name="7 Av")
         ref = _run_blockface_final(bf_conn)
-        rows = bf_conn.execute(
-            f"SELECT full_name, street_tokens_lookup FROM {ref.fqn}"
-        ).fetchall()
+        rows = bf_conn.execute(f"SELECT full_name, street_tokens_lookup FROM {ref.fqn}").fetchall()
         for full_name, toks in rows:
             assert full_name == "7 Av"
             assert "7" in toks
             # Alias-only tokens must NOT appear in the lookup column.
             for alias_only in ("adam", "clayton", "powell"):
-                assert alias_only not in toks, (
-                    f"lookup tokens leaked alias token {alias_only!r}: {toks}"
-                )
+                assert alias_only not in toks, f"lookup tokens leaked alias token {alias_only!r}: {toks}"

@@ -93,6 +93,7 @@ def canonical_addresses(
     # the form OSM uses, so they share a building_id. When the
     # normalized forms differ (e.g., voter `100` vs OSM `100A`, where
     # OSM is encoding a subunit), we keep the voter's parsed form.
+    hn_display = housenumber_display_sql("house_num_prefix", "house_number", "half_code")
     conn.execute(f"""
         INSERT INTO {fqn}
         WITH src AS (
@@ -108,8 +109,8 @@ def canonical_addresses(
         voter_hn AS (
             SELECT
                 external_id,
-                {housenumber_display_sql("house_num_prefix", "house_number", "half_code")} AS hn_str,
-                {housenumber_norm_sql(housenumber_display_sql("house_num_prefix", "house_number", "half_code"))} AS hn_norm
+                {hn_display} AS hn_str,
+                {housenumber_norm_sql(hn_display)} AS hn_norm
             FROM {decomposed_fqn}
         )
         SELECT

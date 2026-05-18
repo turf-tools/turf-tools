@@ -1,8 +1,9 @@
 import tempfile
 from pathlib import Path
 
-import duckdb
 import pytest
+
+import duckdb
 
 
 @pytest.fixture()

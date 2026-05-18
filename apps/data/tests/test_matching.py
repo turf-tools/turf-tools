@@ -12,11 +12,10 @@ All tests build minimal upstream tables by hand. No TIGER download, no
 OSM PBF; runs in well under a second.
 """
 
-import duckdb
 import pytest
 
 from src.addressing import tokenize_street_sql
-from src.dags import matching, tiger
+from src.dags import matching
 from src.models import TableRef
 from src.tables import ensure_org_schema, org_fqn
 
@@ -72,16 +71,19 @@ def _create_blockface_final(conn) -> TableRef:
             geom                  GEOMETRY
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="tiger",
-                    table="blockface_final", version=0)
+    return TableRef(catalog="geo_ducklake", schema="tiger", table="blockface_final", version=0)
 
 
 def _insert_validated(
-    conn, external_id, address_line_1, zip5="10001", half_code=None,
+    conn,
+    external_id,
+    address_line_1,
+    zip5="10001",
+    half_code=None,
     address_line_2=None,
 ):
     conn.execute(
-        f"""INSERT INTO {org_fqn(ORG, 'persons_validated')} VALUES
+        f"""INSERT INTO {org_fqn(ORG, "persons_validated")} VALUES
            (?, 'ny_sboe', 'Test', 'Person', ?, ?, ?, 'NEW YORK', 'NY', ?, NULL, '{{}}')""",
         [external_id, address_line_1, address_line_2, half_code, zip5],
     )
@@ -89,15 +91,22 @@ def _insert_validated(
 
 def _tokens(conn, s):
     """Tokenize via the same SQL helper the pipeline uses."""
-    return conn.execute(
-        f"SELECT {tokenize_street_sql('s')} FROM (VALUES (?)) AS t(s)", [s]
-    ).fetchone()[0]
+    return conn.execute(f"SELECT {tokenize_street_sql('s')} FROM (VALUES (?)) AS t(s)", [s]).fetchone()[0]
 
 
 def _insert_blockface(
-    conn, blockface_id, full_name, from_hn, to_hn, *,
-    zip_code="10001", side="left", prefix="", tiger_line_id=None,
-    number_type=None, match_tokens=None,
+    conn,
+    blockface_id,
+    full_name,
+    from_hn,
+    to_hn,
+    *,
+    zip_code="10001",
+    side="left",
+    prefix="",
+    tiger_line_id=None,
+    number_type=None,
+    match_tokens=None,
 ):
     """Insert one synthetic blockface_final row.
 
@@ -106,8 +115,10 @@ def _insert_blockface(
     """
     if number_type is None:
         number_type = (
-            "odd" if (from_hn % 2 == 1 and to_hn % 2 == 1)
-            else "even" if (from_hn % 2 == 0 and to_hn % 2 == 0)
+            "odd"
+            if (from_hn % 2 == 1 and to_hn % 2 == 1)
+            else "even"
+            if (from_hn % 2 == 0 and to_hn % 2 == 0)
             else "mixed"
         )
     tokens = match_tokens if match_tokens is not None else _tokens(conn, full_name)
@@ -117,8 +128,7 @@ def _insert_blockface(
         """INSERT INTO geo_ducklake.tiger.blockface_final VALUES
            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'n1', 'n2',
             ST_GeomFromText('LINESTRING(0 0, 1 1)'))""",
-        [blockface_id, side, from_hn, to_hn, prefix, number_type, zip_code,
-         full_name, tiger_line_id, tokens, tokens],
+        [blockface_id, side, from_hn, to_hn, prefix, number_type, zip_code, full_name, tiger_line_id, tokens, tokens],
     )
 
 
@@ -141,11 +151,12 @@ class TestPersonsDecomposed:
         conn, validated, _ = synth
         _insert_validated(conn, "v1", "123 BROADWAY")
         ref = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
         row = conn.execute(
-            f"SELECT house_number, house_num_prefix, number_type "
-            f"FROM {ref.fqn} WHERE external_id = 'v1'"
+            f"SELECT house_number, house_num_prefix, number_type FROM {ref.fqn} WHERE external_id = 'v1'"
         ).fetchone()
         assert row == (123, "", "odd")
 
@@ -154,11 +165,12 @@ class TestPersonsDecomposed:
         conn, validated, _ = synth
         _insert_validated(conn, "v1", "34-12 BROADWAY")
         ref = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
         row = conn.execute(
-            f"SELECT house_number, house_num_prefix, number_type "
-            f"FROM {ref.fqn} WHERE external_id = 'v1'"
+            f"SELECT house_number, house_num_prefix, number_type FROM {ref.fqn} WHERE external_id = 'v1'"
         ).fetchone()
         assert row == (12, "34-", "even")
 
@@ -166,11 +178,11 @@ class TestPersonsDecomposed:
         conn, validated, _ = synth
         _insert_validated(conn, "v1", "47 BROADWAY", half_code="1/2")
         ref = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
-        half = conn.execute(
-            f"SELECT half_code FROM {ref.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        half = conn.execute(f"SELECT half_code FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert half == "1/2"
 
     def test_unparseable_address_dropped(self, synth):
@@ -180,11 +192,11 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v1", "BROADWAY")  # no house number
         _insert_validated(conn, "v2", "123 BROADWAY")
         ref = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
-        ids = {r[0] for r in conn.execute(
-            f"SELECT external_id FROM {ref.fqn}"
-        ).fetchall()}
+        ids = {r[0] for r in conn.execute(f"SELECT external_id FROM {ref.fqn}").fetchall()}
         assert ids == {"v2"}
 
     def test_street_rewrite_applied_to_tokens(self, synth):
@@ -194,12 +206,12 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v1", "100 FDR DRIVE")
         _insert_validated(conn, "v2", "100 FRANKLIN D ROOSEVELT DRIVE")
         ref = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
         rows = {
-            r[0]: set(r[1]) for r in conn.execute(
-                f"SELECT external_id, street_name_tokens FROM {ref.fqn}"
-            ).fetchall()
+            r[0]: set(r[1]) for r in conn.execute(f"SELECT external_id, street_name_tokens FROM {ref.fqn}").fetchall()
         }
         # Both should produce the same token set after rewrite.
         assert rows["v1"] == rows["v2"]
@@ -215,11 +227,15 @@ class TestPersonsDecomposed:
 class TestPersonsCandidates:
     def _run(self, conn, validated, bf):
         decomposed = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
         return matching.persons_candidates(
-            persons_decomposed=decomposed, blockface_final=bf,
-            organization_slug=ORG, conn=conn,
+            persons_decomposed=decomposed,
+            blockface_final=bf,
+            organization_slug=ORG,
+            conn=conn,
         )
 
     def test_basic_match(self, synth):
@@ -233,27 +249,22 @@ class TestPersonsCandidates:
         """
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "100 WEST 42 STREET", zip5="10001")
-        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199,
-                          number_type="even")
+        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199, number_type="even")
         ref = self._run(conn, validated, bf)
-        pairs = conn.execute(
-            f"SELECT external_id, blockface_id FROM {ref.fqn}"
-        ).fetchall()
+        pairs = conn.execute(f"SELECT external_id, blockface_id FROM {ref.fqn}").fetchall()
         assert pairs == [("v1", "T1:left")]
 
     def test_zip_mismatch_rejected(self, synth):
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "100 WEST 42 STREET", zip5="10001")
-        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199,
-                          number_type="even", zip_code="20002")
+        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199, number_type="even", zip_code="20002")
         ref = self._run(conn, validated, bf)
         assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 0
 
     def test_house_number_out_of_range_rejected(self, synth):
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "999 WEST 42 STREET")
-        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199,
-                          number_type="odd")
+        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199, number_type="odd")
         ref = self._run(conn, validated, bf)
         assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 0
 
@@ -261,8 +272,7 @@ class TestPersonsCandidates:
         """Odd-numbered voter into an even-only blockface = no match."""
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "101 WEST 42 STREET")  # odd
-        _insert_blockface(conn, "T1:left", "West 42 Street", 2, 200,
-                          number_type="even")
+        _insert_blockface(conn, "T1:left", "West 42 Street", 2, 200, number_type="even")
         ref = self._run(conn, validated, bf)
         assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 0
 
@@ -271,8 +281,7 @@ class TestPersonsCandidates:
         even if all the tokens line up — they're on different blocks."""
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "34-12 WEST 42 STREET")  # prefix="34-", hn=12
-        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 99,
-                          prefix="35-", number_type="even")
+        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 99, prefix="35-", number_type="even")
         ref = self._run(conn, validated, bf)
         assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 0
 
@@ -283,8 +292,7 @@ class TestPersonsCandidates:
         _insert_validated(conn, "v1", "100 EAST 1 STREET")
         # Blockface for "East 11 Street" — overlaps voter's tokens on
         # {east, street} only; "1" and "11" are different.
-        _insert_blockface(conn, "T1:left", "East 11 Street", 1, 199,
-                          number_type="even")
+        _insert_blockface(conn, "T1:left", "East 11 Street", 1, 199, number_type="even")
         ref = self._run(conn, validated, bf)
         assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 0
 
@@ -295,12 +303,9 @@ class TestPersonsCandidates:
         they'd be unmatchable everywhere."""
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "100 WEST DRIVE")
-        _insert_blockface(conn, "T1:left", "West Drive", 1, 199,
-                          number_type="even")
+        _insert_blockface(conn, "T1:left", "West Drive", 1, 199, number_type="even")
         ref = self._run(conn, validated, bf)
-        pairs = conn.execute(
-            f"SELECT external_id, blockface_id FROM {ref.fqn}"
-        ).fetchall()
+        pairs = conn.execute(f"SELECT external_id, blockface_id FROM {ref.fqn}").fetchall()
         assert pairs == [("v1", "T1:left")]
 
     def test_opposing_cardinals_rejected(self, synth):
@@ -308,8 +313,7 @@ class TestPersonsCandidates:
         `South Broadway` even though the token overlap is high."""
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "100 NORTH BROADWAY")
-        _insert_blockface(conn, "T1:left", "South Broadway", 1, 199,
-                          number_type="even")
+        _insert_blockface(conn, "T1:left", "South Broadway", 1, 199, number_type="even")
         ref = self._run(conn, validated, bf)
         assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 0
 
@@ -329,25 +333,30 @@ class TestPersonsBestMatch:
         # voter's '100' against blockface name (no, the numeric bonus is
         # about tokens IN the address line — '100' is a digit. So both T1
         # and T2 get the numeric bonus.)
-        _insert_blockface(conn, "T2:left", "Broadway East", 1, 199,
-                          number_type="even")
+        _insert_blockface(conn, "T2:left", "Broadway East", 1, 199, number_type="even")
         decomposed = matching.persons_decomposed(
-            persons_validated=validated, organization_slug=ORG, conn=conn,
+            persons_validated=validated,
+            organization_slug=ORG,
+            conn=conn,
         )
         candidates = matching.persons_candidates(
-            persons_decomposed=decomposed, blockface_final=bf,
-            organization_slug=ORG, conn=conn,
+            persons_decomposed=decomposed,
+            blockface_final=bf,
+            organization_slug=ORG,
+            conn=conn,
         )
         scored = matching.persons_scored(
-            persons_candidates=candidates, persons_decomposed=decomposed,
-            organization_slug=ORG, conn=conn,
+            persons_candidates=candidates,
+            persons_decomposed=decomposed,
+            organization_slug=ORG,
+            conn=conn,
         )
         best = matching.persons_best_match(
-            persons_scored=scored, organization_slug=ORG, conn=conn,
+            persons_scored=scored,
+            organization_slug=ORG,
+            conn=conn,
         )
-        row = conn.execute(
-            f"SELECT blockface_id FROM {best.fqn} WHERE external_id = 'v1'"
-        ).fetchone()
+        row = conn.execute(f"SELECT blockface_id FROM {best.fqn} WHERE external_id = 'v1'").fetchone()
         assert row[0] == "T2:left", "higher token-overlap blockface should win"
 
     def test_tiebreak_is_deterministic(self, synth):
@@ -356,39 +365,40 @@ class TestPersonsBestMatch:
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "100 WEST 42 STREET")
         # Two equally-scoring blockfaces. ORDER BY blockface_id ASC picks T1.
-        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199,
-                          number_type="even")
-        _insert_blockface(conn, "T2:left", "West 42 Street", 1, 199,
-                          number_type="even")
+        _insert_blockface(conn, "T1:left", "West 42 Street", 1, 199, number_type="even")
+        _insert_blockface(conn, "T2:left", "West 42 Street", 1, 199, number_type="even")
 
         def _run():
             d = matching.persons_decomposed(
-                persons_validated=validated, organization_slug=ORG, conn=conn,
+                persons_validated=validated,
+                organization_slug=ORG,
+                conn=conn,
             )
             c = matching.persons_candidates(
-                persons_decomposed=d, blockface_final=bf,
-                organization_slug=ORG, conn=conn,
+                persons_decomposed=d,
+                blockface_final=bf,
+                organization_slug=ORG,
+                conn=conn,
             )
             s = matching.persons_scored(
-                persons_candidates=c, persons_decomposed=d,
-                organization_slug=ORG, conn=conn,
+                persons_candidates=c,
+                persons_decomposed=d,
+                organization_slug=ORG,
+                conn=conn,
             )
             return matching.persons_best_match(
-                persons_scored=s, organization_slug=ORG, conn=conn,
+                persons_scored=s,
+                organization_slug=ORG,
+                conn=conn,
             )
 
         # Re-running on a fresh org schema is the only way to confirm
         # determinism — incremental nodes won't re-process existing ids.
         ref1 = _run()
-        chosen1 = conn.execute(
-            f"SELECT blockface_id FROM {ref1.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        chosen1 = conn.execute(f"SELECT blockface_id FROM {ref1.fqn} WHERE external_id = 'v1'").fetchone()[0]
         # Drop and re-run.
-        for t in ("persons_best_match", "persons_scored", "persons_candidates",
-                  "persons_decomposed"):
+        for t in ("persons_best_match", "persons_scored", "persons_candidates", "persons_decomposed"):
             conn.execute(f"DROP TABLE IF EXISTS {org_fqn(ORG, t)}")
         ref2 = _run()
-        chosen2 = conn.execute(
-            f"SELECT blockface_id FROM {ref2.fqn} WHERE external_id = 'v1'"
-        ).fetchone()[0]
+        chosen2 = conn.execute(f"SELECT blockface_id FROM {ref2.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert chosen1 == chosen2 == "T1:left"

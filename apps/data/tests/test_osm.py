@@ -20,7 +20,6 @@ Behaviors locked in:
   falls inside a `landuse=residential` polygon.
 """
 
-import duckdb
 import pytest
 
 from src.dags import osm, tiger
@@ -47,8 +46,7 @@ def _create_osm_addresses(conn) -> TableRef:
             lon           DOUBLE
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="osm",
-                    table="addresses", version=0)
+    return TableRef(catalog="geo_ducklake", schema="osm", table="addresses", version=0)
 
 
 def _create_osm_landuse_residential(conn) -> TableRef:
@@ -62,19 +60,27 @@ def _create_osm_landuse_residential(conn) -> TableRef:
             geom        GEOMETRY
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="osm",
-                    table="landuse_residential", version=0)
+    return TableRef(catalog="geo_ducklake", schema="osm", table="landuse_residential", version=0)
 
 
 def _insert_addr(
-    conn, osm_id, housenumber, street, *,
-    kind="way", zip_code="10001", lat=40.75, lon=-73.99,
-    unit=None, city="NEW YORK", state="NY", building="yes",
+    conn,
+    osm_id,
+    housenumber,
+    street,
+    *,
+    kind="way",
+    zip_code="10001",
+    lat=40.75,
+    lon=-73.99,
+    unit=None,
+    city="NEW YORK",
+    state="NY",
+    building="yes",
 ):
     conn.execute(
         "INSERT INTO geo_ducklake.osm.addresses VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [osm_id, kind, housenumber, street, unit, zip_code, city, state,
-         building, lat, lon],
+        [osm_id, kind, housenumber, street, unit, zip_code, city, state, building, lat, lon],
     )
 
 
@@ -105,9 +111,7 @@ class TestCanonicalKey:
         conn, addr, res, tokens = synth
         _insert_addr(conn, 1, "100", "Broadway")
         ref = _run(conn, addr, res, tokens)
-        row = conn.execute(
-            f"SELECT canonical_key FROM {ref.fqn} WHERE zip_code='10001'"
-        ).fetchone()
+        row = conn.execute(f"SELECT canonical_key FROM {ref.fqn} WHERE zip_code='10001'").fetchone()
         assert row[0] == "broadway"
 
     def test_equivalency_expansion_applies(self, synth):
@@ -117,9 +121,7 @@ class TestCanonicalKey:
         conn, addr, res, tokens = synth
         _insert_addr(conn, 1, "100", "Broadway Ave")
         ref = _run(conn, addr, res, tokens)
-        key = conn.execute(
-            f"SELECT canonical_key FROM {ref.fqn} WHERE zip_code='10001'"
-        ).fetchone()[0]
+        key = conn.execute(f"SELECT canonical_key FROM {ref.fqn} WHERE zip_code='10001'").fetchone()[0]
         # Sort + pipe-join, every token preserved (no generic stripping).
         tokens_in_key = set(key.split("|"))
         assert {"ave", "avenue", "broadway"} <= tokens_in_key
@@ -129,17 +131,10 @@ class TestCanonicalKey:
         canonical_key as 'FDR Drive' (STREET_REWRITES collapses both)."""
         conn, addr, res, tokens = synth
         _insert_addr(conn, 1, "100", "FDR Drive", zip_code="10001", lat=40.75, lon=-73.99)
-        _insert_addr(conn, 2, "200", "Franklin D Roosevelt Drive",
-                     zip_code="10002", lat=40.74, lon=-73.98)
+        _insert_addr(conn, 2, "200", "Franklin D Roosevelt Drive", zip_code="10002", lat=40.74, lon=-73.98)
         ref = _run(conn, addr, res, tokens)
-        keys = {
-            r[0]: r[1] for r in conn.execute(
-                f"SELECT zip_code, canonical_key FROM {ref.fqn}"
-            ).fetchall()
-        }
-        assert keys["10001"] == keys["10002"], (
-            f"FDR variants should share canonical_key: {keys}"
-        )
+        keys = {r[0]: r[1] for r in conn.execute(f"SELECT zip_code, canonical_key FROM {ref.fqn}").fetchall()}
+        assert keys["10001"] == keys["10002"], f"FDR variants should share canonical_key: {keys}"
 
     def test_generic_tokens_preserved_in_key(self, synth):
         """`60 Place` and `60 Lane` are different streets — their
@@ -149,14 +144,8 @@ class TestCanonicalKey:
         _insert_addr(conn, 1, "100", "60 Place", zip_code="11420")
         _insert_addr(conn, 2, "100", "60 Lane", zip_code="11421")
         ref = _run(conn, addr, res, tokens)
-        keys = {
-            r[0]: r[1] for r in conn.execute(
-                f"SELECT zip_code, canonical_key FROM {ref.fqn}"
-            ).fetchall()
-        }
-        assert keys["11420"] != keys["11421"], (
-            f"parallel-named streets should have distinct keys: {keys}"
-        )
+        keys = {r[0]: r[1] for r in conn.execute(f"SELECT zip_code, canonical_key FROM {ref.fqn}").fetchall()}
+        assert keys["11420"] != keys["11421"], f"parallel-named streets should have distinct keys: {keys}"
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +191,7 @@ class TestHousenumberNorm:
         _insert_addr(conn, 2, "132-1", "Broadway", lat=40.75, lon=-73.99)
         _insert_addr(conn, 3, "1321", "Broadway", lat=40.75, lon=-73.99)
         ref = _run(conn, addr, res, tokens)
-        rows = conn.execute(
-            f"SELECT count(*) FROM {ref.fqn} WHERE zip_code='10001'"
-        ).fetchone()[0]
+        rows = conn.execute(f"SELECT count(*) FROM {ref.fqn} WHERE zip_code='10001'").fetchone()[0]
         assert rows == 1, "surface-form variants should merge to one keyed row"
 
 
@@ -218,14 +205,10 @@ class TestTiebreakers:
         """When a node and a way both tag the same address, prefer the way
         (polygon centroid is more representative than a doorway point)."""
         conn, addr, res, tokens = synth
-        _insert_addr(conn, 1, "100", "Broadway", kind="node",
-                     lat=40.7500, lon=-73.9900)
-        _insert_addr(conn, 2, "100", "Broadway", kind="way",
-                     lat=40.7501, lon=-73.9901)
+        _insert_addr(conn, 1, "100", "Broadway", kind="node", lat=40.7500, lon=-73.9900)
+        _insert_addr(conn, 2, "100", "Broadway", kind="way", lat=40.7501, lon=-73.9901)
         ref = _run(conn, addr, res, tokens)
-        row = conn.execute(
-            f"SELECT osm_lat, osm_lon FROM {ref.fqn} WHERE zip_code='10001'"
-        ).fetchone()
+        row = conn.execute(f"SELECT osm_lat, osm_lon FROM {ref.fqn} WHERE zip_code='10001'").fetchone()
         # Way coords should win, not node coords.
         assert row == (40.7501, -73.9901)
 
@@ -233,16 +216,11 @@ class TestTiebreakers:
         """Multiple ways for the same canonical address (rare but happens)
         should resolve to the smallest osm_id for deterministic output."""
         conn, addr, res, tokens = synth
-        _insert_addr(conn, 200, "100", "Broadway", kind="way",
-                     lat=40.7502, lon=-73.9902)
-        _insert_addr(conn, 100, "100", "Broadway", kind="way",
-                     lat=40.7501, lon=-73.9901)
-        _insert_addr(conn, 300, "100", "Broadway", kind="way",
-                     lat=40.7503, lon=-73.9903)
+        _insert_addr(conn, 200, "100", "Broadway", kind="way", lat=40.7502, lon=-73.9902)
+        _insert_addr(conn, 100, "100", "Broadway", kind="way", lat=40.7501, lon=-73.9901)
+        _insert_addr(conn, 300, "100", "Broadway", kind="way", lat=40.7503, lon=-73.9903)
         ref = _run(conn, addr, res, tokens)
-        row = conn.execute(
-            f"SELECT osm_lat, osm_lon FROM {ref.fqn} WHERE zip_code='10001'"
-        ).fetchone()
+        row = conn.execute(f"SELECT osm_lat, osm_lon FROM {ref.fqn} WHERE zip_code='10001'").fetchone()
         # osm_id 100 wins (smallest).
         assert row == (40.7501, -73.9901)
 
@@ -267,9 +245,7 @@ class TestResidentialComplex:
             )
         """)
         ref = _run(conn, addr, res, tokens)
-        flag = conn.execute(
-            f"SELECT in_residential_complex FROM {ref.fqn}"
-        ).fetchone()[0]
+        flag = conn.execute(f"SELECT in_residential_complex FROM {ref.fqn}").fetchone()[0]
         assert flag is True
 
     def test_outside_polygon_not_flagged(self, synth):
@@ -285,7 +261,5 @@ class TestResidentialComplex:
             )
         """)
         ref = _run(conn, addr, res, tokens)
-        flag = conn.execute(
-            f"SELECT in_residential_complex FROM {ref.fqn}"
-        ).fetchone()[0]
+        flag = conn.execute(f"SELECT in_residential_complex FROM {ref.fqn}").fetchone()[0]
         assert flag is False

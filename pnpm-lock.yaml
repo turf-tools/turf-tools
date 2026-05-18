@@ -181,7 +181,7 @@ importers:
     dependencies:
       '@base-ui/react':
         specifier: ^1.3.0
-        version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+        version: 1.4.1(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@4.2.1)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@field-tools/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -233,6 +233,9 @@ importers:
       d3-scale-chromatic:
         specifier: ^3.1.0
         version: 3.1.0
+      date-fns:
+        specifier: ^4.2.1
+        version: 4.2.1
       drizzle-orm:
         specifier: beta
         version: 1.0.0-beta.22(@electric-sql/pglite@0.4.5)(postgres@3.4.9)(zod@4.4.3)
@@ -251,6 +254,9 @@ importers:
       react:
         specifier: ^19
         version: 19.2.0
+      react-day-picker:
+        specifier: ^10.0.1
+        version: 10.0.1(@types/react@19.2.14)(react@19.2.0)
       react-dom:
         specifier: ^19
         version: 19.2.0(react@19.2.0)
@@ -997,6 +1003,9 @@ packages:
 
   '@better-fetch/fetch@1.1.21':
     resolution: {integrity: sha512-/ImESw0sskqlVR94jB+5+Pxjf+xBwDZF/N5+y2/q4EqD7IARUTSpPfIo8uf39SYpCxyOCtbyYpUrZ3F/k0zT4A==}
+
+  '@date-fns/tz@1.4.1':
+    resolution: {integrity: sha512-P5LUNhtbj6YfI3iJjw5EL9eUAG6OitD0W3fWQcpQjDRc/QIsL0tRNuO1PcDvPccWL1fSTXXdE1ds+l95DV/OFA==}
 
   '@dotenvx/dotenvx@1.66.0':
     resolution: {integrity: sha512-qlQFhHUjhRDybrinqLAD0MClVZDOrsq80O8eD5iSjz3Qa/4f3Jg7SQrOaSobrRyP1QaWIYLGtGpj2c7H0D8NUw==}
@@ -4028,6 +4037,9 @@ packages:
     resolution: {integrity: sha512-0R9ikRb668HB7QDxT1vkpuUBtqc53YyAwMwGeUFKRojY/NWKvdZ+9UYtRfGmhqNbRkTSVpMbmyhXipFFv2cb/A==}
     engines: {node: '>= 12'}
 
+  date-fns@4.2.1:
+    resolution: {integrity: sha512-37RhSdxaG1suen6VDCza6rNrQfooyQh57HFVPwQGEq2QWliVLzPQZ8Oa017weOu+HZCnzI7N3Pf/wyoBKfEqrA==}
+
   db0@0.3.4:
     resolution: {integrity: sha512-RiXXi4WaNzPTHEOu8UPQKMooIbqOEyqA1t7Z6MsdxSCeb8iUC9ko3LcmsLmeUt2SM5bctfArZKkRQggKZz7JNw==}
     peerDependencies:
@@ -6268,6 +6280,16 @@ packages:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
 
+  react-day-picker@10.0.1:
+    resolution: {integrity: sha512-eNh6BlwcYInWaJtRv18mXQ06Ys/H6rdTZAnTaSdOYJuTpwP1JMCHNd1FDRadA+gbeinq+psdULN5Xnowy9mV8w==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+
   react-devtools-core@6.1.5:
     resolution: {integrity: sha512-ePrwPfxAnB+7hgnEr8vpKxL9cmnp7F322t8oqcPshbIQQhDKgFDW4tjhF2wjVbdXF9O/nyuy3sQWd9JGpiLPvA==}
 
@@ -8120,7 +8142,7 @@ snapshots:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
 
-  '@base-ui/react@1.4.1(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
+  '@base-ui/react@1.4.1(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@4.2.1)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
     dependencies:
       '@babel/runtime': 7.29.2
       '@base-ui/utils': 0.2.8(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -8130,7 +8152,9 @@ snapshots:
       react-dom: 19.2.0(react@19.2.0)
       use-sync-external-store: 1.6.0(react@19.2.0)
     optionalDependencies:
+      '@date-fns/tz': 1.4.1
       '@types/react': 19.2.14
+      date-fns: 4.2.1
 
   '@base-ui/utils@0.2.8(@types/react@19.2.14)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
     dependencies:
@@ -8195,6 +8219,8 @@ snapshots:
       '@noble/hashes': 2.2.0
 
   '@better-fetch/fetch@1.1.21': {}
+
+  '@date-fns/tz@1.4.1': {}
 
   '@dotenvx/dotenvx@1.66.0':
     dependencies:
@@ -11344,6 +11370,8 @@ snapshots:
 
   data-uri-to-buffer@4.0.1: {}
 
+  date-fns@4.2.1: {}
+
   db0@0.3.4(@electric-sql/pglite@0.4.5)(drizzle-orm@1.0.0-beta.22(@electric-sql/pglite@0.4.5)(postgres@3.4.9)(zod@4.4.3)):
     optionalDependencies:
       '@electric-sql/pglite': 0.4.5
@@ -13497,6 +13525,14 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.7.2
       unpipe: 1.0.0
+
+  react-day-picker@10.0.1(@types/react@19.2.14)(react@19.2.0):
+    dependencies:
+      '@date-fns/tz': 1.4.1
+      date-fns: 4.2.1
+      react: 19.2.0
+    optionalDependencies:
+      '@types/react': 19.2.14
 
   react-devtools-core@6.1.5:
     dependencies:

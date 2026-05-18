@@ -10,13 +10,16 @@ from src.dsl.compile import (
     criteria_to_where,
 )
 from src.dsl.criteria import (
+    AddressFilter,
     AgeRangeFilter,
     AllFilter,
     Criteria,
+    DateRangeFilter,
     EnumFilter,
     KeyFilter,
     Step,
     TextFilter,
+    VotingHistoryFilter,
 )
 
 
@@ -139,6 +142,144 @@ def test_all_filter_compiles_to_match_all() -> None:
     )
     assert where == "WHERE 1=1"
     assert params == []
+
+
+def test_date_range_both_bounds() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            DateRangeFilter(
+                kind="date-range",
+                key="registration_date",
+                min="2020-01-01",
+                max="2024-12-31",
+            )
+        ),
+        None,
+        params,
+    )
+    assert "registration_date >= ?" in where
+    assert "registration_date <= ?" in where
+    assert params == ["2020-01-01", "2024-12-31"]
+
+
+def test_date_range_min_only() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(DateRangeFilter(kind="date-range", key="registration_date", min="2020-01-01", max=None)),
+        None,
+        params,
+    )
+    assert "registration_date >= ?" in where
+    assert "<= ?" not in where
+    assert params == ["2020-01-01"]
+
+
+def test_date_range_both_null_is_inactive() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(DateRangeFilter(kind="date-range", key="registration_date", min=None, max=None)),
+        None,
+        params,
+    )
+    assert where == ""
+    assert params == []
+
+
+def test_voting_history_at_least_primary() -> None:
+    """Triple-prime targeting: voted in 3+ primaries (incl. presidential) in last 4y."""
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            VotingHistoryFilter(
+                kind="voting-history-count",
+                key="voting_history",
+                type="primary",
+                windowYears=4,
+                comparator="at_least",
+                count=3,
+            )
+        ),
+        None,
+        params,
+    )
+    assert "list_filter(voting_history" in where
+    assert "year(current_date) - ?" in where
+    assert ">= ?" in where
+    # window_years, then the two primary type values, then count.
+    assert params == [4, "primary", "presidential_primary", 3]
+
+
+def test_address_all_four_fields() -> None:
+    """Address filter AND-joins clauses for every non-empty sub-field."""
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            AddressFilter(
+                kind="address",
+                key="address",
+                line1="Broadway",
+                city="New York",
+                state="ny",
+                zip="10024",
+            )
+        ),
+        None,
+        params,
+    )
+    assert "address_line_1 ILIKE ?" in where
+    assert "city ILIKE ?" in where
+    assert "state = ?" in where
+    assert "zip5 = ?" in where
+    # state is uppercased; line1/city wrapped in %%.
+    assert params == ["%Broadway%", "%New York%", "NY", "10024"]
+
+
+def test_address_partial_fields() -> None:
+    """Only non-empty sub-fields contribute clauses."""
+    params: list = []
+    where = criteria_to_where(
+        _narrow(AddressFilter(kind="address", key="address", line1="", city="brooklyn", state="", zip="")),
+        None,
+        params,
+    )
+    assert "city ILIKE ?" in where
+    assert "address_line_1" not in where
+    assert "state =" not in where
+    assert "zip5 =" not in where
+    assert params == ["%brooklyn%"]
+
+
+def test_address_all_empty_is_inactive() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(AddressFilter(kind="address", key="address", line1="", city="", state="", zip="")),
+        None,
+        params,
+    )
+    assert where == ""
+    assert params == []
+
+
+def test_voting_history_exactly_general() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            VotingHistoryFilter(
+                kind="voting-history-count",
+                key="voting_history",
+                type="general",
+                windowYears=4,
+                comparator="exactly",
+                count=1,
+            )
+        ),
+        None,
+        params,
+    )
+    assert "list_filter(voting_history" in where
+    assert ") = ?" in where
+    assert params == [4, "general", 1]
 
 
 # ---------------------------------------------------------------------------

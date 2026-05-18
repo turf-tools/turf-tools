@@ -44,9 +44,7 @@ NYS_ENROLLMENT_LABELS: dict[tuple[str, str | None], str] = {
 def _case_from_map(col: str, mapping: dict[str, str], default: str | None = None) -> str:
     """SQL CASE mapping `col`'s values via `mapping`. `default` is the label for
     unmatched values (None → NULL)."""
-    branches = "\n            ".join(
-        f"WHEN {col} = '{raw}' THEN '{canonical}'" for raw, canonical in mapping.items()
-    )
+    branches = "\n            ".join(f"WHEN {col} = '{raw}' THEN '{canonical}'" for raw, canonical in mapping.items())
     else_clause = "NULL" if default is None else f"'{default}'"
     return f"CASE\n            {branches}\n            ELSE {else_clause}\n        END"
 
@@ -63,8 +61,7 @@ def _enrollment_case_sql() -> str:
     for enr, pairs in pairs_by_enrollment.items():
         if enr == "OTH":
             inner_branches = "\n                ".join(
-                f"WHEN raw.other_party = '{op}' THEN '{canonical}'"
-                for op, canonical in pairs
+                f"WHEN raw.other_party = '{op}' THEN '{canonical}'" for op, canonical in pairs
             )
             parts.append(
                 f"WHEN raw.enrollment = 'OTH' THEN CASE\n"
@@ -154,10 +151,10 @@ SELECT
     -- hit Parquet column pruning + Bloom filters.
     {enrollment_sql} AS enrollment,
     raw.gender AS gender,
-    {_iso_date_sql('raw.date_of_birth')} AS date_of_birth,
-    {_iso_date_sql('raw.registration_date')} AS registration_date,
-    {_case_from_map('raw.status', NYS_REGISTRATION_STATUS_LABELS, default='unknown')} AS registration_status,
-    {_iso_date_sql('raw.last_voted_date')} AS last_voted_date,
+    {_iso_date_sql("raw.date_of_birth")} AS date_of_birth,
+    {_iso_date_sql("raw.registration_date")} AS registration_date,
+    {_case_from_map("raw.status", NYS_REGISTRATION_STATUS_LABELS, default="unknown")} AS registration_status,
+    {_iso_date_sql("raw.last_voted_date")} AS last_voted_date,
     raw.county_code AS county_code,
     -- `precinct` is the smallest political unit. NYC uses the
     -- "AA-EEE" assembly+election composite; bare election_district is
