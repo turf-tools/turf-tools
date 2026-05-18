@@ -45,8 +45,44 @@ class TextFilter(BaseModel):
     value: str
 
 
+class DateRangeFilter(BaseModel):
+    """ISO-8601 (YYYY-MM-DD) range. Either bound is optional."""
+
+    kind: Literal["date-range"]
+    key: str
+    min: str | None = None
+    max: str | None = None
+
+
+class VotingHistoryFilter(BaseModel):
+    """Count of recent elections matching a type within a year window.
+
+    ``primary`` covers both `primary` and `presidential_primary` canonical
+    types — the common meaning of "primary" when targeting voters.
+    """
+
+    kind: Literal["voting-history-count"]
+    key: str
+    type: Literal["primary", "general"]  # noqa: A003
+    windowYears: int  # noqa: N815  -- camelCase matches the JSON shape sent from web
+    comparator: Literal["at_least", "exactly"]
+    count: int
+
+
+class AddressFilter(BaseModel):
+    """Single UI element, multiple columns. Compiles to AND-joined clauses
+    for whichever sub-fields are non-empty."""
+
+    kind: Literal["address"]
+    key: Literal["address"]
+    line1: str
+    city: str
+    state: str
+    zip: str  # noqa: A003
+
+
 Filter = Annotated[
-    AllFilter | EnumFilter | AgeRangeFilter | TextFilter,
+    AllFilter | EnumFilter | AgeRangeFilter | TextFilter | DateRangeFilter | VotingHistoryFilter | AddressFilter,
     Field(discriminator="kind"),
 ]
 
@@ -101,7 +137,24 @@ class TextFieldDef(BaseModel):
     op: Literal["equals", "contains"]
 
 
-FieldDef = EnumFieldDef | AgeRangeFieldDef | TextFieldDef
+class DateRangeFieldDef(BaseModel):
+    kind: Literal["date-range"]
+    key: str
+    source: Literal["column", "other_properties"]
+
+
+class VotingHistoryFieldDef(BaseModel):
+    kind: Literal["voting-history-count"]
+    key: str  # the STRUCT[] column name, e.g. "voting_history"
+    source: Literal["column"]  # always a top-level STRUCT[]; no JSON path here
+
+
+class AddressFieldDef(BaseModel):
+    kind: Literal["address"]
+    key: Literal["address"]
+
+
+FieldDef = EnumFieldDef | AgeRangeFieldDef | TextFieldDef | DateRangeFieldDef | VotingHistoryFieldDef | AddressFieldDef
 
 
 # Catalog of filterable fields. `source` says whether the field is a
@@ -112,20 +165,26 @@ FieldDef = EnumFieldDef | AgeRangeFieldDef | TextFieldDef
 #
 # Keep in sync with FILTERS in `apps/web/src/lib/filters.ts`.
 FIELDS: dict[str, FieldDef] = {
-    # Top-level Person columns.
+    # All filterable voter-file fields are top-level columns on `persons_geocoded`.
+    # Storage is shredded for filter perf (Parquet column pruning + Bloom filters).
+    # Listed alphabetically by key.
+    "assembly_district": TextFieldDef(kind="text", key="assembly_district", source="column", op="equals"),
+    "congressional_district": TextFieldDef(kind="text", key="congressional_district", source="column", op="equals"),
+    "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="column"),
+    "enrollment": EnumFieldDef(kind="enum", key="enrollment", source="column"),
+    "address": AddressFieldDef(kind="address", key="address"),
+    "county_code": EnumFieldDef(kind="enum", key="county_code", source="column"),
     "first_name": TextFieldDef(kind="text", key="first_name", source="column", op="contains"),
+    "gender": EnumFieldDef(kind="enum", key="gender", source="column"),
     "last_name": TextFieldDef(kind="text", key="last_name", source="column", op="contains"),
+    "precinct": TextFieldDef(kind="text", key="precinct", source="column", op="equals"),
+    "registration_date": DateRangeFieldDef(kind="date-range", key="registration_date", source="column"),
+    "registration_status": EnumFieldDef(kind="enum", key="registration_status", source="column"),
+    "senate_district": TextFieldDef(kind="text", key="senate_district", source="column", op="equals"),
+    "voting_history": VotingHistoryFieldDef(kind="voting-history-count", key="voting_history", source="column"),
+    # `zip5` isn't exposed as a standalone filter (subsumed by `address`)
+    # but is still queried directly by `nyc_zips` boundary-key resolution.
     "zip5": TextFieldDef(kind="text", key="zip5", source="column", op="equals"),
-    # other_properties JSONB.
-    "party": EnumFieldDef(kind="enum", key="party", source="other_properties"),
-    "gender": EnumFieldDef(kind="enum", key="gender", source="other_properties"),
-    "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="other_properties"),
-    "ad_ed": TextFieldDef(kind="text", key="ad_ed", source="other_properties", op="equals"),
-    "assembly_district": TextFieldDef(kind="text", key="assembly_district", source="other_properties", op="equals"),
-    "senate_district": TextFieldDef(kind="text", key="senate_district", source="other_properties", op="equals"),
-    "congressional_district": TextFieldDef(
-        kind="text", key="congressional_district", source="other_properties", op="equals"
-    ),
 }
 
 
@@ -140,6 +199,6 @@ FIELDS: dict[str, FieldDef] = {
 # region key. Used to compose `keyFilter` clauses and per-key
 # aggregation GROUP BYs.
 KEY_GROUPS: dict[str, str] = {
-    "nyc_eds": "ad_ed",
+    "nyc_eds": "precinct",
     "nyc_zips": "zip5",
 }

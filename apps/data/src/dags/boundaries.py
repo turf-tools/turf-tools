@@ -25,7 +25,6 @@ Geometry is pre-simplified at `DEFAULT_SIMPLIFY_TOLERANCE` (0.0001° ≈
 """
 
 import duckdb
-
 from src.models import TableRef
 
 GEO_CATALOG = "geo_ducklake"

@@ -10,13 +10,16 @@ from src.dsl.compile import (
     criteria_to_where,
 )
 from src.dsl.criteria import (
+    AddressFilter,
     AgeRangeFilter,
     AllFilter,
     Criteria,
+    DateRangeFilter,
     EnumFilter,
     KeyFilter,
     Step,
     TextFilter,
+    VotingHistoryFilter,
 )
 
 
@@ -42,7 +45,7 @@ def test_step_with_inactive_filter_drops_out() -> None:
     params: list = []
     where = criteria_to_where(
         _narrow(
-            EnumFilter(kind="enum", key="party", values=[]),
+            EnumFilter(kind="enum", key="enrollment", values=[]),
             TextFilter(kind="text", key="zip5", value=""),
             AgeRangeFilter(kind="age-range", key="date_of_birth", min=None, max=None),
         ),
@@ -58,15 +61,15 @@ def test_step_with_inactive_filter_drops_out() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_enum_filter_on_other_properties() -> None:
+def test_enum_filter_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
-        _narrow(EnumFilter(kind="enum", key="party", values=["DEM", "WOR"])),
+        _narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic", "working_families"])),
         None,
         params,
     )
-    assert where == "WHERE (other_properties->>'party') IN (?, ?)"
-    assert params == ["DEM", "WOR"]
+    assert where == "WHERE enrollment IN (?, ?)"
+    assert params == ["democratic", "working_families"]
 
 
 def test_text_filter_equals_on_top_level_column() -> None:
@@ -100,7 +103,7 @@ def test_age_range_with_both_bounds() -> None:
     )
     # Compiled SQL is messy by necessity (try_strptime + age + extract);
     # what matters is the structure and the param order.
-    assert "try_strptime((other_properties->>'date_of_birth')" in where
+    assert "try_strptime(date_of_birth" in where
     assert ">= ?" in where
     assert "<= ?" in where
     assert params == [18, 64]
@@ -141,6 +144,144 @@ def test_all_filter_compiles_to_match_all() -> None:
     assert params == []
 
 
+def test_date_range_both_bounds() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            DateRangeFilter(
+                kind="date-range",
+                key="registration_date",
+                min="2020-01-01",
+                max="2024-12-31",
+            )
+        ),
+        None,
+        params,
+    )
+    assert "registration_date >= ?" in where
+    assert "registration_date <= ?" in where
+    assert params == ["2020-01-01", "2024-12-31"]
+
+
+def test_date_range_min_only() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(DateRangeFilter(kind="date-range", key="registration_date", min="2020-01-01", max=None)),
+        None,
+        params,
+    )
+    assert "registration_date >= ?" in where
+    assert "<= ?" not in where
+    assert params == ["2020-01-01"]
+
+
+def test_date_range_both_null_is_inactive() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(DateRangeFilter(kind="date-range", key="registration_date", min=None, max=None)),
+        None,
+        params,
+    )
+    assert where == ""
+    assert params == []
+
+
+def test_voting_history_at_least_primary() -> None:
+    """Triple-prime targeting: voted in 3+ primaries (incl. presidential) in last 4y."""
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            VotingHistoryFilter(
+                kind="voting-history-count",
+                key="voting_history",
+                type="primary",
+                windowYears=4,
+                comparator="at_least",
+                count=3,
+            )
+        ),
+        None,
+        params,
+    )
+    assert "list_filter(voting_history" in where
+    assert "year(current_date) - ?" in where
+    assert ">= ?" in where
+    # window_years, then the two primary type values, then count.
+    assert params == [4, "primary", "presidential_primary", 3]
+
+
+def test_address_all_four_fields() -> None:
+    """Address filter AND-joins clauses for every non-empty sub-field."""
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            AddressFilter(
+                kind="address",
+                key="address",
+                line1="Broadway",
+                city="New York",
+                state="ny",
+                zip="10024",
+            )
+        ),
+        None,
+        params,
+    )
+    assert "address_line_1 ILIKE ?" in where
+    assert "city ILIKE ?" in where
+    assert "state = ?" in where
+    assert "zip5 = ?" in where
+    # state is uppercased; line1/city wrapped in %%.
+    assert params == ["%Broadway%", "%New York%", "NY", "10024"]
+
+
+def test_address_partial_fields() -> None:
+    """Only non-empty sub-fields contribute clauses."""
+    params: list = []
+    where = criteria_to_where(
+        _narrow(AddressFilter(kind="address", key="address", line1="", city="brooklyn", state="", zip="")),
+        None,
+        params,
+    )
+    assert "city ILIKE ?" in where
+    assert "address_line_1" not in where
+    assert "state =" not in where
+    assert "zip5 =" not in where
+    assert params == ["%brooklyn%"]
+
+
+def test_address_all_empty_is_inactive() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(AddressFilter(kind="address", key="address", line1="", city="", state="", zip="")),
+        None,
+        params,
+    )
+    assert where == ""
+    assert params == []
+
+
+def test_voting_history_exactly_general() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(
+            VotingHistoryFilter(
+                kind="voting-history-count",
+                key="voting_history",
+                type="general",
+                windowYears=4,
+                comparator="exactly",
+                count=1,
+            )
+        ),
+        None,
+        params,
+    )
+    assert "list_filter(voting_history" in where
+    assert ") = ?" in where
+    assert params == [4, "general", 1]
+
+
 # ---------------------------------------------------------------------------
 # Verb combinations — Boolean algebra
 # ---------------------------------------------------------------------------
@@ -150,16 +291,16 @@ def test_narrow_chain_ands_filters() -> None:
     params: list = []
     where = criteria_to_where(
         _narrow(
-            EnumFilter(kind="enum", key="party", values=["DEM"]),
+            EnumFilter(kind="enum", key="enrollment", values=["democratic"]),
             TextFilter(kind="text", key="zip5", value="10001"),
         ),
         None,
         params,
     )
     assert " AND " in where
-    assert "(other_properties->>'party') IN (?)" in where
+    assert "enrollment IN (?)" in where
     assert "zip5 = ?" in where
-    assert params == ["DEM", "10001"]
+    assert params == ["democratic", "10001"]
 
 
 def test_add_step_compiles_as_or() -> None:
@@ -167,15 +308,15 @@ def test_add_step_compiles_as_or() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-                Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
             ]
         ),
         None,
         params,
     )
     assert " OR " in where
-    assert params == ["DEM", "REP"]
+    assert params == ["democratic", "republican"]
 
 
 def test_remove_step_compiles_as_and_not() -> None:
@@ -183,7 +324,7 @@ def test_remove_step_compiles_as_and_not() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
                 Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
             ]
         ),
@@ -191,7 +332,7 @@ def test_remove_step_compiles_as_and_not() -> None:
         params,
     )
     assert " AND NOT " in where
-    assert params == ["DEM", "10001"]
+    assert params == ["democratic", "10001"]
 
 
 def test_remove_as_first_step_negates() -> None:
@@ -226,8 +367,8 @@ def test_mixed_verb_sequence_preserves_order() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-                Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
                 Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
             ]
         ),
@@ -237,7 +378,7 @@ def test_mixed_verb_sequence_preserves_order() -> None:
     # Verify structure: outermost AND NOT, inside the OR.
     assert " OR " in where
     assert " AND NOT " in where
-    assert params == ["DEM", "REP", "10001"]
+    assert params == ["democratic", "republican", "10001"]
 
 
 # ---------------------------------------------------------------------------
@@ -259,14 +400,14 @@ def test_key_filter_alone() -> None:
 def test_key_filter_combines_with_criteria() -> None:
     params: list = []
     where = criteria_to_where(
-        _narrow(EnumFilter(kind="enum", key="party", values=["DEM"])),
+        _narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
         KeyFilter(keyGroup="nyc_eds", keys=["75-001"]),
         params,
     )
     assert " AND " in where
-    assert "(other_properties->>'party') IN (?)" in where
-    assert "(other_properties->>'ad_ed') IN (?)" in where
-    assert params == ["DEM", "75-001"]
+    assert "enrollment IN (?)" in where
+    assert "precinct IN (?)" in where
+    assert params == ["democratic", "75-001"]
 
 
 def test_empty_key_set_short_circuits_to_match_nothing() -> None:
@@ -299,8 +440,8 @@ def test_cascade_emits_one_filter_per_step() -> None:
     sql = cascade_sql(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=EnumFilter(kind="enum", key="party", values=["DEM"])),
-                Step(verb="add", filter=EnumFilter(kind="enum", key="party", values=["REP"])),
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
             ]
         ),
         "persons",
@@ -311,7 +452,7 @@ def test_cascade_emits_one_filter_per_step() -> None:
     assert "step_2" in sql
     assert sql.count("FILTER (WHERE") == 2
     # Each step compiles independently; params repeat for prefix-1 then prefix-2.
-    assert params == ["DEM", "DEM", "REP"]
+    assert params == ["democratic", "democratic", "republican"]
 
 
 # ---------------------------------------------------------------------------
@@ -352,10 +493,10 @@ def test_column_expr_for_top_level() -> None:
     assert column_expr_for("zip5") == "zip5"
 
 
-def test_column_expr_for_other_properties() -> None:
-    assert column_expr_for("party") == "(other_properties->>'party')"
+def test_column_expr_for_promoted_field() -> None:
+    assert column_expr_for("enrollment") == "enrollment"
 
 
 def test_boundary_key_expr_for_known_groups() -> None:
     assert boundary_key_expr_for("nyc_zips") == "zip5"
-    assert boundary_key_expr_for("nyc_eds") == "(other_properties->>'ad_ed')"
+    assert boundary_key_expr_for("nyc_eds") == "precinct"

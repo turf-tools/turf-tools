@@ -55,61 +55,7 @@ export const turfs = pgTable(
   ],
 );
 
-// Schema for the turf data payload stored in `turf_data.data`.
-// Mirrors the structure the canvasser app expects.
-
 export type GeoJsonPolygon = {
   type: "Polygon";
   coordinates: number[][][];
-};
-
-export type TurfDataAddress = {
-  // Full canonical street address (e.g. "123 MAIN ST"). The data
-  // pipeline produces this as `address_line_1` — house number and
-  // street name are merged upstream, so consumers never need to
-  // recompose them.
-  street: string | null;
-  unit?: string | null;
-  city: string | null;
-  state: string | null;
-  zip: string | null;
-};
-
-export type TurfDataPerson = {
-  personId: string;
-  firstName: string | null;
-  lastName: string | null;
-  // Voter-file fields we don't model individually in the blob —
-  // party, gender, date_of_birth, AD/ED, etc. The data pipeline
-  // packs them into `other_properties` on `_persons_geocoded`;
-  // consumers (native app, etc.) unpack the keys they need.
-  // Adding a new field upstream doesn't require a blob schema
-  // change.
-  otherProperties: Record<string, string | null>;
-};
-
-export type TurfDataDoor = {
-  doorId: string;
-  unit: string | null;
-  persons: TurfDataPerson[];
-};
-
-export type TurfDataBuilding = {
-  buildingId: string;
-  latitude: number | null;
-  longitude: number | null;
-  address: TurfDataAddress;
-  doors: TurfDataDoor[];
-};
-
-export type TurfData = {
-  turfId: string;
-  // Mirrors `turfs.turfCode` — short, human-readable identifier
-  // generated at publish time. Carried in the blob so consumers
-  // that load only the data (offline cache, exports, sync
-  // deltas) have a stable code without a join.
-  turfCode: string;
-  name: string;
-  geometry: GeoJsonPolygon;
-  buildings: TurfDataBuilding[];
 };

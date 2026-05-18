@@ -14,10 +14,14 @@ from typing import Any
 from .criteria import (
     FIELDS,
     KEY_GROUPS,
+    AddressFieldDef,
+    AddressFilter,
     AgeRangeFieldDef,
     AgeRangeFilter,
     AllFilter,
     Criteria,
+    DateRangeFieldDef,
+    DateRangeFilter,
     EnumFieldDef,
     EnumFilter,
     FieldDef,
@@ -25,6 +29,8 @@ from .criteria import (
     KeyFilter,
     TextFieldDef,
     TextFilter,
+    VotingHistoryFieldDef,
+    VotingHistoryFilter,
 )
 
 
@@ -158,6 +164,21 @@ def _filter_clause(f: Filter, params: list[Any]) -> str:
         if field_def is None:
             raise CriteriaError(f"Unknown field: {f.key}")
         return _text_clause(f, field_def, params)
+    if isinstance(f, DateRangeFilter):
+        field_def = FIELDS.get(f.key)
+        if field_def is None:
+            raise CriteriaError(f"Unknown field: {f.key}")
+        return _date_range_clause(f, field_def, params)
+    if isinstance(f, VotingHistoryFilter):
+        field_def = FIELDS.get(f.key)
+        if field_def is None:
+            raise CriteriaError(f"Unknown field: {f.key}")
+        return _voting_history_clause(f, field_def, params)
+    if isinstance(f, AddressFilter):
+        field_def = FIELDS.get(f.key)
+        if field_def is None:
+            raise CriteriaError(f"Unknown field: {f.key}")
+        return _address_clause(f, field_def, params)
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 
@@ -178,7 +199,7 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
     if f.min is None and f.max is None:
         return ""
     expr = _column_expr(f.key, def_.source)
-    dob = f"try_strptime({expr}, '%Y%m%d')::DATE"
+    dob = f"try_strptime({expr}, '%Y-%m-%d')::DATE"
     age_years = f"extract(year from age(current_date, {dob}))"
     parts: list[str] = []
     if f.min is not None:
@@ -201,6 +222,69 @@ def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
         return f"{expr} = ?"
     params.append(f"%{f.value}%")
     return f"{expr} ILIKE ?"
+
+
+def _date_range_clause(f: DateRangeFilter, def_: FieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, DateRangeFieldDef):
+        raise CriteriaError(f"Field {f.key} is not a date-range field")
+    if not f.min and not f.max:
+        return ""
+    expr = _column_expr(f.key, def_.source)
+    parts: list[str] = []
+    if f.min:
+        parts.append(f"{expr} >= ?")
+        params.append(f.min)
+    if f.max:
+        parts.append(f"{expr} <= ?")
+        params.append(f.max)
+    return f"({' AND '.join(parts)})"
+
+
+# Maps the filter's `type` choice to the canonical voting_history.type values
+# it covers. "primary" merges presidential primaries with regular primaries
+# (the common targeting meaning).
+_VH_TYPE_GROUPS: dict[str, tuple[str, ...]] = {
+    "primary": ("primary", "presidential_primary"),
+    "general": ("general",),
+}
+
+
+def _address_clause(f: AddressFilter, def_: FieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, AddressFieldDef):
+        raise CriteriaError(f"Field {f.key} is not an address field")
+    parts: list[str] = []
+    if f.line1.strip():
+        parts.append("address_line_1 ILIKE ?")
+        params.append(f"%{f.line1.strip()}%")
+    if f.city.strip():
+        parts.append("city ILIKE ?")
+        params.append(f"%{f.city.strip()}%")
+    if f.state.strip():
+        parts.append("state = ?")
+        params.append(f.state.strip().upper())
+    if f.zip.strip():
+        parts.append("zip5 = ?")
+        params.append(f.zip.strip())
+    if not parts:
+        return ""
+    return "(" + " AND ".join(parts) + ")"
+
+
+def _voting_history_clause(f: VotingHistoryFilter, def_: FieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, VotingHistoryFieldDef):
+        raise CriteriaError(f"Field {f.key} is not a voting-history-count field")
+    if f.windowYears <= 0 or f.count < 0:
+        return ""
+    types = _VH_TYPE_GROUPS[f.type]
+    type_placeholders = ", ".join("?" for _ in types)
+    # list_filter + len keeps this a scalar expression (no correlated subquery).
+    # `year(current_date) - ?` keeps the recency window relative to query time.
+    inner = f"len(list_filter({def_.key}, e -> e.year >= year(current_date) - ? AND e.type IN ({type_placeholders})))"
+    params.append(f.windowYears)
+    params.extend(types)
+    op = ">=" if f.comparator == "at_least" else "="
+    params.append(f.count)
+    return f"{inner} {op} ?"
 
 
 def _key_filter_clause(kf: KeyFilter, params: list[Any]) -> str:

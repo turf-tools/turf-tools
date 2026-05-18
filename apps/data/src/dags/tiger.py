@@ -17,14 +17,12 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import duckdb
-
 from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
 from src.models import TableRef
 
 GEO_CATALOG = "geo_ducklake"
 TIGER_SCHEMA = "tiger"
 CENSUS_BASE_URL = "https://www2.census.gov/geo/tiger"
-
 
 
 def _fqn(table: str) -> str:

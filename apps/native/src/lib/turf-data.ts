@@ -77,47 +77,6 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
   };
 }
 
-// Compute integer age from a date_of_birth string. Voter-file
-// fields land in the blob as raw `otherProperties` (state-specific
-// formats), so consumers do the parse on read. NYS BOE in
-// particular ships dates as compact `YYYYMMDD` with no separators,
-// which `Date.parse` returns NaN for — we expand those to ISO
-// before parsing. Other parseable forms (ISO, US "MM/DD/YYYY")
-// pass through.
-export function ageFromDob(dob: string | null | undefined): number | null {
-  if (!dob) return null;
-  let s = dob.trim();
-  if (/^\d{8}$/.test(s)) {
-    s = `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
-  }
-  const ts = Date.parse(s);
-  if (Number.isNaN(ts)) return null;
-  const ms = Date.now() - ts;
-  if (ms < 0) return null;
-  return Math.floor(ms / (365.25 * 24 * 60 * 60 * 1000));
-}
-
-// Each formatter renders a single property as a short label fit
-// for a pill — one property per badge so missing fields are
-// visually attributable. Returns "?" for null/missing.
-
-export function formatAge(p: TurfDataPerson): string {
-  const age = ageFromDob(p.otherProperties.date_of_birth);
-  return age != null ? String(age) : "?";
-}
-
-export function formatGender(p: TurfDataPerson): string {
-  const g = (p.otherProperties.gender ?? "").trim();
-  if (!g) return "?";
-  return g.charAt(0).toUpperCase();
-}
-
-export function formatParty(p: TurfDataPerson): string {
-  const party = (p.otherProperties.party ?? "").trim();
-  if (!party) return "?";
-  return party.charAt(0).toUpperCase();
-}
-
 // Combined hook: fetches turf metadata + data blob + builds indexes.
 // Returns everything screens need in one call.
 export function useTurf(turfId: string) {
