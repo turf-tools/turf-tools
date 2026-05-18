@@ -285,3 +285,64 @@ def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
         FROM ducklake."default".persons_geocoded
     """).fetchone()
     assert bad == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# voting-history extraction — shape/content sanity
+# ---------------------------------------------------------------------------
+
+
+def test_other_properties_contains_new_voting_history_keys(nyc_pipeline):
+    """Every person row has the new normalized fields in other_properties."""
+    row = nyc_pipeline.execute("""
+        SELECT
+          count(*) FILTER (WHERE json_extract(other_properties, '$.enrollment') IS NOT NULL)             AS has_enrollment,
+          count(*) FILTER (WHERE json_extract(other_properties, '$.registration_status') IS NOT NULL)    AS has_reg_status,
+          count(*) FILTER (WHERE json_extract(other_properties, '$.registration_date') IS NOT NULL)      AS has_reg_date,
+          count(*) FILTER (WHERE json_extract(other_properties, '$.voting_history') IS NOT NULL)         AS has_voting_history,
+          count(*)                                                                                       AS total
+        FROM ducklake."default".persons_geocoded
+    """).fetchone()
+    has_enrollment, has_reg_status, has_reg_date, has_voting_history, total = row
+    assert has_enrollment > 0.99 * total, f"{has_enrollment}/{total} have enrollment"
+    assert has_reg_status == total
+    assert has_reg_date == total
+    assert has_voting_history == total
+
+
+def test_dates_are_iso_8601(nyc_pipeline):
+    """date_of_birth, registration_date, last_voted_date all match YYYY-MM-DD."""
+    bad = nyc_pipeline.execute(r"""
+        WITH x AS (
+          SELECT
+            json_extract_string(other_properties, '$.date_of_birth')     AS dob,
+            json_extract_string(other_properties, '$.registration_date') AS reg,
+            json_extract_string(other_properties, '$.last_voted_date')   AS lv
+          FROM ducklake."default".persons_geocoded
+        )
+        SELECT
+          count(*) FILTER (WHERE dob IS NOT NULL AND dob !~ '^\d{4}-\d{2}-\d{2}$') AS bad_dob,
+          count(*) FILTER (WHERE reg IS NOT NULL AND reg !~ '^\d{4}-\d{2}-\d{2}$') AS bad_reg,
+          count(*) FILTER (WHERE lv  IS NOT NULL AND lv  !~ '^\d{4}-\d{2}-\d{2}$') AS bad_last_voted
+        FROM x
+    """).fetchone()
+    assert bad == (0, 0, 0)
+
+
+def test_enrollment_values_in_canonical_enum(nyc_pipeline):
+    """enrollment only takes documented canonical labels."""
+    allowed = {
+        "democratic", "republican", "conservative", "working_families",
+        "independence", "green", "libertarian", "reform",
+        "unaffiliated", "other",
+    }
+    rows = nyc_pipeline.execute("""
+        SELECT DISTINCT json_extract_string(other_properties, '$.enrollment')
+        FROM ducklake."default".persons_geocoded
+        WHERE json_extract_string(other_properties, '$.enrollment') IS NOT NULL
+    """).fetchall()
+    seen = {r[0] for r in rows}
+    unexpected = seen - allowed
+    assert not unexpected, f"unexpected enrollment values: {unexpected}"
+
+

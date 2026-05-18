@@ -3,7 +3,7 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator
 
@@ -104,4 +104,7 @@ class Person(BaseModel):
     zip5: str
     zip4: str | None = None
 
-    other_properties: Annotated[dict[str, str | None], BeforeValidator(_parse_json_string)] = {}
+    # Values may be any JSON-encodable shape — scalars for flat filter
+    # primitives (party, district), or nested lists/objects for richer
+    # records like voting_history.
+    other_properties: Annotated[dict[str, Any], BeforeValidator(_parse_json_string)] = {}

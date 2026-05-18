@@ -25,7 +25,8 @@ import {
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { toTitleCase } from "@/lib/format";
-import { formatAge, formatGender, formatParty, useTurf } from "@/lib/turf-data";
+import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
+import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
 
 type Mode = "script" | "unavailable" | "note" | "view-notes";
@@ -206,7 +207,7 @@ export default function PersonScreen() {
             <View className="flex-row items-center gap-2">
               <Pill>{formatAge(person)}</Pill>
               <Pill>{formatGender(person)}</Pill>
-              <Pill>{formatParty(person)}</Pill>
+              <Pill>{formatEnrollment(person)}</Pill>
               <View className="flex-1" />
               {noteExists && <Pill icon={<Scroll size={18} color={iconColor} />} />}
               {surveyExists && <Pill icon={<Speech size={18} color={iconColor} />} />}
