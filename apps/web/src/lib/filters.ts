@@ -71,21 +71,20 @@ export const FILTERS: ReadonlyArray<FilterDef> = [
   // other_properties JSONB
   {
     kind: "enum",
-    key: "party",
+    key: "enrollment",
     label: "Party",
     source: "other_properties",
-    // NYS BOE enrollment codes. Subset most segments care about; full code
-    // list exists upstream and can be extended here as needed.
     values: [
-      { value: "DEM", label: "Democrat" },
-      { value: "REP", label: "Republican" },
-      { value: "WOR", label: "Working Families" },
-      { value: "CON", label: "Conservative" },
-      { value: "BLK", label: "Blank (no party)" },
-      { value: "IND", label: "Independence" },
-      { value: "GRE", label: "Green" },
-      { value: "LIB", label: "Libertarian" },
-      { value: "OTH", label: "Other" },
+      { value: "democratic", label: "Democratic" },
+      { value: "republican", label: "Republican" },
+      { value: "conservative", label: "Conservative" },
+      { value: "working_families", label: "Working Families" },
+      { value: "unaffiliated", label: "Unaffiliated" },
+      { value: "independence", label: "Independence" },
+      { value: "green", label: "Green" },
+      { value: "libertarian", label: "Libertarian" },
+      { value: "reform", label: "Reform" },
+      { value: "other", label: "Other" },
     ],
   },
   {

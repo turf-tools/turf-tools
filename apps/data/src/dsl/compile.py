@@ -178,7 +178,7 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
     if f.min is None and f.max is None:
         return ""
     expr = _column_expr(f.key, def_.source)
-    dob = f"try_strptime({expr}, '%Y%m%d')::DATE"
+    dob = f"try_strptime({expr}, '%Y-%m-%d')::DATE"
     age_years = f"extract(year from age(current_date, {dob}))"
     parts: list[str] = []
     if f.min is not None:

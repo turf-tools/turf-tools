@@ -117,7 +117,7 @@ FIELDS: dict[str, FieldDef] = {
     "last_name": TextFieldDef(kind="text", key="last_name", source="column", op="contains"),
     "zip5": TextFieldDef(kind="text", key="zip5", source="column", op="equals"),
     # other_properties JSONB.
-    "party": EnumFieldDef(kind="enum", key="party", source="other_properties"),
+    "enrollment": EnumFieldDef(kind="enum", key="enrollment", source="other_properties"),
     "gender": EnumFieldDef(kind="enum", key="gender", source="other_properties"),
     "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="other_properties"),
     "ad_ed": TextFieldDef(kind="text", key="ad_ed", source="other_properties", op="equals"),
