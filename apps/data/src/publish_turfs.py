@@ -311,6 +311,7 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
             p.external_id, p.first_name, p.last_name,
             p.address_line_2 AS unit,
             p.other_properties,
+            p.voting_history,
             p.building_id, p.door_id,
             b.latitude, b.longitude,
             b.address_line_1 AS street, b.city, b.state, b.zip5 AS zip
@@ -333,7 +334,9 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
                 'firstName', first_name,
                 'lastName', last_name,
                 'otherProperties',
-                    coalesce(json(other_properties::VARCHAR), json('{{}}'))
+                    coalesce(json(other_properties::VARCHAR), json('{{}}')),
+                'votingHistory',
+                    coalesce(to_json(voting_history), json('[]'))
             )) AS persons
         FROM assigned
         GROUP BY polygon_idx, building_id, door_id, unit

@@ -3,7 +3,7 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator
 
@@ -17,10 +17,19 @@ _SAFE_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 def _parse_json_string(v: object) -> object:
-    """Accept a JSON string or a dict for other_properties."""
+    """Accept a JSON string, or any already-deserialized container."""
     if isinstance(v, str):
         return json.loads(v)
     return v
+
+
+class VotingHistoryEntry(BaseModel):
+    """One past election a voter participated in."""
+
+    year: int
+    type: str
+    date: str | None  # ISO 8601 YYYY-MM-DD; null for legacy year-only entries
+    method: str
 
 
 def quote_ident(name: str) -> str:
@@ -104,7 +113,11 @@ class Person(BaseModel):
     zip5: str
     zip4: str | None = None
 
-    # Values may be any JSON-encodable shape — scalars for flat filter
-    # primitives (party, district), or nested lists/objects for richer
-    # records like voting_history.
-    other_properties: Annotated[dict[str, Any], BeforeValidator(_parse_json_string)] = {}
+    # Flat string-valued bag of filter primitives (party, districts, dates).
+    # Richer records live in dedicated top-level columns (e.g. voting_history)
+    # so they don't bloat the JSON column that scalar filters scan.
+    other_properties: Annotated[dict[str, str | None], BeforeValidator(_parse_json_string)] = {}
+
+    voting_history: Annotated[
+        list[VotingHistoryEntry], BeforeValidator(_parse_json_string)
+    ] = []

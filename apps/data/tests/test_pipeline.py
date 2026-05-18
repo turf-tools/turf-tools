@@ -292,22 +292,24 @@ def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
 # ---------------------------------------------------------------------------
 
 
-def test_other_properties_contains_new_voting_history_keys(nyc_pipeline):
-    """Every person row has the new normalized fields in other_properties."""
+def test_new_voter_fields_present_and_well_shaped(nyc_pipeline):
+    """Scalars live in other_properties; voting_history is a top-level column."""
     row = nyc_pipeline.execute("""
         SELECT
           count(*) FILTER (WHERE json_extract(other_properties, '$.enrollment') IS NOT NULL)             AS has_enrollment,
           count(*) FILTER (WHERE json_extract(other_properties, '$.registration_status') IS NOT NULL)    AS has_reg_status,
           count(*) FILTER (WHERE json_extract(other_properties, '$.registration_date') IS NOT NULL)      AS has_reg_date,
-          count(*) FILTER (WHERE json_extract(other_properties, '$.voting_history') IS NOT NULL)         AS has_voting_history,
+          count(*) FILTER (WHERE voting_history IS NOT NULL)                                             AS has_voting_history,
+          count(*) FILTER (WHERE json_extract(other_properties, '$.voting_history') IS NOT NULL)         AS leaked_into_other,
           count(*)                                                                                       AS total
         FROM ducklake."default".persons_geocoded
     """).fetchone()
-    has_enrollment, has_reg_status, has_reg_date, has_voting_history, total = row
+    has_enrollment, has_reg_status, has_reg_date, has_voting_history, leaked_into_other, total = row
     assert has_enrollment > 0.99 * total, f"{has_enrollment}/{total} have enrollment"
     assert has_reg_status == total
     assert has_reg_date == total
-    assert has_voting_history == total
+    assert has_voting_history == total  # empty list also counts as present
+    assert leaked_into_other == 0, "voting_history should not be inside other_properties"
 
 
 def test_dates_are_iso_8601(nyc_pipeline):
