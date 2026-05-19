@@ -12,14 +12,13 @@ import {
   Timer,
   UserRound,
 } from "lucide-react-native";
-import { useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
 import { createdByNameAtom } from "@/lib/atoms/created-by-name";
-import { SYNC_OPTIONS, syncIntervalAtom } from "@/lib/atoms/sync";
+import { SYNC_OPTIONS, syncIntervalAtom, userSyncingAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
-import { clearPullCache, pullCanvassEvents } from "@/lib/canvass-events";
+import { clearPullCache, pullCanvassEvents, useSyncStatus } from "@/lib/canvass-events";
 import { queryClient } from "@/lib/query-client";
 import { clearHost } from "@/rpc/client";
 
@@ -29,7 +28,11 @@ export default function SettingsScreen() {
   const setActiveTurf = useSetAtom(activeTurfAtom);
   const [createdByName, setCreatedByName] = useAtom(createdByNameAtom);
   const [syncInterval, setSyncInterval] = useAtom(syncIntervalAtom);
-  const [syncing, setSyncing] = useState(false);
+  // User-initiated only — module-level atom so closing and reopening
+  // Settings mid-sync still shows the in-flight state. Background
+  // 30s polls don't flip this; the button only reflects user intent.
+  const [syncing, setSyncing] = useAtom(userSyncingAtom);
+  const syncStatus = useSyncStatus(activeTurf?.turfId ?? null);
 
   const handleEditName = () => {
     Alert.prompt(
@@ -51,7 +54,13 @@ export default function SettingsScreen() {
   };
 
   const handleSync = async () => {
-    if (!activeTurf) return;
+    if (!activeTurf) {
+      Alert.alert(
+        "Nothing to sync",
+        "Open a turf first, syncing starts once you start collecting data.",
+      );
+      return;
+    }
     setSyncing(true);
     try {
       await pullCanvassEvents(activeTurf.turfId);
@@ -164,18 +173,6 @@ export default function SettingsScreen() {
             icon={<UserRound size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
-            title={`Sync frequency: ${syncLabel}`}
-            variant="outline"
-            onPress={handleSyncFrequency}
-            icon={<Timer size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
-          />
-          <Button
-            title={syncing ? "Syncing..." : "Sync now"}
-            variant="outline"
-            onPress={activeTurf ? handleSync : undefined}
-            icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
-          />
-          <Button
             title={theme === "dark" ? "Light mode" : "Dark mode"}
             onPress={() => setTheme(theme === "dark" ? "light" : "dark")}
             variant="outline"
@@ -193,8 +190,68 @@ export default function SettingsScreen() {
             onPress={handleResetAppState}
             icon={<BrushCleaning size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
+          <Button
+            title={`Sync frequency: ${syncLabel}`}
+            variant="outline"
+            onPress={handleSyncFrequency}
+            icon={<Timer size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+          />
+          <Button
+            title={syncing ? "Syncing..." : "Sync now"}
+            variant="outline"
+            onPress={handleSync}
+            disabled={syncing}
+            icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+          />
+          <SyncStatusLine status={syncStatus} />
         </View>
       </View>
+    </View>
+  );
+}
+
+// Relative time. Under a minute uses 5-second buckets (matching the
+// poll cadence) so the label ticks visibly without second-by-second
+// flicker. Coarser units kick in thereafter.
+function relativeTime(ms: number): string {
+  const diff = Math.max(0, Date.now() - ms);
+  const secs = Math.floor(diff / 1000);
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${Math.floor(secs / 5) * 5}s ago`;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function SyncStatusLine({ status }: { status: ReturnType<typeof useSyncStatus> }) {
+  const { lastPullAt, lastErrorAt, pendingCount } = status;
+  const erroredLast = lastErrorAt && (!lastPullAt || lastErrorAt > lastPullAt);
+  const headline = erroredLast
+    ? `Sync failure ${relativeTime(lastErrorAt)}`
+    : lastPullAt
+      ? `Last sync ${relativeTime(lastPullAt)}`
+      : null;
+  // Always reserve space for both lines so the layout doesn't shift as
+  // status text appears, disappears, or wraps to a second line.
+  return (
+    <View className="items-center gap-0.5" style={{ minHeight: 56 }}>
+      <Text
+        className="text-lg text-muted-foreground dark:text-muted-foreground-dark"
+        style={{ fontFamily: "Geist_400Regular" }}
+      >
+        {headline ?? " "}
+      </Text>
+      <Text
+        className="text-lg text-muted-foreground dark:text-muted-foreground-dark"
+        style={{ fontFamily: "Geist_400Regular" }}
+      >
+        {pendingCount > 0
+          ? `${pendingCount} ${pendingCount === 1 ? "result" : "results"} pending`
+          : " "}
+      </Text>
     </View>
   );
 }

@@ -4,8 +4,9 @@ import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import { useLiveQuery } from "@tanstack/react-db";
 import { startOfflineExecutor } from "@tanstack/offline-transactions/react-native";
 import type { StorageAdapter } from "@tanstack/offline-transactions/react-native";
+import { useQueryClient } from "@tanstack/react-query";
 import { getDefaultStore } from "jotai";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CanvassEventPayload } from "@field-tools/db/schema";
 import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
@@ -277,6 +278,59 @@ export function useCanvassEvents(turfId: string) {
 export function useRecordEvent(turfId: string) {
   const { recordEvent } = getTurfContext(turfId);
   return useCallback((params: RecordEventParams) => recordEvent(params), [recordEvent]);
+}
+
+// Snapshot of sync health for the status line in Settings. Pull state
+// (last success / last failure) comes from react-query's query cache;
+// `pendingCount` is the executor's outbox depth, polled at 1s since the
+// offline-transactions API has no subscription primitive. The same
+// 1s tick also keeps the "N min ago" relative-time labels fresh.
+export type SyncStatus = {
+  lastPullAt: number | null;
+  lastErrorAt: number | null;
+  pendingCount: number;
+};
+
+export function useSyncStatus(turfId: string | null): SyncStatus {
+  const queryClient = useQueryClient();
+  const [, forceTick] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Subscribe to cache changes for the canvass-events query so the
+  // status text updates when a pull (background or user) settles.
+  useEffect(() => {
+    if (!turfId) return;
+    const cache = queryClient.getQueryCache();
+    return cache.subscribe((event) => {
+      const key = event.query.queryKey;
+      if (Array.isArray(key) && key[0] === "canvass-events" && key[1] === turfId) {
+        forceTick((t) => t + 1);
+      }
+    });
+  }, [queryClient, turfId]);
+
+  // Poll the executor's pending count + re-render the relative-time
+  // strings. 5s is enough since the displayed time has minute
+  // granularity and pendingCount changes are tied to online-transitions.
+  useEffect(() => {
+    if (!turfId) return;
+    const ctx = getTurfContext(turfId);
+    const update = () => {
+      setPendingCount(ctx.executor.getPendingCount());
+      forceTick((t) => t + 1);
+    };
+    update();
+    const id = setInterval(update, 5000);
+    return () => clearInterval(id);
+  }, [turfId]);
+
+  if (!turfId) return { lastPullAt: null, lastErrorAt: null, pendingCount: 0 };
+  const state = queryClient.getQueryState(["canvass-events", turfId]);
+  return {
+    lastPullAt: state?.dataUpdatedAt || null,
+    lastErrorAt: state?.errorUpdatedAt || null,
+    pendingCount,
+  };
 }
 
 // ---------------------------------------------------------------------------
