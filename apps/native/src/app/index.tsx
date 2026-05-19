@@ -32,8 +32,8 @@ export default function LandingScreen() {
   const goToTurf = (turfId: string) => {
     void openTurf(turfId).catch(() => {
       Alert.alert(
-        "Could not retrieve previous results",
-        "Data may be out of date, sync when you have a connection.",
+        "Couldn't refresh from server",
+        "Showing the most recently synced version but data may be out of date, sync when you have a connection.",
       );
     });
     router.push(`/turfs/${turfId}`);
@@ -69,6 +69,9 @@ export default function LandingScreen() {
   };
 
   const handleSubmit = async () => {
+    // Swallow taps while a previous submit is in flight. The button stays
+    // visually active (no disabled dim) but extra presses are no-ops.
+    if (loading) return;
     const trimmedHost = host.trim();
     const trimmedCode = code.trim();
     if (!trimmedHost) {
@@ -96,7 +99,18 @@ export default function LandingScreen() {
       }
       goToTurf(turf.turfId);
     } catch (err) {
-      Alert.alert("Error", String(err));
+      // RN's fetch surfaces offline / unreachable-host failures as
+      // `TypeError: Network request failed`. Translate to a human-readable
+      // alert; pass other errors through as best-effort text.
+      const message = String(err);
+      if (message.includes("Network request failed")) {
+        Alert.alert(
+          "Connection error",
+          "Could not reach the server to load the turf, try again when you have a network connection.",
+        );
+      } else {
+        Alert.alert("Error", message);
+      }
       setLoading(false);
     }
   };
