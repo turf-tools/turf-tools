@@ -78,7 +78,8 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
 }
 
 // Combined hook: fetches turf metadata + data blob + builds indexes.
-// Returns everything screens need in one call.
+// Returns everything screens need in one call. Also warms the script
+// cache as soon as meta resolves.
 export function useTurf(turfId: string) {
   const metaQuery = useQuery({
     queryKey: ["turf", turfId] as const,
@@ -87,6 +88,13 @@ export function useTurf(turfId: string) {
     staleTime: Infinity,
   });
   const dataQuery = useTurfData(turfId);
+  const scriptId = metaQuery.data?.scriptId;
+  useQuery({
+    queryKey: ["script", scriptId] as const,
+    queryFn: () => client.script.get({ scriptId: scriptId! }),
+    enabled: !!scriptId,
+    staleTime: Infinity,
+  });
   const indexes = useMemo(
     () => (dataQuery.data ? buildTurfIndexes(dataQuery.data) : null),
     [dataQuery.data],
