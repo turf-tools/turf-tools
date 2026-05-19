@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { CanvassEventPayload } from "@field-tools/db/schema";
 import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
+import { FixedReactNativeOnlineDetector } from "@/lib/online-detector";
 import { queryClient } from "@/lib/query-client";
 import { client } from "@/rpc/client";
 
@@ -184,6 +185,10 @@ function createTurfContext(turfId: string): TurfContext {
   const executor = startOfflineExecutor({
     collections: { events: collection as never },
     storage: new AsyncStorageAdapter(),
+    // Workaround for TanStack/db#1490 — upstream RN detector has races
+    // that strand the outbox after airplane-mode-off. Drop the override
+    // (and the file) when upstream ships a fix.
+    onlineDetector: new FixedReactNativeOnlineDetector(),
     mutationFns: {
       appendEvent: async ({ transaction }) => {
         for (const mutation of transaction.mutations) {
