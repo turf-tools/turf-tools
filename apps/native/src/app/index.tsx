@@ -139,7 +139,7 @@ export default function LandingScreen() {
             placeholder="Turf code"
             placeholderTextColor="#999"
             keyboardType="number-pad"
-            style={{ paddingTop: 11, paddingBottom: 13 }}
+            style={{ paddingTop: 11, paddingBottom: 13, fontVariant: ["tabular-nums"] }}
             className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
           />
           <Button title={loading ? "Loading..." : "Open"} onPress={handleSubmit} />
