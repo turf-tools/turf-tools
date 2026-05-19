@@ -243,6 +243,10 @@ function getTurfContext(turfId: string): TurfContext {
 export async function openTurf(turfId: string) {
   pullCache.delete(turfId);
   const { collection } = getTurfContext(turfId);
+  // Invalidate the script cache so script-content edits propagate
+  // when a canvasser reopens a turf.
+  await queryClient.invalidateQueries({ queryKey: ["script"] });
+  // Invalidate canvass events to get fresh event data.
   await queryClient.invalidateQueries({ queryKey: ["canvass-events", turfId] });
   await (collection as unknown as { preload: () => Promise<void> }).preload();
 }
