@@ -103,7 +103,8 @@ export default function LandingScreen() {
 
   return (
     <Pressable className="flex-1 bg-background dark:bg-background-dark" onPress={Keyboard.dismiss}>
-      <View className="flex-1 items-center justify-center p-6">
+      <View className="flex-1 items-center p-6">
+        <View style={{ flex: 1.5 }} />
         <Text
           className="mb-2 text-5xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
           style={{ fontFamily: "Geist_700Bold" }}
@@ -128,7 +129,7 @@ export default function LandingScreen() {
             keyboardType="url"
             returnKeyType="next"
             onSubmitEditing={() => codeRef.current?.focus()}
-            style={{ lineHeight: 20 }}
+            style={{ paddingTop: 11, paddingBottom: 13 }}
             className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
           />
           <TextInput
@@ -138,11 +139,12 @@ export default function LandingScreen() {
             placeholder="Turf code"
             placeholderTextColor="#999"
             keyboardType="number-pad"
-            style={{ lineHeight: 20 }}
+            style={{ paddingTop: 11, paddingBottom: 13 }}
             className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
           />
           <Button title={loading ? "Loading..." : "Open"} onPress={handleSubmit} />
         </View>
+        <View style={{ flex: 2 }} />
       </View>
     </Pressable>
   );
