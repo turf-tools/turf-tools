@@ -1,3 +1,4 @@
+import { ORPCError } from "@orpc/server";
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
@@ -38,7 +39,7 @@ export const countCampaigns = pub
           eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Zone group not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
 
     const refs = await context.db
       .select({ campaignId: campaigns.campaignId })
@@ -121,17 +122,18 @@ export const remove = pub
           eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Zone group not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
 
     const inUse = await context.db
       .select({ campaignId: campaigns.campaignId })
       .from(campaigns)
       .where(eq(campaigns.zoneGroupId, input.zoneGroupId));
     if (inUse.length > 0) {
-      throw new Error(
-        `Zone group is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
+      throw new ORPCError("CONFLICT", {
+        message:
+          `Zone group is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
           "Detach or delete those campaigns first.",
-      );
+      });
     }
 
     await context.db.delete(zoneGroups).where(eq(zoneGroups.zoneGroupId, input.zoneGroupId));
@@ -157,7 +159,7 @@ export const clone = pub
           eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
-    if (source.length === 0) throw new Error("Zone group not found");
+    if (source.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
     const src = source[0]!;
 
     const inserted = await context.db
@@ -225,7 +227,7 @@ export const createWithDefaultZone = pub
         ),
       );
     const segment = segmentRows[0];
-    if (!segment) throw new Error("Segment not found");
+    if (!segment) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
 
     // 2. Resolve the segment's distinct key values via the data
     // app's per-key counts endpoint — we only care about which keys

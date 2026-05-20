@@ -1,3 +1,4 @@
+import { ORPCError } from "@orpc/server";
 import { and, asc, eq } from "@field-tools/db";
 import { zoneGroups, zones } from "@field-tools/db/schema";
 import { z } from "zod";
@@ -66,7 +67,7 @@ export const updateKeys = pub
         and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
     if (owned.length === 0) {
-      throw new Error("Zone not found");
+      throw new ORPCError("NOT_FOUND", { message: "Zone not found" });
     }
     await context.db
       .update(zones)
@@ -91,7 +92,7 @@ export const rename = pub
       .where(
         and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
-    if (owned.length === 0) throw new Error("Zone not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone not found" });
     await context.db
       .update(zones)
       .set({ name: input.name, updatedAt: new Date() })
@@ -117,7 +118,7 @@ export const create = pub
           eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Zone group not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
 
     const rows = await context.db
       .insert(zones)
@@ -142,7 +143,7 @@ export const remove = pub
       .where(
         and(eq(zones.zoneId, input.zoneId), eq(zoneGroups.organizationId, context.organizationId)),
       );
-    if (owned.length === 0) throw new Error("Zone not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone not found" });
     await context.db.delete(zones).where(eq(zones.zoneId, input.zoneId));
     return { ok: true as const };
   });
@@ -161,7 +162,7 @@ export const removeAllInGroup = pub
           eq(zoneGroups.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Zone group not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
     await context.db.delete(zones).where(eq(zones.zoneGroupId, input.zoneGroupId));
     return { ok: true as const };
   });

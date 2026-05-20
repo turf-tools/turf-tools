@@ -1,3 +1,4 @@
+import { ORPCError } from "@orpc/server";
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns, turfDrafts } from "@field-tools/db/schema";
 import { z } from "zod";
@@ -32,7 +33,7 @@ export const list = pub
           eq(campaigns.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Campaign not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
 
     const rows = await context.db
       .select({
@@ -81,10 +82,12 @@ export const replaceAll = pub
           eq(campaigns.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Campaign not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
     const segmentId = owned[0]!.segmentId;
     if (!segmentId) {
-      throw new Error("Campaign has no bound segment; cannot save drafts");
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Campaign has no bound segment; cannot save drafts",
+      });
     }
 
     await context.db.transaction(async (tx) => {
