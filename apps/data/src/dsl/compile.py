@@ -278,14 +278,14 @@ def _address_clause(f: AddressFilter, def_: FieldDef, params: list[Any]) -> str:
 def _voting_history_clause(f: VotingHistoryFilter, def_: FieldDef, params: list[Any]) -> str:
     if not isinstance(def_, VotingHistoryFieldDef):
         raise CriteriaError(f"Field {f.key} is not a voting-history-count field")
-    if f.windowYears <= 0 or f.count < 0:
+    if f.window_years <= 0 or f.count < 0:
         return ""
     types = _VH_TYPE_GROUPS[f.type]
     type_placeholders = ", ".join("?" for _ in types)
     # list_filter + len keeps this a scalar expression (no correlated subquery).
     # `year(current_date) - ?` keeps the recency window relative to query time.
     inner = f"len(list_filter({def_.key}, e -> e.year >= year(current_date) - ? AND e.type IN ({type_placeholders})))"
-    params.append(f.windowYears)
+    params.append(f.window_years)
     params.extend(types)
     op = ">=" if f.comparator == "at_least" else "="
     params.append(f.count)
@@ -295,7 +295,7 @@ def _voting_history_clause(f: VotingHistoryFilter, def_: FieldDef, params: list[
 def _key_filter_clause(kf: KeyFilter, params: list[Any]) -> str:
     if not kf.keys:
         return "1=0"
-    expr = boundary_key_expr_for(kf.keyGroup)
+    expr = boundary_key_expr_for(kf.key_group)
     placeholders = ", ".join("?" for _ in kf.keys)
     params.extend(kf.keys)
     return f"{expr} IN ({placeholders})"

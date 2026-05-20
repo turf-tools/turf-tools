@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
@@ -157,10 +157,17 @@ async def key_group_geojson(key_group: str, org_slug: str):
     )
 
 
-class _PersonsCountRequest(BaseModel):
+# Request models accept the camelCase wire shape sent by the TS web tier
+# while exposing snake_case Python attributes. `populate_by_name=True` lets
+# internal callers (tests, ad-hoc construction) use the Python field name.
+class _WireBaseModel(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _PersonsCountRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
-    keyFilter: KeyFilter | None = None  # noqa: N815  -- camelCase matches wire format from web
-    orgSlug: str  # noqa: N815
+    key_filter: KeyFilter | None = Field(default=None, validation_alias="keyFilter")
+    org_slug: str = Field(validation_alias="orgSlug")
 
 
 @app.post("/persons/count")
@@ -170,7 +177,7 @@ async def persons_count(req: _PersonsCountRequest):
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
     params: list = []
-    where = criteria_to_where(req.criteria, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -180,7 +187,7 @@ async def persons_count(req: _PersonsCountRequest):
         FROM {{persons_geocoded}}
         {where}
         """,
-        slug=req.orgSlug,
+        slug=req.org_slug,
     )
     conn = get_connection(settings, read_only=True)
     row = conn.execute(sql, params).fetchone()
@@ -193,9 +200,9 @@ async def persons_count(req: _PersonsCountRequest):
     }
 
 
-class _PersonsCountCascadeRequest(BaseModel):
+class _PersonsCountCascadeRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
-    orgSlug: str  # noqa: N815
+    org_slug: str = Field(validation_alias="orgSlug")
 
 
 @app.post("/persons/count-cascade")
@@ -207,7 +214,7 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     prior row. The step verb (add/narrow/remove) determines how each step
     modifies the running set.
     """
-    persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
+    persons_table = resolve("{persons_geocoded}", slug=req.org_slug)
     params: list = []
     sql = cascade_sql(req.criteria, persons_table, params)
     conn = get_connection(settings, read_only=True)
@@ -222,10 +229,10 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     return {"steps": steps_result}
 
 
-class _PersonsSampleRequest(BaseModel):
+class _PersonsSampleRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
-    keyFilter: KeyFilter | None = None  # noqa: N815
-    orgSlug: str  # noqa: N815
+    key_filter: KeyFilter | None = Field(default=None, validation_alias="keyFilter")
+    org_slug: str = Field(validation_alias="orgSlug")
     limit: int = 100
 
 
@@ -239,7 +246,7 @@ async def persons_sample(req: _PersonsSampleRequest):
     """
     limit = max(1, min(req.limit, 500))
     params: list = []
-    where = criteria_to_where(req.criteria, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
@@ -248,7 +255,7 @@ async def persons_sample(req: _PersonsSampleRequest):
             {where}
         ) USING SAMPLE {limit} ROWS
         """,
-        slug=req.orgSlug,
+        slug=req.org_slug,
     )
     conn = get_connection(settings, read_only=True)
     rows = conn.execute(sql, params).fetchall()
@@ -268,11 +275,11 @@ async def persons_sample(req: _PersonsSampleRequest):
     }
 
 
-class _PersonsCountByKeyRequest(BaseModel):
+class _PersonsCountByKeyRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
-    keyFilter: KeyFilter | None = None  # noqa: N815
-    keyGroup: str  # noqa: N815
-    orgSlug: str  # noqa: N815
+    key_filter: KeyFilter | None = Field(default=None, validation_alias="keyFilter")
+    key_group: str = Field(validation_alias="keyGroup")
+    org_slug: str = Field(validation_alias="orgSlug")
 
 
 @app.post("/persons/count-by-key")
@@ -284,9 +291,9 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    group_expr = boundary_key_expr_for(req.keyGroup)
+    group_expr = boundary_key_expr_for(req.key_group)
     params: list = []
-    where = criteria_to_where(req.criteria, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -297,7 +304,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         {where}
         GROUP BY {group_expr}
         """,
-        slug=req.orgSlug,
+        slug=req.org_slug,
     )
     conn = get_connection(settings, read_only=True)
     rows = conn.execute(sql, params).fetchall()
@@ -309,10 +316,10 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     return {"counts": counts}
 
 
-class _BuildingsListRequest(BaseModel):
+class _BuildingsListRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
-    keyFilter: KeyFilter | None = None  # noqa: N815
-    orgSlug: str  # noqa: N815
+    key_filter: KeyFilter | None = Field(default=None, validation_alias="keyFilter")
+    org_slug: str = Field(validation_alias="orgSlug")
 
 
 @app.post("/buildings/list")
@@ -325,7 +332,7 @@ async def buildings_list(req: _BuildingsListRequest):
     polygon" client-side.
     """
     params: list = []
-    where = criteria_to_where(req.criteria, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -340,7 +347,7 @@ async def buildings_list(req: _BuildingsListRequest):
         ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
-        slug=req.orgSlug,
+        slug=req.org_slug,
     )
     conn = get_connection(settings, read_only=True)
     cursor = conn.execute(sql, params)
@@ -349,10 +356,10 @@ async def buildings_list(req: _BuildingsListRequest):
     return {"buildings": rows}
 
 
-class _BuildingsPointsRequest(BaseModel):
+class _BuildingsPointsRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
-    keyFilter: KeyFilter | None = None  # noqa: N815
-    orgSlug: str  # noqa: N815
+    key_filter: KeyFilter | None = Field(default=None, validation_alias="keyFilter")
+    org_slug: str = Field(validation_alias="orgSlug")
 
 
 @app.post("/buildings/points")
@@ -364,7 +371,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
     JSON envelope, no per-byte decode work.
     """
     params: list = []
-    where = criteria_to_where(req.criteria, req.keyFilter, params)
+    where = criteria_to_where(req.criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT longitude, latitude
@@ -373,7 +380,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
             SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
         )
         """,
-        slug=req.orgSlug,
+        slug=req.org_slug,
     )
     conn = get_connection(settings, read_only=True)
     cursor = conn.execute(sql, params)
