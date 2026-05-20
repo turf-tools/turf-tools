@@ -1,3 +1,4 @@
+import { ORPCError } from "@orpc/server";
 import { and, asc, eq } from "@field-tools/db";
 import { campaigns } from "@field-tools/db/schema";
 import { z } from "zod";
@@ -87,7 +88,7 @@ export const rename = pub
           eq(campaigns.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Campaign not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
     await context.db
       .update(campaigns)
       .set({ name: input.name })
@@ -117,7 +118,7 @@ export const update = pub
           eq(campaigns.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Campaign not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
     const patch: Record<string, string | null> = {};
     if (input.segmentId !== undefined) patch.segmentId = input.segmentId;
     if (input.zoneGroupId !== undefined) patch.zoneGroupId = input.zoneGroupId;
@@ -146,7 +147,7 @@ export const clone = pub
           eq(campaigns.organizationId, context.organizationId),
         ),
       );
-    if (source.length === 0) throw new Error("Campaign not found");
+    if (source.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
     const src = source[0]!;
     const inserted = await context.db
       .insert(campaigns)
@@ -179,7 +180,7 @@ export const remove = pub
           eq(campaigns.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Campaign not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
     await context.db.delete(campaigns).where(eq(campaigns.campaignId, input.campaignId));
     return { ok: true as const };
   });

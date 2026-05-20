@@ -1,3 +1,4 @@
+import { ORPCError } from "@orpc/server";
 import { and, asc, eq, ne } from "@field-tools/db";
 import { campaigns, segments } from "@field-tools/db/schema";
 import { z } from "zod";
@@ -114,7 +115,7 @@ export const rename = pub
           eq(segments.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Segment not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
     await context.db
       .update(segments)
       .set({ name: input.name, updatedAt: new Date() })
@@ -141,7 +142,7 @@ export const clone = pub
           eq(segments.organizationId, context.organizationId),
         ),
       );
-    if (source.length === 0) throw new Error("Segment not found");
+    if (source.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
     const src = source[0]!;
     const inserted = await context.db
       .insert(segments)
@@ -172,17 +173,18 @@ export const remove = pub
           eq(segments.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Segment not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
 
     const inUse = await context.db
       .select({ campaignId: campaigns.campaignId })
       .from(campaigns)
       .where(eq(campaigns.segmentId, input.segmentId));
     if (inUse.length > 0) {
-      throw new Error(
-        `Segment is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
+      throw new ORPCError("CONFLICT", {
+        message:
+          `Segment is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
           "Detach or delete those campaigns first.",
-      );
+      });
     }
 
     await context.db.delete(segments).where(eq(segments.segmentId, input.segmentId));
@@ -202,7 +204,7 @@ export const countCampaigns = pub
           eq(segments.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new Error("Segment not found");
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
 
     const refs = await context.db
       .select({ campaignId: campaigns.campaignId })
@@ -233,7 +235,7 @@ export const updateCriteria = pub
         ),
       );
     if (owned.length === 0) {
-      throw new Error("Segment not found");
+      throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
     }
 
     const incoming = input.criteria as Criteria;
@@ -269,7 +271,9 @@ export const updateCriteria = pub
       expandSegmentRefs(incoming, segmentsById);
     } catch (err) {
       if (err instanceof SegmentRefError)
-        throw new Error(`Invalid segment references: ${err.message}`);
+        throw new ORPCError("BAD_REQUEST", {
+          message: `Invalid segment references: ${err.message}`,
+        });
       throw err;
     }
 
