@@ -57,6 +57,9 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "fsevents"
-    ]
+    ],
+    "patchedDependencies": {
+      "react-native-css-interop@0.2.3": "patches/react-native-css-interop@0.2.3.patch"
+    }
   }
 }

@@ -1,0 +1,70 @@
+diff --git a/dist/metro/index.js b/dist/metro/index.js
+index c91ba6adf049dd5c6eec1ec8301ecc0802f41bfc..6f1b1e5619afe2615e8e67c6ff360db45e650174 100644
+--- a/dist/metro/index.js
++++ b/dist/metro/index.js
+@@ -176,18 +176,19 @@ async function startCSSProcessor(filePath, platform, isDev, { input, getCSSForPl
+                 ? css
+                 : getNativeJS((0, css_to_rn_1.cssToReactNativeRuntime)(css, options), debug)));
+             debug(`virtualStyles.emit ${platform}`);
++            // Metro >=0.83 reads { changes: { addedFiles, modifiedFiles,
++            // removedFiles }, rootDir } and crashes on the legacy
++            // { eventsQueue } shape this package previously emitted. See
++            // upstream issue: nativewind/nativewind#1773.
+             haste.emit("change", {
+-                eventsQueue: [
+-                    {
+-                        filePath,
+-                        metadata: {
+-                            modifiedTime: Date.now(),
+-                            size: 1,
+-                            type: "virtual",
+-                        },
+-                        type: "change",
+-                    },
+-                ],
++                rootDir: "",
++                changes: {
++                    addedFiles: [],
++                    modifiedFiles: [
++                        [filePath, { modifiedTime: Date.now(), size: 1, type: "virtual" }],
++                    ],
++                    removedFiles: [],
++                },
+             });
+         }).then((css) => {
+             debug(`virtualStyles.initial ${platform}`);
+diff --git a/src/metro/index.ts b/src/metro/index.ts
+index fa58c7b84bfb0e72d6f1100097bdc2c7030358f6..d9f6ae1c162a39483fad9c944d7171d80a1a2bbd 100644
+--- a/src/metro/index.ts
++++ b/src/metro/index.ts
+@@ -341,18 +341,19 @@ async function startCSSProcessor(
+         );
+ 
+         debug(`virtualStyles.emit ${platform}`);
++        // Metro >=0.83 reads { changes: { addedFiles, modifiedFiles,
++        // removedFiles }, rootDir } and crashes on the legacy
++        // { eventsQueue } shape this package previously emitted. See
++        // upstream issue: nativewind/nativewind#1773.
+         haste.emit("change", {
+-          eventsQueue: [
+-            {
+-              filePath,
+-              metadata: {
+-                modifiedTime: Date.now(),
+-                size: 1, // Can be anything
+-                type: "virtual", // Can be anything
+-              },
+-              type: "change",
+-            },
+-          ],
++          rootDir: "",
++          changes: {
++            addedFiles: [],
++            modifiedFiles: [
++              [filePath, { modifiedTime: Date.now(), size: 1, type: "virtual" }],
++            ],
++            removedFiles: [],
++          },
+         });
+       }).then((css) => {
+         debug(`virtualStyles.initial ${platform}`);
