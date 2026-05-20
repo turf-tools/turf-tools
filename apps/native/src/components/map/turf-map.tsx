@@ -10,12 +10,13 @@ import {
 import { useCallback, useMemo, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@field-tools/db/schema";
+import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { LabelLayers } from "./labels";
 
 type Props = {
   turf: TurfData;
-  recordedBuildingIds: Set<string>;
+  buildingRoles: Map<string, "contacted" | "unavailable">;
   onBuildingPress?: (buildingId: string) => void;
   isDark?: boolean;
   bottomInset?: number;
@@ -34,20 +35,24 @@ type BuildingProps = {
   buildingId: string;
   doorCount: number;
   personCount: number;
-  recorded: boolean;
+  // 0 = no result, 1 = unavailable (any recorded), 2 = contacted (any survey).
+  // Encoded as a number so the cluster aggregation can take the max — survey
+  // dominates unavailable, unavailable dominates none.
+  role: 0 | 1 | 2;
 };
 
 // Map for the Turf List screen. Uses native MapLibre for GPU-level clustering.
 export function TurfMap({
   turf,
-  recordedBuildingIds,
+  buildingRoles,
   onBuildingPress,
   isDark = false,
   bottomInset = 0,
 }: Props) {
+  const colors = useColors();
   const featureCollection = useMemo(
-    () => buildFeatureCollection(turf.buildings, recordedBuildingIds),
-    [turf.buildings, recordedBuildingIds],
+    () => buildFeatureCollection(turf.buildings, buildingRoles),
+    [turf.buildings, buildingRoles],
   );
 
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
@@ -156,9 +161,16 @@ export function TurfMap({
             ["+", ["accumulated"], ["get", "personCount"]],
             ["get", "personCount"],
           ],
+          // Maximum role across the cluster — survey (2) > unavailable (1) > none (0).
+          // Mirrors per-building precedence so the cluster reads as the
+          // strongest signal among its members.
+          role: [
+            ["max", ["accumulated"], ["get", "role"]],
+            ["get", "role"],
+          ],
           recordedCount: [
             ["+", ["accumulated"], ["get", "recordedCount"]],
-            ["case", ["get", "recorded"], 1, 0],
+            ["case", [">", ["get", "role"], 0], 1, 0],
           ],
         }}
         onPress={handlePress}
@@ -212,10 +224,14 @@ export function TurfMap({
               50,
               30,
             ],
+            // Cluster color follows the strongest role in the cluster:
+            // any survey → contacted, any unavailable → unavailable, else neutral.
             circleColor: [
               "case",
-              ["==", ["get", "recordedCount"], ["get", "point_count"]],
-              isDark ? "#1A3A45" : "hsl(199, 89%, 80%)",
+              ["==", ["get", "role"], 2],
+              colors.contacted.background,
+              ["==", ["get", "role"], 1],
+              colors.unavailable.background,
               isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
             ],
             circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
@@ -242,8 +258,10 @@ export function TurfMap({
             circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 16],
             circleColor: [
               "case",
-              ["==", ["get", "recorded"], true],
-              isDark ? "#1A3A45" : "hsl(199, 89%, 80%)",
+              ["==", ["get", "role"], 2],
+              colors.contacted.background,
+              ["==", ["get", "role"], 1],
+              colors.unavailable.background,
               isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
             ],
             circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
@@ -268,25 +286,29 @@ export function TurfMap({
 
 function buildFeatureCollection(
   buildings: TurfDataBuilding[],
-  recordedBuildingIds: Set<string>,
+  buildingRoles: Map<string, "contacted" | "unavailable">,
 ): GeoJSON.FeatureCollection<GeoJSON.Point, BuildingProps> {
   return {
     type: "FeatureCollection",
     features: buildings
       .filter((b) => b.latitude != null && b.longitude != null)
-      .map((b) => ({
-        type: "Feature" as const,
-        geometry: {
-          type: "Point" as const,
-          coordinates: [b.longitude as number, b.latitude as number],
-        },
-        properties: {
-          buildingId: b.buildingId,
-          doorCount: b.doors.length,
-          personCount: b.doors.reduce((sum, d) => sum + d.persons.length, 0),
-          recorded: recordedBuildingIds.has(b.buildingId),
-        },
-      })),
+      .map((b) => {
+        const r = buildingRoles.get(b.buildingId);
+        const role: 0 | 1 | 2 = r === "contacted" ? 2 : r === "unavailable" ? 1 : 0;
+        return {
+          type: "Feature" as const,
+          geometry: {
+            type: "Point" as const,
+            coordinates: [b.longitude as number, b.latitude as number],
+          },
+          properties: {
+            buildingId: b.buildingId,
+            doorCount: b.doors.length,
+            personCount: b.doors.reduce((sum, d) => sum + d.persons.length, 0),
+            role,
+          },
+        };
+      }),
   };
 }
 

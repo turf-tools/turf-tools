@@ -12,11 +12,13 @@ import { useScreenNav } from "@/lib/nav-context";
 import {
   type PersonSummary,
   derivePersonSummaries,
+  hasSurvey,
   isRecorded,
   useCanvassEvents,
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
+import { useColors } from "@/lib/colors";
 import { useTurf } from "@/lib/turf-data";
 
 // Turf List screen — the canvasser's home base for a turf. Renders a map at
@@ -33,22 +35,23 @@ export default function TurfListScreen() {
   const events = useCanvassEvents(turfId);
   const allResults = useMemo(() => derivePersonSummaries(events), [events]);
 
-  const recordedBuildingIds = useMemo(() => {
-    const set = new Set<string>();
-    if (!turfData) return set;
-
+  // Per-building semantic role for the map. Only set for fully-recorded
+  // buildings — partials stay uncolored so completion stands out.
+  //   "contacted"   — fully recorded AND any person had a survey response
+  //   "unavailable" — fully recorded AND all results are unavailable
+  //   absent        — partial or none
+  const buildingRoles = useMemo(() => {
+    const map = new Map<string, "contacted" | "unavailable">();
+    if (!turfData) return map;
     for (const building of turfData.buildings) {
-      const allPersonsRecorded =
-        building.doors.length > 0 &&
-        building.doors.every((door) => {
-          if (door.persons.length === 0) return false;
-          return door.persons.every((person) => isRecorded(allResults, person.personId));
-        });
-      if (allPersonsRecorded) {
-        set.add(building.buildingId);
-      }
+      const persons = building.doors.flatMap((d) => d.persons);
+      if (persons.length === 0) continue;
+      const allRecorded = persons.every((p) => isRecorded(allResults, p.personId));
+      if (!allRecorded) continue;
+      const anySurvey = persons.some((p) => hasSurvey(allResults, p.personId));
+      map.set(building.buildingId, anySurvey ? "contacted" : "unavailable");
     }
-    return set;
+    return map;
   }, [allResults, turfData]);
 
   const sheetRef = useRef<BottomSheet>(null);
@@ -160,7 +163,9 @@ export default function TurfListScreen() {
   if (error) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-red-dark pb-2 text-center">Failed to load turf</Text>
+        <Text className="font-sans-bold text-destructive dark:text-destructive-dark pb-2 text-center">
+          Failed to load turf
+        </Text>
         <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark text-center">
           {String(error)}
         </Text>
@@ -170,7 +175,9 @@ export default function TurfListScreen() {
   if (!turfData) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
-        <Text className="font-sans-bold text-red-dark text-center">Empty turf data</Text>
+        <Text className="font-sans-bold text-destructive dark:text-destructive-dark text-center">
+          Empty turf data
+        </Text>
       </View>
     );
   }
@@ -180,7 +187,7 @@ export default function TurfListScreen() {
       <View className="flex-1">
         <TurfMap
           turf={turfData}
-          recordedBuildingIds={recordedBuildingIds}
+          buildingRoles={buildingRoles}
           onBuildingPress={openBuilding}
           isDark={isDark}
           bottomInset={bottomInset}
@@ -227,10 +234,13 @@ function BuildingRow({
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
+  const colors = useColors();
   const persons = building.doors.flatMap((d) => d.persons);
   const personCount = persons.length;
   const recordedCount = persons.filter((p) => isRecorded(allResults, p.personId)).length;
   const allRecorded = recordedCount > 0 && recordedCount === personCount;
+  // Match the dot-coloring rule on the map: only color when fully recorded.
+  const role = persons.some((p) => hasSurvey(allResults, p.personId)) ? "contacted" : "unavailable";
   const address = formatBuildingAddress(building);
 
   return (
@@ -253,16 +263,18 @@ function BuildingRow({
           <View className="flex-1" />
           {recordedCount > 0 && (
             <Pill
-              variant={allRecorded ? "primary" : "default"}
+              style={allRecorded ? { backgroundColor: colors[role].background } : undefined}
               icon={
                 <Check
                   size={16}
-                  color={allRecorded ? (isDark ? "#7ECDE0" : "#3D7385") : iconColor}
+                  color={allRecorded ? colors[role].foreground : iconColor}
                   strokeWidth={2.5}
                 />
               }
             >
-              {recordedCount}
+              <Text style={allRecorded ? { color: colors[role].foreground } : null}>
+                {recordedCount}
+              </Text>
             </Pill>
           )}
         </View>

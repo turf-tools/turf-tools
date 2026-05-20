@@ -1,11 +1,12 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Check, Scroll, Speech } from "lucide-react-native";
+import { Check, Scroll } from "lucide-react-native";
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
 import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@field-tools/db/schema";
 import { SwipeAction } from "@/components/swipe-action";
 import { Pill } from "@/components/pill";
+import { useColors } from "@/lib/colors";
 import { useScreenNav } from "@/lib/nav-context";
 import { toTitleCase } from "@/lib/format";
 import {
@@ -52,7 +53,9 @@ export default function BuildingScreen() {
   if (!building) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-base text-red-dark mb-1">Building not found</Text>
+        <Text className="font-sans-bold text-base text-destructive dark:text-destructive-dark mb-1">
+          Building not found
+        </Text>
         <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark">
           buildingId: {buildingId}
         </Text>
@@ -185,6 +188,8 @@ function PersonRow({
   const survey = hasSurvey(allResults, person.personId);
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
+  const colors = useColors();
+  const role = survey ? "contacted" : "unavailable";
   const recordEvent = useRecordEvent(turfId);
 
   const fullName =
@@ -207,11 +212,14 @@ function PersonRow({
       onTap={markNotHome}
       onFullSwipe={markNotHome}
       actionContent={
-        <Text className="font-sans text-xl text-blue-dark dark:text-blue-dark-dark text-center">
+        <Text
+          style={{ color: colors.unavailable.foreground }}
+          className="font-sans text-xl text-center"
+        >
           Not{"\n"}home
         </Text>
       }
-      actionClassName="bg-blue-light dark:bg-blue-light-dark"
+      actionStyle={{ backgroundColor: colors.unavailable.background }}
       actionWidth={80}
     >
       <Pressable
@@ -230,12 +238,16 @@ function PersonRow({
             <Pill>{formatGender(person)}</Pill>
             <Pill>{formatEnrollment(person)}</Pill>
             <View className="flex-1" />
-            {note && <Pill icon={<Scroll size={18} color={iconColor} />} />}
-            {survey && <Pill icon={<Speech size={18} color={iconColor} />} />}
+            {note && (
+              <Pill
+                style={recorded ? { backgroundColor: colors[role].background } : undefined}
+                icon={<Scroll size={18} color={recorded ? colors[role].foreground : iconColor} />}
+              />
+            )}
             {recorded && (
               <Pill
-                variant="primary"
-                icon={<Check size={18} color={isDark ? "#7ECDE0" : "#3D7385"} strokeWidth={2.5} />}
+                style={{ backgroundColor: colors[role].background }}
+                icon={<Check size={18} color={colors[role].foreground} strokeWidth={2.5} />}
               />
             )}
           </View>

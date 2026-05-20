@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Ban, Check, Pencil, Scroll, Speech } from "lucide-react-native";
+import { Ban, Check, Pencil, Scroll } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { Pill } from "@/components/pill";
+import { useColors } from "@/lib/colors";
 import { useScreenNav } from "@/lib/nav-context";
 import { WideButton } from "@/components/wide-button";
 import {
@@ -68,6 +69,7 @@ export default function PersonScreen() {
   const isDark = theme === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
   const mutedIconColor = isDark ? "#666" : "#888";
+  const colors = useColors();
 
   // Derive current state from the person summary.
   const summary = summaries.get(personId);
@@ -177,7 +179,9 @@ export default function PersonScreen() {
   if (!person || !door || !building) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark p-5">
-        <Text className="font-sans-bold text-red-dark mb-1">Person not found</Text>
+        <Text className="font-sans-bold text-destructive dark:text-destructive-dark mb-1">
+          Person not found
+        </Text>
         <Text className="font-sans text-sm text-muted-foreground dark:text-muted-foreground-dark">
           personId: {personId}
         </Text>
@@ -209,16 +213,30 @@ export default function PersonScreen() {
               <Pill>{formatGender(person)}</Pill>
               <Pill>{formatEnrollment(person)}</Pill>
               <View className="flex-1" />
-              {noteExists && <Pill icon={<Scroll size={18} color={iconColor} />} />}
-              {surveyExists && <Pill icon={<Speech size={18} color={iconColor} />} />}
-              {recorded && (
-                <Pill
-                  variant="primary"
-                  icon={
-                    <Check size={18} color={isDark ? "#7ECDE0" : "#3D7385"} strokeWidth={2.5} />
-                  }
-                />
-              )}
+              {(() => {
+                const role = surveyExists ? "contacted" : "unavailable";
+                return (
+                  <>
+                    {noteExists && (
+                      <Pill
+                        style={recorded ? { backgroundColor: colors[role].background } : undefined}
+                        icon={
+                          <Scroll
+                            size={18}
+                            color={recorded ? colors[role].foreground : iconColor}
+                          />
+                        }
+                      />
+                    )}
+                    {recorded && (
+                      <Pill
+                        style={{ backgroundColor: colors[role].background }}
+                        icon={<Check size={18} color={colors[role].foreground} strokeWidth={2.5} />}
+                      />
+                    )}
+                  </>
+                );
+              })()}
             </View>
           </View>
 
@@ -306,6 +324,8 @@ export default function PersonScreen() {
                     key={opt.value}
                     label={opt.label}
                     selected={unavailableOutcome === opt.value}
+                    selectedForegroundColor={colors.unavailable.foreground}
+                    selectedBackgroundColor={colors.unavailable.background}
                     onPress={() => {
                       const payload = { kind: "outcome" as const, outcome: opt.value };
                       setDisplayResult({ type: "outcome", payload });
@@ -379,6 +399,7 @@ function ScriptContent({
   onSelectOption: (optionId: string) => void;
   onClear: () => void;
 }) {
+  const colors = useColors();
   if (scriptQuery.isLoading) return <ActivityIndicator />;
   if (!scriptQuery.data) {
     return (
@@ -406,6 +427,8 @@ function ScriptContent({
             key={opt.surveyResponseOptionId}
             label={opt.text}
             selected={selectedOptionId === opt.surveyResponseOptionId}
+            selectedForegroundColor={colors.contacted.foreground}
+            selectedBackgroundColor={colors.contacted.background}
             onPress={() => onSelectOption(opt.surveyResponseOptionId)}
           />
         ))}
