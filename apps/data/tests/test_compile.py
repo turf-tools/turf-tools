@@ -196,7 +196,7 @@ def test_voting_history_at_least_primary() -> None:
                 kind="voting-history-count",
                 key="voting_history",
                 type="primary",
-                windowYears=4,
+                window_years=4,
                 comparator="at_least",
                 count=3,
             )
@@ -270,7 +270,7 @@ def test_voting_history_exactly_general() -> None:
                 kind="voting-history-count",
                 key="voting_history",
                 type="general",
-                windowYears=4,
+                window_years=4,
                 comparator="exactly",
                 count=1,
             )
@@ -391,7 +391,7 @@ def test_key_filter_alone() -> None:
     params: list = []
     where = criteria_to_where(
         Criteria(),
-        KeyFilter(keyGroup="nyc_zips", keys=["10001", "10002"]),
+        KeyFilter(key_group="nyc_zips", keys=["10001", "10002"]),
         params,
     )
     assert where == "WHERE zip5 IN (?, ?)"
@@ -402,7 +402,7 @@ def test_key_filter_combines_with_criteria() -> None:
     params: list = []
     where = criteria_to_where(
         _narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
-        KeyFilter(keyGroup="nyc_eds", keys=["75-001"]),
+        KeyFilter(key_group="nyc_eds", keys=["75-001"]),
         params,
     )
     assert " AND " in where
@@ -417,7 +417,7 @@ def test_empty_key_set_short_circuits_to_match_nothing() -> None:
     params: list = []
     where = criteria_to_where(
         Criteria(),
-        KeyFilter(keyGroup="nyc_zips", keys=[]),
+        KeyFilter(key_group="nyc_zips", keys=[]),
         params,
     )
     assert where == "WHERE 1=0"

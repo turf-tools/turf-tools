@@ -11,7 +11,7 @@ see `compile.py`).
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Filter instances — what flows in the request body.
@@ -61,10 +61,12 @@ class VotingHistoryFilter(BaseModel):
     types — the common meaning of "primary" when targeting voters.
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     kind: Literal["voting-history-count"]
     key: str
     type: Literal["primary", "general"]  # noqa: A003
-    windowYears: int  # noqa: N815  -- camelCase matches the JSON shape sent from web
+    window_years: int = Field(validation_alias="windowYears")
     comparator: Literal["at_least", "exactly"]
     count: int
 
@@ -111,7 +113,9 @@ class KeyFilter(BaseModel):
     queries to a zone group's zones (segment ∩ zone group).
     """
 
-    keyGroup: str  # noqa: N815  -- camelCase matches the JSON shape sent from web
+    model_config = ConfigDict(populate_by_name=True)
+
+    key_group: str = Field(validation_alias="keyGroup")
     keys: list[str]
 
 
