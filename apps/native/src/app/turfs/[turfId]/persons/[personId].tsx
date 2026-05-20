@@ -29,8 +29,9 @@ import { toTitleCase } from "@/lib/format";
 import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
 import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
+import type { TurfDataPerson } from "@field-tools/db/schema";
 
-type Mode = "script" | "unavailable" | "note" | "view-notes";
+type Mode = "script" | "unavailable" | "note" | "details";
 
 const UNAVAILABLE_OPTIONS: Array<{
   value: string;
@@ -267,38 +268,26 @@ export default function PersonScreen() {
                 }
               }}
             />
-            {noteExists ? (
-              <View className="flex-row gap-2">
-                <View className="flex-1">
-                  <WideButton
-                    label="Add a note"
-                    icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
-                    selected={mode === "note"}
-                    onPress={() => setMode(mode === "note" ? "script" : "note")}
-                  />
-                </View>
-                <View className="flex-1">
-                  <WideButton
-                    label="View notes"
-                    icon={
-                      <Scroll
-                        size={18}
-                        color={mode === "view-notes" ? iconColor : mutedIconColor}
-                      />
-                    }
-                    selected={mode === "view-notes"}
-                    onPress={() => setMode(mode === "view-notes" ? "script" : "view-notes")}
-                  />
-                </View>
+            <View className="flex-row gap-2">
+              <View className="flex-1">
+                <WideButton
+                  label="Add a note"
+                  icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
+                  selected={mode === "note"}
+                  onPress={() => setMode(mode === "note" ? "script" : "note")}
+                />
               </View>
-            ) : (
-              <WideButton
-                label="Add a note"
-                icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
-                selected={mode === "note"}
-                onPress={() => setMode(mode === "note" ? "script" : "note")}
-              />
-            )}
+              <View className="flex-1">
+                <WideButton
+                  label="View details"
+                  icon={
+                    <Scroll size={18} color={mode === "details" ? iconColor : mutedIconColor} />
+                  }
+                  selected={mode === "details"}
+                  onPress={() => setMode(mode === "details" ? "script" : "details")}
+                />
+              </View>
+            </View>
           </View>
 
           {/* Mode-specific content */}
@@ -352,7 +341,7 @@ export default function PersonScreen() {
                 onCancel={() => setMode("script")}
               />
             )}
-            {mode === "view-notes" && <NotesList notes={formattedNotes} className="-mt-[1px]" />}
+            {mode === "details" && <DetailsContent person={person} notes={formattedNotes} />}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -531,33 +520,71 @@ function NoteContent({
           <WideButton label="Submit" variant="submit" onPress={handleSubmit} />
         </View>
       </View>
-      <NotesList notes={notes} />
+      <DetailSection title="Notes" items={noteItems(notes)} />
     </View>
   );
 }
 
-function NotesList({
+// View Details mode — composes detail sections (voting history, notes, and
+// future contact history) below a single "View details" toggle.
+function DetailsContent({
+  person,
   notes,
-  className,
 }: {
+  person: TurfDataPerson;
   notes: Array<{ text: string; canvassedAt: string }>;
-  className?: string;
 }) {
-  if (notes.length === 0) return null;
-  return (
-    <View className={className}>
-      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark mb-[1px]">
-        Notes
+  const voting = votingHistoryItems(person.votingHistory);
+  const notesList = noteItems(notes);
+  if (voting.length === 0 && notesList.length === 0) {
+    return (
+      <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark -mt-[1px]">
+        No details available
       </Text>
-      {notes.map((note, idx) => (
+    );
+  }
+  return (
+    <View className="gap-6 -mt-[2px]">
+      <DetailSection title="Notes" items={notesList} />
+      <DetailSection title="Voting history" items={voting} />
+    </View>
+  );
+}
+
+// Section header + list of label/date rows. Hidden when there are no items
+// so a section that has nothing to show just disappears.
+function DetailSection({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ label: string; date: string }>;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <View>
+      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark mb-[2px]">
+        {title}
+      </Text>
+      <DetailList items={items} />
+    </View>
+  );
+}
+
+// Generic two-column row list: date on the left, label on the right.
+// Used by every section inside DetailsContent.
+function DetailList({ items }: { items: Array<{ label: string; date: string }> }) {
+  return (
+    <View>
+      {items.map((item, idx) => (
         <View key={idx}>
           {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
           <View className="flex-row py-3 gap-4">
             <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-20">
-              {formatNoteDate(note.canvassedAt)}
+              {item.date}
             </Text>
             <Text className="font-sans text-lg text-foreground dark:text-foreground-dark flex-1">
-              {note.text}
+              {item.label}
             </Text>
           </View>
         </View>
@@ -566,7 +593,36 @@ function NotesList({
   );
 }
 
-function formatNoteDate(dateStr: string): string {
+// ----- Item adapters -------------------------------------------------------
+
+function noteItems(
+  notes: Array<{ text: string; canvassedAt: string }>,
+): Array<{ label: string; date: string }> {
+  return notes.map((n) => ({ label: n.text, date: formatShortDate(n.canvassedAt) }));
+}
+
+const ELECTION_TYPE_LABELS: Record<string, string> = {
+  general: "General",
+  primary: "Primary",
+  presidential_primary: "Pres. primary",
+};
+
+function votingHistoryItems(
+  history: TurfDataPerson["votingHistory"],
+): Array<{ label: string; date: string }> {
+  // Sort most-recent first; fall back to year when `date` is missing.
+  const sorted = [...history].sort((a, b) => {
+    const aKey = a.date ?? `${a.year}-12-31`;
+    const bKey = b.date ?? `${b.year}-12-31`;
+    return bKey.localeCompare(aKey);
+  });
+  return sorted.slice(0, 5).map((e) => ({
+    label: `${ELECTION_TYPE_LABELS[e.type] ?? e.type} ${e.year}`,
+    date: e.date ? formatShortDate(e.date) : String(e.year),
+  }));
+}
+
+function formatShortDate(dateStr: string): string {
   try {
     const d = new Date(dateStr);
     return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
