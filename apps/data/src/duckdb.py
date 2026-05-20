@@ -68,7 +68,7 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
         conn.install_extension("httpfs")
         conn.load_extension("httpfs")
         region = os.environ.get("AWS_REGION", "us-east-1")
-        conn.execute(f"CREATE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}')")
+        conn.execute(f"CREATE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}', REFRESH 'auto')")
 
     # Buffer pool sizing — DuckDB's default `memory_limit` is conservative
     # on Linux. With the cached connection living for the lifetime of the
