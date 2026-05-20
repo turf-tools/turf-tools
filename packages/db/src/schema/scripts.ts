@@ -1,4 +1,5 @@
 import { integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { organizations } from "./organizations";
 import { surveyQuestions } from "./surveys";
 import { users } from "./auth/users";
 
@@ -7,6 +8,9 @@ import { users } from "./auth/users";
 // references one script.
 export const scripts = pgTable("scripts", {
   scriptId: uuid().defaultRandom().primaryKey(),
+  organizationId: uuid()
+    .notNull()
+    .references(() => organizations.organizationId),
   name: text().notNull(),
   createdBy: uuid()
     .notNull()

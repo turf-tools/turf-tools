@@ -49,7 +49,13 @@ export const countForCampaign = pub
     const rows = await context.db
       .select({ count: sql<number>`count(*)::int` })
       .from(turfs)
-      .where(eq(turfs.campaignId, input.campaignId));
+      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
+      .where(
+        and(
+          eq(turfs.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      );
     return { count: rows[0]?.count ?? 0 };
   });
 
@@ -59,6 +65,20 @@ export const countForCampaign = pub
 export const statsForCampaign = pub
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
+    // Org-ownership precheck on the campaign — both queries below filter
+    // only on campaignId, which is fine once we've confirmed the campaign
+    // belongs to the user's org.
+    const owned = await context.db
+      .select({ campaignId: campaigns.campaignId })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+
     const draftRows = await context.db
       .select({ zoneId: turfDrafts.zoneId, count: sql<number>`count(*)::int` })
       .from(turfDrafts)

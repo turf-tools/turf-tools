@@ -14,7 +14,7 @@ from src.duckdb import get_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.settings import get_settings
-from src.tables import resolve
+from src.tables import org_fqn, resolve
 
 logger = logging.getLogger("uvicorn")
 
@@ -109,27 +109,27 @@ async def ducklake_status():
 
 
 @app.get("/key-groups/{key_group}/geojson")
-async def key_group_geojson(key_group: str):
+async def key_group_geojson(key_group: str, org_slug: str):
     """Serve all polygons for a key group as a GeoJSON FeatureCollection.
 
-    Reads from ``geo_ducklake.boundaries.{key_group}`` (populated by the
+    Reads from ``ducklake.{org_slug}.{key_group}`` (populated by the
     `seed-boundaries` CLI). Polygons are pre-simplified at load time, so the
     response is sized for map rendering rather than raw fidelity.
 
-    Cached aggressively — boundary tables are static reference data that
-    only changes when an admin re-seeds them. When that happens, append a
-    bumped `?v=` query param at the call site to bust browser caches.
+    Cached aggressively — boundary tables only change when an admin
+    re-seeds them. When that happens, append a bumped `?v=` query param at
+    the call site to bust browser caches.
     """
     conn = get_connection(settings, read_only=True)
     # Validate the table exists before querying — keeps the error message
     # friendlier than a generic SQL failure.
-    fqn = f"geo_ducklake.boundaries.{key_group}"
+    fqn = org_fqn(org_slug, key_group)
     try:
         conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
     except Exception as e:
         raise HTTPException(
             status_code=404,
-            detail=f"No boundary table for key_group={key_group}. Run `uv run seed-boundaries`.",
+            detail=f"No boundary table for org_slug={org_slug}, key_group={key_group}. Run `uv run seed-boundaries`.",
         ) from e
 
     # Build the FeatureCollection in DuckDB to avoid pulling raw geometry

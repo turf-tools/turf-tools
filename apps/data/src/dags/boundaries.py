@@ -4,10 +4,17 @@ A "boundary" is a polygon naming an administrative unit (Election
 Districts, ZIP areas, Census tracts, …). All loaders write to the
 same destination shape:
 
-    geo_ducklake.boundaries.{key_group}
+    ducklake.{organization_slug}.{key_group}
         key   VARCHAR    -- unique id within the key group
         name  VARCHAR    -- nullable display label
         geom  GEOMETRY   -- polygon, pre-simplified for map rendering
+
+Boundaries live in the org catalog (alongside `persons_geocoded`,
+`buildings_geocoded`, etc.) rather than the geo catalog, because they're
+derived from each org's voter scope — two orgs running `seed-boundaries`
+with different fixtures produce different `nyc_eds` tables. The shared
+TIGER reference data stays under `geo_ducklake.tiger.*`, and OSM under
+`geo_ducklake.osm.*`.
 
 Three loaders share that contract:
 
@@ -26,9 +33,7 @@ Geometry is pre-simplified at `DEFAULT_SIMPLIFY_TOLERANCE` (0.0001° ≈
 
 import duckdb
 from src.models import TableRef
-
-GEO_CATALOG = "geo_ducklake"
-BOUNDARIES_SCHEMA = "boundaries"
+from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
 
 # Default simplification tolerance in degrees. Matches "imperceptible at city
 # zoom" while shrinking polygon vertex counts dramatically. Override per-call
@@ -36,12 +41,8 @@ BOUNDARIES_SCHEMA = "boundaries"
 DEFAULT_SIMPLIFY_TOLERANCE = 0.0001
 
 
-def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
-    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {GEO_CATALOG}.{BOUNDARIES_SCHEMA}")
-
-
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
-    return conn.sql(f"FROM {GEO_CATALOG}.current_snapshot()").fetchone()[0]
+    return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
 def boundary_from_geojson(
@@ -49,19 +50,20 @@ def boundary_from_geojson(
     key_group: str,
     key_property: str,
     name_property: str | None,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
     simplify_tolerance: float = DEFAULT_SIMPLIFY_TOLERANCE,
 ) -> TableRef:
-    """Load polygons from an external GeoJSON file/URL into ``boundaries.{key_group}``.
+    """Load polygons from an external GeoJSON file/URL into ``{organization_slug}.{key_group}``.
 
-    Overwrites the destination table on each call — boundaries are static
-    reference data, so a re-run replaces wholesale rather than diffing.
+    Overwrites the destination table on each call — re-running replaces
+    wholesale rather than diffing.
 
     Source rows missing the key property are silently dropped (rare, but
     real-world feeds occasionally have null props on geometry-only features).
     """
-    _ensure_schema(conn)
-    fqn = f"{GEO_CATALOG}.{BOUNDARIES_SCHEMA}.{key_group}"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, key_group)
 
     # ST_Read flattens GeoJSON properties to top-level columns, so we can
     # reference key_property / name_property directly. Cast to VARCHAR in
@@ -81,8 +83,8 @@ def boundary_from_geojson(
 
     version = _current_version(conn)
     return TableRef(
-        catalog=GEO_CATALOG,
-        schema=BOUNDARIES_SCHEMA,
+        catalog=PERSON_CATALOG,
+        schema=organization_slug,
         table=key_group,
         version=version,
     )
@@ -93,6 +95,7 @@ def boundary_from_blocks(
     tiger_tabblock_raw: TableRef,
     key_group: str,
     key_expression: str,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
     simplify_tolerance: float = DEFAULT_SIMPLIFY_TOLERANCE,
 ) -> TableRef:
@@ -100,9 +103,9 @@ def boundary_from_blocks(
 
     For each distinct key value, takes the set of blocks where any voter
     tagged with that key lives, unions them into a single polygon, and
-    writes one row to ``boundaries.{key_group}``. No external boundary
-    shapefile is involved; the polygon for ED 23-001 literally is the
-    union of blocks containing voters with `precinct = '23-001'`. The
+    writes one row to ``{organization_slug}.{key_group}``. No external
+    boundary shapefile is involved; the polygon for ED 23-001 literally is
+    the union of blocks containing voters with `precinct = '23-001'`. The
     polygon for ZIP 11211 is the union of blocks containing voters with
     `zip5 = '11211'` — which sidesteps the ZIP5/MODZCTA-shape mismatch
     that plagues external ZIP shapefiles.
@@ -134,8 +137,8 @@ def boundary_from_blocks(
     backfilling so polygons don't extend across rivers, the harbor,
     Central Park's reservoir, etc.
     """
-    _ensure_schema(conn)
-    fqn = f"{GEO_CATALOG}.{BOUNDARIES_SCHEMA}.{key_group}"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, key_group)
     persons_fqn = persons_geocoded.fqn
     tabblock_fqn = tiger_tabblock_raw.fqn
 
@@ -227,8 +230,8 @@ def boundary_from_blocks(
 
     version = _current_version(conn)
     return TableRef(
-        catalog=GEO_CATALOG,
-        schema=BOUNDARIES_SCHEMA,
+        catalog=PERSON_CATALOG,
+        schema=organization_slug,
         table=key_group,
         version=version,
     )
@@ -240,16 +243,17 @@ def boundary_from_table(
     key_column: str,
     name_column: str | None,
     geom_column: str,
+    organization_slug: str,
     conn: duckdb.DuckDBPyConnection,
     simplify_tolerance: float = DEFAULT_SIMPLIFY_TOLERANCE,
 ) -> TableRef:
-    """Project an existing DuckLake polygon table into ``boundaries.{key_group}``.
+    """Project an existing DuckLake polygon table into ``{organization_slug}.{key_group}``.
 
     For TIGER-derived sources (ZCTAs, tracts) once the upstream raw table
     exists in ``geo_ducklake.tiger.*``. Cheaper than re-importing from a file.
     """
-    _ensure_schema(conn)
-    fqn = f"{GEO_CATALOG}.{BOUNDARIES_SCHEMA}.{key_group}"
+    ensure_org_schema(conn, organization_slug)
+    fqn = org_fqn(organization_slug, key_group)
     name_select = name_column if name_column else "NULL"
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -265,8 +269,8 @@ def boundary_from_table(
 
     version = _current_version(conn)
     return TableRef(
-        catalog=GEO_CATALOG,
-        schema=BOUNDARIES_SCHEMA,
+        catalog=PERSON_CATALOG,
+        schema=organization_slug,
         table=key_group,
         version=version,
     )

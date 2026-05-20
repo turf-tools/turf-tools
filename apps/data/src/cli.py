@@ -68,7 +68,8 @@ def seed_boundaries() -> None:
     For each configured key group, downloads (if missing) the TIGER
     census-block polygons for the configured counties and unions the
     blocks where voters tagged with each distinct key live. Output goes
-    to ``geo_ducklake.boundaries.{key_group}``.
+    to ``ducklake.<org>.{key_group}`` — same per-org schema as
+    `persons_geocoded`, `buildings_geocoded`, etc.
 
     Requires ``seed-persons`` to have run first — we read from
     ``ducklake.<org>.persons_geocoded`` for the keys + coordinates.
@@ -126,6 +127,7 @@ def seed_boundaries() -> None:
         "tiger_county_fips": settings.tiger_county_fips,
         "tiger_data_dir": settings.tiger_data_dir,
         "persons_geocoded": persons_ref,
+        "organization_slug": args.org_slug,
         "conn": conn,
     }
 

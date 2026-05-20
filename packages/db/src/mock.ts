@@ -108,6 +108,7 @@ async function mock() {
   if (existingScript.length === 0) {
     await db.insert(scripts).values({
       scriptId: SCRIPT_ID,
+      organizationId: ORG_ID,
       name: "Default Script",
       createdBy: USER_ID,
     });
@@ -137,7 +138,7 @@ async function mock() {
         segmentId: s.id,
         organizationId: ORG_ID,
         name: s.name,
-        criteria: { filters: [] },
+        criteria: { steps: [] },
         voterFileId: DEFAULT_VOTER_FILE_ID,
         voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
         doorCount: s.doorCount,
