@@ -26,7 +26,7 @@ export const colors: Record<Role, Themed> = {
   },
   unavailable: {
     light: {
-      background: "#d6bcac",
+      background: "#e6cbbb",
       foreground: "#51311d",
     },
     dark: {

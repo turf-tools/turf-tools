@@ -379,7 +379,7 @@ export default function PersonScreen() {
                 onCancel={() => setMode("script")}
               />
             )}
-            {mode === "view-notes" && <NotesList notes={formattedNotes} className="" />}
+            {mode === "view-notes" && <NotesList notes={formattedNotes} className="-mt-[1px]" />}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -514,7 +514,7 @@ function NoteContent({
 
 function NotesList({
   notes,
-  className = "mt-6",
+  className,
 }: {
   notes: Array<{ text: string; canvassedAt: string }>;
   className?: string;
@@ -522,7 +522,7 @@ function NotesList({
   if (notes.length === 0) return null;
   return (
     <View className={className}>
-      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark mb-3">
+      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark mb-[1px]">
         Notes
       </Text>
       {notes.map((note, idx) => (
