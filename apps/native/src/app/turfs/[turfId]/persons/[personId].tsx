@@ -202,7 +202,7 @@ export default function PersonScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         className="flex-1"
       >
-        <ScrollView>
+        <ScrollView keyboardShouldPersistTaps="handled">
           {/* Person header */}
           <View className="px-5 pt-5 pb-3">
             <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
