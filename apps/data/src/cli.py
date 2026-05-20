@@ -92,7 +92,7 @@ def seed_boundaries() -> None:
     key_group_sources = [
         {
             "key_group": "nyc_eds",
-            "key_expression": "json_extract_string(other_properties, '$.ad_ed')",
+            "key_expression": "precinct",
         },
         {
             "key_group": "nyc_zips",

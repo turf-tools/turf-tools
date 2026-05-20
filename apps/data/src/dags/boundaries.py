@@ -102,7 +102,7 @@ def boundary_from_blocks(
     tagged with that key lives, unions them into a single polygon, and
     writes one row to ``boundaries.{key_group}``. No external boundary
     shapefile is involved; the polygon for ED 23-001 literally is the
-    union of blocks containing voters with `ad_ed = '23-001'`. The
+    union of blocks containing voters with `precinct = '23-001'`. The
     polygon for ZIP 11211 is the union of blocks containing voters with
     `zip5 = '11211'` — which sidesteps the ZIP5/MODZCTA-shape mismatch
     that plagues external ZIP shapefiles.
@@ -110,7 +110,7 @@ def boundary_from_blocks(
     `key_expression` is a SQL fragment producing the key from a row in
     the geocoded persons table, e.g.:
       - ``"zip5"``                                                for ZIPs
-      - ``"json_extract_string(other_properties, '$.ad_ed')"``    for AD-EDs
+      - ``"precinct"``                                            for AD-EDs
 
     Each block is assigned to *one* key — the key with the most voters
     in that block — so polygons partition cleanly instead of
