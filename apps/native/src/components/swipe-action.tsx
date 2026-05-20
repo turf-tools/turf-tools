@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { Pressable, useWindowDimensions } from "react-native";
+import { Pressable, useWindowDimensions, type ViewStyle } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -16,6 +16,8 @@ type Props = {
   onFullSwipe?: () => void;
   actionContent: ReactNode;
   actionClassName?: string;
+  // Inline style for the action container.
+  actionStyle?: ViewStyle;
   hitSlopLeft?: number;
 };
 
@@ -36,6 +38,7 @@ export function SwipeAction({
   onFullSwipe,
   actionContent,
   actionClassName = "",
+  actionStyle,
   hitSlopLeft = 40,
 }: Props) {
   const { width: screenWidth } = useWindowDimensions();
@@ -145,7 +148,7 @@ export function SwipeAction({
     transform: [{ translateX: translateX.value }],
   }));
 
-  const actionStyle = useAnimatedStyle(() => ({
+  const actionAnimatedStyle = useAnimatedStyle(() => ({
     width: translateX.value,
   }));
 
@@ -155,7 +158,7 @@ export function SwipeAction({
         {/* Action button — positioned behind the row */}
         <Animated.View
           className={`absolute left-0 top-0 bottom-0 ${actionClassName}`}
-          style={actionStyle}
+          style={[actionAnimatedStyle, actionStyle]}
         >
           <Pressable
             onPress={() => {

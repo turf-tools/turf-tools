@@ -13,6 +13,9 @@ type Props = {
   // "submit" variant is like action but with dark background
   variant?: "default" | "action" | "submit";
   className?: string;
+  // Custom colors for selected buttons
+  selectedForegroundColor?: string;
+  selectedBackgroundColor?: string;
 };
 
 // Full-width button used for survey responses, unavailable outcomes, and
@@ -25,9 +28,13 @@ export function WideButton({
   onPress,
   variant = "default",
   className = "",
+  selectedForegroundColor,
+  selectedBackgroundColor,
 }: Props) {
   const isAction = variant === "action" || variant === "submit";
   const isDark = useAtomValue(themeAtom) === "dark";
+  const useSelectedTint =
+    selected && !isAction && selectedForegroundColor != null && selectedBackgroundColor != null;
 
   return (
     <Pressable
@@ -38,14 +45,17 @@ export function WideButton({
           : variant === "action"
             ? "bg-surface dark:bg-surface-dark border-border dark:border-border-dark active:bg-faded dark:active:bg-faded-dark"
             : selected
-              ? "bg-surface dark:bg-surface-dark border-foreground dark:border-foreground-dark"
-              : "bg-surface dark:bg-surface-dark border-border dark:border-border-dark"
+              ? "bg-surface dark:bg-surface-dark border-foreground dark:border-foreground-dark active:bg-faded dark:active:bg-faded-dark"
+              : "bg-surface dark:bg-surface-dark border-border dark:border-border-dark active:bg-faded dark:active:bg-faded-dark"
       } ${className}`}
       style={{
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.08,
         shadowRadius: 3,
+        // Inline override wins over className-derived border color.
+        ...(useSelectedTint ? { backgroundColor: selectedBackgroundColor } : null),
+        ...(useSelectedTint ? { borderColor: selectedForegroundColor } : null),
       }}
     >
       <Text
@@ -62,7 +72,11 @@ export function WideButton({
           {icon ? (
             <View>{icon}</View>
           ) : selected ? (
-            <Check size={18} color={isDark ? "#ededed" : "#1b1b1b"} strokeWidth={2.5} />
+            <Check
+              size={18}
+              color={useSelectedTint ? selectedForegroundColor : isDark ? "#ededed" : "#1b1b1b"}
+              strokeWidth={2.5}
+            />
           ) : null}
         </View>
       )}
