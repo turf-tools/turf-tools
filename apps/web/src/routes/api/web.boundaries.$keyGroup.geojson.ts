@@ -20,8 +20,9 @@ export const Route = createFileRoute("/api/web/boundaries/$keyGroup/geojson")({
     handlers: {
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       GET: async ({ request }) => {
+        let context;
         try {
-          await buildWebContext(db, request.headers);
+          context = await buildWebContext(db, request.headers);
         } catch {
           return new Response("Unauthorized", { status: 401, headers: corsHeaders });
         }
@@ -31,7 +32,12 @@ export const Route = createFileRoute("/api/web/boundaries/$keyGroup/geojson")({
         if (!keyGroup) {
           return new Response("Not Found", { status: 404, headers: corsHeaders });
         }
-        const upstreamPath = `/key-groups/${encodeURIComponent(keyGroup)}/geojson${url.search}`;
+        // Forward existing query (e.g. `?v=<updatedAt>` cache-buster) and
+        // tack on the org slug from the auth context. Snake-case to match
+        // the path param (`/key-groups/{key_group}/`) — URL convention.
+        const upstreamQuery = new URLSearchParams(url.search);
+        upstreamQuery.set("org_slug", context.orgSlug);
+        const upstreamPath = `/key-groups/${encodeURIComponent(keyGroup)}/geojson?${upstreamQuery.toString()}`;
         const upstream = await dataFetch(upstreamPath);
         if (!upstream.ok) {
           return new Response(await upstream.text(), {
