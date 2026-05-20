@@ -92,6 +92,18 @@ export default function PersonScreen() {
     }
   }, [latestResult]);
 
+  // Wipe the recorded result for this person. Used by all the "back out"
+  // affordances (mode-switch tap-to-deselect, response-button tap-to-clear,
+  // Cancel button on unavailable). Idempotent — a no-op if nothing was
+  // recorded, so callers don't have to gate. Optimistic local state flips
+  // first; the collection write is deferred with setTimeout so React
+  // renders the change before the event reaches the live query.
+  const clearResult = () => {
+    if (!displayResult || displayResult.type === "empty") return;
+    setDisplayResult({ type: "empty", payload: { kind: "empty" } });
+    setTimeout(() => recordEvent({ personId, type: "empty", payload: { kind: "empty" } }), 0);
+  };
+
   const selectedOptionId =
     displayResult?.type === "survey"
       ? (displayResult.payload as { surveyResponseOptionId: string }).surveyResponseOptionId
@@ -248,11 +260,7 @@ export default function PersonScreen() {
               selected={mode === "unavailable"}
               onPress={() => {
                 if (mode === "unavailable") {
-                  setDisplayResult({ type: "empty", payload: { kind: "empty" } });
-                  setTimeout(
-                    () => recordEvent({ personId, type: "empty", payload: { kind: "empty" } }),
-                    0,
-                  );
+                  clearResult();
                   setMode("script");
                 } else {
                   setMode("unavailable");
@@ -309,61 +317,26 @@ export default function PersonScreen() {
                   setTimeout(() => recordEvent({ personId, type: "survey", payload }), 0);
                 }}
                 onClear={() => {
-                  setDisplayResult({ type: "empty", payload: { kind: "empty" } });
-                  setTimeout(
-                    () => recordEvent({ personId, type: "empty", payload: { kind: "empty" } }),
-                    0,
-                  );
+                  clearResult();
                 }}
               />
             )}
             {mode === "unavailable" && (
-              <View className="gap-2">
-                {UNAVAILABLE_OPTIONS.map((opt) => (
-                  <WideButton
-                    key={opt.value}
-                    label={opt.label}
-                    selected={unavailableOutcome === opt.value}
-                    selectedForegroundColor={colors.unavailable.foreground}
-                    selectedBackgroundColor={colors.unavailable.background}
-                    onPress={() => {
-                      const payload = { kind: "outcome" as const, outcome: opt.value };
-                      setDisplayResult({ type: "outcome", payload });
-                      setTimeout(() => recordEvent({ personId, type: "outcome", payload }), 0);
-                    }}
-                  />
-                ))}
-                <View className="flex-row gap-4 mt-4">
-                  <View className="flex-1">
-                    <WideButton
-                      label="Cancel"
-                      variant="action"
-                      onPress={() => {
-                        setDisplayResult({ type: "empty", payload: { kind: "empty" } });
-                        setTimeout(
-                          () =>
-                            recordEvent({ personId, type: "empty", payload: { kind: "empty" } }),
-                          0,
-                        );
-                        setMode("script");
-                      }}
-                    />
-                  </View>
-                  <View className="flex-1">
-                    <WideButton
-                      label="Submit"
-                      variant="submit"
-                      onPress={() => {
-                        if (!unavailableOutcome) {
-                          Alert.alert("Required", "Please select a reason before submitting.");
-                          return;
-                        }
-                        router.back();
-                      }}
-                    />
-                  </View>
-                </View>
-              </View>
+              <UnavailableContent
+                selectedOutcome={unavailableOutcome}
+                onSelectOption={(value) => {
+                  const payload = { kind: "outcome" as const, outcome: value };
+                  setDisplayResult({ type: "outcome", payload });
+                  setTimeout(() => recordEvent({ personId, type: "outcome", payload }), 0);
+                }}
+                onClear={() => {
+                  clearResult();
+                }}
+                onCancel={() => {
+                  clearResult();
+                  setMode("script");
+                }}
+              />
             )}
             {mode === "note" && (
               <NoteContent
@@ -383,6 +356,53 @@ export default function PersonScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+    </View>
+  );
+}
+
+// Unavailable mode for "contact not available" outcomes.
+function UnavailableContent({
+  selectedOutcome,
+  onSelectOption,
+  onClear,
+  onCancel,
+}: {
+  selectedOutcome: string | undefined;
+  onSelectOption: (value: string) => void;
+  onClear: () => void;
+  onCancel: () => void;
+}) {
+  const colors = useColors();
+  return (
+    <View className="gap-2">
+      {UNAVAILABLE_OPTIONS.map((opt) => (
+        <WideButton
+          key={opt.value}
+          label={opt.label}
+          selected={selectedOutcome === opt.value}
+          selectedForegroundColor={colors.unavailable.foreground}
+          selectedBackgroundColor={colors.unavailable.background}
+          onPress={() => (selectedOutcome === opt.value ? onClear() : onSelectOption(opt.value))}
+        />
+      ))}
+      <View className="flex-row gap-4 mt-4">
+        <View className="flex-1">
+          <WideButton label="Cancel" variant="action" onPress={onCancel} />
+        </View>
+        <View className="flex-1">
+          <WideButton
+            label="Submit"
+            variant="submit"
+            onPress={() => {
+              if (!selectedOutcome) {
+                Alert.alert("Required", "Please select a reason before submitting.");
+                return;
+              }
+              router.back();
+            }}
+          />
+        </View>
+      </View>
     </View>
   );
 }
@@ -429,7 +449,11 @@ function ScriptContent({
             selected={selectedOptionId === opt.surveyResponseOptionId}
             selectedForegroundColor={colors.contacted.foreground}
             selectedBackgroundColor={colors.contacted.background}
-            onPress={() => onSelectOption(opt.surveyResponseOptionId)}
+            onPress={() =>
+              selectedOptionId === opt.surveyResponseOptionId
+                ? onClear()
+                : onSelectOption(opt.surveyResponseOptionId)
+            }
           />
         ))}
         <View className="flex-row gap-4 mt-4">
