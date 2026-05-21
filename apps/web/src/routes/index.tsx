@@ -1,10 +1,12 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { resolveLandingOrgSlug } from "~/lib/server/landing-org";
 
-// `/` is a pure redirect to `/overview` so the sidebar's Overview tab is the
-// single source of truth for the landing page (and its active indicator
-// doesn't need a special-case exact match).
+// Bounces authed users to their most-recently-used org's overview. The auth
+// gate lives in __root.tsx — by the time this runs we know there's a session.
 export const Route = createFileRoute("/")({
-  beforeLoad: () => {
-    throw redirect({ to: "/overview" });
+  beforeLoad: async () => {
+    const orgSlug = await resolveLandingOrgSlug();
+    if (!orgSlug) throw redirect({ to: "/login" });
+    throw redirect({ to: "/$orgSlug/overview", params: { orgSlug } });
   },
 });

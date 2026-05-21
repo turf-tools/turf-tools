@@ -15,22 +15,23 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export const Route = createFileRoute("/api/web/boundaries/$keyGroup/geojson")({
+export const Route = createFileRoute("/api/web/$orgSlug/boundaries/$keyGroup/geojson")({
   server: {
     handlers: {
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       GET: async ({ request }) => {
+        const url = new URL(request.url);
+        const match = url.pathname.match(/^\/api\/web\/([^/]+)\/boundaries\/([^/]+)\/geojson$/);
+        const orgSlug = match?.[1];
+        const keyGroup = match?.[2];
+        if (!orgSlug || !keyGroup) {
+          return new Response("Not Found", { status: 404, headers: corsHeaders });
+        }
         let context;
         try {
-          context = await buildWebContext(db, request.headers);
+          context = await buildWebContext(db, request.headers, orgSlug);
         } catch {
           return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-        }
-        const url = new URL(request.url);
-        const match = url.pathname.match(/^\/api\/web\/boundaries\/([^/]+)\/geojson$/);
-        const keyGroup = match?.[1];
-        if (!keyGroup) {
-          return new Response("Not Found", { status: 404, headers: corsHeaders });
         }
         // Forward existing query (e.g. `?v=<updatedAt>` cache-buster) and
         // tack on the org slug from the auth context. Snake-case to match

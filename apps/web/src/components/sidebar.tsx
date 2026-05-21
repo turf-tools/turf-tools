@@ -23,23 +23,24 @@ type NavItem = {
 };
 
 const PRIMARY: NavItem[] = [
-  { to: "/overview", label: "Overview", icon: LayoutDashboard },
-  { to: "/campaigns", label: "Campaigns", icon: Megaphone },
-  { to: "/segments", label: "Segments", icon: Layers },
-  { to: "/zones", label: "Zones", icon: Waypoints },
-  { to: "/turfs", label: "Turfs", icon: Map },
+  { to: "/$orgSlug/overview", label: "Overview", icon: LayoutDashboard },
+  { to: "/$orgSlug/campaigns", label: "Campaigns", icon: Megaphone },
+  { to: "/$orgSlug/segments", label: "Segments", icon: Layers },
+  { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints },
+  { to: "/$orgSlug/turfs", label: "Turfs", icon: Map },
 ];
 
 const SECONDARY: NavItem[] = [
-  { to: "/users", label: "Users", icon: Users, requires: "users.manage" },
-  { to: "/settings", label: "Settings", icon: Settings },
-  { to: "/account", label: "Account", icon: CircleUser },
+  { to: "/$orgSlug/users", label: "Users", icon: Users, requires: "users.manage" },
+  { to: "/$orgSlug/settings", label: "Settings", icon: Settings },
+  { to: "/$orgSlug/account", label: "Account", icon: CircleUser },
 ];
 
 type SidebarProps = {
   collapsed: boolean;
   onToggle: () => void;
   role: string | null;
+  orgSlug: string;
 };
 
 // Fixed-height rows (h-9) so the icon's vertical position is stable.
@@ -48,7 +49,7 @@ type SidebarProps = {
 // w-12 (48px), which is exactly wide enough that 16px-from-left is also
 // the visual center, so icons stay put through the width transition
 // rather than sliding as the container shrinks around them.
-export function Sidebar({ collapsed, onToggle, role }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, role, orgSlug }: SidebarProps) {
   const visible = (items: NavItem[]) =>
     items.filter((i) => !i.requires || (role != null && hasPermission(role, i.requires)));
 
@@ -57,12 +58,14 @@ export function Sidebar({ collapsed, onToggle, role }: SidebarProps) {
       <NavGroup
         items={visible(PRIMARY)}
         collapsed={collapsed}
+        orgSlug={orgSlug}
         className="border-b border-border pb-2"
       />
       <div className="flex-1" />
       <NavGroup
         items={visible(SECONDARY)}
         collapsed={collapsed}
+        orgSlug={orgSlug}
         className="border-y border-border py-2"
       />
       <button
@@ -90,28 +93,39 @@ export function Sidebar({ collapsed, onToggle, role }: SidebarProps) {
 function NavGroup({
   items,
   collapsed,
+  orgSlug,
   className,
 }: {
   items: NavItem[];
   collapsed: boolean;
+  orgSlug: string;
   className?: string;
 }) {
   return (
     <ul className={cn("flex flex-col gap-1", className)}>
       {items.map((item) => (
         <li key={item.to}>
-          <NavLink item={item} collapsed={collapsed} />
+          <NavLink item={item} collapsed={collapsed} orgSlug={orgSlug} />
         </li>
       ))}
     </ul>
   );
 }
 
-function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function NavLink({
+  item,
+  collapsed,
+  orgSlug,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  orgSlug: string;
+}) {
   const Icon = item.icon;
   return (
     <Link
       to={item.to}
+      params={{ orgSlug }}
       // Skip the focus side-effect of mousedown so click doesn't leave
       // a focus ring after a dialog returns focus here. Tab navigation
       // is unaffected.

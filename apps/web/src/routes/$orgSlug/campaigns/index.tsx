@@ -1,15 +1,15 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 
-export const Route = createFileRoute("/campaigns/")({
-  loader: async ({ context: { queryClient } }) => {
+export const Route = createFileRoute("/$orgSlug/campaigns/")({
+  loader: async ({ context: { queryClient }, params: { orgSlug } }) => {
     const campaigns = await queryClient.fetchQuery(campaignsListQuery());
     // Alphabetically first is the default — matches the list-column order.
     const fallback = [...campaigns].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (fallback) {
       throw redirect({
-        to: "/campaigns/$campaignId",
-        params: { campaignId: fallback.campaignId },
+        to: "/$orgSlug/campaigns/$campaignId",
+        params: { orgSlug, campaignId: fallback.campaignId },
       });
     }
   },

@@ -6,6 +6,7 @@ import {
   HeadContent,
   Scripts,
   redirect,
+  useParams,
   useRouter,
   useRouterState,
 } from "@tanstack/react-router";
@@ -40,7 +41,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 function RootComponent() {
   const { queryClient, session } = Route.useRouteContext();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const chromeless = pathname === "/login";
+  const { orgSlug } = useParams({ strict: false }) as { orgSlug?: string };
+  const chromeless = pathname === "/login" || !orgSlug;
+  const currentOrg = orgSlug && session ? (session.orgsBySlug[orgSlug] ?? null) : null;
+  const role = currentOrg?.role ?? null;
+  const orgs = session ? Object.values(session.orgsBySlug) : [];
 
   // Cross-tab auth signals.
   // - `logged-out`: any other tab signed out → bounce to /login.
@@ -99,10 +104,10 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <JotaiProvider>
         <RootDocument>
-          {chromeless ? (
+          {chromeless || !orgSlug || !currentOrg ? (
             <Outlet />
           ) : (
-            <Shell role={session?.user.role ?? null}>
+            <Shell role={role} orgSlug={orgSlug} orgName={currentOrg.orgName} orgs={orgs}>
               <Outlet />
             </Shell>
           )}

@@ -63,12 +63,12 @@ function bboxOfPolys(fc: FeatureCollection): [number, number, number, number] | 
   return touched ? [minLng, minLat, maxLng, maxLat] : null;
 }
 
-export const Route = createFileRoute("/campaigns/$campaignId/")({
-  loader: async ({ context: { queryClient }, params: { campaignId } }) => {
+export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
+  loader: async ({ context: { queryClient }, params: { orgSlug, campaignId } }) => {
     const campaigns = await queryClient.fetchQuery(campaignsListQuery());
     const exists = campaigns.some((c) => c.campaignId === campaignId);
     if (!exists) {
-      throw redirect({ to: "/campaigns" });
+      throw redirect({ to: "/$orgSlug/campaigns", params: { orgSlug } });
     }
     // Chrome essentials: campaign detail + turf stats + bound segment +
     // zones. Awaited so the sidebar (zones list) and header snap to the
@@ -93,7 +93,7 @@ export const Route = createFileRoute("/campaigns/$campaignId/")({
 
 function CampaignEditor() {
   const navigate = useNavigate();
-  const { campaignId } = Route.useParams();
+  const { orgSlug, campaignId } = Route.useParams();
 
   const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
@@ -299,8 +299,8 @@ function CampaignEditor() {
           onSelect={setSelectedZoneId}
           onCut={(zoneId) => {
             void navigate({
-              to: "/campaigns/$campaignId/cut/$zoneId",
-              params: { campaignId, zoneId },
+              to: "/$orgSlug/campaigns/$campaignId/cut/$zoneId",
+              params: { orgSlug, campaignId, zoneId },
             });
           }}
         />

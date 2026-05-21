@@ -1,26 +1,39 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders, setResponseHeader } from "@tanstack/react-start/server";
 import { and, db, eq, isNull, SEEDED_ADMIN_USER_ID } from "@field-tools/db";
-import { memberships, users } from "@field-tools/db/schema";
+import { memberships, organizations, users } from "@field-tools/db/schema";
 import { auth } from "~/lib/auth";
+
+export type SessionOrg = {
+  organizationId: string;
+  orgSlug: string;
+  orgName: string;
+  role: string;
+};
 
 export type SessionUser = {
   id: string;
   email: string;
   name: string;
+  // Temporary: until $orgSlug-aware chrome lands, kept for the existing
+  // `session.user.role` consumers. Will be removed once chrome derives role
+  // from `orgsBySlug[currentOrgSlug]`.
   role: string;
   displayTimezone: string | null;
 };
 
-async function loadActiveRole(userId: string): Promise<string | null> {
-  const row = (
-    await db
-      .select({ role: memberships.role })
-      .from(memberships)
-      .where(and(eq(memberships.userId, userId), isNull(memberships.archivedAt)))
-      .limit(1)
-  )[0];
-  return row?.role ?? null;
+async function loadOrgsBySlug(userId: string): Promise<Record<string, SessionOrg>> {
+  const rows = await db
+    .select({
+      organizationId: memberships.organizationId,
+      orgSlug: organizations.slug,
+      orgName: organizations.name,
+      role: memberships.role,
+    })
+    .from(memberships)
+    .innerJoin(organizations, eq(memberships.organizationId, organizations.organizationId))
+    .where(and(eq(memberships.userId, userId), isNull(memberships.archivedAt)));
+  return Object.fromEntries(rows.map((r) => [r.orgSlug, r]));
 }
 
 // Lookup the active session for the incoming request. Returns null when no
@@ -32,14 +45,19 @@ async function loadActiveRole(userId: string): Promise<string | null> {
 // Authenticated SSR responses are marked `Cache-Control: no-store` so the
 // browser opts out of bfcache on these pages.
 export const getSession = createServerFn({ method: "GET" }).handler(
-  async (): Promise<{ user: SessionUser } | null> => {
+  async (): Promise<{
+    user: SessionUser;
+    orgsBySlug: Record<string, SessionOrg>;
+  } | null> => {
     if (process.env.AUTH_DISABLED === "1") {
       const row = (await db.select().from(users).where(eq(users.id, SEEDED_ADMIN_USER_ID)))[0];
       if (!row) {
         throw new Error("AUTH_DISABLED=1 but seeded admin not found; run `pnpm db:mock`.");
       }
-      const role = process.env.AUTH_DISABLED_ROLE ?? (await loadActiveRole(row.id));
-      if (!role) return null;
+      const orgsBySlug = await loadOrgsBySlug(row.id);
+      const first = Object.values(orgsBySlug)[0];
+      if (!first) return null;
+      const role = process.env.AUTH_DISABLED_ROLE ?? first.role;
       setResponseHeader("Cache-Control", "no-store");
       return {
         user: {
@@ -49,13 +67,15 @@ export const getSession = createServerFn({ method: "GET" }).handler(
           role,
           displayTimezone: row.displayTimezone,
         },
+        orgsBySlug,
       };
     }
     const headers = new Headers(getRequestHeaders());
     const session = await auth.api.getSession({ headers });
     if (!session) return null;
-    const role = await loadActiveRole(session.user.id);
-    if (!role) return null;
+    const orgsBySlug = await loadOrgsBySlug(session.user.id);
+    const first = Object.values(orgsBySlug)[0];
+    if (!first) return null;
     const userRow = (
       await db
         .select({ displayTimezone: users.displayTimezone })
@@ -68,9 +88,10 @@ export const getSession = createServerFn({ method: "GET" }).handler(
         id: session.user.id,
         email: session.user.email,
         name: session.user.name,
-        role,
+        role: first.role,
         displayTimezone: userRow?.displayTimezone ?? null,
       },
+      orgsBySlug,
     };
   },
 );
