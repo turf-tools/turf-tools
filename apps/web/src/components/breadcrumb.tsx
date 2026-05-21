@@ -51,9 +51,11 @@ function OrgSwitcher({
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Switch organization"
+        onMouseDown={(e) => e.preventDefault()}
         className={cn(
           "flex h-6 w-6 items-center rounded-md justify-center -ml-1",
           "text-muted-foreground hover:bg-muted hover:text-foreground",
+          "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         )}
       >
         <ChevronDown className="size-4" />
