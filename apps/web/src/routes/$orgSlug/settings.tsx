@@ -14,7 +14,7 @@ import { DEFAULT_DISPLAY_TIMEZONE, type DisplayTimezone, TIMEZONE_OPTIONS } from
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/settings")({
+export const Route = createFileRoute("/$orgSlug/settings")({
   component: SettingsPage,
 });
 

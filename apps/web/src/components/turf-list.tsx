@@ -106,14 +106,14 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
             <Button
               size="icon-sm"
               variant="ghost"
-              className="-ml-[1px]"
+              className="-ml-[1px] h-8"
               aria-label={`Remove turf ${idx + 1}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove(turf.id);
               }}
             >
-              <Trash2 className="size-3.5" />
+              <Trash2 className="size-4" />
             </Button>
           </div>
         );

@@ -31,7 +31,7 @@ import { parseHexRgb } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/campaigns/$campaignId/cut/$zoneId")({
+export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/cut/$zoneId")({
   // Boundaries + buildings are intentionally out of the loader — they're
   // the heavy queries, and we'd rather get the user to the cutter chrome
   // fast and let the Map curtain hide their fetch than block navigation.
@@ -57,11 +57,19 @@ export const Route = createFileRoute("/campaigns/$campaignId/cut/$zoneId")({
 // Thin shell so `key={zoneId}` remounts the Cutter on zone change,
 // resetting in-progress drawing state, selection, auto-save timer, etc.
 function CutterPage() {
-  const { campaignId, zoneId } = Route.useParams();
-  return <Cutter key={zoneId} campaignId={campaignId} zoneId={zoneId} />;
+  const { orgSlug, campaignId, zoneId } = Route.useParams();
+  return <Cutter key={zoneId} orgSlug={orgSlug} campaignId={campaignId} zoneId={zoneId} />;
 }
 
-function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) {
+function Cutter({
+  orgSlug,
+  campaignId,
+  zoneId,
+}: {
+  orgSlug: string;
+  campaignId: string;
+  zoneId: string;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const shouldFade = useFadeOnce("/campaigns/cut");
@@ -360,7 +368,7 @@ function Cutter({ campaignId, zoneId }: { campaignId: string; zoneId: string }) 
   }, [selectedTurfId]);
 
   const onBack = () => {
-    void navigate({ to: "/campaigns/$campaignId", params: { campaignId } });
+    void navigate({ to: "/$orgSlug/campaigns/$campaignId", params: { orgSlug, campaignId } });
   };
 
   // Map curtain holds until the heavy queries (boundaries + buildings)

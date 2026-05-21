@@ -64,7 +64,7 @@ function deriveKeyFilter(
   };
 }
 
-export const Route = createFileRoute("/campaigns")({
+export const Route = createFileRoute("/$orgSlug/campaigns")({
   loader: async ({ context: { queryClient } }) => {
     await Promise.all([
       queryClient.fetchQuery(campaignsListQuery()),
@@ -79,6 +79,7 @@ export const Route = createFileRoute("/campaigns")({
 function CampaignsLayout() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { orgSlug } = Route.useParams();
   const params = useParams({ strict: false }) as { campaignId?: string };
   const activeCampaignId = params.campaignId ?? null;
   const shouldFade = useFadeOnce("/campaigns");
@@ -108,7 +109,7 @@ function CampaignsLayout() {
   const campaign = campaignDetail ?? activeCampaign;
 
   const goToCampaign = (id: string) =>
-    navigate({ to: "/campaigns/$campaignId", params: { campaignId: id } });
+    navigate({ to: "/$orgSlug/campaigns/$campaignId", params: { orgSlug, campaignId: id } });
 
   // Mirror of the editor-route loader's prefetch logic — used by the
   // create/clone flows to warm caches against the new campaign's
@@ -265,7 +266,7 @@ function CampaignsLayout() {
         if (fallback) {
           await goToCampaign(fallback.campaignId);
         } else {
-          await navigate({ to: "/campaigns" });
+          await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
         }
       },
     });

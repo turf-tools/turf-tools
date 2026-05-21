@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { webPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
-import * as organizations from "./web/organizations";
 import * as script from "./web/script";
 import * as segments from "./web/segments";
 import * as turfDrafts from "./web/turf-drafts";
@@ -18,9 +17,6 @@ export const webRouter = {
     await context.db.execute("SELECT 1 as ok");
     return { status: "ok", db: "connected" };
   }),
-  organizations: {
-    getCurrent: organizations.getCurrent,
-  },
   campaigns: {
     list: campaigns.list,
     getById: campaigns.getById,

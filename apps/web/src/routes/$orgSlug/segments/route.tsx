@@ -26,7 +26,7 @@ function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export const Route = createFileRoute("/segments")({
+export const Route = createFileRoute("/$orgSlug/segments")({
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(segmentsListQuery()),
   component: SegmentsLayout,
 });
@@ -34,6 +34,7 @@ export const Route = createFileRoute("/segments")({
 function SegmentsLayout() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { orgSlug } = Route.useParams();
   const params = useParams({ strict: false }) as { segmentId?: string };
   const activeSegmentId = params.segmentId ?? null;
   const shouldFade = useFadeOnce("/segments");
@@ -43,7 +44,7 @@ function SegmentsLayout() {
   const activeSegment = segments.find((s) => s.segmentId === activeSegmentId) ?? null;
 
   const goToSegment = (id: string) =>
-    navigate({ to: "/segments/$segmentId", params: { segmentId: id } });
+    navigate({ to: "/$orgSlug/segments/$segmentId", params: { orgSlug, segmentId: id } });
 
   const renameSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; name: string }) => client.segments.rename(input),
@@ -106,7 +107,7 @@ function SegmentsLayout() {
         if (fallback) {
           await goToSegment(fallback.segmentId);
         } else {
-          await navigate({ to: "/segments" });
+          await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
         }
       },
     });

@@ -3,8 +3,9 @@ import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import { createRouterClient } from "@orpc/server";
 import { createIsomorphicFn } from "@tanstack/react-start";
-import { getRequestHeaders } from "@tanstack/react-start/server";
+import { getRequestHeaders, getRequestUrl } from "@tanstack/react-start/server";
 import { db } from "@field-tools/db";
+import { getCurrentOrgSlug, slugFromPathname } from "~/lib/current-route";
 import { webRouter, type WebRouter } from ".";
 import { buildWebContext } from "./context";
 
@@ -13,13 +14,27 @@ const getClient = createIsomorphicFn()
     createRouterClient(webRouter, {
       context: async () => {
         const headers = new Headers(getRequestHeaders());
-        return buildWebContext(db, headers);
+        // SSR: the slug lives in the incoming page URL's first segment.
+        const orgSlug = slugFromPathname(getRequestUrl().pathname);
+        if (!orgSlug) {
+          throw new Error("SSR RPC call outside an org-scoped route");
+        }
+        return buildWebContext(db, headers, orgSlug);
       },
     }),
   )
   .client(() => {
+    // Browser: URL is reconstructed per call from the live router state,
+    // so navigating between orgs routes subsequent calls to the right
+    // `/api/web/<slug>/rpc/*` prefix without rebuilding the link.
     const link = new RPCLink({
-      url: `${window.location.origin}/api/web/rpc`,
+      url: () => {
+        const orgSlug = getCurrentOrgSlug();
+        if (!orgSlug) {
+          throw new Error("RPC call outside an org-scoped route");
+        }
+        return `${window.location.origin}/api/web/${orgSlug}/rpc`;
+      },
     });
     return createORPCClient(link);
   });

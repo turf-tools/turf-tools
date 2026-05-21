@@ -18,6 +18,7 @@ export const memberships = pgTable(
     role: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     archivedAt: timestamp({ withTimezone: true }),
+    lastAccessedAt: timestamp({ withTimezone: true }),
   },
   (t) => [uniqueIndex("memberships_user_org").on(t.userId, t.organizationId)],
 );
