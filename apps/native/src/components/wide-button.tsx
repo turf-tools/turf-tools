@@ -55,7 +55,6 @@ export function WideButton({
         shadowRadius: 3,
         // Inline override wins over className-derived border color.
         ...(useSelectedTint ? { backgroundColor: selectedBackgroundColor } : null),
-        ...(useSelectedTint ? { borderColor: selectedForegroundColor } : null),
       }}
     >
       <Text
