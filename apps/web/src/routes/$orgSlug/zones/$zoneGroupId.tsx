@@ -388,7 +388,7 @@ function ZoneGroupEditor() {
               <Button
                 size="icon-sm"
                 variant="ghost"
-                className="-ml-[1px]"
+                className="-ml-[1px] h-8"
                 aria-label="Delete zone"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -396,7 +396,7 @@ function ZoneGroupEditor() {
                   removeZoneMutation.mutate(zone.zoneId);
                 }}
               >
-                <Trash2 className="size-3.5" />
+                <Trash2 className="size-4" />
               </Button>
             </div>
           );

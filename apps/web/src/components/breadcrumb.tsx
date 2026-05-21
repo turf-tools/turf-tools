@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   DropdownMenu,
@@ -14,19 +14,20 @@ import { cn } from "~/lib/utils";
 // org-switcher trigger when the user has memberships in multiple orgs.
 // Single-membership users just see the name as plain text.
 type BreadcrumbProps = {
+  orgSlug: string;
   orgName: string;
   orgs: ReadonlyArray<SessionOrg>;
   children?: ReactNode;
 };
 
-export function Breadcrumb({ orgName, orgs, children }: BreadcrumbProps) {
+export function Breadcrumb({ orgSlug, orgName, orgs, children }: BreadcrumbProps) {
   const isMulti = orgs.length > 1;
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
       <span className="font-bold text-foreground italic">Field Tools</span>
       <Separator />
       <span className="italic text-foreground">{orgName}</span>
-      {isMulti ? <OrgSwitcher orgs={orgs} /> : null}
+      {isMulti ? <OrgSwitcher currentSlug={orgSlug} orgs={orgs} /> : null}
       {children ? (
         <>
           <Separator />
@@ -37,7 +38,13 @@ export function Breadcrumb({ orgName, orgs, children }: BreadcrumbProps) {
   );
 }
 
-function OrgSwitcher({ orgs }: { orgs: ReadonlyArray<SessionOrg> }) {
+function OrgSwitcher({
+  currentSlug,
+  orgs,
+}: {
+  currentSlug: string;
+  orgs: ReadonlyArray<SessionOrg>;
+}) {
   const navigate = useNavigate();
   const sorted = [...orgs].sort((a, b) => a.orgName.localeCompare(b.orgName));
   return (
@@ -51,17 +58,21 @@ function OrgSwitcher({ orgs }: { orgs: ReadonlyArray<SessionOrg> }) {
       >
         <ChevronDown className="size-4" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={6} className="min-w-44">
-        {sorted.map((o) => (
-          <DropdownMenuItem
-            key={o.orgSlug}
-            onClick={() =>
-              void navigate({ to: "/$orgSlug/overview", params: { orgSlug: o.orgSlug } })
-            }
-          >
-            {o.orgName}
-          </DropdownMenuItem>
-        ))}
+      <DropdownMenuContent align="start" sideOffset={6} className="w-max max-w-72">
+        {sorted.map((o) => {
+          const isCurrent = o.orgSlug === currentSlug;
+          return (
+            <DropdownMenuItem
+              key={o.orgSlug}
+              onClick={() =>
+                void navigate({ to: "/$orgSlug/overview", params: { orgSlug: o.orgSlug } })
+              }
+            >
+              <span className="min-w-0 truncate">{o.orgName}</span>
+              {isCurrent ? <Check className="ml-auto size-4 shrink-0 text-foreground" /> : null}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

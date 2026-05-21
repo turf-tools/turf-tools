@@ -1,12 +1,20 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { resolveLandingOrgSlug } from "~/lib/server/landing-org";
 
-// Bounces authed users to their most-recently-used org's overview. The auth
-// gate lives in __root.tsx — by the time this runs we know there's a session.
+// Bounces authed users to their most-recently-used org's overview. Reads
+// the membership map from session (set by __root.beforeLoad), so no
+// additional DB roundtrip. Tie-broken by org name for stability when
+// nothing has been accessed yet.
 export const Route = createFileRoute("/")({
-  beforeLoad: async () => {
-    const orgSlug = await resolveLandingOrgSlug();
-    if (!orgSlug) throw redirect({ to: "/login" });
-    throw redirect({ to: "/$orgSlug/overview", params: { orgSlug } });
+  beforeLoad: ({ context }) => {
+    if (!context.session) throw redirect({ to: "/login" });
+    const orgs = Object.values(context.session.orgsBySlug);
+    if (orgs.length === 0) throw redirect({ to: "/login" });
+    const recent = [...orgs].sort((a, b) => {
+      const at = a.lastAccessedAt?.getTime() ?? 0;
+      const bt = b.lastAccessedAt?.getTime() ?? 0;
+      if (at !== bt) return bt - at;
+      return a.orgName.localeCompare(b.orgName);
+    })[0]!;
+    throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: recent.orgSlug } });
   },
 });

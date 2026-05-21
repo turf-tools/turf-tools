@@ -23,7 +23,7 @@ export function Shell({ children, role, orgSlug, orgName, orgs }: ShellProps) {
 
   return (
     <div className="mx-auto min-h-screen max-w-[1600px]">
-      <TopBar orgName={orgName} orgs={orgs} />
+      <TopBar orgSlug={orgSlug} orgName={orgName} orgs={orgs} />
       <div className="flex">
         <aside
           className={cn(

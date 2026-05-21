@@ -9,6 +9,7 @@ export type SessionOrg = {
   orgSlug: string;
   orgName: string;
   role: string;
+  lastAccessedAt: Date | null;
 };
 
 export type SessionUser = {
@@ -29,6 +30,7 @@ async function loadOrgsBySlug(userId: string): Promise<Record<string, SessionOrg
       orgSlug: organizations.slug,
       orgName: organizations.name,
       role: memberships.role,
+      lastAccessedAt: memberships.lastAccessedAt,
     })
     .from(memberships)
     .innerJoin(organizations, eq(memberships.organizationId, organizations.organizationId))

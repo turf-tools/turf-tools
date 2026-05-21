@@ -7,6 +7,8 @@ export const Route = createFileRoute("/$orgSlug")({
     const org = context.session.orgsBySlug[params.orgSlug];
     if (!org) throw redirect({ to: "/" });
     // Fire-and-forget; powers the "/" landing redirect on next visit.
+    // Always bumped (even for single-org users) so the value stays
+    // current if the user is later added to a second org.
     void bumpOrgLastAccessed({ data: { orgSlug: params.orgSlug } });
     return {
       organizationId: org.organizationId,
