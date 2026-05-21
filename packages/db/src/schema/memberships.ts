@@ -18,8 +18,6 @@ export const memberships = pgTable(
     role: text().notNull(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     archivedAt: timestamp({ withTimezone: true }),
-    // Bumped on each visit to a /$orgSlug/... route; powers the "/" landing
-    // redirect (most-recently-used org) for multi-membership users.
     lastAccessedAt: timestamp({ withTimezone: true }),
   },
   (t) => [uniqueIndex("memberships_user_org").on(t.userId, t.organizationId)],

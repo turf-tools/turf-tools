@@ -8,11 +8,12 @@ import { UserBadge } from "./user-badge";
 // Top chrome: sticky at the top of the Shell's max-width wrapper with a
 // bottom border. Breadcrumb on the left, user-side chrome on the right.
 type TopBarProps = {
+  orgSlug: string;
   orgName: string;
   orgs: ReadonlyArray<SessionOrg>;
 };
 
-export function TopBar({ orgName, orgs }: TopBarProps) {
+export function TopBar({ orgSlug, orgName, orgs }: TopBarProps) {
   return (
     <header
       className={cn(
@@ -22,7 +23,7 @@ export function TopBar({ orgName, orgs }: TopBarProps) {
         "px-4",
       )}
     >
-      <Breadcrumb orgName={orgName} orgs={orgs} />
+      <Breadcrumb orgSlug={orgSlug} orgName={orgName} orgs={orgs} />
       <div className="flex items-center gap-3 text-sm">
         <LoadingIndicator />
         <LightDarkToggle />
