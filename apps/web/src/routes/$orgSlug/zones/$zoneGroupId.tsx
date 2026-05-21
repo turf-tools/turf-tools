@@ -19,6 +19,7 @@ import { darkAtom } from "~/lib/atoms/theme";
 import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
+import { useHotkey } from "~/lib/use-hotkey";
 import { cn } from "~/lib/utils";
 import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
@@ -174,6 +175,15 @@ function ZoneGroupEditor() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [activeZoneId, removeZoneMutation]);
+
+  // Space toggles the heatmap overlay so the user can flick between
+  // zone-color and segment-counts views without taking their hand off
+  // the mouse. Browser default (scroll) is preempted by useHotkey.
+  useHotkey({
+    key: " ",
+    enabled: true,
+    onMatch: () => setShowSegmentCounts((s) => !s),
+  });
 
   const commitRename = (zoneId: string, currentName: string) => {
     const next = renameDraft.trim();
@@ -449,6 +459,11 @@ function ZoneGroupEditor() {
             <Switch
               checked={showSegmentCounts}
               onCheckedChange={(checked) => setShowSegmentCounts(checked)}
+              // Skip click-to-focus so Space goes to the global toggle
+              // hotkey instead of re-activating the focused switch.
+              // Tab-to-focus still works, so keyboard users keep
+              // Space-to-activate.
+              onMouseDown={(e) => e.preventDefault()}
             />
             <span>Show segment counts</span>
           </label>
