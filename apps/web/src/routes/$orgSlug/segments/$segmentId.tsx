@@ -637,7 +637,13 @@ function StepRow({
           >
             {verbLabel}
           </span>
-          <Button variant="outline" size="icon-xs" onClick={onRemove} aria-label="Remove step">
+          <Button
+            variant="outline"
+            size="icon-xs"
+            onClick={onRemove}
+            onMouseDown={(e) => e.preventDefault()}
+            aria-label="Remove step"
+          >
             <X className="size-4" />
           </Button>
         </div>

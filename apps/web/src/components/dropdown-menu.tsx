@@ -16,12 +16,20 @@ function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
   return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
 }
 
+// Default: refocus the trigger only on keyboard close (preserves
+// Tab order for keyboard users). Mouse/touch/pen closes skip the
+// refocus, which avoids a visible focus ring landing on the trigger
+// after click-outside or item-click. Callsites can override by
+// passing their own `finalFocus`.
+const FINAL_FOCUS_KEYBOARD_ONLY = (closeType: string): boolean => closeType === "keyboard";
+
 function DropdownMenuContent({
   align = "start",
   alignOffset = 0,
   side = "bottom",
   sideOffset = 4,
   className,
+  finalFocus = FINAL_FOCUS_KEYBOARD_ONLY,
   ...props
 }: MenuPrimitive.Popup.Props &
   Pick<MenuPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset">) {
@@ -40,6 +48,7 @@ function DropdownMenuContent({
             "z-50 max-h-(--available-height) w-(--anchor-width) min-w-32 overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none",
             className,
           )}
+          finalFocus={finalFocus}
           {...props}
         />
       </MenuPrimitive.Positioner>
