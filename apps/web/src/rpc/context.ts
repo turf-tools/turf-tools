@@ -16,33 +16,36 @@ export type WebContext = {
   role: string;
 };
 
-// Resolve the (user, org, role) for an incoming web call. Throws
-// UNAUTHORIZED when no valid session exists or the user has no membership.
+// Resolve the (user, org, role) for an incoming web call. The orgSlug is the
+// URL-authoritative org context (extracted from the API route's `$orgSlug`
+// param). Throws UNAUTHORIZED for no session, FORBIDDEN when the user isn't
+// a member of the requested org.
 //
-// `AUTH_DISABLED=1` short-circuits to the seeded admin + its owner membership
-// — for local dev when you don't want to exercise the magic-link flow.
-export async function buildWebContext(db: Db, headers: Headers): Promise<WebContext> {
-  if (process.env.AUTH_DISABLED === "1") {
-    const ctx = await loadFromUserId(db, SEEDED_ADMIN_USER_ID);
-    if (!ctx) {
-      throw new Error("AUTH_DISABLED=1 but seeded admin not found; run `pnpm db:mock`.");
-    }
-    // Dev-only role override — set `AUTH_DISABLED_ROLE=admin` to simulate a
-    // different role without exercising magic-link auth.
-    if (process.env.AUTH_DISABLED_ROLE) {
-      return { ...ctx, role: process.env.AUTH_DISABLED_ROLE };
-    }
-    return ctx;
+// `AUTH_DISABLED=1` short-circuits to the seeded admin; their membership in
+// the requested org is still required.
+export async function buildWebContext(
+  db: Db,
+  headers: Headers,
+  orgSlug: string,
+): Promise<WebContext> {
+  const userId = await resolveUserId(headers);
+  if (!userId) throw new ORPCError("UNAUTHORIZED");
+  const ctx = await loadMembership(db, userId, orgSlug);
+  if (!ctx) throw new ORPCError("FORBIDDEN", { message: `No membership in org "${orgSlug}".` });
+  // Dev-only role override.
+  if (process.env.AUTH_DISABLED === "1" && process.env.AUTH_DISABLED_ROLE) {
+    return { ...ctx, role: process.env.AUTH_DISABLED_ROLE };
   }
-
-  const session = await auth.api.getSession({ headers });
-  if (!session) throw new ORPCError("UNAUTHORIZED");
-  const ctx = await loadFromUserId(db, session.user.id);
-  if (!ctx) throw new ORPCError("UNAUTHORIZED");
   return ctx;
 }
 
-async function loadFromUserId(db: Db, userId: string): Promise<WebContext | null> {
+async function resolveUserId(headers: Headers): Promise<string | null> {
+  if (process.env.AUTH_DISABLED === "1") return SEEDED_ADMIN_USER_ID;
+  const session = await auth.api.getSession({ headers });
+  return session?.user.id ?? null;
+}
+
+async function loadMembership(db: Db, userId: string, orgSlug: string): Promise<WebContext | null> {
   const userRow = (await db.select().from(users).where(eq(users.id, userId)))[0];
   if (!userRow) return null;
   const row = (
@@ -54,7 +57,13 @@ async function loadFromUserId(db: Db, userId: string): Promise<WebContext | null
       })
       .from(memberships)
       .innerJoin(organizations, eq(memberships.organizationId, organizations.organizationId))
-      .where(and(eq(memberships.userId, userId), isNull(memberships.archivedAt)))
+      .where(
+        and(
+          eq(memberships.userId, userId),
+          eq(organizations.slug, orgSlug),
+          isNull(memberships.archivedAt),
+        ),
+      )
   )[0];
   if (!row) return null;
   return {

@@ -20,7 +20,7 @@ from src.duckdb import get_connection
 from src.models import TableRef
 from src.perf import TimingHook
 from src.settings import get_settings
-from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema
+from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema, org_fqn, org_schema_fqn
 from src.transformations import nys_sboe_transformation_query
 
 
@@ -317,3 +317,56 @@ def seed_persons() -> None:
         timing.print_summary()
     conn.close()
     print("Persons seeded.")
+
+
+def mirror_org_data() -> None:
+    """Copy every table in ``ducklake.<src>.*`` to ``ducklake.<dst>.*``.
+
+    Cheap way to give a second org a working dataset for local multi-tenancy
+    testing without re-running the full seed pipeline against a separate
+    fixture. Drops the destination schema first so the mirror is a clean
+    replica rather than a merge.
+
+        uv run mirror-org-data --from default --to other
+
+    For realistic differentiated data across orgs, run ``seed-persons``
+    twice with different ``--fixture`` and ``--org-slug`` instead.
+    """
+    parser = argparse.ArgumentParser(prog="mirror-org-data", description=mirror_org_data.__doc__)
+    parser.add_argument("--from", dest="src", required=True, help="Source org slug.")
+    parser.add_argument("--to", dest="dst", required=True, help="Destination org slug.")
+    args = parser.parse_args()
+
+    if args.src == args.dst:
+        print("--from and --to must differ.")
+        return
+
+    settings = get_settings()
+    conn = get_connection(settings)
+
+    tables = [
+        r[0]
+        for r in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_catalog = ? AND table_schema = ? "
+            "ORDER BY table_name",
+            [PERSON_CATALOG, args.src],
+        ).fetchall()
+    ]
+    if not tables:
+        print(f"No tables in {org_schema_fqn(args.src)}. Run `uv run seed-persons --org-slug {args.src}` first.")
+        conn.close()
+        return
+
+    print(f"Resetting {org_schema_fqn(args.dst)}…")
+    drop_org_schema(conn, args.dst)
+    ensure_org_schema(conn, args.dst)
+
+    for table in tables:
+        src_fqn = org_fqn(args.src, table)
+        dst_fqn = org_fqn(args.dst, table)
+        print(f"  → {table}")
+        conn.execute(f"CREATE TABLE {dst_fqn} AS SELECT * FROM {src_fqn}")
+
+    conn.close()
+    print(f"Mirrored {len(tables)} table(s): {args.src} → {args.dst}.")

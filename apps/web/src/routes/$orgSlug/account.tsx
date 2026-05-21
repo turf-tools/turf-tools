@@ -7,7 +7,7 @@ import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/account")({
+export const Route = createFileRoute("/$orgSlug/account")({
   component: AccountPage,
 });
 

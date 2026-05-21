@@ -17,7 +17,7 @@ type TurfsSearch = {
   campaignId: string | null;
 };
 
-export const Route = createFileRoute("/turfs/")({
+export const Route = createFileRoute("/$orgSlug/turfs/")({
   validateSearch: (search): TurfsSearch => ({
     campaignId: typeof search.campaignId === "string" ? search.campaignId : null,
   }),

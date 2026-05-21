@@ -35,6 +35,22 @@ const MANHATTAN_ZONE_ID = "00000000-0000-4000-8000-00000000000c";
 const BROOKLYN_ZONE_ID = "00000000-0000-4000-8000-00000000000d";
 const QUEENS_ZONE_ID = "00000000-0000-4000-8000-00000000000e";
 
+// Second org for exercising multi-tenancy. The admin user is added with
+// role "admin" (not "owner") so the per-org permission check is visible
+// in the UI — Users tab disappears when switched to this org.
+const SECOND_ORG_ID = "00000000-0000-4000-8000-000000000020";
+const SECOND_SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000021";
+const SECOND_SCRIPT_ID = "00000000-0000-4000-8000-000000000022";
+const SECOND_SEGMENT_ID = "00000000-0000-4000-8000-000000000023";
+const SECOND_ZONE_GROUP_ID = "00000000-0000-4000-8000-000000000024";
+const SECOND_ZONE_ID = "00000000-0000-4000-8000-000000000025";
+const SECOND_CAMPAIGN_ID = "00000000-0000-4000-8000-000000000026";
+const SECOND_RESPONSE_OPTION_IDS = [
+  "00000000-0000-4000-8000-000000000040",
+  "00000000-0000-4000-8000-000000000041",
+  "00000000-0000-4000-8000-000000000042",
+];
+
 const DEFAULT_VOTER_FILE_ID = "nys_boe";
 const DEFAULT_VOTER_FILE_VERSION = 1;
 
@@ -229,6 +245,124 @@ async function mock() {
       });
       console.log(`Created campaign ${c.name}`);
     }
+  }
+
+  // --- Second org ---
+
+  const existingSecondOrg = await db
+    .select()
+    .from(organizations)
+    .where(eq(organizations.organizationId, SECOND_ORG_ID));
+  if (existingSecondOrg.length === 0) {
+    await db.insert(organizations).values({
+      organizationId: SECOND_ORG_ID,
+      slug: "other",
+      name: "Other Organization",
+    });
+    await db.insert(memberships).values({
+      userId: USER_ID,
+      organizationId: SECOND_ORG_ID,
+      role: "admin",
+    });
+    console.log("Created second organization and admin membership");
+  }
+
+  const existingSecondQuestion = await db
+    .select()
+    .from(surveyQuestions)
+    .where(eq(surveyQuestions.surveyQuestionId, SECOND_SURVEY_QUESTION_ID));
+  if (existingSecondQuestion.length === 0) {
+    await db.insert(surveyQuestions).values({
+      surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+      organizationId: SECOND_ORG_ID,
+      text: "Do you support the bill?",
+      createdBy: USER_ID,
+    });
+    await db.insert(surveyResponseOptions).values(
+      ["Yes", "No", "Undecided"].map((text, order) => ({
+        surveyResponseOptionId: SECOND_RESPONSE_OPTION_IDS[order]!,
+        surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+        text,
+        order,
+        createdBy: USER_ID,
+      })),
+    );
+    console.log("Created second-org survey question and response options");
+  }
+
+  const existingSecondScript = await db
+    .select()
+    .from(scripts)
+    .where(eq(scripts.scriptId, SECOND_SCRIPT_ID));
+  if (existingSecondScript.length === 0) {
+    await db.insert(scripts).values({
+      scriptId: SECOND_SCRIPT_ID,
+      organizationId: SECOND_ORG_ID,
+      name: "Other Script",
+      createdBy: USER_ID,
+    });
+    await db.insert(scriptQuestions).values({
+      scriptId: SECOND_SCRIPT_ID,
+      surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+      order: 0,
+    });
+    console.log("Created second-org script");
+  }
+
+  const existingSecondSegment = await db
+    .select()
+    .from(segments)
+    .where(eq(segments.segmentId, SECOND_SEGMENT_ID));
+  if (existingSecondSegment.length === 0) {
+    await db.insert(segments).values({
+      segmentId: SECOND_SEGMENT_ID,
+      organizationId: SECOND_ORG_ID,
+      name: "Other Segment",
+      criteria: { steps: [] },
+      voterFileId: DEFAULT_VOTER_FILE_ID,
+      voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
+      createdBy: USER_ID,
+    });
+    console.log("Created second-org segment");
+  }
+
+  const existingSecondZoneGroup = await db
+    .select()
+    .from(zoneGroups)
+    .where(eq(zoneGroups.zoneGroupId, SECOND_ZONE_GROUP_ID));
+  if (existingSecondZoneGroup.length === 0) {
+    await db.insert(zoneGroups).values({
+      zoneGroupId: SECOND_ZONE_GROUP_ID,
+      organizationId: SECOND_ORG_ID,
+      name: "Other Zone Group",
+      keyGroup: "nyc_eds",
+      createdBy: USER_ID,
+    });
+    await db.insert(zones).values({
+      zoneId: SECOND_ZONE_ID,
+      zoneGroupId: SECOND_ZONE_GROUP_ID,
+      name: "Other Zone",
+      keys: [],
+      createdBy: USER_ID,
+    });
+    console.log("Created second-org zone group and zone");
+  }
+
+  const existingSecondCampaign = await db
+    .select()
+    .from(campaigns)
+    .where(eq(campaigns.campaignId, SECOND_CAMPAIGN_ID));
+  if (existingSecondCampaign.length === 0) {
+    await db.insert(campaigns).values({
+      campaignId: SECOND_CAMPAIGN_ID,
+      organizationId: SECOND_ORG_ID,
+      name: "Other Campaign",
+      segmentId: SECOND_SEGMENT_ID,
+      zoneGroupId: SECOND_ZONE_GROUP_ID,
+      scriptId: SECOND_SCRIPT_ID,
+      createdBy: USER_ID,
+    });
+    console.log("Created second-org campaign");
   }
 
   console.log("Mock data in database.");
