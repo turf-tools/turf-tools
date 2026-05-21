@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import { getCurrentOrgSlug } from "~/lib/current-route";
 import type { Criteria } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
@@ -57,7 +58,8 @@ export async function fetchSegmentPoints(input: {
   criteria: unknown;
   keyFilter?: { keyGroup: string; keys: string[] } | null;
 }): Promise<Float32Array> {
-  const res = await fetch("/api/web/segment-points", {
+  const orgSlug = getCurrentOrgSlug();
+  const res = await fetch(`/api/web/${orgSlug}/segment-points`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

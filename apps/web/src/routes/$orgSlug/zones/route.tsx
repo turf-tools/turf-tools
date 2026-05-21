@@ -27,7 +27,7 @@ function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export const Route = createFileRoute("/zones")({
+export const Route = createFileRoute("/$orgSlug/zones")({
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(zoneGroupsQuery()),
   component: ZonesLayout,
 });
@@ -35,6 +35,7 @@ export const Route = createFileRoute("/zones")({
 function ZonesLayout() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { orgSlug } = Route.useParams();
   const params = useParams({ strict: false }) as { zoneGroupId?: string };
   const activeGroupId = params.zoneGroupId ?? null;
   const shouldFade = useFadeOnce("/zones");
@@ -44,7 +45,7 @@ function ZonesLayout() {
   const activeGroup = zoneGroups.find((g) => g.zoneGroupId === activeGroupId) ?? null;
 
   const goToGroup = (id: string) =>
-    navigate({ to: "/zones/$zoneGroupId", params: { zoneGroupId: id } });
+    navigate({ to: "/$orgSlug/zones/$zoneGroupId", params: { orgSlug, zoneGroupId: id } });
 
   const renameGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
@@ -116,7 +117,7 @@ function ZonesLayout() {
         if (fallback) {
           await goToGroup(fallback.zoneGroupId);
         } else {
-          await navigate({ to: "/zones" });
+          await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
         }
       },
     });

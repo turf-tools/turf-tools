@@ -64,14 +64,14 @@ const ROLE_OPTIONS = [
   { value: "admin", label: "Admin" },
 ];
 
-export const Route = createFileRoute("/users")({
+export const Route = createFileRoute("/$orgSlug/users")({
   validateSearch: (search): UsersSearch => ({
     role: typeof search.role === "string" ? search.role : null,
     status: typeof search.status === "string" ? search.status : null,
   }),
-  beforeLoad: ({ context }) => {
-    if (!context.session || !hasPermission(context.session.user.role, "users.manage")) {
-      throw redirect({ to: "/" });
+  beforeLoad: ({ context, params }) => {
+    if (!hasPermission(context.role, "users.manage")) {
+      throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
     }
   },
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(usersListQuery()),

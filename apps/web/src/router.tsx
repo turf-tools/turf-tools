@@ -1,6 +1,7 @@
-import { QueryClient } from "@tanstack/react-query";
+import { hashKey, QueryClient } from "@tanstack/react-query";
 import { createRouter, defaultStringifySearch } from "@tanstack/react-router";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
+import { __registerRouter } from "./lib/current-route";
 import { routeTree } from "./routeTree.gen";
 
 // Strip null/undefined search params before serializing so e.g. setting a
@@ -14,17 +15,41 @@ function stringifySearch(search: Record<string, unknown>): string {
   return defaultStringifySearch(cleaned);
 }
 
+type RouterLike = {
+  state: {
+    matches: ReadonlyArray<{
+      routeId: string;
+      params: Record<string, string | undefined>;
+    }>;
+  };
+};
+
 // Per-request QueryClient — no cross-user cache bleed in SSR.
 // `routerWithQueryClient` dehydrates loader-prefetched query state on the
 // server and rehydrates it on the client so useSuspenseQuery finds it.
 export function getRouter() {
-  const queryClient = new QueryClient({
+  // Captured via a setter to avoid the queryClient↔router type-inference
+  // cycle (router context references queryClient; hashFn references router).
+  let routerRef: RouterLike | null = null;
+
+  const queryClient: QueryClient = new QueryClient({
     defaultOptions: {
       // 15s default — long enough that "tab away and back" hits cache,
       // short enough that "data is roughly current." Per-query overrides
       // (`staleTime: Infinity` for key-determined data, `0` for always-
       // fresh) live next to those queries.
-      queries: { staleTime: 15_000 },
+      queries: {
+        staleTime: 15_000,
+        // Ambient org scoping: prepend the current $orgSlug to every key
+        // before hashing. Two orgs with the same logical key (e.g.
+        // `["campaigns"]`) get different cache slots. `routerRef` is
+        // captured per-request on SSR, so concurrent requests don't race.
+        queryKeyHashFn: (key) => {
+          const match = routerRef?.state.matches.find((m) => m.routeId === "/$orgSlug");
+          const slug = match?.params.orgSlug;
+          return hashKey(slug ? [slug, ...(key as unknown[])] : (key as unknown[]));
+        },
+      },
     },
   });
 
@@ -39,6 +64,13 @@ export function getRouter() {
     defaultPendingMinMs: 300,
     defaultPreload: "intent",
   });
+
+  routerRef = router;
+
+  // Expose live router state to non-React call sites (RPC client, fetch-
+  // based query factories) on the browser. SSR derives the slug from the
+  // request URL directly.
+  if (typeof window !== "undefined") __registerRouter(router);
 
   return routerWithQueryClient(router, queryClient);
 }

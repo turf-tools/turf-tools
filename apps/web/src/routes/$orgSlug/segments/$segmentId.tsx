@@ -70,12 +70,12 @@ import type { CascadeStep } from "~/rpc/web/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/segments/$segmentId")({
-  loader: async ({ context: { queryClient }, params: { segmentId } }) => {
+export const Route = createFileRoute("/$orgSlug/segments/$segmentId")({
+  loader: async ({ context: { queryClient }, params: { orgSlug, segmentId } }) => {
     const segments = await queryClient.fetchQuery(segmentsListQuery());
     const exists = segments.some((s) => s.segmentId === segmentId);
     if (!exists) {
-      throw redirect({ to: "/segments" });
+      throw redirect({ to: "/$orgSlug/segments", params: { orgSlug } });
     }
     await queryClient.fetchQuery(segmentDetailQuery(segmentId));
   },

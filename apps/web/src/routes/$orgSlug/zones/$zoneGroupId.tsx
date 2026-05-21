@@ -23,13 +23,13 @@ import { cn } from "~/lib/utils";
 import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
-export const Route = createFileRoute("/zones/$zoneGroupId")({
-  loader: async ({ context: { queryClient }, params: { zoneGroupId } }) => {
+export const Route = createFileRoute("/$orgSlug/zones/$zoneGroupId")({
+  loader: async ({ context: { queryClient }, params: { orgSlug, zoneGroupId } }) => {
     const groups = await queryClient.fetchQuery(zoneGroupsQuery());
     const exists = groups.some((g) => g.zoneGroupId === zoneGroupId);
     if (!exists) {
       // Loader at /zones picks the most-recent fallback.
-      throw redirect({ to: "/zones" });
+      throw redirect({ to: "/$orgSlug/zones", params: { orgSlug } });
     }
     await queryClient.fetchQuery(zonesQuery(zoneGroupId));
   },
@@ -38,7 +38,7 @@ export const Route = createFileRoute("/zones/$zoneGroupId")({
 
 function ZoneGroupEditor() {
   const queryClient = useQueryClient();
-  const { zoneGroupId } = Route.useParams();
+  const { orgSlug, zoneGroupId } = Route.useParams();
   const isDark = useAtomValue(darkAtom);
 
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
@@ -428,7 +428,7 @@ function ZoneGroupEditor() {
           className="h-full"
           boundariesUrl={
             activeGroup
-              ? `/api/web/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+              ? `/api/web/${orgSlug}/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
               : undefined
           }
           coloringByKey={coloringByKey}

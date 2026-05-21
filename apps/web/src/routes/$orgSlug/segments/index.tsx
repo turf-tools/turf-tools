@@ -1,15 +1,15 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { segmentsListQuery } from "~/lib/queries/segments";
 
-export const Route = createFileRoute("/segments/")({
-  loader: async ({ context: { queryClient } }) => {
+export const Route = createFileRoute("/$orgSlug/segments/")({
+  loader: async ({ context: { queryClient }, params: { orgSlug } }) => {
     const segments = await queryClient.fetchQuery(segmentsListQuery());
     // Alphabetically first is the default — matches the list-column order.
     const fallback = [...segments].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (fallback) {
       throw redirect({
-        to: "/segments/$segmentId",
-        params: { segmentId: fallback.segmentId },
+        to: "/$orgSlug/segments/$segmentId",
+        params: { orgSlug, segmentId: fallback.segmentId },
       });
     }
   },

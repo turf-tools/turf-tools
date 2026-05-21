@@ -16,14 +16,20 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export const Route = createFileRoute("/api/web/segment-points")({
+export const Route = createFileRoute("/api/web/$orgSlug/segment-points")({
   server: {
     handlers: {
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async ({ request }) => {
+        const url = new URL(request.url);
+        const match = url.pathname.match(/^\/api\/web\/([^/]+)\/segment-points$/);
+        const orgSlug = match?.[1];
+        if (!orgSlug) {
+          return new Response("Not Found", { status: 404, headers: corsHeaders });
+        }
         let context;
         try {
-          context = await buildWebContext(db, request.headers);
+          context = await buildWebContext(db, request.headers, orgSlug);
         } catch {
           return new Response("Unauthorized", { status: 401, headers: corsHeaders });
         }
