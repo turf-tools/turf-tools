@@ -35,6 +35,14 @@ function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
   return <DialogPrimitive.Trigger {...props} />;
 }
 
+// Never refocus the trigger on close. base-ui's `finalFocus` only
+// knows the close-interaction type, not how the dialog was opened — so
+// a mouse-opened, keyboard-closed flow (Enter on Done) would otherwise
+// leave a visible :focus-visible ring on the trigger. Trade-off: pure
+// Tab-only users lose return-to-trigger after dialog close, which is
+// rare in this app vs the visual cost of stray rings.
+const FINAL_FOCUS_NONE = (): boolean => false;
+
 function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.Props) {
   const ctx = useContext(DialogProtectContext);
   const popupRef = useRef<HTMLDivElement | null>(null);
@@ -64,6 +72,7 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
         initialFocus={() =>
           popupRef.current?.querySelector<HTMLElement>("input, textarea") ?? popupRef.current
         }
+        finalFocus={FINAL_FOCUS_NONE}
         // Default Enter clicks the first DialogClose (Cancel/Ok), so
         // confirm dialogs are still keyboard-dismissable. Skipped when
         // focus is in an input or tabbed-to button — those handle

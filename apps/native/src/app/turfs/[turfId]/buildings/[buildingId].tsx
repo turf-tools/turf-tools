@@ -200,12 +200,14 @@ function PersonRow({
   };
 
   const markNotHome = useCallback(() => {
+    // Idempotent — a repeat swipe is a UX shortcut, not a re-declaration.
+    if (allResults.get(person.personId)?.currentOutcome === "not_home") return;
     recordEvent({
       personId: person.personId,
-      type: "outcome",
+      kind: "outcome",
       payload: { kind: "outcome", outcome: "not_home" },
     });
-  }, [person.personId, recordEvent]);
+  }, [person.personId, recordEvent, allResults]);
 
   return (
     <SwipeAction

@@ -35,7 +35,7 @@ export const appendDoorResult = mut
         turfId: input.turfId,
         createdByName: input.createdByName,
         doorId: input.doorId,
-        type: "outcome",
+        kind: "outcome",
         payload: { kind: "outcome", outcome: input.outcome },
         inputType: input.inputType,
       })
@@ -62,7 +62,7 @@ export const appendBuildingResult = mut
         turfId: input.turfId,
         createdByName: input.createdByName,
         buildingId: input.buildingId,
-        type: "outcome",
+        kind: "outcome",
         payload: { kind: "outcome", outcome: input.outcome },
         inputType: input.inputType,
       })
@@ -85,14 +85,11 @@ export const appendPersonResult = mut
         z.object({
           kind: z.literal("survey"),
           surveyQuestionId: z.string().uuid(),
-          surveyResponseOptionId: z.string().uuid(),
+          surveyResponseOptionId: z.string().uuid().nullable(),
         }),
         z.object({
           kind: z.literal("outcome"),
-          outcome: personOutcome,
-        }),
-        z.object({
-          kind: z.literal("empty"),
+          outcome: personOutcome.nullable(),
         }),
       ]),
     }),
@@ -105,7 +102,7 @@ export const appendPersonResult = mut
         turfId: input.turfId,
         createdByName: input.createdByName,
         personId: input.personId,
-        type: input.payload.kind,
+        kind: input.payload.kind,
         payload: input.payload,
         inputType: input.inputType,
       })
@@ -138,7 +135,7 @@ export const appendNote = mut
         personId: input.personId,
         doorId: input.doorId,
         buildingId: input.buildingId,
-        type: "note",
+        kind: "note",
         payload: { kind: "note", text: input.text, canvassedAt: input.canvassedAt },
         inputType: input.inputType,
       })

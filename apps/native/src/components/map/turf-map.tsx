@@ -161,11 +161,16 @@ export function TurfMap({
             ["+", ["accumulated"], ["get", "personCount"]],
             ["get", "personCount"],
           ],
-          // Maximum role across the cluster — survey (2) > unavailable (1) > none (0).
-          // Mirrors per-building precedence so the cluster reads as the
-          // strongest signal among its members.
+          // Aggregate min + max role so the cluster can stay neutral when any
+          // member is unrecorded (min = 0), and otherwise color by the
+          // strongest signal (max). Mirrors the per-building rule that only
+          // colors a building once *every* person is recorded.
           role: [
             ["max", ["accumulated"], ["get", "role"]],
+            ["get", "role"],
+          ],
+          minRole: [
+            ["min", ["accumulated"], ["get", "role"]],
             ["get", "role"],
           ],
           recordedCount: [
@@ -224,10 +229,12 @@ export function TurfMap({
               50,
               30,
             ],
-            // Cluster color follows the strongest role in the cluster:
-            // any survey → contacted, any unavailable → unavailable, else neutral.
+            // Neutral when any member is unrecorded; otherwise color by the
+            // strongest role across the cluster.
             circleColor: [
               "case",
+              ["==", ["get", "minRole"], 0],
+              isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
               ["==", ["get", "role"], 2],
               colors.contacted.background,
               ["==", ["get", "role"], 1],
