@@ -32,7 +32,7 @@ type CanvassEvent = {
   personId: string | null;
   doorId: string | null;
   buildingId: string | null;
-  type: string;
+  kind: string;
   payload: Record<string, unknown>;
   inputType: string | null;
   createdAt: string;
@@ -42,13 +42,15 @@ type TurfContext = {
   collection: ReturnType<typeof createCollection_>;
   executor: ReturnType<typeof startOfflineExecutor>;
   recordEvent: (params: RecordEventParams) => void;
+  // Append multiple events as a single offline transaction.
+  recordEvents: (params: RecordEventParams[]) => void;
 };
 
 type RecordEventParams = {
   personId?: string;
   doorId?: string;
   buildingId?: string;
-  type: string;
+  kind: string;
   payload: CanvassEventPayload;
 };
 
@@ -152,7 +154,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
       payload: payload as unknown as {
         kind: "survey";
         surveyQuestionId: string;
-        surveyResponseOptionId: string;
+        surveyResponseOptionId: string | null;
       },
       createdByName,
       inputType: "mobile",
@@ -200,29 +202,40 @@ function createTurfContext(turfId: string): TurfContext {
     },
   });
 
+  const buildEvent = (params: RecordEventParams) => ({
+    // Placeholder values — server assigns sequence; userId is always null
+    // for canvasser-flow events (attribution flows through createdByName).
+    sequence: 0,
+    userId: null,
+    createdByName: currentCreatedByName() ?? null,
+    clientEventId: crypto.randomUUID(),
+    turfId,
+    personId: params.personId ?? null,
+    doorId: params.doorId ?? null,
+    buildingId: params.buildingId ?? null,
+    kind: params.kind,
+    payload: params.payload as Record<string, unknown>,
+    inputType: "mobile",
+    createdAt: new Date().toISOString(),
+  });
+
   const recordEvent = executor.createOfflineAction({
     mutationFnName: "appendEvent",
     onMutate: (params: RecordEventParams) => {
-      collection.insert({
-        // Placeholder values — server assigns sequence; userId is always null
-        // for canvasser-flow events (attribution flows through createdByName).
-        sequence: 0,
-        userId: null,
-        createdByName: currentCreatedByName() ?? null,
-        clientEventId: crypto.randomUUID(),
-        turfId,
-        personId: params.personId ?? null,
-        doorId: params.doorId ?? null,
-        buildingId: params.buildingId ?? null,
-        type: params.type,
-        payload: params.payload as Record<string, unknown>,
-        inputType: "mobile",
-        createdAt: new Date().toISOString(),
-      });
+      collection.insert(buildEvent(params));
     },
   });
 
-  return { collection, executor, recordEvent };
+  const recordEvents = executor.createOfflineAction({
+    mutationFnName: "appendEvent",
+    onMutate: (paramsList: RecordEventParams[]) => {
+      for (const params of paramsList) {
+        collection.insert(buildEvent(params));
+      }
+    },
+  });
+
+  return { collection, executor, recordEvent, recordEvents };
 }
 
 function getTurfContext(turfId: string): TurfContext {
@@ -246,7 +259,6 @@ export async function openTurf(turfId: string) {
   // Invalidate the script cache so script-content edits propagate
   // when a canvasser reopens a turf.
   await queryClient.invalidateQueries({ queryKey: ["script"] });
-  // Invalidate canvass events to get fresh event data.
   await queryClient.invalidateQueries({ queryKey: ["canvass-events", turfId] });
   await (collection as unknown as { preload: () => Promise<void> }).preload();
 }
@@ -287,6 +299,11 @@ export function useCanvassEvents(turfId: string) {
 export function useRecordEvent(turfId: string) {
   const { recordEvent } = getTurfContext(turfId);
   return useCallback((params: RecordEventParams) => recordEvent(params), [recordEvent]);
+}
+
+export function useRecordEvents(turfId: string) {
+  const { recordEvents } = getTurfContext(turfId);
+  return useCallback((params: RecordEventParams[]) => recordEvents(params), [recordEvents]);
 }
 
 // Snapshot of sync health for the status line in Settings. Pull state
@@ -347,10 +364,15 @@ export function useSyncStatus(turfId: string | null): SyncStatus {
 // ---------------------------------------------------------------------------
 
 export type PersonSummary = {
-  latestResult: CanvassEvent | null;
+  currentOutcome: string | null;
   notes: CanvassEvent[];
+  selectedByQuestion: Map<string, string>;
 };
 
+// Replays events to compute current state. `currentOutcome` and
+// `selectedByQuestion` are mutually exclusive: a non-null survey
+// answer clears the outcome, and a non-null outcome clears the
+// answers. Un-records (null payloads) only clear their own field.
 export function derivePersonSummaries(events: CanvassEvent[]) {
   const map = new Map<string, PersonSummary>();
   const sorted = [...events].sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
@@ -358,26 +380,44 @@ export function derivePersonSummaries(events: CanvassEvent[]) {
     if (!event.personId) continue;
     let summary = map.get(event.personId);
     if (!summary) {
-      summary = { latestResult: null, notes: [] };
+      summary = { currentOutcome: null, notes: [], selectedByQuestion: new Map() };
       map.set(event.personId, summary);
     }
-    if (event.type === "note") {
+    if (event.kind === "note") {
       summary.notes.push(event);
-    } else {
-      summary.latestResult = event;
+    } else if (event.kind === "outcome") {
+      const payload = event.payload as { outcome: string | null };
+      if (payload.outcome === null) {
+        summary.currentOutcome = null;
+      } else {
+        summary.currentOutcome = payload.outcome;
+        summary.selectedByQuestion.clear();
+      }
+    } else if (event.kind === "survey") {
+      const payload = event.payload as {
+        surveyQuestionId: string;
+        surveyResponseOptionId: string | null;
+      };
+      if (payload.surveyResponseOptionId === null) {
+        summary.selectedByQuestion.delete(payload.surveyQuestionId);
+      } else {
+        summary.selectedByQuestion.set(payload.surveyQuestionId, payload.surveyResponseOptionId);
+        summary.currentOutcome = null;
+      }
     }
   }
   return map;
 }
 
+// Notes alone don't count — they're surfaced via hasNotes.
 export function isRecorded(summaries: Map<string, PersonSummary>, personId: string): boolean {
   const s = summaries.get(personId);
-  if (!s?.latestResult) return false;
-  return s.latestResult.type !== "empty";
+  if (!s) return false;
+  return s.currentOutcome != null || s.selectedByQuestion.size > 0;
 }
 
 export function hasSurvey(summaries: Map<string, PersonSummary>, personId: string): boolean {
-  return summaries.get(personId)?.latestResult?.type === "survey";
+  return (summaries.get(personId)?.selectedByQuestion.size ?? 0) > 0;
 }
 
 export function hasNotes(summaries: Map<string, PersonSummary>, personId: string): boolean {

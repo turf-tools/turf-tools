@@ -1,11 +1,11 @@
-import { integer, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { surveyQuestions } from "./surveys";
 import { users } from "./auth/users";
 
-// A script is a sequence of survey questions presented to canvassers at
-// the door. Standalone and reusable across campaigns; each campaign
-// references one script.
+// A script is an ordered sequence of steps presented to canvassers at the
+// door. Standalone and reusable across campaigns; each campaign references
+// one script.
 export const scripts = pgTable("scripts", {
   scriptId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
@@ -18,16 +18,16 @@ export const scripts = pgTable("scripts", {
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 
-export const scriptQuestions = pgTable(
-  "script_questions",
-  {
-    scriptId: uuid()
-      .notNull()
-      .references(() => scripts.scriptId),
-    surveyQuestionId: uuid()
-      .notNull()
-      .references(() => surveyQuestions.surveyQuestionId),
-    order: integer().notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.scriptId, t.surveyQuestionId] })],
-);
+// A step is either stepType='question' (referencing a reusable survey
+// question) or stepType='text' (carrying its copy inline). Type/payload
+// consistency is enforced at the RPC layer.
+export const scriptSteps = pgTable("script_steps", {
+  scriptStepId: uuid().defaultRandom().primaryKey(),
+  scriptId: uuid()
+    .notNull()
+    .references(() => scripts.scriptId, { onDelete: "cascade" }),
+  order: integer().notNull(),
+  stepType: text().notNull(),
+  surveyQuestionId: uuid().references(() => surveyQuestions.surveyQuestionId),
+  text: text(),
+});

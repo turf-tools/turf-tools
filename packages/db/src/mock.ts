@@ -5,7 +5,7 @@ import { seedReferenceData } from "./seed";
 import { campaigns } from "./schema/campaigns";
 import { memberships } from "./schema/memberships";
 import { organizations } from "./schema/organizations";
-import { scripts, scriptQuestions } from "./schema/scripts";
+import { scripts, scriptSteps } from "./schema/scripts";
 import { segments } from "./schema/segments";
 import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
 import { users } from "./schema/auth/users";
@@ -105,6 +105,8 @@ async function mock() {
     await db.insert(surveyQuestions).values({
       surveyQuestionId: SURVEY_QUESTION_ID,
       organizationId: ORG_ID,
+      name: "Candidate support",
+      responseType: "single_select",
       text: "Are you planning to vote for our candidate?",
       createdBy: USER_ID,
     });
@@ -128,10 +130,11 @@ async function mock() {
       name: "Default Script",
       createdBy: USER_ID,
     });
-    await db.insert(scriptQuestions).values({
+    await db.insert(scriptSteps).values({
       scriptId: SCRIPT_ID,
-      surveyQuestionId: SURVEY_QUESTION_ID,
       order: 0,
+      stepType: "question",
+      surveyQuestionId: SURVEY_QUESTION_ID,
     });
     console.log("Created script");
   }
@@ -275,6 +278,8 @@ async function mock() {
     await db.insert(surveyQuestions).values({
       surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
       organizationId: SECOND_ORG_ID,
+      name: "Bill support",
+      responseType: "single_select",
       text: "Do you support the bill?",
       createdBy: USER_ID,
     });
@@ -301,11 +306,20 @@ async function mock() {
       name: "Other Script",
       createdBy: USER_ID,
     });
-    await db.insert(scriptQuestions).values({
-      scriptId: SECOND_SCRIPT_ID,
-      surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
-      order: 0,
-    });
+    await db.insert(scriptSteps).values([
+      {
+        scriptId: SECOND_SCRIPT_ID,
+        order: 0,
+        stepType: "text",
+        text: "Hi, I'm canvassing for the campaign — got a moment?",
+      },
+      {
+        scriptId: SECOND_SCRIPT_ID,
+        order: 1,
+        stepType: "question",
+        surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+      },
+    ]);
     console.log("Created second-org script");
   }
 

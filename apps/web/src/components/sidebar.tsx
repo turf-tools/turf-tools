@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import {
+  CheckCheck,
   CircleUser,
   LayoutDashboard,
   Layers,
@@ -8,6 +9,7 @@ import {
   Megaphone,
   PanelLeftClose,
   PanelLeftOpen,
+  ClipboardPen,
   Settings,
   Users,
   Waypoints,
@@ -28,6 +30,8 @@ const PRIMARY: NavItem[] = [
   { to: "/$orgSlug/segments", label: "Segments", icon: Layers },
   { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints },
   { to: "/$orgSlug/turfs", label: "Turfs", icon: Map },
+  { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen },
+  { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck },
 ];
 
 const SECONDARY: NavItem[] = [
