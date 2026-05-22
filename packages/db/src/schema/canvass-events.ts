@@ -12,7 +12,7 @@ import { turfs } from "./turfs";
 import { users } from "./auth/users";
 
 // Append-only event log for canvass results. Every result change (survey
-// response, unavailable outcome, note, empty mark) is an immutable append.
+// response, unavailable outcome, note) is an immutable append.
 // "Current state" for an entity = latest event by sequence.
 //
 // Exactly one of (personId, doorId, buildingId) is set per event, identifying
@@ -41,7 +41,7 @@ export const canvassEvents = pgTable(
     personId: text(),
     doorId: uuid(),
     buildingId: uuid(),
-    type: text().notNull(),
+    kind: text().notNull(),
     payload: jsonb().notNull(),
     inputType: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -53,11 +53,11 @@ export const canvassEvents = pgTable(
 );
 
 // Payload discriminated union — shared between server and native app.
-
+// A `null` value (surveyResponseOptionId or outcome) is an un-record:
+// canvasser undid their own previous answer for just that field.
 export type CanvassEventPayload =
-  | { kind: "survey"; surveyQuestionId: string; surveyResponseOptionId: string }
-  | { kind: "outcome"; outcome: string }
-  | { kind: "note"; text: string; canvassedAt: string }
-  | { kind: "empty" };
+  | { kind: "survey"; surveyQuestionId: string; surveyResponseOptionId: string | null }
+  | { kind: "outcome"; outcome: string | null }
+  | { kind: "note"; text: string; canvassedAt: string };
 
 export type CanvassEvent = typeof canvassEvents.$inferSelect;

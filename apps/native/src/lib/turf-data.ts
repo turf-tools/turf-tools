@@ -91,7 +91,7 @@ export function useTurf(turfId: string) {
   const scriptId = metaQuery.data?.scriptId;
   useQuery({
     queryKey: ["script", scriptId] as const,
-    queryFn: () => client.script.get({ scriptId: scriptId! }),
+    queryFn: () => client.scripts.get({ scriptId: scriptId! }),
     enabled: !!scriptId,
     staleTime: Infinity,
   });

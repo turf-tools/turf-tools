@@ -21,6 +21,7 @@ import {
   derivePersonSummaries,
   isRecorded,
   useRecordEvent,
+  useRecordEvents,
   useCanvassEvents,
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
@@ -32,6 +33,10 @@ import { client } from "@/rpc/client";
 import type { TurfDataPerson } from "@field-tools/db/schema";
 
 type Mode = "script" | "unavailable" | "note" | "details";
+
+// Stable reference so the derivedSelections useEffect doesn't fire
+// every render when the person has no events yet.
+const EMPTY_SELECTIONS = new Map<string, string>();
 
 const UNAVAILABLE_OPTIONS: Array<{
   value: string;
@@ -54,7 +59,7 @@ export default function PersonScreen() {
   const scriptId = meta?.scriptId;
   const scriptQuery = useQuery({
     queryKey: ["script", scriptId] as const,
-    queryFn: () => client.script.get({ scriptId: scriptId! }),
+    queryFn: () => client.scripts.get({ scriptId: scriptId! }),
     enabled: !!scriptId,
   });
   const person = indexes?.personsById.get(personId);
@@ -64,64 +69,73 @@ export default function PersonScreen() {
   const events = useCanvassEvents(turfId);
   const summaries = useMemo(() => derivePersonSummaries(events), [events]);
   const recordEvent = useRecordEvent(turfId);
+  const recordEvents = useRecordEvents(turfId);
   const setOpenSheet = useSetAtom(openSheetAtom);
-  const firstQuestion = scriptQuery.data?.questions?.[0];
   const theme = useAtomValue(themeAtom);
   const isDark = theme === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
   const mutedIconColor = isDark ? "#666" : "#888";
   const colors = useColors();
 
-  // Derive current state from the person summary.
   const summary = summaries.get(personId);
-  const latestResult = summary?.latestResult;
   const formattedNotes = (summary?.notes ?? []).map((e) => ({
     text: (e.payload as { text: string }).text,
     canvassedAt: (e.payload as { canvassedAt: string }).canvassedAt ?? e.createdAt,
   }));
 
-  // Local display state for instant visual feedback. Initialized from the
-  // live query summary, updated immediately on tap. The collection write
-  // is deferred with setTimeout so the state update renders first.
-  const [displayResult, setDisplayResult] = useState<{
-    type: string;
-    payload: Record<string, unknown>;
-  } | null>(latestResult ? { type: latestResult.type, payload: latestResult.payload } : null);
+  // Optimistic mirrors: taps update local state immediately so the
+  // check renders/clears this frame; useEffect re-syncs from derived
+  // once the event lands in the live query.
+  const derivedSelections = summary?.selectedByQuestion ?? EMPTY_SELECTIONS;
+  const [selectedOptionByQuestion, setSelectedOptionByQuestion] =
+    useState<Map<string, string>>(derivedSelections);
   useEffect(() => {
-    if (latestResult) {
-      setDisplayResult({ type: latestResult.type, payload: latestResult.payload });
-    }
-  }, [latestResult]);
+    setSelectedOptionByQuestion(derivedSelections);
+  }, [derivedSelections]);
 
-  // Wipe the recorded result for this person. Used by all the "back out"
-  // affordances (mode-switch tap-to-deselect, response-button tap-to-clear,
-  // Cancel button on unavailable). Idempotent — a no-op if nothing was
-  // recorded, so callers don't have to gate. Optimistic local state flips
-  // first; the collection write is deferred with setTimeout so React
-  // renders the change before the event reaches the live query.
-  const clearResult = () => {
-    if (!displayResult || displayResult.type === "empty") return;
-    setDisplayResult({ type: "empty", payload: { kind: "empty" } });
-    setTimeout(() => recordEvent({ personId, type: "empty", payload: { kind: "empty" } }), 0);
-  };
-
-  const selectedOptionId =
-    displayResult?.type === "survey"
-      ? (displayResult.payload as { surveyResponseOptionId: string }).surveyResponseOptionId
-      : undefined;
-  const unavailableOutcome =
-    displayResult?.type === "outcome"
-      ? (displayResult.payload as { outcome: string }).outcome
-      : undefined;
+  const derivedOutcome = summary?.currentOutcome ?? null;
+  const [unavailableOutcome, setUnavailableOutcome] = useState<string | null>(derivedOutcome);
+  useEffect(() => {
+    setUnavailableOutcome(derivedOutcome);
+  }, [derivedOutcome]);
 
   const [mode, setMode] = useState<Mode>("script");
 
-  // Sync mode to match existing result.
   useEffect(() => {
     if (unavailableOutcome) setMode("unavailable");
   }, [unavailableOutcome]);
 
-  // Navigation
+  const clearResult = () => {
+    if (mode === "unavailable") {
+      if (unavailableOutcome === null) return;
+      setUnavailableOutcome(null);
+      setTimeout(
+        () =>
+          recordEvent({ personId, kind: "outcome", payload: { kind: "outcome", outcome: null } }),
+        0,
+      );
+      return;
+    }
+    if (selectedOptionByQuestion.size === 0) return;
+    const questionIds = Array.from(selectedOptionByQuestion.keys());
+    setSelectedOptionByQuestion(new Map());
+    setTimeout(
+      () =>
+        recordEvents(
+          questionIds.map((surveyQuestionId) => ({
+            personId,
+            kind: "survey",
+            payload: {
+              kind: "survey" as const,
+              surveyQuestionId,
+              surveyResponseOptionId: null,
+            },
+          })),
+        ),
+      0,
+    );
+  };
+
   const handleListPress = () => {
     setOpenSheet(true);
     router.dismissTo(`/turfs/${turfId}`);
@@ -140,7 +154,6 @@ export default function PersonScreen() {
     }
     // If the current person isn't marked yet, there's nobody else — stay put.
     if (!isRecorded(summaries, personId)) return;
-    // Building complete — offer to return to list or go to next building.
     const nextBuilding = indexes.buildingsInOrder.find((b) => {
       if (b.buildingId === building.buildingId) return false;
       return b.doors.some((d) => d.persons.some((p) => !isRecorded(summaries, p.personId)));
@@ -180,7 +193,6 @@ export default function PersonScreen() {
     },
   });
 
-  // Loading / error states
   if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
@@ -202,10 +214,9 @@ export default function PersonScreen() {
     );
   }
 
-  const recorded =
-    !!displayResult && displayResult.type !== "empty" && displayResult.type !== "note";
   const noteExists = formattedNotes.length > 0;
-  const surveyExists = displayResult?.type === "survey";
+  const surveyExists = selectedOptionByQuestion.size > 0;
+  const recorded = surveyExists || unavailableOutcome != null;
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
 
@@ -295,32 +306,40 @@ export default function PersonScreen() {
             {mode === "script" && (
               <ScriptContent
                 scriptQuery={scriptQuery}
-                selectedOptionId={selectedOptionId}
-                onSelectOption={(optionId) => {
+                selectedOptionByQuestion={selectedOptionByQuestion}
+                onSelectOption={(surveyQuestionId, surveyResponseOptionId) => {
                   const payload = {
                     kind: "survey" as const,
-                    surveyQuestionId: firstQuestion!.surveyQuestionId,
-                    surveyResponseOptionId: optionId,
+                    surveyQuestionId,
+                    surveyResponseOptionId,
                   };
-                  setDisplayResult({ type: "survey", payload });
-                  setTimeout(() => recordEvent({ personId, type: "survey", payload }), 0);
+                  // Picking a survey answer also un-marks unavailable —
+                  // mirrors the mutual exclusion in derivePersonSummaries.
+                  setSelectedOptionByQuestion((prev) => {
+                    const next = new Map(prev);
+                    if (surveyResponseOptionId === null) {
+                      next.delete(surveyQuestionId);
+                    } else {
+                      next.set(surveyQuestionId, surveyResponseOptionId);
+                      setUnavailableOutcome(null);
+                    }
+                    return next;
+                  });
+                  setTimeout(() => recordEvent({ personId, kind: "survey", payload }), 0);
                 }}
-                onClear={() => {
-                  clearResult();
-                }}
+                onClear={clearResult}
               />
             )}
             {mode === "unavailable" && (
               <UnavailableContent
-                selectedOutcome={unavailableOutcome}
+                selectedOutcome={unavailableOutcome ?? undefined}
                 onSelectOption={(value) => {
                   const payload = { kind: "outcome" as const, outcome: value };
-                  setDisplayResult({ type: "outcome", payload });
-                  setTimeout(() => recordEvent({ personId, type: "outcome", payload }), 0);
+                  setUnavailableOutcome(value);
+                  setSelectedOptionByQuestion(new Map());
+                  setTimeout(() => recordEvent({ personId, kind: "outcome", payload }), 0);
                 }}
-                onClear={() => {
-                  clearResult();
-                }}
+                onClear={clearResult}
                 onCancel={() => {
                   clearResult();
                   setMode("script");
@@ -333,7 +352,7 @@ export default function PersonScreen() {
                 onSubmitNote={(text) => {
                   recordEvent({
                     personId,
-                    type: "note",
+                    kind: "note",
                     payload: { kind: "note", text, canvassedAt: new Date().toISOString() },
                   });
                   setMode("script");
@@ -349,7 +368,6 @@ export default function PersonScreen() {
   );
 }
 
-// Unavailable mode for "contact not available" outcomes.
 function UnavailableContent({
   selectedOutcome,
   onSelectOption,
@@ -396,16 +414,16 @@ function UnavailableContent({
   );
 }
 
-// Script mode
 function ScriptContent({
   scriptQuery,
-  selectedOptionId,
+  selectedOptionByQuestion,
   onSelectOption,
   onClear,
 }: {
-  scriptQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof client.script.get>>>>;
-  selectedOptionId: string | undefined;
-  onSelectOption: (optionId: string) => void;
+  scriptQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof client.scripts.get>>>>;
+  selectedOptionByQuestion: Map<string, string>;
+  // `surveyResponseOptionId: null` un-answers just this question.
+  onSelectOption: (surveyQuestionId: string, surveyResponseOptionId: string | null) => void;
   onClear: () => void;
 }) {
   const colors = useColors();
@@ -419,56 +437,58 @@ function ScriptContent({
   }
 
   const script = scriptQuery.data;
-  const question = script.questions[0];
-  if (!question) return null;
 
   return (
     <View className="gap-4 mb-6">
-      <Text className="font-sans-bold text-lg text-foreground dark:text-muted-foreground-dark leading-6">
+      <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark leading-6">
         {script.name}
       </Text>
-      <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
-        {question.text}
-      </Text>
-      <View className="gap-2">
-        {question.options.map((opt) => (
-          <WideButton
-            key={opt.surveyResponseOptionId}
-            label={opt.text}
-            selected={selectedOptionId === opt.surveyResponseOptionId}
-            selectedForegroundColor={colors.contacted.foreground}
-            selectedBackgroundColor={colors.contacted.background}
-            onPress={() =>
-              selectedOptionId === opt.surveyResponseOptionId
-                ? onClear()
-                : onSelectOption(opt.surveyResponseOptionId)
-            }
-          />
-        ))}
-        <View className="flex-row gap-4 mt-4">
-          <View className="flex-1">
-            <WideButton label="Clear" variant="action" onPress={onClear} />
-          </View>
-          <View className="flex-1">
-            <WideButton
-              label="Submit"
-              variant="submit"
-              onPress={() => {
-                if (!selectedOptionId) {
-                  Alert.alert("Required", "Please select a response before submitting.");
-                  return;
+      {script.steps.map((step) => {
+        if (step.stepType === "text") {
+          return (
+            <Text
+              key={step.scriptStepId}
+              className="font-sans text-lg transform -skew-x-12 leading-6"
+            >
+              {step.text}
+            </Text>
+          );
+        }
+        const selected = selectedOptionByQuestion.get(step.surveyQuestionId);
+        return (
+          <View key={step.scriptStepId} className="gap-2">
+            <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
+              {step.text}
+            </Text>
+            {step.options.map((opt) => (
+              <WideButton
+                key={opt.surveyResponseOptionId}
+                label={opt.text}
+                selected={selected === opt.surveyResponseOptionId}
+                selectedForegroundColor={colors.contacted.foreground}
+                selectedBackgroundColor={colors.contacted.background}
+                onPress={() =>
+                  selected === opt.surveyResponseOptionId
+                    ? onSelectOption(step.surveyQuestionId, null)
+                    : onSelectOption(step.surveyQuestionId, opt.surveyResponseOptionId)
                 }
-                router.back();
-              }}
-            />
+              />
+            ))}
           </View>
+        );
+      })}
+      <View className="flex-row gap-4 mt-4">
+        <View className="flex-1">
+          <WideButton label="Clear" variant="action" onPress={onClear} />
+        </View>
+        <View className="flex-1">
+          <WideButton label="Submit" variant="submit" onPress={() => router.back()} />
         </View>
       </View>
     </View>
   );
 }
 
-// Note mode
 function NoteContent({
   notes,
   onSubmitNote,
@@ -525,8 +545,6 @@ function NoteContent({
   );
 }
 
-// View Details mode — composes detail sections (voting history, notes, and
-// future contact history) below a single "View details" toggle.
 function DetailsContent({
   person,
   notes,
@@ -551,8 +569,7 @@ function DetailsContent({
   );
 }
 
-// Section header + list of label/date rows. Hidden when there are no items
-// so a section that has nothing to show just disappears.
+// Auto-hides when there are no items so empty sections don't render.
 function DetailSection({
   title,
   items,
@@ -571,8 +588,6 @@ function DetailSection({
   );
 }
 
-// Generic two-column row list: date on the left, label on the right.
-// Used by every section inside DetailsContent.
 function DetailList({ items }: { items: Array<{ label: string; date: string }> }) {
   return (
     <View>

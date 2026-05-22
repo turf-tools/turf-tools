@@ -1,15 +1,16 @@
 import { z } from "zod";
 import { webPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
-import * as script from "./web/script";
+import * as scripts from "./web/scripts";
 import * as segments from "./web/segments";
+import * as surveyQuestions from "./web/survey-questions";
 import * as turfDrafts from "./web/turf-drafts";
 import * as webTurfs from "./web/turfs";
 import * as webUsers from "./web/users";
 import * as zoneGroups from "./web/zone-groups";
 import * as zones from "./web/zones";
 import * as canvass from "./native/canvass";
-import * as nativeScript from "./native/script";
+import * as nativeScripts from "./native/scripts";
 import * as nativeTurfs from "./native/turfs";
 
 export const webRouter = {
@@ -70,8 +71,31 @@ export const webRouter = {
     list: turfDrafts.list,
     replaceAll: turfDrafts.replaceAll,
   },
-  script: {
-    list: script.list,
+  scripts: {
+    list: scripts.list,
+    getById: scripts.getById,
+    create: scripts.create,
+    rename: scripts.rename,
+    clone: scripts.clone,
+    remove: scripts.remove,
+    countCampaigns: scripts.countCampaigns,
+    addStep: scripts.addStep,
+    removeStep: scripts.removeStep,
+    reorderSteps: scripts.reorderSteps,
+    updateTextStep: scripts.updateTextStep,
+  },
+  surveyQuestions: {
+    list: surveyQuestions.list,
+    getById: surveyQuestions.getById,
+    create: surveyQuestions.create,
+    rename: surveyQuestions.rename,
+    updateText: surveyQuestions.updateText,
+    archive: surveyQuestions.archive,
+    unarchive: surveyQuestions.unarchive,
+    addResponseOption: surveyQuestions.addResponseOption,
+    removeResponseOption: surveyQuestions.removeResponseOption,
+    reorderResponseOptions: surveyQuestions.reorderResponseOptions,
+    updateResponseOptionText: surveyQuestions.updateResponseOptionText,
   },
   users: {
     list: webUsers.list,
@@ -95,8 +119,8 @@ export const nativeRouter = {
     getByCode: nativeTurfs.getByCode,
     getData: nativeTurfs.getData,
   },
-  script: {
-    get: nativeScript.get,
+  scripts: {
+    get: nativeScripts.get,
   },
   canvass: {
     appendDoorResult: canvass.appendDoorResult,
