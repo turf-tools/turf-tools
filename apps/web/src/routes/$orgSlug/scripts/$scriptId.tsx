@@ -606,7 +606,7 @@ function QuestionPreview({ surveyQuestionId }: { surveyQuestionId: string }) {
   const { data } = useQuery(surveyQuestionDetailQuery(surveyQuestionId));
   if (!data) return null;
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       <p className="text-sm">
         {data.text?.trim() ? (
           data.text
