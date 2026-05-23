@@ -50,7 +50,7 @@ function TurfsIndex() {
   const campaignOptions = campaigns?.map((c) => ({ value: c.campaignId, label: c.name })) ?? [];
 
   return (
-    <Page className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+    <Page className={shouldFade}>
       <EditorHeader title="Turfs">
         <Filter
           icon={<Megaphone className="size-3.5" />}

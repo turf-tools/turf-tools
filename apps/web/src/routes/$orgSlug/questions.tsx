@@ -95,7 +95,7 @@ function QuestionsPage() {
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
-    <Page className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+    <Page className={shouldFade}>
       <EditorHeader title="Questions">
         <Filter
           icon={<Activity className="size-3.5" />}
