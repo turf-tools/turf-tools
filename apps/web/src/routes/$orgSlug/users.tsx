@@ -579,7 +579,7 @@ function InviteDialog({
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
-              Send invites
+              {rows.some((r) => r.sendEmail) ? "Send invites" : "Add users"}
             </Button>
           </div>
         </form>
