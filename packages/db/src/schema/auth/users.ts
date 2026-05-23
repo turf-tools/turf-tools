@@ -8,7 +8,14 @@ export const users = pgTable(
   "users",
   {
     id: uuid().defaultRandom().primaryKey(),
+    // Canonical form (lowercased; Gmail dots stripped before `+`). Used
+    // for all lookups + uniqueness; Better Auth's verification flow keys
+    // on this column. Never user-facing — show `displayEmail` instead.
     email: text().notNull(),
+    // Lowercased typed form, preserving dots. What the admin entered at
+    // invite time. Used for UI rendering and as the magic-link `to:`
+    // address so links arrive at the address the user recognises.
+    displayEmail: text().notNull(),
     emailVerified: boolean().notNull().default(false),
     name: text().notNull(),
     image: text(),

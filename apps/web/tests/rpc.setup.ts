@@ -16,6 +16,7 @@ export async function getTestClient() {
   const user: User = {
     id: SEEDED_ADMIN_USER_ID,
     email: "admin@field.tools",
+    displayEmail: "admin@field.tools",
     emailVerified: true,
     name: "Admin User",
     image: null,

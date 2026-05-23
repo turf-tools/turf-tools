@@ -64,7 +64,7 @@ export const getSession = createServerFn({ method: "GET" }).handler(
       return {
         user: {
           id: row.id,
-          email: row.email,
+          email: row.displayEmail,
           name: row.name,
           role,
           displayTimezone: row.displayTimezone,
@@ -80,7 +80,7 @@ export const getSession = createServerFn({ method: "GET" }).handler(
     if (!first) return null;
     const userRow = (
       await db
-        .select({ displayTimezone: users.displayTimezone })
+        .select({ displayEmail: users.displayEmail, displayTimezone: users.displayTimezone })
         .from(users)
         .where(eq(users.id, session.user.id))
     )[0];
@@ -88,7 +88,7 @@ export const getSession = createServerFn({ method: "GET" }).handler(
     return {
       user: {
         id: session.user.id,
-        email: session.user.email,
+        email: userRow?.displayEmail ?? session.user.email,
         name: session.user.name,
         role: first.role,
         displayTimezone: userRow?.displayTimezone ?? null,
