@@ -67,8 +67,7 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     if using_s3:
         conn.install_extension("httpfs")
         conn.load_extension("httpfs")
-        region = os.environ.get("AWS_REGION", "us-east-1")
-        conn.execute(f"CREATE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}', REFRESH 'auto')")
+        _create_or_replace_s3_secret(conn)
 
     # Buffer pool sizing — DuckDB's default `memory_limit` is conservative
     # on Linux. With the cached connection living for the lifetime of the
@@ -106,6 +105,42 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
 
     conn.execute("USE ducklake")
     return conn
+
+
+def _create_or_replace_s3_secret(conn: duckdb.DuckDBPyConnection) -> None:
+    """(Re)create the S3 SECRET that authorises DuckDB's httpfs reads.
+
+    Called once at connection build and then periodically from the FastAPI
+    lifespan to refresh credentials. `CREATE OR REPLACE` is atomic at the
+    secrets-manager level; in-flight queries that already resolved the
+    secret keep their token snapshot (still valid for hours), and new
+    queries pick up the new triple. `VALIDATION 'none'` keeps a transient
+    IMDS blip from killing the service.
+
+    Note: `REFRESH 'auto'` is documented but is a no-op for plain
+    `credential_chain` on EC2 instance profile — DuckDB only wires the
+    refresh hook into the STS / web_identity branches (see duckdb-aws#26).
+    That's why we drive the refresh ourselves from lifespan.
+    """
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    conn.execute(
+        f"CREATE OR REPLACE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}', VALIDATION 'none')"
+    )
+
+
+def refresh_s3_secret_on_shared_connection(settings: Settings) -> None:
+    """Force-refresh the S3 credentials on the cached read-only connection.
+
+    Safe no-op when the connection hasn't been built yet (cold process)
+    or when S3 isn't in use (local dev). Caller is responsible for the
+    schedule — see the lifespan task in `main.py`.
+    """
+    if _shared_ro_conn is None:
+        return
+    using_s3 = bool(settings.ducklake_metadata_postgres_url) or bool(settings.geo_ducklake_metadata_postgres_url)
+    if not using_s3:
+        return
+    _create_or_replace_s3_secret(_shared_ro_conn)
 
 
 # Alias under which the operational Postgres database is mounted into

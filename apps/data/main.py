@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
-from src.duckdb import get_connection
+from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.settings import get_settings
@@ -30,7 +30,27 @@ def _log_background_task_failure(task: asyncio.Task) -> None:
     except asyncio.CancelledError:
         return
     if exc is not None:
-        logger.exception("Job manager stopped unexpectedly", exc_info=exc)
+        logger.exception("Background task %s stopped unexpectedly", task.get_name(), exc_info=exc)
+
+
+# Cadence for forcing a fresh credential-chain walk on the shared DuckDB
+# connection. EC2 instance-profile STS tokens are typically valid for ~6h;
+# 30 min leaves comfortable headroom for clock skew and scheduling slop.
+# Driven manually because DuckDB's `REFRESH 'auto'` is wired only into the
+# STS / web_identity branches of credential_chain (duckdb-aws#26).
+_S3_SECRET_REFRESH_INTERVAL_SECONDS = 30 * 60
+
+
+async def _refresh_s3_secret_forever() -> None:
+    while True:
+        await asyncio.sleep(_S3_SECRET_REFRESH_INTERVAL_SECONDS)
+        try:
+            # IMDS network call inside CREATE OR REPLACE — keep it off the
+            # event loop so concurrent request handling doesn't pause.
+            await asyncio.to_thread(refresh_s3_secret_on_shared_connection, settings)
+            logger.info("Refreshed S3 SECRET on shared DuckDB connection")
+        except Exception:
+            logger.exception("S3 SECRET refresh failed; will retry on next tick")
 
 
 @asynccontextmanager
@@ -66,10 +86,16 @@ async def lifespan(app: FastAPI):
     job_manager_task = asyncio.create_task(JobManager().run_forever(), name="job-manager")
     job_manager_task.add_done_callback(_log_background_task_failure)
 
+    s3_refresh_task = asyncio.create_task(_refresh_s3_secret_forever(), name="s3-secret-refresh")
+    s3_refresh_task.add_done_callback(_log_background_task_failure)
+
     try:
         yield
     finally:
+        s3_refresh_task.cancel()
         job_manager_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await s3_refresh_task
         with suppress(asyncio.CancelledError):
             await job_manager_task
         await close_pool()
