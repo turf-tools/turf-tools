@@ -58,7 +58,7 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
         className={cn(
           "fixed inset-0 z-50 bg-black/40 backdrop-blur-sm",
           "data-[starting-style]:opacity-0 data-[ending-style]:opacity-0",
-          "transition-opacity duration-100 data-[ending-style]:duration-200",
+          "transition-opacity duration-100",
         )}
       />
       <DialogPrimitive.Popup
@@ -92,7 +92,7 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
           "w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-[0_0_20px_rgba(0,0,0,0.2)]",
           "data-[starting-style]:opacity-0 data-[ending-style]:opacity-0",
           "data-[starting-style]:scale-95",
-          "transition-[opacity,transform] duration-100 data-[ending-style]:duration-200",
+          "transition-[opacity,transform] duration-100",
           "outline-none",
           className,
         )}
