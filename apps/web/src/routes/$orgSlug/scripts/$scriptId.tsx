@@ -207,16 +207,23 @@ function ScriptEditor() {
   };
 
   const stepsContainerRef = useRef<HTMLDivElement>(null);
-  const prevStepsLengthRef = useRef(steps.length);
+  // Track per-script so tabbing between scripts doesn't read "count grew."
+  const prevStepsRef = useRef<{ scriptId: string; length: number } | null>(null);
   useEffect(() => {
-    if (steps.length > prevStepsLengthRef.current && stepsContainerRef.current) {
+    const prev = prevStepsRef.current;
+    if (
+      prev &&
+      prev.scriptId === scriptId &&
+      steps.length > prev.length &&
+      stepsContainerRef.current
+    ) {
       stepsContainerRef.current.scrollTo({
         top: stepsContainerRef.current.scrollHeight,
         behavior: "smooth",
       });
     }
-    prevStepsLengthRef.current = steps.length;
-  }, [steps.length]);
+    prevStepsRef.current = { scriptId, length: steps.length };
+  }, [scriptId, steps.length]);
 
   if (!script) return null;
 
