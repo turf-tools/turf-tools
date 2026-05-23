@@ -2,8 +2,8 @@ import { ORPCError } from "@orpc/server";
 import { and, asc, eq, ne } from "@field-tools/db";
 import { campaigns, segments } from "@field-tools/db/schema";
 import { z } from "zod";
-import { expandSegmentRefs, SegmentRefError, type SegmentLike } from "~/lib/expand-segment-refs";
 import type { Criteria } from "~/lib/filters";
+import { detectSegmentCycles, SegmentRefError, type SegmentLike } from "~/lib/segment-refs";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
 
@@ -252,23 +252,14 @@ export const updateCriteria = pub
           ne(segments.segmentId, input.segmentId),
         ),
       );
-    // Build an org map containing the incoming criteria for the segment
-    // being saved (in place of its stored criteria). Expanding the
-    // incoming criteria then walks all transitive refs, and any path
-    // that loops back to the segment under edit trips the cycle check.
-    const segmentsById = new Map<string, SegmentLike>(
+    const otherSegments = new Map<string, SegmentLike>(
       others.map((s) => [
         s.segmentId,
         { segmentId: s.segmentId, name: s.name, criteria: s.criteria as Criteria },
       ]),
     );
-    segmentsById.set(input.segmentId, {
-      segmentId: input.segmentId,
-      name: "(self)",
-      criteria: incoming,
-    });
     try {
-      expandSegmentRefs(incoming, segmentsById);
+      detectSegmentCycles(input.segmentId, incoming, otherSegments);
     } catch (err) {
       if (err instanceof SegmentRefError)
         throw new ORPCError("BAD_REQUEST", {

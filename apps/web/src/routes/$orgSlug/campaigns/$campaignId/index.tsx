@@ -19,7 +19,6 @@ import {
 import { type SegmentCriteria, segmentDetailQuery } from "~/lib/queries/segments";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
-import { useExpandedCriteria } from "~/lib/use-expanded-criteria";
 import type { Criteria } from "~/lib/filters";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -127,25 +126,21 @@ function CampaignEditor() {
     [activeZoneGroup, zones],
   );
 
-  // Resolve any segment-ref filters in the campaign's segment before
-  // sending criteria to the data server.
-  const expandedSegmentCriteria = useExpandedCriteria(
-    segmentDetail?.criteria as Criteria | null | undefined,
-  );
+  const segmentCriteria = segmentDetail?.criteria as Criteria | null | undefined;
 
   const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
-    ...(expandedSegmentCriteria && keyFilter
-      ? campaignPointsQuery(expandedSegmentCriteria, keyFilter)
+    ...(segmentCriteria && keyFilter
+      ? campaignPointsQuery(segmentCriteria, keyFilter)
       : campaignPointsQuery({} as SegmentCriteria, null)),
-    enabled: !!expandedSegmentCriteria && !!keyFilter,
+    enabled: !!segmentCriteria && !!keyFilter,
     placeholderData: keepPreviousData,
   });
 
   const { data: keyCountsResult, isPlaceholderData: countsStale } = useQuery({
-    ...(expandedSegmentCriteria && keyFilter
-      ? campaignKeyCountsQuery(expandedSegmentCriteria, keyFilter.keyGroup, keyFilter.keys)
+    ...(segmentCriteria && keyFilter
+      ? campaignKeyCountsQuery(segmentCriteria, keyFilter.keyGroup, keyFilter.keys)
       : campaignKeyCountsQuery({} as SegmentCriteria, "", [])),
-    enabled: !!expandedSegmentCriteria && !!keyFilter,
+    enabled: !!segmentCriteria && !!keyFilter,
     placeholderData: keepPreviousData,
   });
   const perKeyCounts = keyCountsResult?.counts ?? null;
