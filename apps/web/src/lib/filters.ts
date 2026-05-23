@@ -53,8 +53,8 @@ export type AddressFilter = {
 };
 
 // Reference to another segment by id. Authored form — what the user
-// composes and what we persist. Resolved to NestedFilter (below) by
-// `expandSegmentRefs` before any query reaches the data server.
+// composes and what we persist. Resolved to NestedFilter (below) on the
+// data server (see `apps/data/src/dsl/expand.py`).
 export type SegmentFilter = {
   kind: "segment";
   key: "segment";

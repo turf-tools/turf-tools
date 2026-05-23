@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.resolve import resolve_criteria
 from src.duckdb import get_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
@@ -176,8 +177,10 @@ async def persons_count(req: _PersonsCountRequest):
 
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
+    conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(req.criteria, req.key_filter, params)
+    where = criteria_to_where(criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -189,7 +192,6 @@ async def persons_count(req: _PersonsCountRequest):
         """,
         slug=req.org_slug,
     )
-    conn = get_connection(settings, read_only=True)
     row = conn.execute(sql, params).fetchone()
     if row is None:
         raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
@@ -215,9 +217,10 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     modifies the running set.
     """
     persons_table = resolve("{persons_geocoded}", slug=req.org_slug)
-    params: list = []
-    sql = cascade_sql(req.criteria, persons_table, params)
     conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+    params: list = []
+    sql = cascade_sql(criteria, persons_table, params)
     row = conn.execute(sql, params).fetchone()
     counts = list(row)
     steps_result = []
@@ -245,8 +248,10 @@ async def persons_sample(req: _PersonsSampleRequest):
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
     limit = max(1, min(req.limit, 500))
+    conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(req.criteria, req.key_filter, params)
+    where = criteria_to_where(criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
@@ -257,7 +262,6 @@ async def persons_sample(req: _PersonsSampleRequest):
         """,
         slug=req.org_slug,
     )
-    conn = get_connection(settings, read_only=True)
     rows = conn.execute(sql, params).fetchall()
     return {
         "persons": [
@@ -292,8 +296,10 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
     group_expr = boundary_key_expr_for(req.key_group)
+    conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(req.criteria, req.key_filter, params)
+    where = criteria_to_where(criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -306,7 +312,6 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         """,
         slug=req.org_slug,
     )
-    conn = get_connection(settings, read_only=True)
     rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
     for key, doors, people in rows:
@@ -331,8 +336,10 @@ async def buildings_list(req: _BuildingsListRequest):
     zone, with enough detail to compute "what's inside this drawn
     polygon" client-side.
     """
+    conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(req.criteria, req.key_filter, params)
+    where = criteria_to_where(criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -349,7 +356,6 @@ async def buildings_list(req: _BuildingsListRequest):
         """,
         slug=req.org_slug,
     )
-    conn = get_connection(settings, read_only=True)
     cursor = conn.execute(sql, params)
     cols = [d[0] for d in cursor.description]
     rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
@@ -370,8 +376,10 @@ async def buildings_points(req: _BuildingsPointsRequest):
     Designed for direct upload into a GPU buffer on the browser — no
     JSON envelope, no per-byte decode work.
     """
+    conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(req.criteria, req.key_filter, params)
+    where = criteria_to_where(criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT longitude, latitude
@@ -382,7 +390,6 @@ async def buildings_points(req: _BuildingsPointsRequest):
         """,
         slug=req.org_slug,
     )
-    conn = get_connection(settings, read_only=True)
     cursor = conn.execute(sql, params)
     arr = array.array("f")
     for lng, lat in cursor.fetchall():
