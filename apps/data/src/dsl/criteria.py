@@ -84,14 +84,24 @@ class AddressFilter(BaseModel):
 
 
 class NestedFilter(BaseModel):
-    """Wraps a complete sub-criteria as a single filter. Produced by the
-    web layer when expanding segment references; the data server never
-    sees segment ids — only resolved nested criteria. Compiles to a
-    parenthesised boolean expression that the outer step's verb composes
-    in the usual way."""
+    """Wraps a complete sub-criteria as a single filter. Produced by
+    `expand_segment_refs` when resolving segment references; the SQL
+    compiler never sees a `SegmentFilter` — only `NestedFilter`. Compiles
+    to a parenthesised boolean expression that the outer step's verb
+    composes in the usual way."""
 
     kind: Literal["nested"]
     criteria: "Criteria"
+
+
+class SegmentFilter(BaseModel):
+    """Reference to another segment by id. Resolved to a `NestedFilter`
+    by `expand_segment_refs` before SQL compilation."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["segment"]
+    segment_id: str | None = Field(default=None, validation_alias="segmentId")
 
 
 Filter = Annotated[
@@ -102,7 +112,8 @@ Filter = Annotated[
     | DateRangeFilter
     | VotingHistoryFilter
     | AddressFilter
-    | NestedFilter,
+    | NestedFilter
+    | SegmentFilter,
     Field(discriminator="kind"),
 ]
 

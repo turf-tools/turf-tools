@@ -56,7 +56,6 @@ import {
   type VotingHistoryFilter,
   VERB_META,
 } from "~/lib/filters";
-import { findCyclicSegmentIds, type SegmentLike } from "~/lib/expand-segment-refs";
 import {
   segmentCascadeQuery,
   segmentCountsQuery,
@@ -65,7 +64,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
-import { useExpandedCriteria } from "~/lib/use-expanded-criteria";
+import { findCyclicSegmentIds, type SegmentLike } from "~/lib/segment-refs";
 import type { CascadeStep } from "~/rpc/web/segments";
 import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -108,13 +107,12 @@ function SegmentEditor() {
   const displaySteps = draft ?? steps;
 
   // Only steps with active filters drive queries — adding an empty step
-  // doesn't trigger a refetch. Segment-ref filters are resolved here so
-  // queries hit the cache as authored-form changes flow through.
+  // doesn't trigger a refetch. Segment-ref resolution happens on the
+  // data server, so authored criteria flows straight through.
   const authoredCriteria = useMemo<Criteria>(
     () => ({ steps: steps.filter(isActiveStep) }),
     [steps],
   );
-  const effectiveCriteria = useExpandedCriteria(authoredCriteria) ?? authoredCriteria;
 
   // Segment id -> row lookup, used by the cascade panel to render
   // segment refs as "Segment: <name>" and to mirror the expansion's
@@ -142,7 +140,7 @@ function SegmentEditor() {
   // revisiting a view after a criteria change shows the last result while
   // the new fetch lands, and a previously-visited view is instant from cache.
   const { data: counts, isPlaceholderData: countsStale } = useQuery({
-    ...segmentCountsQuery(effectiveCriteria),
+    ...segmentCountsQuery(authoredCriteria),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
@@ -151,7 +149,7 @@ function SegmentEditor() {
     isPlaceholderData: pointsStale,
     isLoading: pointsLoading,
   } = useQuery({
-    ...segmentPointsQuery(effectiveCriteria),
+    ...segmentPointsQuery(authoredCriteria),
     enabled: !!activeSegmentDetail && view === "map",
     placeholderData: keepPreviousData,
   });
@@ -160,12 +158,12 @@ function SegmentEditor() {
     isPlaceholderData: sampleStale,
     isLoading: sampleLoading,
   } = useQuery({
-    ...segmentSampleQuery(effectiveCriteria),
+    ...segmentSampleQuery(authoredCriteria),
     enabled: !!activeSegmentDetail && view === "list",
     placeholderData: keepPreviousData,
   });
   const { data: cascade, isPlaceholderData: cascadeStale } = useQuery({
-    ...segmentCascadeQuery(effectiveCriteria),
+    ...segmentCascadeQuery(authoredCriteria),
     enabled: !!activeSegmentDetail && view === "waterfall",
     placeholderData: keepPreviousData,
   });
