@@ -92,12 +92,12 @@ type MapProps = {
   // map-internal events.
   loading?: boolean;
   // Optional point overlay rendered via a custom WebGL layer. The
-  // caller owns the data and passes a flat `[lng, lat, ...]` typed
-  // array straight into the GPU buffer — no per-point object
-  // allocation. We don't viewport-bound the data here; the layer
-  // renders whatever's loaded, and pan/zoom is purely a per-frame
-  // matrix update on the GPU.
-  points?: Float32Array;
+  // caller owns the data and passes a mercator-delta buffer + the fp64
+  // origin those deltas were computed against straight into the GPU
+  // buffer with no per-point object allocation. We don't viewport-bound
+  // the data here; the layer renders whatever's loaded, and pan/zoom
+  // is purely a per-frame matrix update on the GPU.
+  points?: { deltas: Float32Array; origin: [number, number] } | null;
   // Optional per-point RGB color overlay (one byte triple per point,
   // matched 1:1 with `points`). When provided, every dot uses its own
   // color instead of the layer's default style color. Mismatched
