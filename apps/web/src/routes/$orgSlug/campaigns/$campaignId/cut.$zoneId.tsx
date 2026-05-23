@@ -107,14 +107,34 @@ function Cutter({
   });
   const buildings = buildingsResult?.buildings;
 
+  // Project to MapLibre [0,1] mercator at fp64, subtract the centroid,
+  // then store fp32 deltas. fp32 over the tight centered range keeps
+  // millimeter precision at z20 (raw lng/lat → mercator in the shader
+  // at fp32 loses ~8 px per ULP at z20 — visible jitter).
   const pointsBuffer = useMemo(() => {
-    if (!buildings) return undefined;
-    const buf = new Float32Array(buildings.length * 2);
-    for (let i = 0; i < buildings.length; i++) {
-      buf[i * 2] = buildings[i]!.longitude;
-      buf[i * 2 + 1] = buildings[i]!.latitude;
+    if (!buildings || buildings.length === 0) return undefined;
+    const n = buildings.length;
+    const merc = new Float64Array(n * 2);
+    let ox = 0;
+    let oy = 0;
+    for (let i = 0; i < n; i++) {
+      const b = buildings[i]!;
+      const mx = (b.longitude + 180) / 360;
+      const my =
+        0.5 - Math.log(Math.tan(Math.PI / 4 + (b.latitude * Math.PI) / 360)) / (2 * Math.PI);
+      merc[i * 2] = mx;
+      merc[i * 2 + 1] = my;
+      ox += mx;
+      oy += my;
     }
-    return buf;
+    ox /= n;
+    oy /= n;
+    const deltas = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      deltas[i * 2] = merc[i * 2]! - ox;
+      deltas[i * 2 + 1] = merc[i * 2 + 1]! - oy;
+    }
+    return { deltas, origin: [ox, oy] as [number, number] };
   }, [buildings]);
 
   // BBox of the zone's keys' polygons (no unioning needed — bbox accumulates the same).

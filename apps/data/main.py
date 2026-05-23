@@ -370,11 +370,18 @@ class _BuildingsPointsRequest(_WireBaseModel):
 
 @app.post("/buildings/points")
 async def buildings_points(req: _BuildingsPointsRequest):
-    """Binary lng/lat pairs (Float32, row-major) for buildings whose
-    contained persons match the criteria.
+    """Binary mercator-delta pairs for buildings whose contained persons
+    match the criteria.
 
-    Designed for direct upload into a GPU buffer on the browser — no
-    JSON envelope, no per-byte decode work.
+    Wire format: 16-byte header of two fp64 (origin_x, origin_y in
+    MapLibre [0,1] mercator), then N*8 bytes of fp32 (dx, dy) where each
+    pair is the building's mercator coord minus the origin.
+
+    The origin is the centroid of the returned points, kept at fp64 so
+    the browser-side `cameraMerc - origin` subtraction stays precise.
+    Storing deltas (not absolute mercator) lets fp32 spend its full
+    mantissa on intra-cluster precision. Gives millimeter-scale at z20
+    instead of meter-scale.
     """
     conn = get_connection(settings, read_only=True)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
@@ -382,20 +389,35 @@ async def buildings_points(req: _BuildingsPointsRequest):
     where = criteria_to_where(criteria, req.key_filter, params)
     sql = resolve(
         f"""
-        SELECT longitude, latitude
-        FROM {{buildings_geocoded}}
-        WHERE building_id IN (
-            SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
-        )
+        WITH pts AS (
+            SELECT
+                (b.longitude + 180.0) / 360.0 AS mx,
+                0.5 - ln(tan(pi()/4 + radians(b.latitude)/2)) / (2*pi()) AS my
+            FROM {{buildings_geocoded}} b
+            WHERE b.building_id IN (
+                SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
+            )
+        ),
+        o AS (SELECT avg(mx) AS ox, avg(my) AS oy FROM pts)
+        SELECT pts.mx - o.ox, pts.my - o.oy, o.ox, o.oy
+        FROM pts, o
         """,
         slug=req.org_slug,
     )
     cursor = conn.execute(sql, params)
-    arr = array.array("f")
-    for lng, lat in cursor.fetchall():
-        arr.append(lng)
-        arr.append(lat)
-    return Response(content=arr.tobytes(), media_type="application/octet-stream")
+    rows = cursor.fetchall()
+    header = array.array("d", [0.0, 0.0])
+    deltas = array.array("f")
+    if rows:
+        header[0] = rows[0][2]
+        header[1] = rows[0][3]
+        for dx, dy, _, _ in rows:
+            deltas.append(dx)
+            deltas.append(dy)
+    return Response(
+        content=header.tobytes() + deltas.tobytes(),
+        media_type="application/octet-stream",
+    )
 
 
 @app.post("/turfs/publish")
