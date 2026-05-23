@@ -6,6 +6,7 @@ import { Input } from "~/components/input";
 import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
 import { useDelayedFlag } from "~/lib/use-delayed-flag";
+import { useFadeOnce } from "~/lib/use-fade-once";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/account")({
@@ -16,6 +17,7 @@ function AccountPage() {
   const router = useRouter();
   const { session } = Route.useRouteContext();
   const user = session?.user;
+  const shouldFade = useFadeOnce("/account");
 
   const [name, setName] = useState(user?.name ?? "");
   const trimmed = name.trim();
@@ -37,7 +39,7 @@ function AccountPage() {
   if (!user) return null;
 
   return (
-    <Page>
+    <Page className={shouldFade}>
       <div className="mb-4 flex h-8 items-center justify-between">
         <h1 className="text-xl font-extrabold tracking-wide italic">Account</h1>
       </div>

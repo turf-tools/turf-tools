@@ -9,7 +9,7 @@ export const Route = createFileRoute("/$orgSlug/overview")({
 function Overview() {
   const shouldFade = useFadeOnce("/overview");
   return (
-    <Page className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+    <Page className={shouldFade}>
       <div className="mb-4 flex h-8 items-center justify-between">
         <h1 className="text-xl font-extrabold tracking-wide">Overview</h1>
       </div>
