@@ -3,6 +3,7 @@ import { and, asc, eq, isNull, sql, type Db } from "@field-tools/db";
 import { memberships, users } from "@field-tools/db/schema";
 import { z } from "zod";
 import { auth } from "~/lib/auth";
+import { normalizeEmail } from "~/lib/normalize-email";
 import { ROLES } from "~/lib/permissions";
 import { checkPermission, webMut, webPub } from "../context";
 
@@ -30,7 +31,7 @@ export const list = webPub.input(z.object({}).optional()).handler(async ({ conte
   const rows = await context.db
     .select({
       userId: users.id,
-      email: users.email,
+      email: users.displayEmail,
       name: users.name,
       emailVerified: users.emailVerified,
       role: memberships.role,
@@ -62,7 +63,7 @@ export const list = webPub.input(z.object({}).optional()).handler(async ({ conte
 export const invite = webMut
   .input(
     z.object({
-      email: z.string().email().toLowerCase().trim(),
+      email: z.string().email().trim(),
       name: z.string().trim().min(1).max(120).optional(),
       role: roleSchema,
       sendEmail: z.boolean().default(true),
@@ -71,14 +72,15 @@ export const invite = webMut
   .handler(async ({ context, input }) => {
     checkPermission(context, "users.manage");
 
+    const email = normalizeEmail(input.email);
+    const displayEmail = input.email.toLowerCase();
+
     const existing = (
       await context.db
         .select({ archivedAt: memberships.archivedAt })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.userId))
-        .where(
-          and(eq(users.email, input.email), eq(memberships.organizationId, context.organizationId)),
-        )
+        .where(and(eq(users.email, email), eq(memberships.organizationId, context.organizationId)))
     )[0];
     if (existing) {
       throw new ORPCError("CONFLICT", {
@@ -88,10 +90,10 @@ export const invite = webMut
       });
     }
 
-    const name = input.name ?? input.email.split("@")[0]!;
+    const name = input.name ?? displayEmail.split("@")[0]!;
     const inserted = await context.db
       .insert(users)
-      .values({ email: input.email, name })
+      .values({ email, displayEmail, name })
       .returning({ id: users.id });
     const userId = inserted[0]!.id;
     await context.db.insert(memberships).values({
@@ -102,7 +104,7 @@ export const invite = webMut
 
     if (input.sendEmail) {
       await auth.api.signInMagicLink({
-        body: { email: input.email, callbackURL: "/" },
+        body: { email: displayEmail, callbackURL: "/" },
         headers: new Headers(),
       });
     }
@@ -225,7 +227,7 @@ export const resendInvite = webMut
 
     const row = (
       await context.db
-        .select({ email: users.email })
+        .select({ displayEmail: users.displayEmail })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.userId))
         .where(
@@ -239,7 +241,7 @@ export const resendInvite = webMut
     if (!row) throw new ORPCError("NOT_FOUND");
 
     await auth.api.signInMagicLink({
-      body: { email: row.email, callbackURL: "/" },
+      body: { email: row.displayEmail, callbackURL: "/" },
       headers: new Headers(),
     });
 

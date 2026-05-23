@@ -1,10 +1,11 @@
 import { betterAuth } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { magicLink } from "better-auth/plugins";
 import { Resend } from "resend";
 import { and, db, eq, isNull } from "@field-tools/db";
 import { accounts, memberships, sessions, users, verifications } from "@field-tools/db/schema";
+import { normalizeEmail } from "./normalize-email";
 
 // Resolved lazily so dev can boot without RESEND_API_KEY; magic links print
 // to the server console in that case.
@@ -45,19 +46,30 @@ export const auth = betterAuth({
       },
     },
   },
+  hooks: {
+    // Normalize the typed email to its canonical form before BA's own
+    // logic sees it — the verification record and any downstream user
+    // lookups all key on `users.email`, which we store canonicalised.
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/sign-in/magic-link" && typeof ctx.body?.email === "string") {
+        ctx.body.email = normalizeEmail(ctx.body.email);
+      }
+    }),
+  },
   plugins: [
     magicLink({
       disableSignUp: true,
       expiresIn: 60 * 60,
       sendMagicLink: async ({ email, url }) => {
-        // Membership gate — BA's disableSignUp only fires at verify-time, so
-        // without this check the link gets sent first and the user only sees
-        // the failure after clicking it. We gate on an *active* (non-archived)
+        // `email` is already canonical thanks to the before-hook. Membership
+        // gate — BA's disableSignUp only fires at verify-time, so without
+        // this check the link gets sent first and the user only sees the
+        // failure after clicking it. We gate on an *active* (non-archived)
         // membership rather than just users-row existence, so removed/archived
         // people get the same rejection as strangers.
         const row = (
           await db
-            .select({ id: users.id })
+            .select({ id: users.id, displayEmail: users.displayEmail })
             .from(users)
             .innerJoin(memberships, eq(memberships.userId, users.id))
             .where(and(eq(users.email, email), isNull(memberships.archivedAt)))
@@ -68,15 +80,16 @@ export const auth = betterAuth({
             message: "No account found for this email",
           });
         }
+        const to = row.displayEmail;
         const resend = getResend();
         if (!resend) {
-          console.log(`[auth] magic link for ${email}: ${url}`);
+          console.log(`[auth] magic link for ${to}: ${url}`);
           return;
         }
         const from = process.env.RESEND_FROM ?? "Field Tools <onboarding@resend.dev>";
         await resend.emails.send({
           from,
-          to: email,
+          to,
           subject: "Log in to Field Tools",
           html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #333;">
   <br/>

@@ -38,6 +38,7 @@ import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { Toggle } from "~/components/toggle";
 import { formatDate } from "~/lib/format";
+import { normalizeEmail } from "~/lib/normalize-email";
 import { hasPermission, ROLES, type Role } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { usersListQuery } from "~/lib/queries/users";
@@ -434,8 +435,10 @@ function InviteDialog({
 
   const submit = async () => {
     setError(null);
-    // Block partial-success — preflight before inserting.
-    const inputEmails = rows.map((r) => r.email.trim().toLowerCase());
+    // Block partial-success — preflight before inserting. Compare on
+    // canonical form so `foo.bar@gmail.com` and `foobar@gmail.com` collide
+    // (same mailbox); server enforces the same.
+    const inputEmails = rows.map((r) => (r.email.trim() ? normalizeEmail(r.email) : ""));
     // (1) duplicates within the dialog rows themselves
     const seen = new Set<string>();
     const dupes: string[] = [];
@@ -450,7 +453,7 @@ function InviteDialog({
     }
     // (2) emails already on a membership (any status). Archived users
     // must be restored via the row menu, not re-invited.
-    const memberEmails = new Set(existingUsers.map((u) => u.email.toLowerCase()));
+    const memberEmails = new Set(existingUsers.map((u) => normalizeEmail(u.email)));
     const conflicts = inputEmails.filter((e) => e.length > 0 && memberEmails.has(e));
     if (conflicts.length > 0) {
       setError(`Already a member: ${conflicts.join(", ")}`);
