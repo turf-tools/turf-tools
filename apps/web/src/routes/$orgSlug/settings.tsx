@@ -12,6 +12,7 @@ import {
 import { Page } from "~/components/page";
 import { DEFAULT_DISPLAY_TIMEZONE, type DisplayTimezone, TIMEZONE_OPTIONS } from "~/lib/timezones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
+import { useFadeOnce } from "~/lib/use-fade-once";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/settings")({
@@ -22,6 +23,7 @@ function SettingsPage() {
   const router = useRouter();
   const { session } = Route.useRouteContext();
   const user = session?.user;
+  const shouldFade = useFadeOnce("/settings");
 
   const updateTimezone = useMutation({
     mutationFn: (tz: DisplayTimezone) =>
@@ -40,7 +42,7 @@ function SettingsPage() {
   const currentTzLabel = TIMEZONE_OPTIONS.find((o) => o.value === currentTz)?.label ?? currentTz;
 
   return (
-    <Page>
+    <Page className={shouldFade}>
       <div className="mb-4 flex h-8 items-center justify-between">
         <h1 className="text-xl font-extrabold tracking-wide italic">Settings</h1>
       </div>
