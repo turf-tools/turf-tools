@@ -568,7 +568,7 @@ function DoubleClickEditInput({
           setEditing(false);
         }
       }}
-      className={cn("h-7", className)}
+      className={cn("h-7 px-2", className)}
     />
   );
 }
