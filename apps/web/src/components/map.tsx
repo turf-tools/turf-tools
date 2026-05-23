@@ -212,6 +212,10 @@ export function Map({
   // curtain stays up across re-frames without any parent
   // coordination.
   const [pendingFit, setPendingFit] = useState(false);
+  // Last bounds we actually fit to — refetched-but-identical-content
+  // bounds short-circuit the fit effect so a focus refetch doesn't reset
+  // the camera the user just panned.
+  const lastFitBoundsRef = useRef<readonly number[] | null>(null);
 
   useEffect(() => {
     if (!boundariesUrl) return;
@@ -502,9 +506,14 @@ export function Map({
   // listener if it isn't ready yet.
   useEffect(() => {
     if (!fitBounds) {
+      lastFitBoundsRef.current = null;
       setPendingFit(false);
       return;
     }
+    // Refetched-but-identical-content bounds shouldn't reset the camera
+    // after the user has panned/zoomed. Compare by value.
+    const prev = lastFitBoundsRef.current;
+    if (prev && prev.every((v, i) => v === fitBounds[i])) return;
     setPendingFit(true);
     if (!mapReady) return;
     const map = mapRef.current?.getMap();
@@ -517,6 +526,7 @@ export function Map({
         ],
         { padding: 40, duration: 0 },
       );
+      lastFitBoundsRef.current = fitBounds;
       setPendingFit(false);
     };
     if (
