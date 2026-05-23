@@ -26,6 +26,11 @@ export const segmentCountsQuery = (criteria: Criteria) =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+export type SegmentPoints = {
+  origin: [number, number];
+  deltas: Float32Array;
+};
+
 // gcTime:0 releases the multi-MB Float32Array the moment the query goes
 // inactive — accumulating multiple buffers triggers V8 GC pauses.
 export const segmentPointsQuery = (criteria: Criteria) =>
@@ -50,14 +55,20 @@ export const segmentCascadeQuery = (criteria: Criteria) =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-// Binary lng/lat pairs — uploaded directly into a GPU buffer, so the
-// response stays as raw bytes the whole way through (no JSON envelope,
-// no per-byte JS decode). Lives outside oRPC for that reason; auth /
-// org are enforced by the /api proxy on the web edge.
+// Binary mercator-delta pairs — uploaded directly into a GPU buffer,
+// so the response stays as raw bytes the whole way through (no JSON
+// envelope, no per-byte JS decode). Lives outside oRPC for that
+// reason; auth / org are enforced by the /api proxy on the web edge.
+//
+// Wire: 16-byte header (two fp64 — origin x, y in [0,1] mercator),
+// then N*8 bytes of fp32 (dx, dy). The fp64 origin is critical: the
+// per-frame `cameraMerc - origin` subtract in PointsLayer happens at
+// fp64, and an fp32 origin would re-introduce the precision loss the
+// delta encoding exists to fix.
 export async function fetchSegmentPoints(input: {
   criteria: unknown;
   keyFilter?: { keyGroup: string; keys: string[] } | null;
-}): Promise<Float32Array> {
+}): Promise<SegmentPoints> {
   const orgSlug = getCurrentOrgSlug();
   const res = await fetch(`/api/web/${orgSlug}/segment-points`, {
     method: "POST",
@@ -68,7 +79,10 @@ export async function fetchSegmentPoints(input: {
     }),
   });
   if (!res.ok) throw new Error(`segment-points failed: ${res.status} ${await res.text()}`);
-  return new Float32Array(await res.arrayBuffer());
+  const buf = await res.arrayBuffer();
+  const header = new Float64Array(buf, 0, 2);
+  const deltas = new Float32Array(buf, 16);
+  return { origin: [header[0]!, header[1]!], deltas };
 }
 
 // Buildings inside a single zone, narrowed by segment criteria. Used by

@@ -1,32 +1,39 @@
 // Custom MapLibre layer that renders an array of geographic points as
 // anti-aliased dots via WebGL. Conforms to MapLibre's CustomLayerInterface.
 //
-// Input: a flat Float32Array of `[lng, lat, lng, lat, ...]` in degrees,
-// plus two optional per-point overlays:
+// Input: a Float32Array of mercator deltas `[dx, dy, dx, dy, ...]` where
+// each pair is the point's MapLibre [0,1] mercator coord minus a
+// stable `origin` (passed alongside the buffer, fp64). Pre-projecting
+// to mercator off the GPU is what ensures precision.
+//
+// Two optional per-point overlays:
 //   - colors  (Uint8Array RGB triples, one per point)
 //   - sizes   (Float32Array scaling factors, one per point)
 // Both default to a uniform style — `style.color` for color, 1.0 for
 // size — and resize automatically when `setPoints` runs.
 //
 // Data flow:
-//   setPoints(buf)  → one VBO upload per data refresh, plus reset of
+//   setPoints({deltas, origin})
+//                   → one VBO upload per data refresh, plus reset of
 //                     the color / size buffers to their defaults so a
 //                     stale per-point overlay can't outlive its points.
+//                     Stores `origin` for the per-frame shift math.
 //   setColors(buf)  → one VBO upload; `null` reverts to style color.
 //   setSizes(buf)   → one VBO upload; `null` reverts to scale 1.0.
-//   render()        → one draw call (gl.POINTS) per frame; the shader
-//                     subtracts a per-frame camera origin from each
-//                     projected mercator coord and applies an
-//                     origin-shifted matrix (see the "translation
-//                     split" comment on `render`).
+//   render()        → one draw call (gl.POINTS) per frame; computes
+//                     `shift = cameraMerc - storedOrigin` at fp64,
+//                     splits into hi/lo fp32, and the shader does
+//                     `a_merc_rel - shift` then multiplies by an
+//                     origin-shifted projection matrix (see the
+//                     "translation split" comment on `render`).
 //
 // The origin-split trick: at high zoom, MapLibre's `mainMatrix` has
 // translation values in the millions, and `mat * vec(small_mercator)`
 // in float32 is a difference-of-large-numbers that loses precision.
 // We compute a "shifted" matrix on the CPU (camera mercator origin
 // baked into the translation column at JS-double precision) and have
-// the shader multiply it against `mercator - origin`. Algebra cancels
-// the same way; the bytes flowing to the GPU are small numbers.
+// the shader multiply it against `mercator - cameraMerc`. Algebra
+// cancels the same way; the bytes flowing to the GPU are small numbers.
 
 import type {
   CustomLayerInterface,
@@ -37,8 +44,11 @@ import type {
 const VERTEX_SHADER = `#version 300 es
 precision highp float;
 
-// Per-vertex: lng, lat in degrees, straight from the server.
-in vec2 a_lnglat;
+// Per-vertex: mercator delta (point's [0,1] mercator coord minus the
+// layer's stored origin), pre-projected by the producer. Pre-projection +
+// origin subtract together keep fp32 spending its full mantissa on
+// useful digits, yielding millimeter precision at z20.
+in vec2 a_merc_rel;
 // Per-vertex color (UNSIGNED_BYTE normalized to 0..1). Defaults to
 // the style color when no per-point colors are provided.
 in vec3 a_color;
@@ -48,19 +58,15 @@ in float a_size;
 
 // Origin-shifted projection matrix (see PointsLayer.render).
 uniform mat4 u_matrix;
-// Camera mercator origin for the current frame, split into hi/lo
-// fp32 pair (effective ~48 bits of mantissa). The lo half absorbs
-// the fp32 quantization of the hi half, so the perceived origin
-// changes smoothly as the camera pans by sub-ULP amounts. Without
-// this, every fp32 quantum the camera crosses snaps all points by
-// 1 ULP at once — visible jitter during slow pan.
-uniform vec2 u_originHi;
-uniform vec2 u_originLo;
+// cameraMerc minus storedOrigin for the current frame, split into
+// hi/lo fp32 pair (effective ~48 bits of mantissa). Two-step subtract
+// in the shader stays smooth as the hi part ticks across fp32
+// boundaries during pan/zoom.
+uniform vec2 u_shiftHi;
+uniform vec2 u_shiftLo;
 uniform float u_zoom;
 
 out vec3 v_color;
-
-const float PI = 3.14159265359;
 
 // Zoom range and pixel-size endpoints for the dot. Each zoom level
 // scales the dot by the same factor (geometric ramp), matching the
@@ -71,17 +77,10 @@ const float PX_MIN = 2.0;
 const float PX_MAX = 14.0;
 
 void main() {
-  // Web Mercator projection: lng/lat (degrees) → mercator (0..1).
-  float x = (a_lnglat.x + 180.0) / 360.0;
-  float lat_rad = a_lnglat.y * PI / 180.0;
-  float y = 0.5 - log(tan(PI / 4.0 + lat_rad / 2.0)) / (2.0 * PI);
-
-  // Two-step subtraction: subtract the hi part (close to vertex
-  // mercator → fp32 has plenty of precision in the small result),
-  // then the lo residual. Equivalent to merc - (hi + lo) but stays
-  // smooth as the hi part ticks across fp32 boundaries during pan.
-  vec2 deltaHi = vec2(x, y) - u_originHi;
-  vec2 relative = deltaHi - u_originLo;
+  // (merc - cameraMerc) = (merc - storedOrigin) - (cameraMerc - storedOrigin).
+  // Two-step subtraction so cross-quantum camera shifts stay smooth.
+  vec2 deltaHi = a_merc_rel - u_shiftHi;
+  vec2 relative = deltaHi - u_shiftLo;
   gl_Position = u_matrix * vec4(relative, 0.0, 1.0);
 
   v_color = a_color;
@@ -138,20 +137,25 @@ export class PointsLayer implements CustomLayerInterface {
   private pointCount = 0;
 
   // Cached attribute / uniform locations.
-  private locA_lnglat = -1;
+  private locA_mercRel = -1;
   private locA_color = -1;
   private locA_size = -1;
   private locU_matrix: WebGLUniformLocation | null = null;
-  private locU_originHi: WebGLUniformLocation | null = null;
-  private locU_originLo: WebGLUniformLocation | null = null;
+  private locU_shiftHi: WebGLUniformLocation | null = null;
+  private locU_shiftLo: WebGLUniformLocation | null = null;
   private locU_zoom: WebGLUniformLocation | null = null;
 
   // Reusable scratch buffer for the shifted matrix; one allocation
   // amortized over every frame.
   private readonly shiftedMatrix = new Float32Array(16);
 
+  // Mercator origin the current `a_merc_rel` deltas were computed
+  // against. Held at fp64, the per-frame `cameraMerc - storedOrigin`
+  // subtract is the precision-critical step.
+  private storedOrigin: [number, number] = [0, 0];
+
   // Pending point data — applied during the next `onAdd` once GL is up.
-  private pendingPoints: Float32Array | null = null;
+  private pendingPoints: { deltas: Float32Array; origin: [number, number] } | null = null;
 
   // Latest user-provided overlays. `null` means "no per-point data,
   // use the style/default." Held independent of GL state so we can
@@ -174,7 +178,8 @@ export class PointsLayer implements CustomLayerInterface {
     this.colorBuffer = this.gl.createBuffer();
     this.sizeBuffer = this.gl.createBuffer();
     if (this.pendingPoints) {
-      this.uploadPoints(this.pendingPoints);
+      this.storedOrigin = this.pendingPoints.origin;
+      this.uploadPoints(this.pendingPoints.deltas);
       this.pendingPoints = null;
     }
     // Color/size buffers always need *some* contents — the shader
@@ -208,8 +213,8 @@ export class PointsLayer implements CustomLayerInterface {
     gl2.useProgram(this.program);
 
     gl2.bindBuffer(gl2.ARRAY_BUFFER, this.pointsBuffer);
-    gl2.enableVertexAttribArray(this.locA_lnglat);
-    gl2.vertexAttribPointer(this.locA_lnglat, 2, gl2.FLOAT, false, 0, 0);
+    gl2.enableVertexAttribArray(this.locA_mercRel);
+    gl2.vertexAttribPointer(this.locA_mercRel, 2, gl2.FLOAT, false, 0, 0);
 
     // Per-point color attribute when an overlay is active; otherwise
     // disable the array and feed the shader a constant style color via
@@ -267,19 +272,21 @@ export class PointsLayer implements CustomLayerInterface {
     this.shiftedMatrix[14] = M[2] * ox + M[6] * oy + M[14];
     this.shiftedMatrix[15] = M[3] * ox + M[7] * oy + M[15];
 
-    // Split the fp64 origin into a hi/lo fp32 pair. `Math.fround`
-    // gives the closest fp32; the residual fits in fp32 precision-wise
-    // because we just subtracted two close values. The shader does a
-    // two-step subtraction (see VERTEX_SHADER) so cross-quantum camera
-    // shifts stay smooth.
-    const oxHi = Math.fround(ox);
-    const oxLo = ox - oxHi;
-    const oyHi = Math.fround(oy);
-    const oyLo = oy - oyHi;
+    // Shift = cameraMerc - storedOrigin, computed at fp64 then split
+    // into hi/lo fp32. The subtraction itself is the precision-critical
+    // step — both operands are fp64 here. `Math.fround` quantizes to
+    // fp32; the residual recovers the bits lost. Two-step subtract in
+    // the shader keeps cross-quantum camera shifts smooth.
+    const sx = ox - this.storedOrigin[0];
+    const sy = oy - this.storedOrigin[1];
+    const sxHi = Math.fround(sx);
+    const sxLo = sx - sxHi;
+    const syHi = Math.fround(sy);
+    const syLo = sy - syHi;
 
     gl2.uniformMatrix4fv(this.locU_matrix, false, this.shiftedMatrix);
-    gl2.uniform2f(this.locU_originHi, oxHi, oyHi);
-    gl2.uniform2f(this.locU_originLo, oxLo, oyLo);
+    gl2.uniform2f(this.locU_shiftHi, sxHi, syHi);
+    gl2.uniform2f(this.locU_shiftLo, sxLo, syLo);
     gl2.uniform1f(this.locU_zoom, this.map.getZoom());
 
     gl2.drawArrays(gl2.POINTS, 0, this.pointCount);
@@ -288,17 +295,20 @@ export class PointsLayer implements CustomLayerInterface {
   // Replace the entire point set. One VBO upload for positions; the
   // color/size buffers only get touched when a per-point overlay is
   // active (otherwise render() supplies a constant attribute value).
-  // `flat` is `[lng0, lat0, lng1, lat1, ...]`. If the layer hasn't been
+  // `deltas` is `[dx0, dy0, dx1, dy1, ...]` in MapLibre [0,1] mercator,
+  // each pair already offset by `origin`. If the layer hasn't been
   // added to the map yet (onAdd hasn't run), we stash and upload on add.
-  setPoints(flat: Float32Array | null | undefined): void {
-    const data = flat ?? new Float32Array(0);
+  setPoints(input: { deltas: Float32Array; origin: [number, number] } | null | undefined): void {
+    const deltas = input?.deltas ?? new Float32Array(0);
+    const origin: [number, number] = input?.origin ?? [0, 0];
+    this.storedOrigin = origin;
     if (this.gl && this.pointsBuffer) {
-      this.uploadPoints(data);
+      this.uploadPoints(deltas);
       if (this.userColors) this.uploadDerivedColors();
       if (this.userSizes) this.uploadDerivedSizes();
     } else {
-      this.pendingPoints = data;
-      this.pointCount = data.length / 2;
+      this.pendingPoints = { deltas, origin };
+      this.pointCount = deltas.length / 2;
     }
     this.nudgeOnTop();
     this.map?.triggerRepaint();
@@ -393,12 +403,12 @@ export class PointsLayer implements CustomLayerInterface {
     }
     this.program = program;
 
-    this.locA_lnglat = gl.getAttribLocation(program, "a_lnglat");
+    this.locA_mercRel = gl.getAttribLocation(program, "a_merc_rel");
     this.locA_color = gl.getAttribLocation(program, "a_color");
     this.locA_size = gl.getAttribLocation(program, "a_size");
     this.locU_matrix = gl.getUniformLocation(program, "u_matrix");
-    this.locU_originHi = gl.getUniformLocation(program, "u_originHi");
-    this.locU_originLo = gl.getUniformLocation(program, "u_originLo");
+    this.locU_shiftHi = gl.getUniformLocation(program, "u_shiftHi");
+    this.locU_shiftLo = gl.getUniformLocation(program, "u_shiftLo");
     this.locU_zoom = gl.getUniformLocation(program, "u_zoom");
   }
 }
