@@ -292,7 +292,9 @@ function RenameDialog({
     if (open) setName(currentName);
   }, [open, currentName]);
 
-  const valid = name.trim().length > 0;
+  const trimmed = name.trim();
+  const dirty = trimmed !== currentName;
+  const valid = trimmed.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -301,8 +303,8 @@ function RenameDialog({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (!valid || pending) return;
-            onSubmit(name.trim());
+            if (!valid || !dirty || pending) return;
+            onSubmit(trimmed);
           }}
           className="flex flex-col gap-4"
         >
@@ -317,7 +319,7 @@ function RenameDialog({
           <DialogError error={error} />
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!valid} loading={pending}>
+            <Button type="submit" disabled={!valid || !dirty} loading={pending}>
               Rename
             </Button>
           </div>
