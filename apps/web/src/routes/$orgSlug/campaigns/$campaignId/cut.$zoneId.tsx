@@ -375,7 +375,7 @@ function Cutter({
     (!!campaign.segmentId && buildings === undefined) || (!!campaign.zoneGroupId && !boundaryFC);
 
   return (
-    <div className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+    <div className={shouldFade}>
       <EditorHeader
         title="Turf Cutter"
         subtitle={zone?.name}
