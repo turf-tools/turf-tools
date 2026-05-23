@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from src.dsl.compile import criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
 from src.tables import resolve
@@ -82,8 +83,9 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     scope = _load_publish_scope(conn, req)
+    criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
-    where_sql = criteria_to_where(scope.criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params)
+    where_sql = criteria_to_where(criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params)
     _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
 
     # Retry budget exists only to swallow the rare turf_code collision
