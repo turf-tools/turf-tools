@@ -100,7 +100,7 @@ function UsersIndex() {
       : (STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? null);
 
   return (
-    <Page className={shouldFade ? "animate-in fade-in duration-100" : undefined}>
+    <Page className={shouldFade}>
       <EditorHeader title="Users">
         <Filter
           icon={<Tag className="size-3.5" />}

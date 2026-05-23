@@ -126,12 +126,7 @@ function ScriptsLayout() {
 
   return (
     <>
-      <div
-        className={cn(
-          "flex h-[calc(100vh-3.5rem)]",
-          shouldFade && "animate-in fade-in duration-100",
-        )}
-      >
+      <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
         <Rail>
           {sortedScripts.map((s) => (
             <Rail.Item
