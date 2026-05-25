@@ -1,22 +1,12 @@
 import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Spinner } from "./spinner";
 
 // Always mounted (opacity-toggled) so the spin animation doesn't restart
-// across navigations. Queries with `meta: { silent: true }` opt out.
+// across navigations.
 export function LoadingIndicator() {
-  // Server renders this as hidden because no client queries are in flight.
-  // Without this gate, the first client render would flip to active (from
-  // useIsFetching/useRouterState) and trip a hydration mismatch.
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
-
-  const fetching =
-    useIsFetching({
-      predicate: (query) => query.meta?.silent !== true,
-    }) > 0;
+  const fetching = useIsFetching() > 0;
   const mutating = useIsMutating() > 0;
   // `isLoading` covers navigations; the matches-pending check covers the
   // initial app boot, when no navigation has fired yet but route loaders
@@ -24,7 +14,7 @@ export function LoadingIndicator() {
   const routing = useRouterState({
     select: (s) => s.isLoading || s.matches.some((m) => m.status === "pending"),
   });
-  const active = hydrated && (fetching || mutating || routing);
+  const active = fetching || mutating || routing;
   return (
     <div
       className={cn(
