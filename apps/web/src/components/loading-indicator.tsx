@@ -1,11 +1,16 @@
 import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Spinner } from "./spinner";
 
 // Always mounted (opacity-toggled) so the spin animation doesn't restart
 // across navigations.
 export function LoadingIndicator() {
+  // Renders the spinner as visible so first paint shows it before hydration.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+
   const fetching = useIsFetching() > 0;
   const mutating = useIsMutating() > 0;
   // `isLoading` covers navigations; the matches-pending check covers the
@@ -14,7 +19,7 @@ export function LoadingIndicator() {
   const routing = useRouterState({
     select: (s) => s.isLoading || s.matches.some((m) => m.status === "pending"),
   });
-  const active = fetching || mutating || routing;
+  const active = !hydrated || fetching || mutating || routing;
   return (
     <div
       className={cn(
