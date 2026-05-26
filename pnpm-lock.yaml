@@ -367,6 +367,28 @@ importers:
         specifier: ^0.1.11
         version: 0.1.21(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.47.1)(tsx@4.21.0)(typescript@5.9.3)(vite@8.0.12(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.47.1)(tsx@4.21.0)(yaml@2.9.0))(yaml@2.9.0)
 
+  scripts:
+    dependencies:
+      '@field-tools/db':
+        specifier: workspace:*
+        version: link:../packages/db
+      drizzle-orm:
+        specifier: beta
+        version: 1.0.0-beta.22(@electric-sql/pglite@0.4.5)(postgres@3.4.9)(zod@4.4.3)
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.19
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
