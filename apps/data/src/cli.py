@@ -17,7 +17,7 @@ from src.dags import (
     voter_file_loader,
 )
 from src.duckdb import get_connection
-from src.models import TableRef
+from src.models import TableRef, quote_ident
 from src.perf import TimingHook
 from src.settings import get_settings
 from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema, org_fqn, org_schema_fqn
@@ -370,3 +370,41 @@ def mirror_org_data() -> None:
 
     conn.close()
     print(f"Mirrored {len(tables)} table(s): {args.src} → {args.dst}.")
+
+
+def rename_org_schema() -> None:
+    """Rename ``ducklake.<from>`` to ``ducklake.<to>``.
+
+    Used after a Postgres-side org slug change so the per-org DuckLake
+    schema stays addressable by the new slug. No-op if the source schema
+    doesn't exist (the org may have been created without seeding data yet).
+
+        uv run rename-org-schema --from old-slug --to new-slug
+    """
+    parser = argparse.ArgumentParser(prog="rename-org-schema", description=rename_org_schema.__doc__)
+    parser.add_argument("--from", dest="src", required=True, help="Current org slug.")
+    parser.add_argument("--to", dest="dst", required=True, help="New org slug.")
+    args = parser.parse_args()
+
+    if args.src == args.dst:
+        print("--from and --to must differ.")
+        return
+
+    settings = get_settings()
+    conn = get_connection(settings)
+
+    src_exists = (
+        conn.execute(
+            "SELECT 1 FROM information_schema.schemata WHERE catalog_name = ? AND schema_name = ?",
+            [PERSON_CATALOG, args.src],
+        ).fetchone()
+        is not None
+    )
+    if not src_exists:
+        print(f"No schema {org_schema_fqn(args.src)} — nothing to rename.")
+        conn.close()
+        return
+
+    conn.execute(f"ALTER SCHEMA {org_schema_fqn(args.src)} RENAME TO {quote_ident(args.dst)}")
+    conn.close()
+    print(f"Renamed schema: {args.src} → {args.dst}.")

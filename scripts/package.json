@@ -1,0 +1,16 @@
+{
+  "name": "@field-tools/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@field-tools/db": "workspace:*",
+    "drizzle-orm": "beta",
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3"
+  }
+}
