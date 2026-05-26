@@ -27,7 +27,20 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Field Tools" },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", type: "image/png", href: "/favicon/toolbox.png" },
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 120%22><text x=%220%22 y=%22100%22 font-size=%22100%22>🧰</text></svg>",
+      },
+      {
+        rel: "mask-icon",
+        href: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 120%22><text x=%220%22 y=%22100%22 font-size=%22100%22>🧰</text></svg>",
+      },
+      { rel: "apple-touch-icon", sizes: "180x180", href: "/favicon/toolbox-180x180.png" },
+    ],
   }),
   beforeLoad: async ({ location }) => {
     if (location.pathname === "/login") return { session: null };
