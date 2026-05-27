@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import meow from "meow";
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
-import { createLogger } from "./_logging";
+import { REPO_ROOT, createLogger } from "./_logging";
 
 const log = createLogger("rename-org-slug");
 
@@ -59,7 +60,7 @@ if (result.length === 0) {
 log.info(`updated organizations.slug: ${slug} → ${newSlug}`);
 
 const py = spawnSync("uv", ["run", "rename-org-schema", "--from", slug, "--to", newSlug], {
-  cwd: "apps/data",
+  cwd: resolve(REPO_ROOT, "apps/data"),
   stdio: "inherit",
 });
 

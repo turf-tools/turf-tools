@@ -43,6 +43,7 @@
     "prod:add-user": "set -a && . /etc/field-tools-web.env && set +a && pnpm -F @field-tools/scripts exec tsx prod-add-user.ts",
     "prod:rename-org": "set -a && . /etc/field-tools-web.env && set +a && pnpm -F @field-tools/scripts exec tsx prod-rename-org.ts",
     "prod:rename-org-slug": "set -a && . /etc/field-tools-web.env && set +a && pnpm -F @field-tools/scripts exec tsx prod-rename-org-slug.ts",
+    "prod:remove-org": "set -a && . /etc/field-tools-web.env && set +a && pnpm -F @field-tools/scripts exec tsx prod-remove-org.ts",
     "prod:web:logs": "sudo journalctl -u field-tools-web -f",
     "prod:data:logs": "sudo journalctl -u field-tools-data -f"
   },
