@@ -15,9 +15,9 @@ export function section(title: string): void {
 export function createLogger(name: string) {
   const prefix = chalk.gray(`[${name}]`);
   const tag = {
-    info: chalk.gray("[info]   "),
-    success: chalk.green("[success]"),
-    error: chalk.red("[error]  "),
+    info: "[" + chalk.gray("info") + "]   ",
+    success: "[" + chalk.green("success") + "]",
+    error: "[" + chalk.red("error") + "]  ",
   };
   return {
     info: (msg: string) => console.log(`${prefix} ${tag.info} ${msg}`),
