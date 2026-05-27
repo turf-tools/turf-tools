@@ -9,6 +9,23 @@ export function section(title: string): void {
   process.stdout.write(`\n${chalk.yellow(`==> ${title}`)}\n`);
 }
 
+// Per-script logger with a `[name]` prefix and tagged severities. Tags are
+// fixed-width ([info] padded to match [success]/[error]) so multi-line
+// output aligns cleanly.
+export function createLogger(name: string) {
+  const prefix = chalk.gray(`[${name}]`);
+  const tag = {
+    info: chalk.gray("[info]   "),
+    success: chalk.green("[success]"),
+    error: chalk.red("[error]  "),
+  };
+  return {
+    info: (msg: string) => console.log(`${prefix} ${tag.info} ${msg}`),
+    success: (msg: string) => console.log(`${prefix} ${tag.success} ${msg}`),
+    error: (msg: string) => console.error(`${prefix} ${tag.error} ${msg}`),
+  };
+}
+
 // Runs `cmd` through `bash -c` so shell features (set -a, source, pipes,
 // `$VAR` expansion) work. Inherits stdio so output streams live. Exits the
 // process on non-zero status.
