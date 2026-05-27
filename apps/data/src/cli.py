@@ -408,3 +408,21 @@ def rename_org_schema() -> None:
     conn.execute(f"ALTER SCHEMA {org_schema_fqn(args.src)} RENAME TO {quote_ident(args.dst)}")
     conn.close()
     print(f"Renamed schema: {args.src} → {args.dst}.")
+
+
+def drop_org_schema_cli() -> None:
+    """Drop ``ducklake.<slug>`` and all tables in it (CASCADE).
+
+    Idempotent — no-op if the schema doesn't exist.
+
+        uv run drop-org-schema --slug myorg
+    """
+    parser = argparse.ArgumentParser(prog="drop-org-schema", description=drop_org_schema_cli.__doc__)
+    parser.add_argument("--slug", required=True, help="Org slug whose schema to drop.")
+    args = parser.parse_args()
+
+    settings = get_settings()
+    conn = get_connection(settings)
+    drop_org_schema(conn, args.slug)
+    conn.close()
+    print(f"Dropped schema {org_schema_fqn(args.slug)}.")
