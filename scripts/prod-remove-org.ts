@@ -125,15 +125,15 @@ async function counts() {
 const totals = await counts();
 
 log.info(`will delete organization "${slug}" (${org.name}, id=${orgId}) and:`);
-log.info(`  - ${totals.memberships} memberships`);
-log.info(`  - ${totals.campaigns} campaigns`);
-log.info(`  - ${totals.turfs} turfs`);
-log.info(`  - ${totals.canvassEvents} canvass events`);
-log.info(`  - ${totals.segments} segments`);
-log.info(`  - ${totals.zoneGroups} zone groups (+ zones, cascaded)`);
-log.info(`  - ${totals.scripts} scripts (+ script steps, cascaded)`);
-log.info(`  - ${totals.surveyQuestions} survey questions (+ response options)`);
-log.info(`  - the ducklake.${slug} schema and all tables in it`);
+log.info(`- ${totals.memberships} memberships`);
+log.info(`- ${totals.campaigns} campaigns`);
+log.info(`- ${totals.turfs} turfs`);
+log.info(`- ${totals.canvassEvents} canvass events`);
+log.info(`- ${totals.segments} segments`);
+log.info(`- ${totals.zoneGroups} zone groups (+ zones, cascaded)`);
+log.info(`- ${totals.scripts} scripts (+ script steps, cascaded)`);
+log.info(`- ${totals.surveyQuestions} survey questions (+ response options)`);
+log.info(`- the ducklake.${slug} schema and all tables in it`);
 
 if (!force) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
