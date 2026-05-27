@@ -367,6 +367,34 @@ importers:
         specifier: ^0.1.11
         version: 0.1.21(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.47.1)(tsx@4.21.0)(typescript@5.9.3)(vite@8.0.12(@types/node@25.7.0)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.47.1)(tsx@4.21.0)(yaml@2.9.0))(yaml@2.9.0)
 
+  scripts:
+    dependencies:
+      '@field-tools/db':
+        specifier: workspace:*
+        version: link:../packages/db
+      chalk:
+        specifier: ^5.6.2
+        version: 5.6.2
+      drizzle-orm:
+        specifier: beta
+        version: 1.0.0-beta.22(@electric-sql/pglite@0.4.5)(postgres@3.4.9)(zod@4.4.3)
+      meow:
+        specifier: ^14.1.0
+        version: 14.1.0
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.19
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
 packages:
 
   '@alloc/quick-lru@5.2.0':
@@ -5570,6 +5598,10 @@ packages:
 
   memoize-one@6.0.0:
     resolution: {integrity: sha512-rkpe71W0N0c0Xz6QD0eJETuWAJGnJ9afsl1srmwPrI+yBCkge5EycXXbYRyvL29zZVUWQCY7InPRCv3GDXuZNw==}
+
+  meow@14.1.0:
+    resolution: {integrity: sha512-EDYo6VlmtnumlcBCbh1gLJ//9jvM/ndXHfVXIFrZVr6fGcwTUyCTFNTLCKuY3ffbK8L/+3Mzqnd58RojiZqHVw==}
+    engines: {node: '>=20'}
 
   merge-descriptors@2.0.0:
     resolution: {integrity: sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==}
@@ -12748,6 +12780,8 @@ snapshots:
   memoize-one@5.2.1: {}
 
   memoize-one@6.0.0: {}
+
+  meow@14.1.0: {}
 
   merge-descriptors@2.0.0: {}
 
