@@ -20,7 +20,7 @@ seed-boundaries = "src.cli:seed_boundaries"
 seed-persons = "src.cli:seed_persons"
 mirror-org-data = "src.cli:mirror_org_data"
 rename-org-schema = "src.cli:rename_org_schema"
-drop-org-schema = "src.cli:drop_org_schema_cli"
+drop-org-schema = "src.cli:drop_org_schema"
 
 [build-system]
 requires = ["hatchling>=1.27.0"]
