@@ -1,6 +1,9 @@
 import meow from "meow";
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
+import { createLogger } from "./_logging";
+
+const log = createLogger("rename-org");
 
 const cli = meow(
   `
@@ -39,9 +42,9 @@ const result = await db
   .returning({ organizationId: organizations.organizationId });
 
 if (result.length === 0) {
-  console.error(`no organization with slug "${slug}"`);
+  log.error(`no organization with slug "${slug}"`);
   process.exit(1);
 }
 
-console.log(`renamed organization with "${slug}" to "${name}"`);
+log.success(`renamed organization with slug "${slug}" to "${name}"`);
 process.exit(0);

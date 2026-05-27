@@ -1,6 +1,9 @@
 import meow from "meow";
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
+import { createLogger } from "./_logging";
+
+const log = createLogger("create-org");
 
 const cli = meow(
   `
@@ -38,7 +41,7 @@ const existing = await db
   .where(eq(organizations.slug, slug));
 
 if (existing.length > 0) {
-  console.error(`organization with slug "${slug}" already exists`);
+  log.error(`organization with slug "${slug}" already exists`);
   process.exit(1);
 }
 
@@ -47,5 +50,5 @@ const [row] = await db
   .values({ slug, name })
   .returning({ organizationId: organizations.organizationId });
 
-console.log(`created organization: ${name} (slug=${slug}, id=${row.organizationId})`);
+log.success(`created organization: ${name} (slug=${slug}, id=${row.organizationId})`);
 process.exit(0);

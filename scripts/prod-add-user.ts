@@ -1,6 +1,9 @@
 import meow from "meow";
 import { and, db, eq, isNull } from "@field-tools/db";
 import { memberships, organizations, users } from "@field-tools/db/schema";
+import { createLogger } from "./_logging";
+
+const log = createLogger("add-user");
 
 // Canonical form used for user lookup + uniqueness, mirrors
 // apps/web/src/lib/normalize-email.ts. Better Auth's magic-link flow
@@ -64,7 +67,7 @@ const [org] = await db
   .where(eq(organizations.slug, slug));
 
 if (!org) {
-  console.error(`no organization with slug "${slug}"`);
+  log.error(`no organization with slug "${slug}"`);
   process.exit(1);
 }
 
@@ -73,7 +76,7 @@ const [existingUser] = await db.select({ id: users.id }).from(users).where(eq(us
 let userId: string;
 if (existingUser) {
   userId = existingUser.id;
-  console.log(`user already exists (${email}, id=${userId}); adding membership`);
+  log.info(`user already exists (${email}, id=${userId}); adding membership`);
 } else {
   const [row] = await db
     .insert(users)
@@ -85,7 +88,7 @@ if (existingUser) {
     })
     .returning({ id: users.id });
   userId = row.id;
-  console.log(`created user: ${name} <${rawEmail}> (id=${userId})`);
+  log.info(`created user: ${name} <${rawEmail}> (id=${userId})`);
 }
 
 const [existingMembership] = await db
@@ -100,7 +103,7 @@ const [existingMembership] = await db
   );
 
 if (existingMembership) {
-  console.error(`user already has active membership in "${slug}"`);
+  log.error(`user already has active membership in "${slug}"`);
   process.exit(1);
 }
 
@@ -110,5 +113,5 @@ await db.insert(memberships).values({
   role,
 });
 
-console.log(`added ${rawEmail} to ${slug} as ${role}`);
+log.success(`added ${rawEmail} to ${slug} as ${role}`);
 process.exit(0);
