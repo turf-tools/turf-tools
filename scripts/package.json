@@ -5,7 +5,9 @@
   "type": "module",
   "dependencies": {
     "@field-tools/db": "workspace:*",
+    "chalk": "^5.6.2",
     "drizzle-orm": "beta",
+    "meow": "^14.1.0",
     "postgres": "^3.4.8"
   },
   "devDependencies": {

@@ -1,21 +1,35 @@
-import { parseArgs } from "node:util";
+import meow from "meow";
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
 
-const { values } = parseArgs({
-  options: {
-    slug: { type: "string" },
-    name: { type: "string" },
-  },
-  strict: true,
-});
+const cli = meow(
+  `
+  Usage
+    $ pnpm prod:rename-org [<slug> <new-name>]
+    $ pnpm prod:rename-org --slug <slug> --name <new-name>
 
-const slug = values.slug;
-const name = values.name;
+  Options
+    --slug   Slug of the org to rename
+    --name   New display name
+
+  Examples
+    $ pnpm prod:rename-org myorg 'My Renamed Org'
+    $ pnpm prod:rename-org --slug myorg --name 'My Renamed Org'
+`,
+  {
+    importMeta: import.meta,
+    flags: {
+      slug: { type: "string" },
+      name: { type: "string" },
+    },
+  },
+);
+
+const slug = cli.flags.slug ?? cli.input[0];
+const name = cli.flags.name ?? cli.input[1];
 
 if (!slug || !name) {
-  console.error("Usage: pnpm prod:rename-org --slug <slug> --name <new-name>");
-  process.exit(1);
+  cli.showHelp(1);
 }
 
 const result = await db
@@ -29,5 +43,5 @@ if (result.length === 0) {
   process.exit(1);
 }
 
-console.log(`renamed organization "${slug}" → "${name}"`);
+console.log(`renamed organization with "${slug}" to "${name}"`);
 process.exit(0);

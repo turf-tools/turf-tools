@@ -1,21 +1,35 @@
-import { parseArgs } from "node:util";
+import meow from "meow";
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
 
-const { values } = parseArgs({
-  options: {
-    slug: { type: "string" },
-    name: { type: "string" },
-  },
-  strict: true,
-});
+const cli = meow(
+  `
+  Usage
+    $ pnpm prod:create-org [<slug> <name>]
+    $ pnpm prod:create-org --slug <slug> --name <name>
 
-const slug = values.slug;
-const name = values.name;
+  Options
+    --slug   Org slug (URL-safe identifier, used in URLs + DuckLake schema names)
+    --name   Display name
+
+  Examples
+    $ pnpm prod:create-org myorg 'My Org'
+    $ pnpm prod:create-org --slug myorg --name 'My Org'
+`,
+  {
+    importMeta: import.meta,
+    flags: {
+      slug: { type: "string" },
+      name: { type: "string" },
+    },
+  },
+);
+
+const slug = cli.flags.slug ?? cli.input[0];
+const name = cli.flags.name ?? cli.input[1];
 
 if (!slug || !name) {
-  console.error("Usage: pnpm prod:create-org --slug <slug> --name <name>");
-  process.exit(1);
+  cli.showHelp(1);
 }
 
 const existing = await db
