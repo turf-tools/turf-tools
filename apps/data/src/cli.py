@@ -20,7 +20,15 @@ from src.duckdb import get_connection
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
 from src.settings import get_settings
-from src.tables import PERSON_CATALOG, drop_org_schema, ensure_org_schema, org_fqn, org_schema_fqn
+from src.tables import (
+    PERSON_CATALOG,
+    ensure_org_schema,
+    org_fqn,
+    org_schema_fqn,
+)
+from src.tables import (
+    drop_org_schema as _drop_org_schema_helper,
+)
 from src.transformations import nys_sboe_transformation_query
 
 
@@ -231,7 +239,7 @@ def seed_persons() -> None:
 
     if args.reset:
         print(f"Dropping schema ducklake.{args.org_slug}…")
-        drop_org_schema(conn, args.org_slug)
+        _drop_org_schema_helper(conn, args.org_slug)
         ensure_org_schema(conn, args.org_slug)
 
     fixture_name = args.fixture or settings.voter_file_fixture
@@ -359,7 +367,7 @@ def mirror_org_data() -> None:
         return
 
     print(f"Resetting {org_schema_fqn(args.dst)}…")
-    drop_org_schema(conn, args.dst)
+    _drop_org_schema_helper(conn, args.dst)
     ensure_org_schema(conn, args.dst)
 
     for table in tables:
@@ -410,19 +418,19 @@ def rename_org_schema() -> None:
     print(f"Renamed schema: {args.src} → {args.dst}.")
 
 
-def drop_org_schema_cli() -> None:
+def drop_org_schema() -> None:
     """Drop ``ducklake.<slug>`` and all tables in it (CASCADE).
 
     Idempotent — no-op if the schema doesn't exist.
 
         uv run drop-org-schema --slug myorg
     """
-    parser = argparse.ArgumentParser(prog="drop-org-schema", description=drop_org_schema_cli.__doc__)
+    parser = argparse.ArgumentParser(prog="drop-org-schema", description=drop_org_schema.__doc__)
     parser.add_argument("--slug", required=True, help="Org slug whose schema to drop.")
     args = parser.parse_args()
 
     settings = get_settings()
     conn = get_connection(settings)
-    drop_org_schema(conn, args.slug)
+    _drop_org_schema_helper(conn, args.slug)
     conn.close()
     print(f"Dropped schema {org_schema_fqn(args.slug)}.")
