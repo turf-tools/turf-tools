@@ -372,9 +372,15 @@ importers:
       '@field-tools/db':
         specifier: workspace:*
         version: link:../packages/db
+      chalk:
+        specifier: ^5.6.2
+        version: 5.6.2
       drizzle-orm:
         specifier: beta
         version: 1.0.0-beta.22(@electric-sql/pglite@0.4.5)(postgres@3.4.9)(zod@4.4.3)
+      meow:
+        specifier: ^14.1.0
+        version: 14.1.0
       postgres:
         specifier: ^3.4.8
         version: 3.4.9
@@ -5592,6 +5598,10 @@ packages:
 
   memoize-one@6.0.0:
     resolution: {integrity: sha512-rkpe71W0N0c0Xz6QD0eJETuWAJGnJ9afsl1srmwPrI+yBCkge5EycXXbYRyvL29zZVUWQCY7InPRCv3GDXuZNw==}
+
+  meow@14.1.0:
+    resolution: {integrity: sha512-EDYo6VlmtnumlcBCbh1gLJ//9jvM/ndXHfVXIFrZVr6fGcwTUyCTFNTLCKuY3ffbK8L/+3Mzqnd58RojiZqHVw==}
+    engines: {node: '>=20'}
 
   merge-descriptors@2.0.0:
     resolution: {integrity: sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==}
@@ -12770,6 +12780,8 @@ snapshots:
   memoize-one@5.2.1: {}
 
   memoize-one@6.0.0: {}
+
+  meow@14.1.0: {}
 
   merge-descriptors@2.0.0: {}
 

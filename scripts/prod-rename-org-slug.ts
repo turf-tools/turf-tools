@@ -1,22 +1,36 @@
 import { spawnSync } from "node:child_process";
-import { parseArgs } from "node:util";
+import meow from "meow";
 import { db, eq } from "@field-tools/db";
 import { organizations } from "@field-tools/db/schema";
 
-const { values } = parseArgs({
-  options: {
-    slug: { type: "string" },
-    "new-slug": { type: "string" },
-  },
-  strict: true,
-});
+const cli = meow(
+  `
+  Usage
+    $ pnpm prod:rename-org-slug [<slug> <new-slug>]
+    $ pnpm prod:rename-org-slug --slug <slug> --new-slug <new-slug>
 
-const slug = values.slug;
-const newSlug = values["new-slug"];
+  Options
+    --slug       Current slug
+    --new-slug   New slug
+
+  Examples
+    $ pnpm prod:rename-org-slug myorg neworg
+    $ pnpm prod:rename-org-slug --slug myorg --new-slug neworg
+`,
+  {
+    importMeta: import.meta,
+    flags: {
+      slug: { type: "string" },
+      newSlug: { type: "string" },
+    },
+  },
+);
+
+const slug = cli.flags.slug ?? cli.input[0];
+const newSlug = cli.flags.newSlug ?? cli.input[1];
 
 if (!slug || !newSlug) {
-  console.error("Usage: pnpm prod:rename-org-slug --slug <old> --new-slug <new>");
-  process.exit(1);
+  cli.showHelp(1);
 }
 
 if (slug === newSlug) {

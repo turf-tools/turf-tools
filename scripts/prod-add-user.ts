@@ -1,4 +1,4 @@
-import { parseArgs } from "node:util";
+import meow from "meow";
 import { and, db, eq, isNull } from "@field-tools/db";
 import { memberships, organizations, users } from "@field-tools/db/schema";
 
@@ -20,26 +20,40 @@ function normalizeEmail(input: string): string {
   return `${beforePlus.replace(/\./g, "")}${afterPlus}@${domain}`;
 }
 
-const { values } = parseArgs({
-  options: {
-    slug: { type: "string" },
-    name: { type: "string" },
-    email: { type: "string" },
-    role: { type: "string", default: "owner" },
-  },
-  strict: true,
-});
+const cli = meow(
+  `
+  Usage
+    $ pnpm prod:add-user [<slug> <name> <email>] [--role <role>]
+    $ pnpm prod:add-user --slug <slug> --name <name> --email <email> [--role <role>]
 
-const slug = values.slug;
-const name = values.name;
-const rawEmail = values.email;
-const role = values.role!;
+  Options
+    --slug    Org slug to add the user to
+    --name    User's display name
+    --email   User's email
+    --role    Role (default: owner)
+
+  Examples
+    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com
+    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com --role member
+`,
+  {
+    importMeta: import.meta,
+    flags: {
+      slug: { type: "string" },
+      name: { type: "string" },
+      email: { type: "string" },
+      role: { type: "string", default: "owner" },
+    },
+  },
+);
+
+const slug = cli.flags.slug ?? cli.input[0];
+const name = cli.flags.name ?? cli.input[1];
+const rawEmail = cli.flags.email ?? cli.input[2];
+const role = cli.flags.role;
 
 if (!slug || !name || !rawEmail) {
-  console.error(
-    "Usage: pnpm prod:add-user --slug <slug> --name <name> --email <email> [--role <role>]",
-  );
-  process.exit(1);
+  cli.showHelp(1);
 }
 
 const email = normalizeEmail(rawEmail);
