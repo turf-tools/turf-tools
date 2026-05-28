@@ -17,11 +17,11 @@ function getResend(): Resend | null {
 }
 
 export const auth = betterAuth({
-  // Verbose by default — magic-link debugging is the most common reason we
-  // dig into auth logs (corporate filters pre-clicking links, scanners
-  // burning tokens, etc.). The volume is low; if it gets noisy we can
-  // bump to "info".
-  logger: { level: "debug" },
+  // Default logger level is "warn"; "info" surfaces config-validation
+  // warnings + internal errors. BA itself doesn't log around magic-link
+  // operations, so for per-request auth tracing we instrument in `hooks`
+  // below rather than relying on this.
+  logger: { level: "info" },
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
@@ -52,10 +52,22 @@ export const auth = betterAuth({
     },
   },
   hooks: {
-    // Normalize the typed email to its canonical form before BA's own
-    // logic sees it — the verification record and any downstream user
-    // lookups all key on `users.email`, which we store canonicalised.
     before: createAuthMiddleware(async (ctx) => {
+      // One-line trace of every auth request — gives us magic-link send +
+      // verify visibility (BA's own logger doesn't instrument these).
+      // `?` masks the token value, just records whether one was present.
+      const hasToken = typeof ctx.query?.token === "string";
+      const emailHint =
+        typeof ctx.body?.email === "string" ? ctx.body.email.slice(0, 3) + "…" : null;
+      console.log(
+        `[auth] ${ctx.method ?? "?"} ${ctx.path}` +
+          (hasToken ? " token=<present>" : "") +
+          (emailHint ? ` email=${emailHint}` : ""),
+      );
+
+      // Normalize the typed email to its canonical form before BA's own
+      // logic sees it — the verification record and any downstream user
+      // lookups all key on `users.email`, which we store canonicalised.
       if (ctx.path === "/sign-in/magic-link" && typeof ctx.body?.email === "string") {
         ctx.body.email = normalizeEmail(ctx.body.email);
       }
