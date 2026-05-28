@@ -269,20 +269,16 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
             status_code=400,
             detail="Campaign must have a segment and script bound to publish.",
         )
-    # Detect the two coherent shapes (and reject mismatches):
-    #   zoned:    req.zoneId set + campaign has zone group + zone row found
-    #   zoneless: req.zoneId null + campaign has no zone group
-    if req.zoneId is None and campaign_zone_group_id:
+    # Valid shapes: zoned (both zoneId and zoneGroupId present) or
+    # zoneless (both absent). Anything else is a caller bug.
+    expects_zone = req.zoneId is not None
+    has_zone_group = campaign_zone_group_id is not None
+    if expects_zone != has_zone_group:
         raise HTTPException(
             status_code=400,
-            detail="Campaign has a zone group; publish must specify a zoneId.",
+            detail="zoneId presence must match campaign.zoneGroupId presence.",
         )
-    if req.zoneId is not None and not campaign_zone_group_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Campaign has no zone group; publish with zoneId=null.",
-        )
-    if req.zoneId is not None and not zone_id:
+    if expects_zone and not zone_id:
         raise HTTPException(status_code=404, detail="Zone not found in campaign's zone group.")
     if draft_count == 0:
         raise HTTPException(status_code=400, detail="No drafts to publish.")

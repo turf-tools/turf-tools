@@ -19,7 +19,7 @@ import {
 import { scriptsListQuery } from "~/lib/queries/scripts";
 import {
   segmentCountsQuery,
-  segmentDetailQuery,
+  segmentsListQuery,
   type SegmentCriteria,
 } from "~/lib/queries/segments";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
@@ -119,14 +119,13 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
       queryClient.fetchQuery(campaignDetailQuery(campaignId)),
       queryClient.fetchQuery(turfStatsForCampaignQuery(campaignId)),
     ]);
-    await Promise.all([
-      campaign.segmentId
-        ? queryClient.fetchQuery(segmentDetailQuery(campaign.segmentId))
-        : Promise.resolve(undefined),
-      campaign.zoneGroupId
-        ? queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId))
-        : Promise.resolve(undefined),
-    ]);
+    if (campaign.zoneGroupId) {
+      await queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId));
+    }
+    // segmentsListQuery is prefetched by the parent campaigns layout
+    // loader, so we read segment name + criteria from there via find()
+    // — matches how the script and zone-group lookups work and keeps
+    // a rename's optimistic list patch visible without a hard reload.
   },
   component: CampaignEditor,
 });
@@ -137,19 +136,17 @@ function CampaignEditor() {
 
   const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
-  // Scripts list is pre-fetched by the parent campaigns route loader so this
-  // resolves from cache — used to look up the bound script's display name
-  // for the header card row.
+  // Scripts + segments lists are pre-fetched by the parent campaigns
+  // route loader so these resolve from cache. We look up the bound
+  // segment/script/zone-group by id via find(); using the list lets a
+  // rename's optimistic patch surface here without a separate detail
+  // cache to keep in sync.
   const { data: scripts } = useSuspenseQuery(scriptsListQuery());
+  const { data: segments } = useSuspenseQuery(segmentsListQuery());
 
   const activeZoneGroup = zoneGroups.find((g) => g.zoneGroupId === campaign?.zoneGroupId) ?? null;
   const activeScript = scripts.find((s) => s.scriptId === campaign?.scriptId) ?? null;
-
-  const { data: segmentDetail, isPlaceholderData: segmentDetailStale } = useQuery({
-    ...segmentDetailQuery(campaign?.segmentId ?? ""),
-    enabled: !!campaign?.segmentId,
-    placeholderData: keepPreviousData,
-  });
+  const activeSegment = segments.find((s) => s.segmentId === campaign?.segmentId) ?? null;
 
   const { data: zones, isPlaceholderData: zonesStale } = useQuery({
     ...zonesQuery(campaign?.zoneGroupId ?? ""),
@@ -172,7 +169,7 @@ function CampaignEditor() {
     [activeZoneGroup, zones],
   );
 
-  const segmentCriteria = segmentDetail?.criteria as Criteria | null | undefined;
+  const segmentCriteria = activeSegment?.criteria as Criteria | null | undefined;
 
   // Points run for both zoned and zoneless campaigns. When `keyFilter` is
   // null the query asks the data server for *all* segment-matching points
@@ -227,33 +224,9 @@ function CampaignEditor() {
     return out;
   }, [perKeyCounts, zones, countsStale]);
 
-  // Campaign-wide totals. Buildings/doors/people source depends on
-  // whether the campaign has a zone group:
-  //   - zoned: sum per-zone counts (already a key-filtered query)
-  //   - zoneless: segmentTotals (segment-wide, unfiltered)
-  // Both sources fetch *after* the route loader runs, so the count
-  // fields are nullable — SummaryCard's value spans render only once
-  // they're truthy, which gates the animate-in fade. Turf stats are
-  // prefetched in the loader and arrive on first render, hence the
-  // unconditional sum.
+  // Campaign-wide turf stats. Prefetched in the loader, so they arrive
+  // on first render and don't need fade-in handling.
   const totals = useMemo(() => {
-    let buildings: number | null = null;
-    let doors: number | null = null;
-    let people: number | null = null;
-    if (zoneCounts) {
-      buildings = 0;
-      doors = 0;
-      people = 0;
-      for (const c of Object.values(zoneCounts)) {
-        buildings += c.buildings;
-        doors += c.doors;
-        people += c.people;
-      }
-    } else if (segmentTotals) {
-      buildings = segmentTotals.buildingCount;
-      doors = segmentTotals.doorCount;
-      people = segmentTotals.personCount;
-    }
     let drafts = 0;
     let active = 0;
     let published = 0;
@@ -264,17 +237,14 @@ function CampaignEditor() {
         published += s.published;
       }
     }
-    return { buildings, doors, people, drafts, active, published };
-  }, [zoneCounts, segmentTotals, turfStats]);
+    return { drafts, active, published };
+  }, [turfStats]);
 
   // One unioned polygon per zone, tagged with `zoneId`. Single-key zones
   // short-circuit because turf.union returns null for degenerate inputs.
-  //
-  // We bail eagerly on `campaign.zoneGroupId == null` because the
-  // `zones` and `boundaryFC` queries both keep their previous data on
-  // navigate (placeholderData: keepPreviousData) — without this guard,
-  // switching from a zoned campaign to a zoneless one would briefly
-  // render the previous campaign's polygons on the map.
+  // Bails when zoneless — `zones` and `boundaryFC` use placeholderData,
+  // so without this guard a zoned→zoneless switch flashes the previous
+  // campaign's polygons.
   const zonePerimeters = useMemo<FeatureCollection | undefined>(() => {
     if (!campaign?.zoneGroupId) return undefined;
     if (!zones || !boundaryFC) return undefined;
@@ -337,7 +307,10 @@ function CampaignEditor() {
     const s = !!campaign.segmentId;
     const z = !!campaign.zoneGroupId;
     if (s) {
-      if (!segmentDetail || segmentDetailStale) return false;
+      // The segments list is loader-prefetched and rerendered via
+      // useSuspenseQuery, so `activeSegment` is always fresh — no
+      // separate staleness gate needed for the segment binding.
+      if (!activeSegment) return false;
       // Points fire as soon as we have a segment, zoned or not.
       if (!pointsBuffer || pointsStale) return false;
     }
@@ -395,8 +368,8 @@ function CampaignEditor() {
   return (
     <div className="flex gap-4 h-full">
       {/* Sidebar renders immediately against loader-cached chrome data
-          (zones, segmentDetail). The map curtain handles waits for the
-          heavy data still fetching in-component. */}
+          (zones + segment binding). The map curtain handles waits for
+          the heavy data still fetching in-component. */}
       <div className="w-128 shrink-0 h-full min-h-0">
         <ZonesList
           campaignId={campaignId}
@@ -413,7 +386,7 @@ function CampaignEditor() {
               ? { doors: segmentTotals.doorCount, people: segmentTotals.personCount }
               : null
           }
-          segmentName={segmentDetail?.name ?? null}
+          segmentName={activeSegment?.name ?? null}
           scriptName={activeScript?.name ?? null}
           zoneGroupName={activeZoneGroup?.name ?? null}
           onSelect={setSelectedZoneId}
@@ -471,9 +444,6 @@ function ZonesList({
   zoneCounts: Record<string, { buildings: number; doors: number; people: number }> | null;
   turfStats: TurfStats | null;
   totals: {
-    buildings: number | null;
-    doors: number | null;
-    people: number | null;
     drafts: number;
     active: number;
     published: number;
@@ -537,73 +507,42 @@ function ConfigSummary({
   scriptName: string | null;
   zoneGroupName: string | null;
   totals: {
-    buildings: number | null;
-    doors: number | null;
-    people: number | null;
     drafts: number;
     active: number;
     published: number;
   };
 }) {
-  const fmt = (n: number | null) => (n === null ? null : n.toLocaleString());
-  // Layout uses an implicit 3-column grid: top row splits 2/3 (config) + 1/3
-  // (counts) so the gridline lands where the bottom row's middle/right
-  // boundary sits, keeping vertical column rhythm consistent.
   return (
-    <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-2 gap-2">
-        <SummaryCard
-          className="col-span-1"
-          rows={[
-            { label: "Segment", value: segmentName ?? "None selected" },
-            { label: "Script", value: scriptName ?? "None selected" },
-            { label: "Zones", value: zoneGroupName ?? "None selected" },
-          ]}
-        />
-        <SummaryCard
-          rows={[
-            { label: "Total people", value: fmt(totals.people) },
-            { label: "Total doors", value: fmt(totals.doors) },
-            { label: "Total buildings", value: fmt(totals.buildings) },
-          ]}
-        />
-      </div>
+    <div className="flex flex-col gap-2 rounded-md border border-border bg-card px-3 py-2">
       <div className="grid grid-cols-3 gap-2">
-        <SummaryCard rows={[{ label: "Cut turfs", value: totals.drafts.toLocaleString() }]} />
-        <SummaryCard rows={[{ label: "Active turfs", value: totals.active.toLocaleString() }]} />
-        <SummaryCard rows={[{ label: "Published", value: totals.published.toLocaleString() }]} />
+        <div className="flex flex-col">
+          <span className="text-muted-foreground">Segment</span>
+          <span className="truncate">{segmentName}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-muted-foreground">Zones</span>
+          <span className="truncate">{zoneGroupName || "None selected"}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-muted-foreground">Script</span>
+          <span className="truncate">{scriptName}</span>
+        </div>
+      </div>
+      <hr className="my-1 border-t border-border" />
+      <div className="grid grid-cols-3 gap-2">
+        <Stat label="Draft turfs" value={totals.drafts} />
+        <Stat label="Published turfs" value={totals.published} />
+        <Stat label="Active turfs" value={totals.active} />
       </div>
     </div>
   );
 }
 
-function SummaryCard({
-  className,
-  rows,
-}: {
-  className?: string;
-  // `value: null` means "not loaded yet" — render only the label so the
-  // value span can mount + fade in once data arrives, matching how
-  // ZoneRow/FullSegmentRow pills gate on their counts.
-  rows: Array<{ label: string; value: string | null }>;
-}) {
+function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div
-      className={cn(
-        "min-w-0 flex flex-col gap-1 rounded-md border border-border bg-card px-3 py-2",
-        className,
-      )}
-    >
-      {rows.map((row) => (
-        <div key={row.label} className="flex items-baseline justify-between gap-2">
-          <span className="shrink-0 text-sm">{row.label}</span>
-          {row.value !== null ? (
-            <span className="truncate text-sm tabular-nums text-muted-foreground animate-in fade-in duration-100">
-              {row.value}
-            </span>
-          ) : null}
-        </div>
-      ))}
+    <div className="flex flex-col">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="tabular-nums">{value.toLocaleString()}</span>
     </div>
   );
 }
