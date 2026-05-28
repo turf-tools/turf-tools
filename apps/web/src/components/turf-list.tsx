@@ -91,15 +91,15 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
                   variant="number"
                   className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
                 >
-                  <DoorClosed className="size-3.5 text-foreground" />
-                  {turf.counts.doors.toLocaleString()}
+                  <UserRound className="size-3.5 text-foreground" />
+                  {turf.counts.people.toLocaleString()}
                 </Pill>
                 <Pill
                   variant="number"
                   className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
                 >
-                  <UserRound className="size-3.5 text-foreground" />
-                  {turf.counts.people.toLocaleString()}
+                  <DoorClosed className="size-3.5 text-foreground" />
+                  {turf.counts.doors.toLocaleString()}
                 </Pill>
               </div>
             ) : null}

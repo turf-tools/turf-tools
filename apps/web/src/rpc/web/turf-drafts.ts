@@ -1,8 +1,17 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq } from "@field-tools/db";
+import { and, asc, eq, isNull } from "@field-tools/db";
 import { campaigns, turfDrafts } from "@field-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
+
+// Drafts are scoped to `(campaignId, zoneId)`, where `zoneId` is null
+// for zoneless campaigns (cut against the full segment). Drizzle's
+// `eq(col, null)` resolves to `col = NULL` which is never true, so we
+// match the SQL semantics explicitly.
+const zoneIdMatch = (zid: string | null) =>
+  zid === null ? isNull(turfDrafts.zoneId) : eq(turfDrafts.zoneId, zid);
+
+const nullableUuid = z.string().uuid().nullable();
 
 // GeoJSON Polygon validator. We don't enforce ring-closure here —
 // the cutter naturally produces closed rings, and the publish path
@@ -18,7 +27,7 @@ export const list = pub
   .input(
     z.object({
       campaignId: z.string().uuid(),
-      zoneId: z.string().uuid(),
+      zoneId: nullableUuid,
     }),
   )
   .handler(async ({ context, input }) => {
@@ -43,7 +52,7 @@ export const list = pub
         sortOrder: turfDrafts.sortOrder,
       })
       .from(turfDrafts)
-      .where(and(eq(turfDrafts.campaignId, input.campaignId), eq(turfDrafts.zoneId, input.zoneId)))
+      .where(and(eq(turfDrafts.campaignId, input.campaignId), zoneIdMatch(input.zoneId)))
       .orderBy(asc(turfDrafts.sortOrder));
     return rows;
   });
@@ -61,7 +70,7 @@ export const replaceAll = pub
   .input(
     z.object({
       campaignId: z.string().uuid(),
-      zoneId: z.string().uuid(),
+      zoneId: nullableUuid,
       drafts: z.array(
         z.object({
           turfDraftId: z.string().uuid(),
@@ -93,9 +102,7 @@ export const replaceAll = pub
     await context.db.transaction(async (tx) => {
       await tx
         .delete(turfDrafts)
-        .where(
-          and(eq(turfDrafts.campaignId, input.campaignId), eq(turfDrafts.zoneId, input.zoneId)),
-        );
+        .where(and(eq(turfDrafts.campaignId, input.campaignId), zoneIdMatch(input.zoneId)));
       if (input.drafts.length > 0) {
         await tx.insert(turfDrafts).values(
           input.drafts.map((d) => ({

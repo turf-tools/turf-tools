@@ -16,7 +16,9 @@ type PersonsCount = {
   buildingCount: number;
 };
 
-type PersonsCountByKey = { counts: Record<string, { doors: number; people: number }> };
+type PersonsCountByKey = {
+  counts: Record<string, { buildings: number; doors: number; people: number }>;
+};
 
 type PersonsSample = {
   persons: Array<{
