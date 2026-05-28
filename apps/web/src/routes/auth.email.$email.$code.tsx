@@ -6,24 +6,17 @@ import { LoadingIndicator } from "~/components/loading-indicator";
 import { authClient } from "~/lib/auth-client";
 import { getSession } from "~/lib/server/session";
 
-// Linear-style verify landing. The email contains a link to this URL with
-// the OTP in the path. We deliberately do NOT verify on GET — the server
-// just renders the page. Verification fires from a client-side effect, so
-// scanner pre-fetches (which don't execute JS) never trigger the POST and
-// can't burn the OTP. A real user's browser executes the effect and
-// redirects them straight into the app.
-//
-// If a verify fails (already used, expired, JS-executing scanner, double
-// click) the user sees a "link can't be used" message with a button back
-// to /login where they can request a new one.
+// Verify landing for the OTP embedded in email links. The GET serves an
+// inert page; verification fires from a client-side effect on mount, so
+// GET-based email scanners that pre-fetch the URL can't trigger the POST
+// and can't burn the OTP. Real browsers execute the effect and redirect
+// into the app. On failure (already used, expired, etc.) we surface a
+// message with a button back to /login.
 export const Route = createFileRoute("/auth/email/$email/$code")({
   beforeLoad: async () => {
-    // If they're already signed in (e.g. clicked the same link twice in
-    // the same session), skip the verify entirely and bounce home.
-    // `reloadDocument` forces a full-document navigation so root's
-    // beforeLoad re-runs with a fresh session lookup — an internal
-    // redirect would reuse the auth-flow bypass context (session=null)
-    // from this route and bounce back through /login in a loop.
+    // Already signed in — skip the verify and bounce home. `reloadDocument`
+    // is load-bearing: an internal redirect would reuse this route's auth-
+    // flow bypass context (session=null) and loop back through /login.
     const session = await getSession();
     if (session) throw redirect({ to: "/", reloadDocument: true });
   },
@@ -33,10 +26,9 @@ export const Route = createFileRoute("/auth/email/$email/$code")({
 function VerifyPage() {
   const { email, code } = Route.useParams();
   const [error, setError] = useState<string | null>(null);
-  // Guards against React's dev-mode double-effect (and any other mount-
-  // remount within the same component instance) from firing the verify
-  // POST twice. A genuinely separate navigation gets a fresh component
-  // and a fresh ref, so it isn't affected.
+  // Guards a single component instance from firing the verify POST twice
+  // (notably React's dev-mode double-effect). Separate navigations get a
+  // fresh component + fresh ref and are unaffected.
   const fired = useRef(false);
 
   useEffect(() => {
@@ -45,26 +37,21 @@ function VerifyPage() {
     void (async () => {
       const res = await authClient.signIn.emailOtp({ email, otp: code });
       if (res.error) {
-        // Common reasons collapse into one message: already used (scanner
-        // burned it, or user clicked twice from different sessions),
-        // expired, or never existed. Recovery is the same — request a
-        // new link.
+        // All failure modes (already-used, expired, never-existed) collapse
+        // here — the recovery is the same in every case: request a new link.
         setError("This link is no longer valid, please try again.");
         return;
       }
       // Hard-load to "/" — root's mount-time effect broadcasts the
-      // logged-in signal (with userId) so any sibling /login tabs
-      // transition too. Broadcasting from here would lack a userId and
-      // trip the root listener's user-switch detection → reload loop.
+      // logged-in signal with the user id. Broadcasting from this page
+      // would lack a userId and trip the root listener's user-switch
+      // detection → reload loop.
       window.location.replace("/");
     })();
-    // Run once on mount — `email`/`code` come from URL params and don't change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Truly blank during the in-flight POST so the redirect lands as fast
-  // as the prior magic-link flow — even the spinner briefly visible feels
-  // distracting at this scale.
+  // Truly blank during the in-flight POST so the redirect feels instant.
   if (!error) return null;
   return (
     <div className="flex min-h-screen items-center justify-center px-4">

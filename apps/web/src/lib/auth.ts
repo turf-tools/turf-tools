@@ -17,10 +17,9 @@ function getResend(): Resend | null {
 }
 
 export const auth = betterAuth({
-  // Default logger level is "warn"; "info" surfaces config-validation
-  // warnings + internal errors. BA itself doesn't log around magic-link
-  // operations, so for per-request auth tracing we instrument in `hooks`
-  // below rather than relying on this.
+  // "info" surfaces BA's config-validation + internal errors. Per-request
+  // OTP send/verify tracing is in the hooks below — BA itself doesn't log
+  // around those.
   logger: { level: "info" },
   database: drizzleAdapter(db, {
     provider: "pg",
@@ -53,10 +52,8 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
-      // One-line trace of every auth request — gives us OTP send + verify
-      // visibility. BA's own logger doesn't instrument these. The OTP
-      // value itself is never logged. `/get-session` is excluded because
-      // it fires on every page load and would drown out the signal.
+      // Per-request trace; OTP values never logged. `/get-session` fires
+      // on every page load and would drown out the signal.
       if (ctx.path !== "/get-session") {
         const emailHint =
           typeof ctx.body?.email === "string" ? ctx.body.email.slice(0, 3) + "…" : null;
@@ -75,15 +72,10 @@ export const auth = betterAuth({
         ctx.body.email = normalizeEmail(ctx.body.email);
       }
 
-      // Membership gate for OTP send. BA's emailOTP plugin silently
-      // no-ops for unknown emails when `disableSignUp: true` (avoids
-      // leaking user existence — see /email-otp/send-verification-otp
-      // route source). That's the right default for a public SaaS, but
-      // for an invite-only internal tool it's worse UX than a visible
-      // error: the user types the wrong address, sees "we sent it",
-      // waits forever. We gate here in the before-hook so the failure
-      // is a visible 4xx instead of a silent success, accepting the
-      // small existence-leak.
+      // Membership gate for OTP send — invite-only tool, surface a visible
+      // "no account found" instead of the silent no-op BA's emailOTP plugin
+      // returns for unknown emails under `disableSignUp: true`. We accept
+      // the small existence-leak.
       if (ctx.path === "/email-otp/send-verification-otp" && typeof ctx.body?.email === "string") {
         const row = (
           await db
@@ -101,12 +93,9 @@ export const auth = betterAuth({
       }
     }),
     after: createAuthMiddleware(async (ctx) => {
-      // Verify-outcome trace for `/sign-in/email-otp`. The client knows
-      // the outcome (it's how /login decides whether to flip to the
-      // invalid-code state), but server logs would otherwise be silent
-      // — which is exactly the visibility we want when debugging
-      // scanner-burned-token failures on pilot. The OTP value is never
-      // logged.
+      // Verify-outcome trace. Without this, server logs are silent on
+      // success vs failure — exactly the visibility we need when
+      // diagnosing scanner-burned-token failures.
       if (ctx.path !== "/sign-in/email-otp") return;
       const returned = ctx.context.returned;
       const headers = ctx.context.responseHeaders;
@@ -124,22 +113,20 @@ export const auth = betterAuth({
     emailOTP({
       disableSignUp: true,
       expiresIn: 60 * 60,
-      // The OTP is embedded in the verify-page URL (`/auth/email/:email/:code`)
-      // and never displayed to the user in Phase 1 — the email contains
-      // only the clickable link. The verify page POSTs the code to BA
-      // from a client-side effect on mount, so GET-based email scanners
-      // (the dominant kind) pre-fetch the URL but never trigger the POST
-      // and never burn the code. Phase 2 will also surface the code as a
-      // human-typeable string in the email body + a code input on /login
-      // for the small minority of scanners that execute JS.
+      // Two-channel delivery to defeat email security scanners. The OTP
+      // sits in the verify-page URL — link click triggers a client-side
+      // POST on mount that GET-based scanners can't fire by pre-fetching
+      // the page. The same OTP is also rendered as a human-typeable string
+      // in the email body and `/login`'s code-entry step accepts it as a
+      // manual fallback for the minority of scanners that execute JS and
+      // would otherwise burn the link.
       sendVerificationOTP: async ({ email, otp, type }) => {
         // We only use the sign-in flow; other types (email-verification,
         // forget-password, change-email) aren't wired up.
         if (type !== "sign-in") return;
-        // `email` is canonical thanks to the before-hook, and the
-        // before-hook has already gated on active membership — so this
-        // user definitely exists. We just need their displayEmail for
-        // the `to` field on the outbound message.
+        // The before-hook has already canonicalised `email` and confirmed
+        // an active membership exists. This lookup is just to grab the
+        // displayEmail for the outbound `to`.
         const row = (
           await db
             .select({ displayEmail: users.displayEmail })
@@ -148,8 +135,7 @@ export const auth = betterAuth({
             .limit(1)
         )[0];
         if (!row) {
-          // Shouldn't be reachable — the before-hook guarantees a user
-          // row exists for this email. Log loudly if it ever fires.
+          // Unreachable per the before-hook guarantee. Log loudly if it fires.
           console.error(`[auth] sendVerificationOTP: no user row for ${email}`);
           return;
         }
