@@ -27,7 +27,6 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { Rail } from "~/components/rail";
-import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignKeyCountsQuery,
@@ -36,7 +35,7 @@ import {
   type KeyFilter,
 } from "~/lib/queries/campaigns";
 import { scriptsListQuery } from "~/lib/queries/scripts";
-import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { segmentsListQuery } from "~/lib/queries/segments";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
@@ -88,7 +87,9 @@ function CampaignsLayout() {
   // case. Reads the *committed* match (not the eager pathname) so the
   // header doesn't flicker during the cutter's loader run.
   const childMatches = useChildMatches();
-  const isCut = childMatches.some((m) => m.routeId.endsWith("/cut/$zoneId"));
+  const isCut = childMatches.some(
+    (m) => m.routeId.endsWith("/cut/$zoneId") || m.routeId.endsWith("/cut/"),
+  );
 
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
@@ -114,6 +115,8 @@ function CampaignsLayout() {
   // Mirror of the editor-route loader's prefetch logic — used by the
   // create/clone flows to warm caches against the new campaign's
   // bindings before the navigate, so the body's queries cache-hit.
+  // Segment criteria comes from the segments list cache (already loaded
+  // above) — same lookup pattern the campaign view uses.
   const prefetchCampaignViewData = async (target: {
     campaignId: string;
     segmentId: string | null;
@@ -121,14 +124,13 @@ function CampaignsLayout() {
   }) => {
     const zgs = await queryClient.fetchQuery(zoneGroupsQuery());
     const nextZoneGroup = zgs.find((g) => g.zoneGroupId === target.zoneGroupId) ?? null;
-    const [nextSegmentDetail, nextZones] = await Promise.all([
-      target.segmentId
-        ? queryClient.fetchQuery(segmentDetailQuery(target.segmentId))
-        : Promise.resolve(undefined),
-      target.zoneGroupId
-        ? queryClient.fetchQuery(zonesQuery(target.zoneGroupId))
-        : Promise.resolve(undefined),
-    ]);
+    const nextSegment = target.segmentId
+      ? (segments.find((s) => s.segmentId === target.segmentId) ?? null)
+      : null;
+    const nextCriteria = nextSegment?.criteria ?? null;
+    const nextZones = target.zoneGroupId
+      ? await queryClient.fetchQuery(zonesQuery(target.zoneGroupId))
+      : undefined;
     const nextKeyFilter = deriveKeyFilter(nextZoneGroup, nextZones);
     await Promise.all([
       queryClient.prefetchQuery(turfStatsForCampaignQuery(target.campaignId)),
@@ -137,16 +139,12 @@ function CampaignsLayout() {
             boundariesGeoJsonQuery(nextZoneGroup.keyGroup, nextZoneGroup.updatedAt),
           )
         : Promise.resolve(),
-      nextSegmentDetail?.criteria && nextKeyFilter
-        ? queryClient.prefetchQuery(campaignPointsQuery(nextSegmentDetail.criteria, nextKeyFilter))
+      nextCriteria && nextKeyFilter
+        ? queryClient.prefetchQuery(campaignPointsQuery(nextCriteria, nextKeyFilter))
         : Promise.resolve(),
-      nextSegmentDetail?.criteria && nextKeyFilter
+      nextCriteria && nextKeyFilter
         ? queryClient.prefetchQuery(
-            campaignKeyCountsQuery(
-              nextSegmentDetail.criteria,
-              nextKeyFilter.keyGroup,
-              nextKeyFilter.keys,
-            ),
+            campaignKeyCountsQuery(nextCriteria, nextKeyFilter.keyGroup, nextKeyFilter.keys),
           )
         : Promise.resolve(),
     ]);
@@ -168,28 +166,17 @@ function CampaignsLayout() {
   // Wrapping zoneGroups.createWithDefaultZone + campaigns.create in one
   // mutation so the dialog's pending/error UX is coherent across both paths.
   const createCampaign = useDialogMutation({
-    mutationFn: async (input: {
+    mutationFn: (input: {
       name: string;
       segmentId: string;
       scriptId: string;
       zoneGroupId: string | null;
-      constructFromKeyGroup: string | null;
     }) => {
-      let zoneGroupId = input.zoneGroupId;
-      if (input.constructFromKeyGroup) {
-        const zg = await client.zoneGroups.createWithDefaultZone({
-          name: `${input.name} zones`,
-          keyGroup: input.constructFromKeyGroup,
-          segmentId: input.segmentId,
-        });
-        zoneGroupId = zg.zoneGroupId;
-        void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      }
       return client.campaigns.create({
         name: input.name,
         segmentId: input.segmentId,
         scriptId: input.scriptId,
-        zoneGroupId,
+        zoneGroupId: input.zoneGroupId,
       });
     },
     onSuccess: (created) => {
@@ -252,6 +239,12 @@ function CampaignsLayout() {
 
   const [configOpen, setConfigOpen] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+  // Pending patch + draft count snapshotted at Save-click time, used by
+  // the zone-change confirm dialog. Non-null state == confirm is open.
+  const [pendingZoneChange, setPendingZoneChange] = useState<{
+    patch: { segmentId: string | null; zoneGroupId: string | null; scriptId: string | null };
+    draftCount: number;
+  } | null>(null);
   // Snapshotted at click time so the dialog body keeps showing the
   // just-deleted name during its close animation, even after the URL
   // has reactively swapped to the fallback campaign.
@@ -292,27 +285,71 @@ function CampaignsLayout() {
     },
   });
 
-  const saveConfigure = async (patch: {
-    segmentId: string | null;
-    zoneGroupId: string | null;
-    scriptId: string | null;
-  }) => {
+  // Actual save path — clears drafts when the zone group changed, then
+  // warms caches against the new bindings before firing the optimistic
+  // detail update. Called directly when no drafts are at risk, or via
+  // the confirm dialog when there are.
+  const commitConfigure = async (
+    patch: {
+      segmentId: string | null;
+      zoneGroupId: string | null;
+      scriptId: string | null;
+    },
+    opts: { clearDrafts: boolean },
+  ) => {
     if (!activeCampaignId) return;
     setConfigSaving(true);
     try {
-      // Warm caches against the new bindings before the optimistic
-      // detail update fires, so the body's queries cache-hit on
-      // rebind and the `ready` curtain never drops.
-      await prefetchCampaignViewData({
+      if (opts.clearDrafts) {
+        await client.turfDrafts.clearForCampaign({ campaignId: activeCampaignId });
+        // Remove rather than invalidate — we know the drafts no longer
+        // exist server-side, so any cached row would be wrong, and we'd
+        // rather force a clean refetch on next access than risk a render
+        // with stale cache that's been marked-but-not-yet-refetched.
+        queryClient.removeQueries({ queryKey: ["turf-drafts", activeCampaignId] });
+        void queryClient.invalidateQueries({ queryKey: ["turf-stats", activeCampaignId] });
+      }
+      // Fire-and-forget the cache-warming prefetch — awaiting it pushes
+      // the total dialog-locked time past the spinner threshold (~100ms)
+      // for no UX benefit, since the optimistic campaign update below is
+      // what actually drives the view's rebind.
+      void prefetchCampaignViewData({
         campaignId: activeCampaignId,
         segmentId: patch.segmentId,
         zoneGroupId: patch.zoneGroupId,
       });
       updateCampaignMutation.mutate({ campaignId: activeCampaignId, ...patch });
       setConfigOpen(false);
+      setPendingZoneChange(null);
     } finally {
       setConfigSaving(false);
     }
+  };
+
+  const saveConfigure = async (patch: {
+    segmentId: string | null;
+    zoneGroupId: string | null;
+    scriptId: string | null;
+  }) => {
+    if (!activeCampaignId) return;
+    const zoneGroupChanged = patch.zoneGroupId !== (campaign?.zoneGroupId ?? null);
+    if (!zoneGroupChanged) {
+      await commitConfigure(patch, { clearDrafts: false });
+      return;
+    }
+    // Read draft count from the turf-stats cache (already warm when
+    // the editor is open). Trust the cache for the user-facing N; the
+    // server-side clear runs unconditionally on a zone change so any
+    // drift can't leave orphaned drafts behind.
+    const stats = queryClient.getQueryData<
+      Record<string, { drafts: number; published: number; active: number }>
+    >(turfStatsForCampaignQuery(activeCampaignId).queryKey);
+    const draftCount = stats ? Object.values(stats).reduce((a, b) => a + b.drafts, 0) : 0;
+    if (draftCount === 0) {
+      await commitConfigure(patch, { clearDrafts: true });
+      return;
+    }
+    setPendingZoneChange({ patch, draftCount });
   };
 
   return (
@@ -432,6 +469,19 @@ function CampaignsLayout() {
         pending={configSaving}
         onSubmit={(patch) => void saveConfigure(patch)}
       />
+
+      <ConfirmZoneChangeDialog
+        open={pendingZoneChange !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingZoneChange(null);
+        }}
+        draftCount={pendingZoneChange?.draftCount ?? 0}
+        pending={configSaving}
+        onConfirm={() => {
+          if (!pendingZoneChange) return;
+          void commitConfigure(pendingZoneChange.patch, { clearDrafts: true });
+        }}
+      />
     </>
   );
 }
@@ -444,7 +494,6 @@ type SelectOption = { value: string; label: string };
 
 // Sentinel for the "construct fresh zone group from key group" path —
 // sits alongside real zone-group ids in the create-dialog dropdown.
-const AUTO_ZONES_SENTINEL = "__auto__";
 
 function DialogError({ error }: { error: string | null }) {
   if (!error) return null;
@@ -482,41 +531,33 @@ function CreateCampaignDialog({
     segmentId: string;
     scriptId: string;
     zoneGroupId: string | null;
-    constructFromKeyGroup: string | null;
   }) => void;
 }) {
   const [name, setName] = useState("");
   const [segmentId, setSegmentId] = useState<string | null>(null);
   const [scriptId, setScriptId] = useState<string | null>(null);
   const [zonesValue, setZonesValue] = useState<string | null>(null);
-  const [constructKeyGroup, setConstructKeyGroup] = useState<string>(
-    KEY_GROUPS_AVAILABLE[0]!.value,
-  );
   useEffect(() => {
     if (open) {
       setName("");
       setSegmentId(null);
       setScriptId(null);
       setZonesValue(null);
-      setConstructKeyGroup(KEY_GROUPS_AVAILABLE[0]!.value);
     }
   }, [open]);
 
-  const isAuto = zonesValue === AUTO_ZONES_SENTINEL;
-  const zonesOptions: ReadonlyArray<SelectOption> = [
-    { value: AUTO_ZONES_SENTINEL, label: "Define automatically" },
-    ...zoneGroupOptions,
-  ];
-  const validZones = zonesValue !== null && (!isAuto || constructKeyGroup !== "");
-  const valid = name.trim().length > 0 && segmentId !== null && scriptId !== null && validZones;
+  // Zones is optional — a campaign with no zone group cuts turfs against
+  // the whole segment.
+  const valid = name.trim().length > 0 && segmentId !== null && scriptId !== null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>Create new campaign</DialogTitle>
         <DialogDescription>
-          A campaign combines a segment (people), a group of zones (geography), and a script
-          (questions). Choices can be edited later via Configure.
+          A campaign combines a segment (people) and a script (questions). Optionally pick a group
+          of zones to subdivide the segment for turf cutting. Choices can be edited later via
+          Configure.
         </DialogDescription>
         <form
           onSubmit={(e) => {
@@ -526,8 +567,7 @@ function CreateCampaignDialog({
               name: name.trim(),
               segmentId: segmentId!,
               scriptId: scriptId!,
-              zoneGroupId: isAuto ? null : zonesValue,
-              constructFromKeyGroup: isAuto ? constructKeyGroup : null,
+              zoneGroupId: zonesValue,
             });
           }}
           className="flex flex-col gap-3"
@@ -553,15 +593,10 @@ function CreateCampaignDialog({
             label="Zones"
             placeholder="Pick a zone group…"
             value={zonesValue}
-            options={zonesOptions}
+            options={zoneGroupOptions}
             onChange={setZonesValue}
+            noneLabel="None (full segment)"
           />
-          {isAuto ? (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm text-muted-foreground">Define from</label>
-              <KeyGroupRadio value={constructKeyGroup} onChange={setConstructKeyGroup} />
-            </div>
-          ) : null}
           <ConfigField
             label="Script"
             placeholder="Pick a script…"
@@ -750,6 +785,40 @@ function DeleteDialog({
   );
 }
 
+function ConfirmZoneChangeDialog({
+  open,
+  onOpenChange,
+  draftCount,
+  pending,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  draftCount: number;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  useConfirmHotkey({ open, disabled: pending, onConfirm });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Change zones?</DialogTitle>
+        <DialogDescription>
+          Changing the zone group will discard{" "}
+          <span className="font-bold text-foreground">{draftCount}</span> draft turf
+          {draftCount === 1 ? "" : "s"}. Published turfs are unaffected.
+        </DialogDescription>
+        <div className="mt-2 flex justify-end gap-2">
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button variant="destructive" onClick={onConfirm} loading={pending}>
+            Discard drafts and save
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ConfigureDialog({
   open,
   onOpenChange,
@@ -826,6 +895,7 @@ function ConfigureDialog({
             value={zoneGroupId}
             options={zoneGroupOptions}
             onChange={setZoneGroupId}
+            noneLabel="None (full segment)"
           />
           <ConfigField
             label="Script"
@@ -852,15 +922,21 @@ function ConfigField({
   value,
   options,
   onChange,
+  noneLabel,
 }: {
   label: string;
   placeholder: string;
   value: string | null;
   options: ReadonlyArray<SelectOption>;
   onChange: (value: string | null) => void;
+  // When set, renders an explicit "none" item at the top of the list
+  // that commits `null`. The trigger displays this label when value is
+  // null (instead of the placeholder).
+  noneLabel?: string;
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v || null) });
   const current = options.find((o) => o.value === value);
+  const triggerLabel = current?.label ?? (value === null && noneLabel ? noneLabel : placeholder);
   return (
     <div className="flex flex-col gap-1.5">
       {label ? <label className="text-sm text-muted-foreground">{label}</label> : null}
@@ -871,11 +947,12 @@ function ConfigField({
             "enabled:hover:bg-muted",
           )}
         >
-          <span className="truncate">{current?.label ?? placeholder}</span>
+          <span className="truncate">{triggerLabel}</span>
           <ChevronDown className="size-3.5 shrink-0" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-[var(--anchor-width)]">
           <DropdownMenuRadioGroup {...dd.radio} value={value ?? ""}>
+            {noneLabel ? <DropdownMenuRadioItem value="">{noneLabel}</DropdownMenuRadioItem> : null}
             {options.map((o) => (
               <DropdownMenuRadioItem key={o.value} value={o.value}>
                 {o.label}
@@ -884,29 +961,6 @@ function ConfigField({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
-  );
-}
-
-function KeyGroupRadio({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {KEY_GROUPS_AVAILABLE.map((kg) => {
-        const selected = value === kg.value;
-        return (
-          <button
-            type="button"
-            key={kg.value}
-            onClick={() => onChange(kg.value)}
-            className={cn(
-              "rounded-md border border-border px-2.5 py-1 text-sm active:translate-y-px",
-              selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
-            )}
-          >
-            {kg.label}
-          </button>
-        );
-      })}
     </div>
   );
 }

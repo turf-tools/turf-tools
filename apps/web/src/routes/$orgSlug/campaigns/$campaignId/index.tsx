@@ -16,7 +16,12 @@ import {
   campaignsListQuery,
   type KeyFilter,
 } from "~/lib/queries/campaigns";
-import { type SegmentCriteria, segmentDetailQuery } from "~/lib/queries/segments";
+import { scriptsListQuery } from "~/lib/queries/scripts";
+import {
+  segmentCountsQuery,
+  segmentsListQuery,
+  type SegmentCriteria,
+} from "~/lib/queries/segments";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
@@ -33,6 +38,42 @@ function deriveKeyFilter(
     keyGroup: zoneGroup.keyGroup,
     keys: Array.from(new Set(zones.flatMap((z) => z.keys))).sort(),
   };
+}
+
+// Reverses the Web Mercator y → lat projection (matches the forward
+// transform used in apps/web/src/lib/queries/segments.ts when the points
+// buffer is built server-side).
+function mercY2Lat(my: number): number {
+  return (Math.atan(Math.sinh(Math.PI * (1 - 2 * my))) * 180) / Math.PI;
+}
+
+// bbox in [west, south, east, north] from the origin-relative fp32
+// mercator delta buffer used by the points layer. Used as a fitBounds
+// fallback when there's no zone perimeter to fit to.
+function bboxOfMercDeltas(buffer: {
+  deltas: Float32Array;
+  origin: [number, number];
+}): [number, number, number, number] | null {
+  if (buffer.deltas.length === 0) return null;
+  const [ox, oy] = buffer.origin;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < buffer.deltas.length; i += 2) {
+    const x = buffer.deltas[i]!;
+    const y = buffer.deltas[i + 1]!;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const minLng = (ox + minX) * 360 - 180;
+  const maxLng = (ox + maxX) * 360 - 180;
+  // Smaller mercator y = larger latitude (top of the map).
+  const maxLat = mercY2Lat(oy + minY);
+  const minLat = mercY2Lat(oy + maxY);
+  return [minLng, minLat, maxLng, maxLat];
 }
 
 // Walks every coord in a polygon/multipolygon FeatureCollection.
@@ -78,14 +119,13 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
       queryClient.fetchQuery(campaignDetailQuery(campaignId)),
       queryClient.fetchQuery(turfStatsForCampaignQuery(campaignId)),
     ]);
-    await Promise.all([
-      campaign.segmentId
-        ? queryClient.fetchQuery(segmentDetailQuery(campaign.segmentId))
-        : Promise.resolve(undefined),
-      campaign.zoneGroupId
-        ? queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId))
-        : Promise.resolve(undefined),
-    ]);
+    if (campaign.zoneGroupId) {
+      await queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId));
+    }
+    // segmentsListQuery is prefetched by the parent campaigns layout
+    // loader, so we read segment name + criteria from there via find()
+    // — matches how the script and zone-group lookups work and keeps
+    // a rename's optimistic list patch visible without a hard reload.
   },
   component: CampaignEditor,
 });
@@ -96,14 +136,17 @@ function CampaignEditor() {
 
   const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
+  // Scripts + segments lists are pre-fetched by the parent campaigns
+  // route loader so these resolve from cache. We look up the bound
+  // segment/script/zone-group by id via find(); using the list lets a
+  // rename's optimistic patch surface here without a separate detail
+  // cache to keep in sync.
+  const { data: scripts } = useSuspenseQuery(scriptsListQuery());
+  const { data: segments } = useSuspenseQuery(segmentsListQuery());
 
   const activeZoneGroup = zoneGroups.find((g) => g.zoneGroupId === campaign?.zoneGroupId) ?? null;
-
-  const { data: segmentDetail, isPlaceholderData: segmentDetailStale } = useQuery({
-    ...segmentDetailQuery(campaign?.segmentId ?? ""),
-    enabled: !!campaign?.segmentId,
-    placeholderData: keepPreviousData,
-  });
+  const activeScript = scripts.find((s) => s.scriptId === campaign?.scriptId) ?? null;
+  const activeSegment = segments.find((s) => s.segmentId === campaign?.segmentId) ?? null;
 
   const { data: zones, isPlaceholderData: zonesStale } = useQuery({
     ...zonesQuery(campaign?.zoneGroupId ?? ""),
@@ -126,16 +169,20 @@ function CampaignEditor() {
     [activeZoneGroup, zones],
   );
 
-  const segmentCriteria = segmentDetail?.criteria as Criteria | null | undefined;
+  const segmentCriteria = activeSegment?.criteria as Criteria | null | undefined;
 
+  // Points run for both zoned and zoneless campaigns. When `keyFilter` is
+  // null the query asks the data server for *all* segment-matching points
+  // (no zone-keyed narrowing), which is the right answer for zoneless.
   const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
-    ...(segmentCriteria && keyFilter
-      ? campaignPointsQuery(segmentCriteria, keyFilter)
-      : campaignPointsQuery({} as SegmentCriteria, null)),
-    enabled: !!segmentCriteria && !!keyFilter,
+    ...campaignPointsQuery(segmentCriteria ?? ({} as SegmentCriteria), keyFilter),
+    enabled: !!segmentCriteria,
     placeholderData: keepPreviousData,
   });
 
+  // Per-key counts only matter when zoned (zoneCounts sums them per zone).
+  // For zoneless we use segmentCountsQuery below instead, which returns
+  // segment-wide totals directly.
   const { data: keyCountsResult, isPlaceholderData: countsStale } = useQuery({
     ...(segmentCriteria && keyFilter
       ? campaignKeyCountsQuery(segmentCriteria, keyFilter.keyGroup, keyFilter.keys)
@@ -145,6 +192,13 @@ function CampaignEditor() {
   });
   const perKeyCounts = keyCountsResult?.counts ?? null;
 
+  // Segment-wide totals for zoneless campaigns — drives the header card's
+  // Buildings/Doors/People numbers when there's no zone group to sum from.
+  const { data: segmentTotals } = useQuery({
+    ...segmentCountsQuery(segmentCriteria ?? ({} as Criteria)),
+    enabled: !!segmentCriteria && !campaign?.zoneGroupId,
+  });
+
   // Per-zone totals = sum per-key counts across each zone's keys.
   // Returns null when the underlying counts query is still resolving
   // for the new binding — otherwise mixing stale (previous campaign's)
@@ -152,25 +206,47 @@ function CampaignEditor() {
   // sidebar pills. Better to drop the pills until real data lands.
   const zoneCounts = useMemo(() => {
     if (!perKeyCounts || !zones || countsStale) return null;
-    const out: Record<string, { doors: number; people: number }> = {};
+    const out: Record<string, { buildings: number; doors: number; people: number }> = {};
     for (const z of zones) {
+      let buildings = 0;
       let doors = 0;
       let people = 0;
       for (const k of z.keys) {
         const c = perKeyCounts[k];
         if (c) {
+          buildings += c.buildings;
           doors += c.doors;
           people += c.people;
         }
       }
-      out[z.zoneId] = { doors, people };
+      out[z.zoneId] = { buildings, doors, people };
     }
     return out;
   }, [perKeyCounts, zones, countsStale]);
 
+  // Campaign-wide turf stats. Prefetched in the loader, so they arrive
+  // on first render and don't need fade-in handling.
+  const totals = useMemo(() => {
+    let drafts = 0;
+    let active = 0;
+    let published = 0;
+    if (turfStats) {
+      for (const s of Object.values(turfStats)) {
+        drafts += s.drafts;
+        active += s.active;
+        published += s.published;
+      }
+    }
+    return { drafts, active, published };
+  }, [turfStats]);
+
   // One unioned polygon per zone, tagged with `zoneId`. Single-key zones
   // short-circuit because turf.union returns null for degenerate inputs.
+  // Bails when zoneless — `zones` and `boundaryFC` use placeholderData,
+  // so without this guard a zoned→zoneless switch flashes the previous
+  // campaign's polygons.
   const zonePerimeters = useMemo<FeatureCollection | undefined>(() => {
+    if (!campaign?.zoneGroupId) return undefined;
     if (!zones || !boundaryFC) return undefined;
     const featuresByKey: Record<string, Feature<Polygon | MultiPolygon>> = {};
     for (const f of boundaryFC.features) {
@@ -213,12 +289,16 @@ function CampaignEditor() {
       }
     });
     return { type: "FeatureCollection", features: out };
-  }, [zones, boundaryFC]);
+  }, [zones, boundaryFC, campaign?.zoneGroupId]);
 
-  const fitBounds = useMemo(
-    () => (zonePerimeters ? bboxOfPolys(zonePerimeters) : null),
-    [zonePerimeters],
-  );
+  // Prefer zone perimeters for the fit when we have them (matches the
+  // visible boundary on the map). Fall back to the points cloud for
+  // zoneless campaigns so the map still lands somewhere sensible.
+  const fitBounds = useMemo(() => {
+    if (zonePerimeters) return bboxOfPolys(zonePerimeters);
+    if (pointsBuffer) return bboxOfMercDeltas(pointsBuffer);
+    return null;
+  }, [zonePerimeters, pointsBuffer]);
 
   // Curtain stays up until every relevant query has data for the current
   // bindings (no `isPlaceholderData` from a previous binding).
@@ -227,15 +307,21 @@ function CampaignEditor() {
     const s = !!campaign.segmentId;
     const z = !!campaign.zoneGroupId;
     if (s) {
-      if (!segmentDetail || segmentDetailStale) return false;
+      // The segments list is loader-prefetched and rerendered via
+      // useSuspenseQuery, so `activeSegment` is always fresh — no
+      // separate staleness gate needed for the segment binding.
+      if (!activeSegment) return false;
+      // Points fire as soon as we have a segment, zoned or not.
+      if (!pointsBuffer || pointsStale) return false;
     }
     if (z) {
       if (!zones || zonesStale) return false;
       if (!boundaryFC || boundaryStale) return false;
-    }
-    if (s && z) {
-      if (!pointsBuffer || pointsStale) return false;
       if (!perKeyCounts || countsStale) return false;
+    } else if (s) {
+      // Zoneless: header totals come from segmentTotals instead of
+      // per-zone aggregation.
+      if (!segmentTotals) return false;
     }
     return true;
   })();
@@ -282,21 +368,40 @@ function CampaignEditor() {
   return (
     <div className="flex gap-4 h-full">
       {/* Sidebar renders immediately against loader-cached chrome data
-          (zones, segmentDetail). The map curtain handles waits for the
-          heavy data still fetching in-component. */}
-      <div className="w-124 shrink-0 h-full min-h-0">
+          (zones + segment binding). The map curtain handles waits for
+          the heavy data still fetching in-component. */}
+      <div className="w-128 shrink-0 h-full min-h-0">
         <ZonesList
           campaignId={campaignId}
           zones={zones ?? null}
           selectedZoneId={selectedZoneId}
           zoneCounts={zoneCounts}
           turfStats={turfStats ?? null}
+          totals={totals}
+          // Null-until-loaded mirror of zoneCounts[zoneId] — gates the
+          // FullSegmentRow's pills so they fade in cleanly instead of
+          // flashing zeros first.
+          fullSegmentCounts={
+            segmentTotals
+              ? { doors: segmentTotals.doorCount, people: segmentTotals.personCount }
+              : null
+          }
+          segmentName={activeSegment?.name ?? null}
+          scriptName={activeScript?.name ?? null}
+          zoneGroupName={activeZoneGroup?.name ?? null}
           onSelect={setSelectedZoneId}
           onCut={(zoneId) => {
-            void navigate({
-              to: "/$orgSlug/campaigns/$campaignId/cut/$zoneId",
-              params: { orgSlug, campaignId, zoneId },
-            });
+            if (zoneId === null) {
+              void navigate({
+                to: "/$orgSlug/campaigns/$campaignId/cut",
+                params: { orgSlug, campaignId },
+              });
+            } else {
+              void navigate({
+                to: "/$orgSlug/campaigns/$campaignId/cut/$zoneId",
+                params: { orgSlug, campaignId, zoneId },
+              });
+            }
           }}
         />
       </div>
@@ -317,7 +422,7 @@ function CampaignEditor() {
   );
 }
 
-type TurfStats = Record<string, { drafts: number; published: number }>;
+type TurfStats = Record<string, { drafts: number; published: number; active: number }>;
 
 function ZonesList({
   campaignId,
@@ -325,32 +430,183 @@ function ZonesList({
   selectedZoneId,
   zoneCounts,
   turfStats,
+  totals,
+  fullSegmentCounts,
+  segmentName,
+  scriptName,
+  zoneGroupName,
   onSelect,
   onCut,
 }: {
   campaignId: string;
   zones: Awaited<ReturnType<typeof client.zones.list>> | null;
   selectedZoneId: string | null;
-  zoneCounts: Record<string, { doors: number; people: number }> | null;
+  zoneCounts: Record<string, { buildings: number; doors: number; people: number }> | null;
   turfStats: TurfStats | null;
+  totals: {
+    drafts: number;
+    active: number;
+    published: number;
+  };
+  fullSegmentCounts: { doors: number; people: number } | null;
+  segmentName: string | null;
+  scriptName: string | null;
+  zoneGroupName: string | null;
   onSelect: (zoneId: string) => void;
-  onCut: (zoneId: string) => void;
+  // `null` means navigate to the zoneless cutter route.
+  onCut: (zoneId: string | null) => void;
 }) {
+  // When there's no zone group, the user can still cut turfs — they're
+  // just scoped to the full segment instead of a zone. Surface that as a
+  // single row that looks like a ZoneRow so the layout doesn't change
+  // shape between zoned and zoneless campaigns.
+  const zoneless = zoneGroupName === null;
   return (
     <div className="flex h-full flex-col gap-2 overflow-y-auto">
-      {zones?.map((zone, idx) => (
-        <ZoneRow
-          key={zone.zoneId}
+      <ConfigSummary
+        segmentName={segmentName}
+        scriptName={scriptName}
+        zoneGroupName={zoneGroupName}
+        totals={totals}
+      />
+      {zoneless ? (
+        <FullSegmentRow
           campaignId={campaignId}
-          zone={zone}
-          color={colorFor(idx)}
-          selected={zone.zoneId === selectedZoneId}
-          counts={zoneCounts?.[zone.zoneId] ?? null}
-          turfStats={turfStats?.[zone.zoneId] ?? null}
-          onSelect={() => onSelect(zone.zoneId)}
-          onCut={() => onCut(zone.zoneId)}
+          counts={fullSegmentCounts}
+          // Zoneless turfs land under the empty-string key in
+          // statsForCampaign — see the sentinel comment there.
+          turfStats={turfStats?.[""] ?? null}
+          onCut={() => onCut(null)}
         />
-      ))}
+      ) : (
+        zones?.map((zone, idx) => (
+          <ZoneRow
+            key={zone.zoneId}
+            campaignId={campaignId}
+            zone={zone}
+            color={colorFor(idx)}
+            selected={zone.zoneId === selectedZoneId}
+            counts={zoneCounts?.[zone.zoneId] ?? null}
+            turfStats={turfStats?.[zone.zoneId] ?? null}
+            onSelect={() => onSelect(zone.zoneId)}
+            onCut={() => onCut(zone.zoneId)}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function ConfigSummary({
+  segmentName,
+  scriptName,
+  zoneGroupName,
+  totals,
+}: {
+  segmentName: string | null;
+  scriptName: string | null;
+  zoneGroupName: string | null;
+  totals: {
+    drafts: number;
+    active: number;
+    published: number;
+  };
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-border bg-card px-3 py-2">
+      <div className="grid grid-cols-3 gap-2">
+        <div className="flex flex-col">
+          <span className="text-muted-foreground">Segment</span>
+          <span className="truncate">{segmentName}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-muted-foreground">Zones</span>
+          <span className="truncate">{zoneGroupName || "None selected"}</span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-muted-foreground">Script</span>
+          <span className="truncate">{scriptName}</span>
+        </div>
+      </div>
+      <hr className="my-1 border-t border-border" />
+      <div className="grid grid-cols-3 gap-2">
+        <Stat label="Draft turfs" value={totals.drafts} />
+        <Stat label="Published turfs" value={totals.published} />
+        <Stat label="Active turfs" value={totals.active} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="tabular-nums">{value.toLocaleString()}</span>
+    </div>
+  );
+}
+
+function FullSegmentRow({
+  campaignId,
+  counts,
+  turfStats,
+  onCut,
+}: {
+  campaignId: string;
+  counts: { doors: number; people: number } | null;
+  turfStats: { drafts: number; published: number; active: number } | null;
+  onCut: () => void;
+}) {
+  const turfCount = turfStats?.drafts ?? 0;
+  const hasPublished = (turfStats?.published ?? 0) > 0;
+  return (
+    <div
+      className={cn(
+        "flex h-11 items-center gap-2 rounded-md border border-border bg-card py-2 pr-2 pl-3 text-left",
+      )}
+    >
+      <span className="flex-1 truncate text-sm">Full segment</span>
+      {/* Keyed by campaignId — matches the ZoneRow pattern so pills
+          remount + re-fire animate-in on every campaign switch. */}
+      {counts ? (
+        <Fragment key={campaignId}>
+          <Pill
+            variant="number"
+            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+          >
+            <UserRound className="size-3.5 text-foreground" />
+            {counts.people.toLocaleString()}
+          </Pill>
+          <Pill
+            variant="number"
+            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+          >
+            <DoorClosed className="size-3.5 text-foreground" />
+            {counts.doors.toLocaleString()}
+          </Pill>
+          {hasPublished ? (
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
+            >
+              <Send className="size-3.5 text-foreground" />
+              {(turfStats?.published ?? 0).toLocaleString()}
+            </Pill>
+          ) : null}
+          <Pill
+            variant="number"
+            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+          >
+            <CircleDotDashed className="size-3.5 text-foreground" />
+            {turfCount}
+          </Pill>
+        </Fragment>
+      ) : null}
+      <Button variant="outline" className="h-[31px]" onClick={onCut}>
+        <Scissors />
+        Cut
+      </Button>
     </div>
   );
 }
@@ -370,7 +626,7 @@ function ZoneRow({
   color: string;
   selected: boolean;
   counts: { doors: number; people: number } | null;
-  turfStats: { drafts: number; published: number } | null;
+  turfStats: { drafts: number; published: number; active: number } | null;
   onSelect: () => void;
   onCut: () => void;
 }) {
@@ -407,22 +663,23 @@ function ZoneRow({
             variant="number"
             className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
           >
-            <DoorClosed className="size-3.5 text-foreground" />
-            {counts.doors.toLocaleString()}
+            <UserRound className="size-3.5 text-foreground" />
+            {counts.people.toLocaleString()}
           </Pill>
           <Pill
             variant="number"
             className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
           >
-            <UserRound className="size-3.5 text-foreground" />
-            {counts.people.toLocaleString()}
+            <DoorClosed className="size-3.5 text-foreground" />
+            {counts.doors.toLocaleString()}
           </Pill>
           {hasPublished ? (
             <Pill
               variant="number"
-              className="size-7 shrink-0 justify-center !px-0 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
             >
-              <Send className="size-4 text-foreground" />
+              <Send className="size-3.5 text-foreground" />
+              {(turfStats?.published ?? 0).toLocaleString()}
             </Pill>
           ) : null}
           <Pill
@@ -435,8 +692,8 @@ function ZoneRow({
         </Fragment>
       ) : null}
       <Button
-        size="sm"
         variant="outline"
+        className="h-[31px]"
         onClick={(e) => {
           e.stopPropagation();
           onCut();
