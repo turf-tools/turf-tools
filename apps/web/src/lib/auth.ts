@@ -17,6 +17,11 @@ function getResend(): Resend | null {
 }
 
 export const auth = betterAuth({
+  // Verbose by default — magic-link debugging is the most common reason we
+  // dig into auth logs (corporate filters pre-clicking links, scanners
+  // burning tokens, etc.). The volume is low; if it gets noisy we can
+  // bump to "info".
+  logger: { level: "debug" },
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
