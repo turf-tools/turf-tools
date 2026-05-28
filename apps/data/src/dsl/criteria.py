@@ -45,6 +45,16 @@ class TextFilter(BaseModel):
     value: str
 
 
+class TextMultiFilter(BaseModel):
+    """OR-matches the column against any value in `values`. Compiles to
+    SQL `IN (...)`. Single-value usage remains expressible as a
+    one-element list."""
+
+    kind: Literal["text-multi"]
+    key: str
+    values: list[str]
+
+
 class DateRangeFilter(BaseModel):
     """ISO-8601 (YYYY-MM-DD) range. Either bound is optional."""
 
@@ -109,6 +119,7 @@ Filter = Annotated[
     | EnumFilter
     | AgeRangeFilter
     | TextFilter
+    | TextMultiFilter
     | DateRangeFilter
     | VotingHistoryFilter
     | AddressFilter
@@ -174,6 +185,12 @@ class TextFieldDef(BaseModel):
     op: Literal["equals", "contains"]
 
 
+class TextMultiFieldDef(BaseModel):
+    kind: Literal["text-multi"]
+    key: str
+    source: Literal["column", "other_properties"]
+
+
 class DateRangeFieldDef(BaseModel):
     kind: Literal["date-range"]
     key: str
@@ -191,7 +208,15 @@ class AddressFieldDef(BaseModel):
     key: Literal["address"]
 
 
-FieldDef = EnumFieldDef | AgeRangeFieldDef | TextFieldDef | DateRangeFieldDef | VotingHistoryFieldDef | AddressFieldDef
+FieldDef = (
+    EnumFieldDef
+    | AgeRangeFieldDef
+    | TextFieldDef
+    | TextMultiFieldDef
+    | DateRangeFieldDef
+    | VotingHistoryFieldDef
+    | AddressFieldDef
+)
 
 
 # Catalog of filterable fields. `source` says whether the field is a
@@ -205,8 +230,8 @@ FIELDS: dict[str, FieldDef] = {
     # All filterable voter-file fields are top-level columns on `persons_geocoded`.
     # Storage is shredded for filter perf (Parquet column pruning + Bloom filters).
     # Listed alphabetically by key.
-    "assembly_district": TextFieldDef(kind="text", key="assembly_district", source="column", op="equals"),
-    "congressional_district": TextFieldDef(kind="text", key="congressional_district", source="column", op="equals"),
+    "assembly_district": TextMultiFieldDef(kind="text-multi", key="assembly_district", source="column"),
+    "congressional_district": TextMultiFieldDef(kind="text-multi", key="congressional_district", source="column"),
     "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="column"),
     "enrollment": EnumFieldDef(kind="enum", key="enrollment", source="column"),
     "address": AddressFieldDef(kind="address", key="address"),
@@ -214,14 +239,15 @@ FIELDS: dict[str, FieldDef] = {
     "first_name": TextFieldDef(kind="text", key="first_name", source="column", op="contains"),
     "gender": EnumFieldDef(kind="enum", key="gender", source="column"),
     "last_name": TextFieldDef(kind="text", key="last_name", source="column", op="contains"),
-    "precinct": TextFieldDef(kind="text", key="precinct", source="column", op="equals"),
+    "precinct": TextMultiFieldDef(kind="text-multi", key="precinct", source="column"),
     "registration_date": DateRangeFieldDef(kind="date-range", key="registration_date", source="column"),
     "registration_status": EnumFieldDef(kind="enum", key="registration_status", source="column"),
-    "senate_district": TextFieldDef(kind="text", key="senate_district", source="column", op="equals"),
+    "senate_district": TextMultiFieldDef(kind="text-multi", key="senate_district", source="column"),
     "voting_history": VotingHistoryFieldDef(kind="voting-history-count", key="voting_history", source="column"),
-    # `zip5` isn't exposed as a standalone filter (subsumed by `address`)
-    # but is still queried directly by `nyc_zips` boundary-key resolution.
-    "zip5": TextFieldDef(kind="text", key="zip5", source="column", op="equals"),
+    # Also queried directly by `nyc_zips` boundary-key resolution — the
+    # text-multi shape supports both the multi-value editor filter and the
+    # single-key resolver path (one-element values list).
+    "zip5": TextMultiFieldDef(kind="text-multi", key="zip5", source="column"),
 }
 
 

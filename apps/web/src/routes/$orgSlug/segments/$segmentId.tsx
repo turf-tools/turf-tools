@@ -52,6 +52,7 @@ import {
   type SegmentFilter,
   type Step,
   type TextFilter,
+  type TextMultiFilter,
   type Verb,
   type VotingHistoryFilter,
   VERB_META,
@@ -655,6 +656,9 @@ function StepRow({
       {filter.kind === "text" && def?.kind === "text" ? (
         <TextFilterEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
+      {filter.kind === "text-multi" && def?.kind === "text-multi" ? (
+        <TextMultiFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
       {filter.kind === "date-range" && def?.kind === "date-range" ? (
         <DateRangeFilterEditor filter={filter} onChange={onChange} />
       ) : null}
@@ -708,6 +712,60 @@ function TextFilterEditor({
         }}
         className="h-8 text-sm"
         placeholder={def.op === "contains" ? "any substring" : "exact match"}
+      />
+    </div>
+  );
+}
+
+// Per-key normalizer for text-multi values. Run on each token at commit
+// time so the canonical form is what gets stored and queried. Anything
+// the normalizer doesn't recognize passes through unchanged so the user
+// can see the bad value and correct it.
+const NORMALIZERS: Record<string, (v: string) => string> = {
+  // NYC precincts canonicalize as `AA-EEE` (zero-padded AD, dash, zero-padded ED).
+  // Accept compact 5-digit input as a shortcut.
+  precinct: (v) => (/^\d{5}$/.test(v) ? `${v.slice(0, 2)}-${v.slice(2)}` : v),
+};
+
+function TextMultiFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: TextMultiFilter;
+  onChange: (next: Filter) => void;
+}) {
+  // Local input state — same commit-on-blur/Enter pattern as TextFilterEditor.
+  // Parse on commit: split on comma, trim, normalize, drop empties, dedupe
+  // (preserve order).
+  const [local, setLocal] = useState(filter.values.join(", "));
+  useEffect(() => setLocal(filter.values.join(", ")), [filter.values]);
+  const normalize = NORMALIZERS[filter.key] ?? ((v: string) => v);
+  const commit = () => {
+    const tokens = local
+      .split(",")
+      .map((t) => normalize(t.trim()))
+      .filter((t) => t.length > 0);
+    const next = Array.from(new Set(tokens));
+    const same =
+      next.length === filter.values.length && next.every((v, i) => v === filter.values[i]);
+    if (!same) onChange({ ...filter, values: next });
+    else setLocal(next.join(", "));
+  };
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <span className="text-muted-foreground">Equals</span>
+      <Input
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        className="h-8 text-sm"
+        placeholder="single or comma-separated"
       />
     </div>
   );

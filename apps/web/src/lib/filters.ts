@@ -25,6 +25,16 @@ export type TextFilter = {
   value: string;
 };
 
+// Multi-value text filter — matches if the column equals any of `values`
+// (OR'd into SQL `IN (...)`). Used for short-code district fields where
+// users typically know multiple specific values they want to include.
+// Single-value remains expressible as a one-element array.
+export type TextMultiFilter = {
+  kind: "text-multi";
+  key: string;
+  values: string[];
+};
+
 export type DateRangeFilter = {
   kind: "date-range";
   key: string;
@@ -75,6 +85,7 @@ export type Filter =
   | EnumFilter
   | AgeRangeFilter
   | TextFilter
+  | TextMultiFilter
   | DateRangeFilter
   | VotingHistoryFilter
   | AddressFilter
@@ -113,6 +124,12 @@ export type FilterDef =
       op: "equals" | "contains";
     }
   | {
+      kind: "text-multi";
+      key: string;
+      label: string;
+      source: "column" | "other_properties";
+    }
+  | {
       kind: "date-range";
       key: string;
       label: string;
@@ -147,6 +164,7 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
     { kind: "text", key: "first_name", label: "First name", source: "column", op: "contains" },
     { kind: "text", key: "last_name", label: "Last name", source: "column", op: "contains" },
     { kind: "address", key: "address", label: "Address" },
+    { kind: "text-multi", key: "zip5", label: "Zip Code", source: "column" },
     {
       // The field is canonical (`county_code`) but the enum values are
       // state-local. NYC: 5 NYS-BOE county codes → borough names.
@@ -177,27 +195,24 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
   ],
   // Geographic divisions
   [
-    { kind: "text", key: "precinct", label: "Precint", source: "column", op: "equals" },
+    { kind: "text-multi", key: "precinct", label: "Precint", source: "column" },
     {
-      kind: "text",
+      kind: "text-multi",
       key: "assembly_district",
       label: "Assembly District",
       source: "column",
-      op: "equals",
     },
     {
-      kind: "text",
+      kind: "text-multi",
       key: "senate_district",
       label: "Senate District",
       source: "column",
-      op: "equals",
     },
     {
-      kind: "text",
+      kind: "text-multi",
       key: "congressional_district",
       label: "Congressional District",
       source: "column",
-      op: "equals",
     },
   ],
   // Voter behavior
@@ -263,6 +278,7 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "enum") return { kind: "enum", key: def.key, values: [] };
   if (def.kind === "age-range") return { kind: "age-range", key: def.key, min: null, max: null };
   if (def.kind === "text") return { kind: "text", key: def.key, value: "" };
+  if (def.kind === "text-multi") return { kind: "text-multi", key: def.key, values: [] };
   if (def.kind === "date-range") return { kind: "date-range", key: def.key, min: null, max: null };
   if (def.kind === "address")
     return { kind: "address", key: "address", line1: "", city: "", state: "", zip: "" };
@@ -283,6 +299,7 @@ export function isActiveFilter(f: Filter): boolean {
   if (f.kind === "all") return true;
   if (f.kind === "enum") return f.values.length > 0;
   if (f.kind === "text") return f.value.trim().length > 0;
+  if (f.kind === "text-multi") return f.values.length > 0;
   if (f.kind === "age-range") return f.min != null || f.max != null;
   if (f.kind === "date-range") return f.min != null || f.max != null;
   if (f.kind === "address")
