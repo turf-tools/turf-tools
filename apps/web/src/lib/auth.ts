@@ -72,6 +72,34 @@ export const auth = betterAuth({
         ctx.body.email = normalizeEmail(ctx.body.email);
       }
     }),
+    after: createAuthMiddleware(async (ctx) => {
+      // Magic-link verify always 302s — to the callbackURL on success
+      // (with a Set-Cookie carrying the session) or to errorCallbackURL
+      // with `?error=<reason>` on failure. Logging both lets us tell
+      // "token consumed by a scanner" (error=INVALID_TOKEN) from
+      // "succeeded but cookie didn't stick" (no error, cookie present
+      // in our logs but missing from the user's browser later) from
+      // any path we haven't anticipated yet.
+      if (ctx.path !== "/magic-link/verify") return;
+      const headers = ctx.context.responseHeaders;
+      const location = headers?.get("location") ?? null;
+      const setCookie = headers?.get("set-cookie") ?? null;
+      const cookieSet = !!setCookie && setCookie.includes("session");
+      let error: string | null = null;
+      if (location) {
+        try {
+          // `location` may be absolute or path-relative; the base is
+          // unused since we only read the query string.
+          error = new URL(location, "http://placeholder").searchParams.get("error");
+        } catch {
+          /* malformed Location header — ignore */
+        }
+      }
+      console.log(
+        `[auth] verify result: location=${location ?? "?"} cookie=${cookieSet ? "set" : "missing"}` +
+          (error ? ` error=${error}` : ""),
+      );
+    }),
   },
   plugins: [
     magicLink({
