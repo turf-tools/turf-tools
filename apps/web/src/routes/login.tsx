@@ -44,7 +44,7 @@ function LoginPage() {
   }, []);
 
   // 600ms floor on both mutations so button-state transitions read as
-  // intentional even on fast networks (matches the prior magic-link flow).
+  // intentional even on fast networks.
   const sendCode = useMutation({
     mutationFn: async (target: string) => {
       const [res] = await Promise.all([
@@ -111,9 +111,9 @@ function LoginPage() {
             email={email}
             setEmail={(next) => {
               setEmail(next);
-              // Clear the error as soon as the user starts editing — otherwise
-              // a stale "no account found" sits there next to a half-typed
-              // new email, which reads like the field still has the problem.
+              // Clear any stale error as the user starts editing — otherwise
+              // it sits next to a half-typed new email, looking like the
+              // field still has the problem.
               if (error) setError(null);
             }}
             pending={sendCode.isPending}
