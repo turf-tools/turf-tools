@@ -35,21 +35,29 @@ logger = logging.getLogger("uvicorn")
 
 class PublishTurfsRequest(BaseModel):
     campaignId: str  # noqa: N815
-    zoneId: str  # noqa: N815
+    # `null` ⇒ zoneless campaign: drafts are scoped only by campaign and
+    # the publish reads the full segment (no key filter).
+    zoneId: str | None  # noqa: N815
     createdBy: str  # noqa: N815
     orgSlug: str  # noqa: N815
 
 
 @dataclass(frozen=True)
 class _PublishScope:
-    """Pre-resolved facts the publish SQL needs as parameters."""
+    """Pre-resolved facts the publish SQL needs as parameters.
+
+    For zoneless campaigns, ``zone_id``, ``zone_group_id``, ``key_group``
+    are ``None`` and ``keys`` is empty — downstream SQL binds NULL for
+    the zone columns and ``criteria_to_where`` is called without a key
+    filter.
+    """
 
     campaign_id: str
     segment_id: str
-    zone_id: str
-    zone_group_id: str
+    zone_id: str | None
+    zone_group_id: str | None
     script_id: str
-    key_group: str
+    key_group: str | None
     keys: list[str]
     criteria: Criteria
     draft_count: int
@@ -85,7 +93,10 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
     scope = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
-    where_sql = criteria_to_where(criteria, KeyFilter(keyGroup=scope.key_group, keys=scope.keys), where_params)
+    # Zoned: scope to the zone's keys. Zoneless: no key filter — publish
+    # spans the whole segment.
+    key_filter = KeyFilter(keyGroup=scope.key_group, keys=scope.keys) if scope.key_group is not None else None
+    where_sql = criteria_to_where(criteria, key_filter, where_params)
     _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
 
     # Retry budget exists only to swallow the rare turf_code collision
@@ -155,13 +166,16 @@ def _check_no_ambiguous_assignments(
     """
     persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
     buildings_table = resolve("{buildings_geocoded}", slug=req.orgSlug)
+    # `IS NOT DISTINCT FROM` matches null-to-null, so the same predicate
+    # works for zoned (zoneId is a UUID) and zoneless (zoneId is NULL)
+    # publishes — no SQL branching needed.
     sql = f"""
     WITH drafts AS (
         SELECT
             row_number() OVER (ORDER BY d.sort_order, d.turf_draft_id) - 1 AS idx,
             ST_GeomFromGeoJSON(d.geometry::VARCHAR) AS geom
         FROM {OPERATIONAL_PG_ALIAS}.public.turf_drafts d
-        WHERE d.campaign_id = ?::UUID AND d.zone_id = ?::UUID
+        WHERE d.campaign_id = ?::UUID AND d.zone_id IS NOT DISTINCT FROM ?::UUID
     ),
     matched_buildings AS (
         SELECT DISTINCT b.building_id, b.longitude, b.latitude
@@ -196,9 +210,17 @@ def _check_no_ambiguous_assignments(
 
 
 def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> _PublishScope:
-    """Resolve the campaign + segment + zone + draft count in a single SQL
-    hit through the attached Postgres. Raises 4xx for the various
-    "not configured to publish" cases."""
+    """Resolve the campaign + segment + (optional) zone + draft count in
+    one SQL hit through the attached Postgres.
+
+    Zone joins are LEFT so zoneless campaigns (``req.zoneId is None``
+    AND ``campaigns.zone_group_id IS NULL``) still produce a row with
+    nulls in the zone columns. ``IS NOT DISTINCT FROM`` matches the
+    draft-count subquery for both zoned (zoneId UUID) and zoneless
+    (zoneId NULL) callers.
+
+    Raises 4xx for the various "not configured to publish" cases.
+    """
     row = conn.execute(
         f"""
         SELECT
@@ -212,28 +234,29 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
             z.keys::VARCHAR AS keys_json,
             (
                 SELECT count(*)::INT FROM {OPERATIONAL_PG_ALIAS}.public.turf_drafts d
-                WHERE d.campaign_id = c.campaign_id AND d.zone_id = z.zone_id
+                WHERE d.campaign_id = c.campaign_id
+                  AND d.zone_id IS NOT DISTINCT FROM ?::UUID
             ) AS draft_count
         FROM {OPERATIONAL_PG_ALIAS}.public.campaigns c
         JOIN {OPERATIONAL_PG_ALIAS}.public.segments s ON s.segment_id = c.segment_id
-        JOIN {OPERATIONAL_PG_ALIAS}.public.zone_groups zg
+        LEFT JOIN {OPERATIONAL_PG_ALIAS}.public.zone_groups zg
             ON zg.zone_group_id = c.zone_group_id
-        JOIN {OPERATIONAL_PG_ALIAS}.public.zones z
+        LEFT JOIN {OPERATIONAL_PG_ALIAS}.public.zones z
             ON z.zone_id = ?::UUID
             AND z.zone_group_id = c.zone_group_id
         WHERE c.campaign_id = ?::UUID
         """,
-        [req.zoneId, req.campaignId],
+        [req.zoneId, req.zoneId, req.campaignId],
     ).fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="Campaign or zone not found.")
+        raise HTTPException(status_code=404, detail="Campaign not found.")
 
     (
         campaign_id,
         segment_id,
         script_id,
-        zone_group_id,
+        campaign_zone_group_id,
         criteria_json,
         key_group,
         zone_id,
@@ -241,11 +264,22 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
         draft_count,
     ) = row
 
-    if not segment_id or not script_id or not zone_group_id:
+    if not segment_id or not script_id:
         raise HTTPException(
             status_code=400,
-            detail="Campaign must have a segment, script, and zone group bound to publish.",
+            detail="Campaign must have a segment and script bound to publish.",
         )
+    # Valid shapes: zoned (both zoneId and zoneGroupId present) or
+    # zoneless (both absent). Anything else is a caller bug.
+    expects_zone = req.zoneId is not None
+    has_zone_group = campaign_zone_group_id is not None
+    if expects_zone != has_zone_group:
+        raise HTTPException(
+            status_code=400,
+            detail="zoneId presence must match campaign.zoneGroupId presence.",
+        )
+    if expects_zone and not zone_id:
+        raise HTTPException(status_code=404, detail="Zone not found in campaign's zone group.")
     if draft_count == 0:
         raise HTTPException(status_code=400, detail="No drafts to publish.")
 
@@ -258,7 +292,7 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
         campaign_id=campaign_id,
         segment_id=segment_id,
         zone_id=zone_id,
-        zone_group_id=zone_group_id,
+        zone_group_id=campaign_zone_group_id,
         script_id=script_id,
         key_group=key_group,
         keys=[str(k) for k in keys],
@@ -298,7 +332,7 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
             ST_GeomFromGeoJSON(d.geometry::VARCHAR) AS geom
         FROM {OPERATIONAL_PG_ALIAS}.public.turf_drafts d
         WHERE d.campaign_id = ?::UUID
-          AND d.zone_id = ?::UUID
+          AND d.zone_id IS NOT DISTINCT FROM ?::UUID
     ),
     filtered_persons AS (
         SELECT * FROM {persons_table} {where_sql}

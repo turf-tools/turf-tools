@@ -15,6 +15,9 @@ import { users } from "./auth/users";
 // breaking historical turfs. Stale-tracking based on whether the
 // referenced row still exists is a follow-up.
 //
+// `zoneId` and `zoneGroupId` are nullable: turfs cut on a campaign
+// without a zone group hang off the campaign's segment directly.
+//
 // `status` gates the canvasser-facing lifecycle: only `'active'`
 // turfs honor their `turfCode` (the partial unique index enforces
 // uniqueness only across active turfs, so archived turfs hold
@@ -31,9 +34,10 @@ export const turfs = pgTable(
       .references(() => campaigns.campaignId),
     segmentId: uuid().notNull(),
     // Source zone (the cutter scope) and its parent group. Both kept
-    // as plain values rather than FKs — see comment above.
-    zoneId: uuid().notNull(),
-    zoneGroupId: uuid().notNull(),
+    // as plain values rather than FKs — see comment above. Null when
+    // the campaign has no zone group (cut against the full segment).
+    zoneId: uuid(),
+    zoneGroupId: uuid(),
     scriptId: uuid()
       .notNull()
       .references(() => scripts.scriptId),

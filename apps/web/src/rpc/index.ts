@@ -70,6 +70,7 @@ export const webRouter = {
   turfDrafts: {
     list: turfDrafts.list,
     replaceAll: turfDrafts.replaceAll,
+    clearForCampaign: turfDrafts.clearForCampaign,
   },
   scripts: {
     list: scripts.list,
