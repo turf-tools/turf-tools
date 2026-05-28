@@ -330,6 +330,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         f"""
         SELECT
             {group_expr} AS key,
+            count(DISTINCT building_id) AS buildings,
             count(DISTINCT door_id) AS doors,
             count(*) AS people
         FROM {{persons_geocoded}}
@@ -340,10 +341,14 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     )
     rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
-    for key, doors, people in rows:
+    for key, buildings, doors, people in rows:
         if key is None:
             continue
-        counts[key] = {"doors": int(doors), "people": int(people)}
+        counts[key] = {
+            "buildings": int(buildings),
+            "doors": int(doors),
+            "people": int(people),
+        }
     return {"counts": counts}
 
 

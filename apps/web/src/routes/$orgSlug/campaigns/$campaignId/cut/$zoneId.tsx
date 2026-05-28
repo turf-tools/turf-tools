@@ -60,14 +60,20 @@ function CutterPage() {
   return <Cutter key={zoneId} orgSlug={orgSlug} campaignId={campaignId} zoneId={zoneId} />;
 }
 
-function Cutter({
+// Exported so the zoneless `cut.tsx` route can render the same Cutter
+// with `zoneId={null}` — keeps the two routes thin shells over one
+// implementation.
+export function Cutter({
   orgSlug,
   campaignId,
   zoneId,
 }: {
   orgSlug: string;
   campaignId: string;
-  zoneId: string;
+  // `zoneId === null` means the campaign has no zone group — the cutter
+  // operates against the full segment (no key filter, fitBounds from
+  // the points buffer, drafts/publish RPCs accept null).
+  zoneId: string | null;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -97,13 +103,18 @@ function Cutter({
   });
 
   const segmentCriteria = segmentDetail?.criteria as Criteria | null | undefined;
+  // Zoned: pass keyFilter so the data server narrows buildings to the
+  // zone's keys. Zoneless: no keyFilter → all buildings matching the
+  // segment criteria. The query is enabled either as soon as we have a
+  // segment + zone match (zoned), or as soon as we have a segment at
+  // all (zoneless).
   const { data: buildingsResult } = useQuery({
     ...cutterBuildingsQuery(
       zoneId,
       segmentCriteria,
       zoneGroup && zone ? { keyGroup: zoneGroup.keyGroup, keys: zone.keys } : undefined,
     ),
-    enabled: !!segmentCriteria && !!zone,
+    enabled: !!segmentCriteria && (zoneId === null || !!zone),
   });
   const buildings = buildingsResult?.buildings;
 
@@ -137,8 +148,25 @@ function Cutter({
     return { deltas, origin: [ox, oy] as [number, number] };
   }, [buildings]);
 
-  // BBox of the zone's keys' polygons (no unioning needed — bbox accumulates the same).
-  const fitBounds = useMemo(() => {
+  // Zoned: bbox of the zone's keys' polygons (no unioning needed — bbox
+  // accumulates the same). Zoneless: bbox of the buildings themselves,
+  // which is the natural "fit to what you can cut" framing when there's
+  // no zone perimeter to anchor against.
+  const fitBounds = useMemo<[number, number, number, number] | null>(() => {
+    if (zoneId === null) {
+      if (!buildings || buildings.length === 0) return null;
+      let minLng = Infinity;
+      let minLat = Infinity;
+      let maxLng = -Infinity;
+      let maxLat = -Infinity;
+      for (const b of buildings) {
+        if (b.longitude < minLng) minLng = b.longitude;
+        if (b.longitude > maxLng) maxLng = b.longitude;
+        if (b.latitude < minLat) minLat = b.latitude;
+        if (b.latitude > maxLat) maxLat = b.latitude;
+      }
+      return [minLng, minLat, maxLng, maxLat];
+    }
     if (!zone || !boundaryFC) return null;
     const keys = new Set(zone.keys);
     let minLng = Infinity;
@@ -165,8 +193,8 @@ function Cutter({
         for (const poly of g.coordinates) for (const ring of poly) for (const c of ring) visit(c);
       }
     }
-    return touched ? ([minLng, minLat, maxLng, maxLat] as [number, number, number, number]) : null;
-  }, [zone, boundaryFC]);
+    return touched ? [minLng, minLat, maxLng, maxLat] : null;
+  }, [zoneId, zone, boundaryFC, buildings]);
 
   // In-progress turfs. Lives in the parent so the sidebar list and the
   // drawer share one source of truth. Initialised from loader-fresh drafts.
@@ -398,7 +426,7 @@ function Cutter({
     <div className={shouldFade}>
       <EditorHeader
         title="Turf Cutter"
-        subtitle={zone?.name}
+        subtitle={zoneId === null ? "Full segment" : zone?.name}
         leading={
           <Button variant="outline" size="icon" onClick={onBack} aria-label="Back to campaign">
             <ArrowLeft />
@@ -469,8 +497,8 @@ function Cutter({
         <DialogContent>
           <DialogTitle>Clear all turfs?</DialogTitle>
           <DialogDescription>
-            Removes every turf you've cut in this zone, including any in-progress turfs. This can't
-            be undone.
+            Removes every turf you've cut in {zoneId === null ? "this campaign" : "this zone"},
+            including any in-progress turfs. This can't be undone.
           </DialogDescription>
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>

@@ -27,7 +27,6 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { Rail } from "~/components/rail";
-import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignKeyCountsQuery,
@@ -88,7 +87,9 @@ function CampaignsLayout() {
   // case. Reads the *committed* match (not the eager pathname) so the
   // header doesn't flicker during the cutter's loader run.
   const childMatches = useChildMatches();
-  const isCut = childMatches.some((m) => m.routeId.endsWith("/cut/$zoneId"));
+  const isCut = childMatches.some(
+    (m) => m.routeId.endsWith("/cut/$zoneId") || m.routeId.endsWith("/cut/"),
+  );
 
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
@@ -168,28 +169,17 @@ function CampaignsLayout() {
   // Wrapping zoneGroups.createWithDefaultZone + campaigns.create in one
   // mutation so the dialog's pending/error UX is coherent across both paths.
   const createCampaign = useDialogMutation({
-    mutationFn: async (input: {
+    mutationFn: (input: {
       name: string;
       segmentId: string;
       scriptId: string;
       zoneGroupId: string | null;
-      constructFromKeyGroup: string | null;
     }) => {
-      let zoneGroupId = input.zoneGroupId;
-      if (input.constructFromKeyGroup) {
-        const zg = await client.zoneGroups.createWithDefaultZone({
-          name: `${input.name} zones`,
-          keyGroup: input.constructFromKeyGroup,
-          segmentId: input.segmentId,
-        });
-        zoneGroupId = zg.zoneGroupId;
-        void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      }
       return client.campaigns.create({
         name: input.name,
         segmentId: input.segmentId,
         scriptId: input.scriptId,
-        zoneGroupId,
+        zoneGroupId: input.zoneGroupId,
       });
     },
     onSuccess: (created) => {
@@ -444,7 +434,6 @@ type SelectOption = { value: string; label: string };
 
 // Sentinel for the "construct fresh zone group from key group" path —
 // sits alongside real zone-group ids in the create-dialog dropdown.
-const AUTO_ZONES_SENTINEL = "__auto__";
 
 function DialogError({ error }: { error: string | null }) {
   if (!error) return null;
@@ -482,41 +471,33 @@ function CreateCampaignDialog({
     segmentId: string;
     scriptId: string;
     zoneGroupId: string | null;
-    constructFromKeyGroup: string | null;
   }) => void;
 }) {
   const [name, setName] = useState("");
   const [segmentId, setSegmentId] = useState<string | null>(null);
   const [scriptId, setScriptId] = useState<string | null>(null);
   const [zonesValue, setZonesValue] = useState<string | null>(null);
-  const [constructKeyGroup, setConstructKeyGroup] = useState<string>(
-    KEY_GROUPS_AVAILABLE[0]!.value,
-  );
   useEffect(() => {
     if (open) {
       setName("");
       setSegmentId(null);
       setScriptId(null);
       setZonesValue(null);
-      setConstructKeyGroup(KEY_GROUPS_AVAILABLE[0]!.value);
     }
   }, [open]);
 
-  const isAuto = zonesValue === AUTO_ZONES_SENTINEL;
-  const zonesOptions: ReadonlyArray<SelectOption> = [
-    { value: AUTO_ZONES_SENTINEL, label: "Define automatically" },
-    ...zoneGroupOptions,
-  ];
-  const validZones = zonesValue !== null && (!isAuto || constructKeyGroup !== "");
-  const valid = name.trim().length > 0 && segmentId !== null && scriptId !== null && validZones;
+  // Zones is optional — a campaign with no zone group cuts turfs against
+  // the whole segment.
+  const valid = name.trim().length > 0 && segmentId !== null && scriptId !== null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>Create new campaign</DialogTitle>
         <DialogDescription>
-          A campaign combines a segment (people), a group of zones (geography), and a script
-          (questions). Choices can be edited later via Configure.
+          A campaign combines a segment (people) and a script (questions). Optionally pick a group
+          of zones to subdivide the segment for turf cutting. Choices can be edited later via
+          Configure.
         </DialogDescription>
         <form
           onSubmit={(e) => {
@@ -526,8 +507,7 @@ function CreateCampaignDialog({
               name: name.trim(),
               segmentId: segmentId!,
               scriptId: scriptId!,
-              zoneGroupId: isAuto ? null : zonesValue,
-              constructFromKeyGroup: isAuto ? constructKeyGroup : null,
+              zoneGroupId: zonesValue,
             });
           }}
           className="flex flex-col gap-3"
@@ -550,18 +530,12 @@ function CreateCampaignDialog({
             onChange={setSegmentId}
           />
           <ConfigField
-            label="Zones"
+            label="Zones (optional)"
             placeholder="Pick a zone group…"
             value={zonesValue}
-            options={zonesOptions}
+            options={zoneGroupOptions}
             onChange={setZonesValue}
           />
-          {isAuto ? (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm text-muted-foreground">Define from</label>
-              <KeyGroupRadio value={constructKeyGroup} onChange={setConstructKeyGroup} />
-            </div>
-          ) : null}
           <ConfigField
             label="Script"
             placeholder="Pick a script…"
@@ -884,29 +858,6 @@ function ConfigField({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
-  );
-}
-
-function KeyGroupRadio({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {KEY_GROUPS_AVAILABLE.map((kg) => {
-        const selected = value === kg.value;
-        return (
-          <button
-            type="button"
-            key={kg.value}
-            onClick={() => onChange(kg.value)}
-            className={cn(
-              "rounded-md border border-border px-2.5 py-1 text-sm active:translate-y-px",
-              selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
-            )}
-          >
-            {kg.label}
-          </button>
-        );
-      })}
     </div>
   );
 }

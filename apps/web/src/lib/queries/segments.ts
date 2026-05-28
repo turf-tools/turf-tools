@@ -85,11 +85,14 @@ export async function fetchSegmentPoints(input: {
   return { origin: [header[0]!, header[1]!], deltas };
 }
 
-// Buildings inside a single zone, narrowed by segment criteria. Used by
-// the turf cutter. `segmentCriteria` is `unknown`-typed at the type level,
-// so passing `undefined` is structurally allowed for disabled-state calls.
+// Buildings for the turf cutter, narrowed by segment criteria and
+// optionally further filtered to a specific zone's keys. Pass
+// `zoneId: null` and `keyFilter: undefined` for zoneless campaigns —
+// the cutter then renders the full segment's points. `segmentCriteria`
+// is `unknown`-typed at the type level, so passing `undefined` is
+// structurally allowed for disabled-state calls.
 export const cutterBuildingsQuery = (
-  zoneId: string,
+  zoneId: string | null,
   segmentCriteria: SegmentCriteria,
   keyFilter: { keyGroup: string; keys: string[] } | undefined,
 ) =>

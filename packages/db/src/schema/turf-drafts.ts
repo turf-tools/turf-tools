@@ -18,6 +18,9 @@ import type { GeoJsonPolygon } from "./turfs";
 // reorganize zones/segments independently). `campaignId` *is* an FK
 // with cascade since drafts are meaningless without their parent
 // campaign.
+//
+// `zoneId` is nullable so the cutter can produce drafts on campaigns
+// without a zone group (scope = whole segment).
 export const turfDrafts = pgTable(
   "turf_drafts",
   {
@@ -25,7 +28,7 @@ export const turfDrafts = pgTable(
     campaignId: uuid()
       .notNull()
       .references(() => campaigns.campaignId, { onDelete: "cascade" }),
-    zoneId: uuid().notNull(),
+    zoneId: uuid(),
     segmentId: uuid().notNull(),
     // GeoJSON Polygon — interoperable with PostGIS / turf.js / mapbox-gl.
     // The cutter's in-memory shape is a flat `[[lng,lat],...]`; we
