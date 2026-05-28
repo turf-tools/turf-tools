@@ -30,6 +30,8 @@ from .criteria import (
     NestedFilter,
     TextFieldDef,
     TextFilter,
+    TextMultiFieldDef,
+    TextMultiFilter,
     VotingHistoryFieldDef,
     VotingHistoryFilter,
 )
@@ -165,6 +167,11 @@ def _filter_clause(f: Filter, params: list[Any]) -> str:
         if field_def is None:
             raise CriteriaError(f"Unknown field: {f.key}")
         return _text_clause(f, field_def, params)
+    if isinstance(f, TextMultiFilter):
+        field_def = FIELDS.get(f.key)
+        if field_def is None:
+            raise CriteriaError(f"Unknown field: {f.key}")
+        return _text_multi_clause(f, field_def, params)
     if isinstance(f, DateRangeFilter):
         field_def = FIELDS.get(f.key)
         if field_def is None:
@@ -227,6 +234,18 @@ def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
         return f"{expr} = ?"
     params.append(f"%{f.value}%")
     return f"{expr} ILIKE ?"
+
+
+def _text_multi_clause(f: TextMultiFilter, def_: FieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, TextMultiFieldDef):
+        raise CriteriaError(f"Field {f.key} is not a text-multi field")
+    vals = [v.strip() for v in f.values if v.strip()]
+    if not vals:
+        return ""
+    expr = _column_expr(f.key, def_.source)
+    placeholders = ", ".join("?" for _ in vals)
+    params.extend(vals)
+    return f"{expr} IN ({placeholders})"
 
 
 def _date_range_clause(f: DateRangeFilter, def_: FieldDef, params: list[Any]) -> str:

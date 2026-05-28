@@ -20,6 +20,7 @@ from src.dsl.criteria import (
     NestedFilter,
     Step,
     TextFilter,
+    TextMultiFilter,
     VotingHistoryFilter,
 )
 
@@ -47,7 +48,7 @@ def test_step_with_inactive_filter_drops_out() -> None:
     where = criteria_to_where(
         _narrow(
             EnumFilter(kind="enum", key="enrollment", values=[]),
-            TextFilter(kind="text", key="zip5", value=""),
+            TextFilter(kind="text", key="last_name", value=""),
             AgeRangeFilter(kind="age-range", key="date_of_birth", min=None, max=None),
         ),
         None,
@@ -73,15 +74,15 @@ def test_enum_filter_on_top_level_column() -> None:
     assert params == ["democratic", "working_families"]
 
 
-def test_text_filter_equals_on_top_level_column() -> None:
+def test_text_multi_filter_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
-        _narrow(TextFilter(kind="text", key="zip5", value="10001")),
+        _narrow(TextMultiFilter(kind="text-multi", key="zip5", values=["10001", "10002"])),
         None,
         params,
     )
-    assert where == "WHERE zip5 = ?"
-    assert params == ["10001"]
+    assert where == "WHERE zip5 IN (?, ?)"
+    assert params == ["10001", "10002"]
 
 
 def test_text_filter_contains_on_top_level_column() -> None:
@@ -293,15 +294,15 @@ def test_narrow_chain_ands_filters() -> None:
     where = criteria_to_where(
         _narrow(
             EnumFilter(kind="enum", key="enrollment", values=["democratic"]),
-            TextFilter(kind="text", key="zip5", value="10001"),
+            TextFilter(kind="text", key="last_name", value="smith"),
         ),
         None,
         params,
     )
     assert " AND " in where
     assert "enrollment IN (?)" in where
-    assert "zip5 = ?" in where
-    assert params == ["democratic", "10001"]
+    assert "last_name ILIKE ?" in where
+    assert params == ["democratic", "%smith%"]
 
 
 def test_add_step_compiles_as_or() -> None:
@@ -326,14 +327,14 @@ def test_remove_step_compiles_as_and_not() -> None:
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
-                Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
+                Step(verb="remove", filter=TextFilter(kind="text", key="last_name", value="smith")),
             ]
         ),
         None,
         params,
     )
     assert " AND NOT " in where
-    assert params == ["democratic", "10001"]
+    assert params == ["democratic", "%smith%"]
 
 
 def test_remove_as_first_step_negates() -> None:
@@ -341,14 +342,14 @@ def test_remove_as_first_step_negates() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
+                Step(verb="remove", filter=TextFilter(kind="text", key="last_name", value="smith")),
             ]
         ),
         None,
         params,
     )
-    assert where == "WHERE NOT (zip5 = ?)"
-    assert params == ["10001"]
+    assert where == "WHERE NOT (last_name ILIKE ?)"
+    assert params == ["%smith%"]
 
 
 def test_remove_all_resets_to_empty_set() -> None:
@@ -363,14 +364,14 @@ def test_remove_all_resets_to_empty_set() -> None:
 
 
 def test_mixed_verb_sequence_preserves_order() -> None:
-    # narrow D, add R, remove ZIP — final: (D OR R) AND NOT zip
+    # narrow D, add R, remove last_name — final: (D OR R) AND NOT name
     params: list = []
     where = criteria_to_where(
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
                 Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
-                Step(verb="remove", filter=TextFilter(kind="text", key="zip5", value="10001")),
+                Step(verb="remove", filter=TextFilter(kind="text", key="last_name", value="smith")),
             ]
         ),
         None,
@@ -379,7 +380,7 @@ def test_mixed_verb_sequence_preserves_order() -> None:
     # Verify structure: outermost AND NOT, inside the OR.
     assert " OR " in where
     assert " AND NOT " in where
-    assert params == ["democratic", "republican", "10001"]
+    assert params == ["democratic", "republican", "%smith%"]
 
 
 # ---------------------------------------------------------------------------
@@ -522,15 +523,15 @@ def test_nested_filter_narrow_composes_as_and() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
                 Step(verb="narrow", filter=_inner_dem()),
             ],
         ),
         None,
         params,
     )
-    assert where == "WHERE (zip5 = ?) AND ((enrollment IN (?)))"
-    assert params == ["11201", "democratic"]
+    assert where == "WHERE (last_name ILIKE ?) AND ((enrollment IN (?)))"
+    assert params == ["%smith%", "democratic"]
 
 
 def test_nested_filter_add_composes_as_or() -> None:
@@ -538,15 +539,15 @@ def test_nested_filter_add_composes_as_or() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
                 Step(verb="add", filter=_inner_dem()),
             ],
         ),
         None,
         params,
     )
-    assert where == "WHERE (zip5 = ?) OR ((enrollment IN (?)))"
-    assert params == ["11201", "democratic"]
+    assert where == "WHERE (last_name ILIKE ?) OR ((enrollment IN (?)))"
+    assert params == ["%smith%", "democratic"]
 
 
 def test_nested_filter_remove_composes_as_and_not() -> None:
@@ -554,15 +555,15 @@ def test_nested_filter_remove_composes_as_and_not() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
                 Step(verb="remove", filter=_inner_dem()),
             ],
         ),
         None,
         params,
     )
-    assert where == "WHERE (zip5 = ?) AND NOT ((enrollment IN (?)))"
-    assert params == ["11201", "democratic"]
+    assert where == "WHERE (last_name ILIKE ?) AND NOT ((enrollment IN (?)))"
+    assert params == ["%smith%", "democratic"]
 
 
 def test_empty_nested_filter_matches_universe() -> None:
@@ -597,15 +598,15 @@ def test_nested_filter_with_internal_verbs_preserves_composition() -> None:
     where = criteria_to_where(
         Criteria(
             steps=[
-                Step(verb="narrow", filter=TextFilter(kind="text", key="zip5", value="11201")),
+                Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
                 Step(verb="narrow", filter=NestedFilter(kind="nested", criteria=inner)),
             ],
         ),
         None,
         params,
     )
-    assert where == "WHERE (zip5 = ?) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
-    assert params == ["11201", "democratic", "working_families"]
+    assert where == "WHERE (last_name ILIKE ?) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
+    assert params == ["%smith%", "democratic", "working_families"]
 
 
 def test_nested_filter_compiles_recursively() -> None:
