@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import { LightDarkToggle } from "~/components/light-dark-toggle";
 import { LoadingIndicator } from "~/components/loading-indicator";
@@ -33,12 +33,17 @@ export const Route = createFileRoute("/auth/email/$email/$code")({
 function VerifyPage() {
   const { email, code } = Route.useParams();
   const [error, setError] = useState<string | null>(null);
+  // Guards against React's dev-mode double-effect (and any other mount-
+  // remount within the same component instance) from firing the verify
+  // POST twice. A genuinely separate navigation gets a fresh component
+  // and a fresh ref, so it isn't affected.
+  const fired = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
+    if (fired.current) return;
+    fired.current = true;
     void (async () => {
       const res = await authClient.signIn.emailOtp({ email, otp: code });
-      if (cancelled) return;
       if (res.error) {
         // Common reasons collapse into one message: already used (scanner
         // burned it, or user clicked twice from different sessions),
@@ -53,9 +58,6 @@ function VerifyPage() {
       // trip the root listener's user-switch detection → reload loop.
       window.location.replace("/");
     })();
-    return () => {
-      cancelled = true;
-    };
     // Run once on mount — `email`/`code` come from URL params and don't change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
