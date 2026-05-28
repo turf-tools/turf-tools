@@ -1,14 +1,14 @@
 import { betterAuth } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { magicLink } from "better-auth/plugins";
+import { emailOTP } from "better-auth/plugins";
 import { Resend } from "resend";
 import { and, db, eq, isNull } from "@field-tools/db";
 import { accounts, memberships, sessions, users, verifications } from "@field-tools/db/schema";
 import { normalizeEmail } from "./normalize-email";
 
-// Resolved lazily so dev can boot without RESEND_API_KEY; magic links print
-// to the server console in that case.
+// Resolved lazily so dev can boot without RESEND_API_KEY; the login URL +
+// OTP code print to the server console in that case.
 let resendClient: Resend | null = null;
 function getResend(): Resend | null {
   if (!process.env.RESEND_API_KEY) return null;
@@ -17,10 +17,9 @@ function getResend(): Resend | null {
 }
 
 export const auth = betterAuth({
-  // Default logger level is "warn"; "info" surfaces config-validation
-  // warnings + internal errors. BA itself doesn't log around magic-link
-  // operations, so for per-request auth tracing we instrument in `hooks`
-  // below rather than relying on this.
+  // "info" surfaces BA's config-validation + internal errors. Per-request
+  // OTP send/verify tracing is in the hooks below — BA itself doesn't log
+  // around those.
   logger: { level: "info" },
   database: drizzleAdapter(db, {
     provider: "pg",
@@ -53,71 +52,37 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
-      // One-line trace of every auth request — gives us magic-link send +
-      // verify visibility (BA's own logger doesn't instrument these).
-      // `?` masks the token value, just records whether one was present.
-      const hasToken = typeof ctx.query?.token === "string";
-      const emailHint =
-        typeof ctx.body?.email === "string" ? ctx.body.email.slice(0, 3) + "…" : null;
-      console.log(
-        `[auth] ${ctx.method ?? "?"} ${ctx.path}` +
-          (hasToken ? " token=<present>" : "") +
-          (emailHint ? ` email=${emailHint}` : ""),
-      );
+      // Per-request trace; OTP values never logged. `/get-session` fires
+      // on every page load and would drown out the signal.
+      if (ctx.path !== "/get-session") {
+        const emailHint =
+          typeof ctx.body?.email === "string" ? ctx.body.email.slice(0, 3) + "…" : null;
+        console.log(
+          `[auth] ${ctx.method ?? "?"} ${ctx.path}` + (emailHint ? ` email=${emailHint}` : ""),
+        );
+      }
 
       // Normalize the typed email to its canonical form before BA's own
-      // logic sees it — the verification record and any downstream user
-      // lookups all key on `users.email`, which we store canonicalised.
-      if (ctx.path === "/sign-in/magic-link" && typeof ctx.body?.email === "string") {
+      // logic sees it — verification records and user lookups all key on
+      // `users.email`, which we store canonicalised.
+      if (
+        (ctx.path === "/email-otp/send-verification-otp" || ctx.path === "/sign-in/email-otp") &&
+        typeof ctx.body?.email === "string"
+      ) {
         ctx.body.email = normalizeEmail(ctx.body.email);
       }
-    }),
-    after: createAuthMiddleware(async (ctx) => {
-      // Magic-link verify always 302s — to the callbackURL on success
-      // (with a Set-Cookie carrying the session) or to errorCallbackURL
-      // with `?error=<reason>` on failure. Logging both lets us tell
-      // "token consumed by a scanner" (error=INVALID_TOKEN) from
-      // "succeeded but cookie didn't stick" (no error, cookie present
-      // in our logs but missing from the user's browser later) from
-      // any path we haven't anticipated yet.
-      if (ctx.path !== "/magic-link/verify") return;
-      const headers = ctx.context.responseHeaders;
-      const location = headers?.get("location") ?? null;
-      const setCookie = headers?.get("set-cookie") ?? null;
-      const cookieSet = !!setCookie && setCookie.includes("session");
-      let error: string | null = null;
-      if (location) {
-        try {
-          // `location` may be absolute or path-relative; the base is
-          // unused since we only read the query string.
-          error = new URL(location, "http://placeholder").searchParams.get("error");
-        } catch {
-          /* malformed Location header — ignore */
-        }
-      }
-      console.log(
-        `[auth] verify result: location=${location ?? "?"} cookie=${cookieSet ? "set" : "missing"}` +
-          (error ? ` error=${error}` : ""),
-      );
-    }),
-  },
-  plugins: [
-    magicLink({
-      disableSignUp: true,
-      expiresIn: 60 * 60,
-      sendMagicLink: async ({ email, url }) => {
-        // `email` is already canonical thanks to the before-hook. Membership
-        // gate — BA's disableSignUp only fires at verify-time, so without
-        // this check the link gets sent first and the user only sees the
-        // failure after clicking it. We gate on an *active* (non-archived)
-        // membership rather than just users-row existence, so removed/archived
-        // people get the same rejection as strangers.
+
+      // Membership gate for OTP send — invite-only tool, surface a visible
+      // "no account found" instead of the silent no-op BA's emailOTP plugin
+      // returns for unknown emails under `disableSignUp: true`. We accept
+      // the small existence-leak.
+      if (ctx.path === "/email-otp/send-verification-otp" && typeof ctx.body?.email === "string") {
         const row = (
           await db
-            .select({ id: users.id, displayEmail: users.displayEmail })
+            .select({ id: users.id })
             .from(users)
             .innerJoin(memberships, eq(memberships.userId, users.id))
-            .where(and(eq(users.email, email), isNull(memberships.archivedAt)))
+            .where(and(eq(users.email, ctx.body.email), isNull(memberships.archivedAt)))
             .limit(1)
         )[0];
         if (!row) {
@@ -125,10 +90,61 @@ export const auth = betterAuth({
             message: "No account found for this email",
           });
         }
+      }
+    }),
+    after: createAuthMiddleware(async (ctx) => {
+      // Verify-outcome trace. Without this, server logs are silent on
+      // success vs failure — exactly the visibility we need when
+      // diagnosing scanner-burned-token failures.
+      if (ctx.path !== "/sign-in/email-otp") return;
+      const returned = ctx.context.returned;
+      const headers = ctx.context.responseHeaders;
+      const cookieSet = !!headers?.get("set-cookie")?.includes("session");
+      if (isAPIError(returned)) {
+        const status = returned.status ?? "?";
+        const message = returned.body?.message ?? "(no message)";
+        console.log(`[auth] verify failed: status=${status} message=${message}`);
+        return;
+      }
+      console.log(`[auth] verify ok: cookie=${cookieSet ? "set" : "missing"}`);
+    }),
+  },
+  plugins: [
+    emailOTP({
+      disableSignUp: true,
+      expiresIn: 60 * 60,
+      // Two-channel delivery to defeat email security scanners. The OTP
+      // sits in the verify-page URL — link click triggers a client-side
+      // POST on mount that GET-based scanners can't fire by pre-fetching
+      // the page. The same OTP is also rendered as a human-typeable string
+      // in the email body and `/login`'s code-entry step accepts it as a
+      // manual fallback for the minority of scanners that execute JS and
+      // would otherwise burn the link.
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        // We only use the sign-in flow; other types (email-verification,
+        // forget-password, change-email) aren't wired up.
+        if (type !== "sign-in") return;
+        // The before-hook has already canonicalised `email` and confirmed
+        // an active membership exists. This lookup is just to grab the
+        // displayEmail for the outbound `to`.
+        const row = (
+          await db
+            .select({ displayEmail: users.displayEmail })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1)
+        )[0];
+        if (!row) {
+          // Unreachable per the before-hook guarantee. Log loudly if it fires.
+          console.error(`[auth] sendVerificationOTP: no user row for ${email}`);
+          return;
+        }
         const to = row.displayEmail;
+        const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
+        const verifyUrl = `${baseUrl}/auth/email/${encodeURIComponent(email)}/${otp}`;
         const resend = getResend();
         if (!resend) {
-          console.log(`[auth] magic link for ${to}: ${url}`);
+          console.log(`[auth] otp for ${to}: ${otp} (${verifyUrl})`);
           return;
         }
         const from = process.env.RESEND_FROM ?? "Field Tools <onboarding@resend.dev>";
@@ -142,10 +158,14 @@ export const auth = betterAuth({
   <p style="font-size: 16px;">Click the button below to log in securely:</p>
 
   <p style="text-align: left; margin: 30px 0;">
-    <a href="${url}" style="background-color: #222222; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-size: 16px; display: inline-block;">
+    <a href="${verifyUrl}" style="background-color: #222222; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-size: 16px; display: inline-block;">
       Log in to Field Tools
     </a>
   </p>
+
+  <p style="font-size: 16px;">If you have trouble with magic links, you can also enter this code on the login page:</p>
+
+  <p><span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 18px; color: #333; background-color: #f3f3f3; padding: 4px 8px; border-radius: 4px; display: inline-block;">${otp}</span></p>
 
   <p style="font-size: 16px;">If you didn't request this email, you can safely ignore it.</p>
 
