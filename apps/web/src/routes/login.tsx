@@ -44,7 +44,7 @@ function LoginPage() {
   const mutation = useMutation({
     mutationFn: async (target: string) => {
       const [res] = await Promise.all([
-        authClient.signIn.magicLink({ email: target, callbackURL: "/" }),
+        authClient.emailOtp.sendVerificationOtp({ email: target, type: "sign-in" }),
         new Promise((r) => setTimeout(r, 600)),
       ]);
       return res;

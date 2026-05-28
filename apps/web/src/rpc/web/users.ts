@@ -103,8 +103,8 @@ export const invite = webMut
     });
 
     if (input.sendEmail) {
-      await auth.api.signInMagicLink({
-        body: { email: displayEmail, callbackURL: "/" },
+      await auth.api.sendVerificationOTP({
+        body: { email: displayEmail, type: "sign-in" },
         headers: new Headers(),
       });
     }
@@ -240,8 +240,8 @@ export const resendInvite = webMut
     )[0];
     if (!row) throw new ORPCError("NOT_FOUND");
 
-    await auth.api.signInMagicLink({
-      body: { email: row.displayEmail, callbackURL: "/" },
+    await auth.api.sendVerificationOTP({
+      body: { email: row.displayEmail, type: "sign-in" },
       headers: new Headers(),
     });
 
