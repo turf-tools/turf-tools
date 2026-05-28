@@ -22,10 +22,8 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/cut/")({
 
 function CutterPage() {
   const { orgSlug, campaignId } = Route.useParams();
-  // Key includes campaignId so navigating between two zoneless campaigns
-  // forces a remount — same reset semantics as the zoned route's
-  // `key={zoneId}` (zoneIds are unique per campaign, so swapping
-  // campaigns there changes the key naturally; here we need help).
+  // Key includes campaignId so navigating between zoneless campaigns
+  // remounts the Cutter; the zoned route gets this for free via `zoneId`.
   return (
     <Cutter key={`${campaignId}-full`} orgSlug={orgSlug} campaignId={campaignId} zoneId={null} />
   );

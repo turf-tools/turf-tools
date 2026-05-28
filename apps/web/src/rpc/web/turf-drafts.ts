@@ -120,3 +120,29 @@ export const replaceAll = pub
 
     return { ok: true as const };
   });
+
+// Wipe every draft across every zone for a campaign. Used when the
+// user changes the campaign's zone group (including zoned↔zoneless),
+// since drafts are inherently scoped to a specific zoneId and would
+// be orphaned by any rebind — even a "functionally identical" new
+// zone group is treated as a fresh slate.
+export const clearForCampaign = pub
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ campaignId: campaigns.campaignId })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+
+    const deleted = await context.db
+      .delete(turfDrafts)
+      .where(eq(turfDrafts.campaignId, input.campaignId))
+      .returning({ turfDraftId: turfDrafts.turfDraftId });
+    return { deleted: deleted.length };
+  });

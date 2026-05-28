@@ -35,9 +35,10 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/cut/$zoneI
   // the heavy queries, and we'd rather get the user to the cutter chrome
   // fast and let the Map curtain hide their fetch than block navigation.
   loader: async ({ context: { queryClient }, params: { campaignId, zoneId } }) => {
+    // zoneGroupsQuery is already prefetched by the parent campaigns
+    // route loader, so we don't refetch it here.
     const [campaign] = await Promise.all([
       queryClient.fetchQuery(campaignDetailQuery(campaignId)),
-      queryClient.fetchQuery(zoneGroupsQuery()),
       queryClient.fetchQuery(turfDraftsQuery(campaignId, zoneId)),
     ]);
 
@@ -60,9 +61,7 @@ function CutterPage() {
   return <Cutter key={zoneId} orgSlug={orgSlug} campaignId={campaignId} zoneId={zoneId} />;
 }
 
-// Exported so the zoneless `cut.tsx` route can render the same Cutter
-// with `zoneId={null}` — keeps the two routes thin shells over one
-// implementation.
+// Shared between zoned (`./$zoneId`) and zoneless (`./index`) cutter routes.
 export function Cutter({
   orgSlug,
   campaignId,
