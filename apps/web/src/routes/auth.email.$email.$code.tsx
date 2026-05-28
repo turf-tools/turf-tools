@@ -20,8 +20,12 @@ export const Route = createFileRoute("/auth/email/$email/$code")({
   beforeLoad: async () => {
     // If they're already signed in (e.g. clicked the same link twice in
     // the same session), skip the verify entirely and bounce home.
+    // `reloadDocument` forces a full-document navigation so root's
+    // beforeLoad re-runs with a fresh session lookup — an internal
+    // redirect would reuse the auth-flow bypass context (session=null)
+    // from this route and bounce back through /login in a loop.
     const session = await getSession();
-    if (session) throw redirect({ to: "/" });
+    if (session) throw redirect({ to: "/", reloadDocument: true });
   },
   component: VerifyPage,
 });
@@ -40,7 +44,7 @@ function VerifyPage() {
         // burned it, or user clicked twice from different sessions),
         // expired, or never existed. Recovery is the same — request a
         // new link.
-        setError("This link is no longer valid.");
+        setError("This link is no longer valid, please try again.");
         return;
       }
       // Hard-load to "/" — root's mount-time effect broadcasts the
