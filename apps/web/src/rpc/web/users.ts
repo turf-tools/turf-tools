@@ -25,8 +25,8 @@ async function countActiveOwners(db: Db, organizationId: string): Promise<number
 
 // List memberships in the current org. Status is derived per-row:
 //   archived → membership has archivedAt set
-//   active   → users.emailVerified (BA flips this on first magic-link click)
-//   pending  → invite sent, link never clicked
+//   active   → users.emailVerified (BA flips this on first OTP verify)
+//   pending  → invite sent, never verified
 export const list = webPub.input(z.object({}).optional()).handler(async ({ context }) => {
   const rows = await context.db
     .select({
@@ -103,8 +103,8 @@ export const invite = webMut
     });
 
     if (input.sendEmail) {
-      await auth.api.signInMagicLink({
-        body: { email: displayEmail, callbackURL: "/" },
+      await auth.api.sendVerificationOTP({
+        body: { email: displayEmail, type: "sign-in" },
         headers: new Headers(),
       });
     }
@@ -219,7 +219,7 @@ export const unarchive = webMut
     return { ok: true as const };
   });
 
-// Re-send the magic link for an active member of this org.
+// Re-send the login email for an active member of this org.
 export const resendInvite = webMut
   .input(z.object({ userId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -240,8 +240,8 @@ export const resendInvite = webMut
     )[0];
     if (!row) throw new ORPCError("NOT_FOUND");
 
-    await auth.api.signInMagicLink({
-      body: { email: row.displayEmail, callbackURL: "/" },
+    await auth.api.sendVerificationOTP({
+      body: { email: row.displayEmail, type: "sign-in" },
       headers: new Headers(),
     });
 

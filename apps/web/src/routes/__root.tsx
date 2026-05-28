@@ -43,7 +43,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
   }),
   beforeLoad: async ({ location }) => {
-    if (location.pathname === "/login") return { session: null };
+    // Auth-flow routes can be hit without a session (that's the whole
+    // point — the verify route is mid-login). Skip the gate for them.
+    const isAuthFlow =
+      location.pathname === "/login" || location.pathname.startsWith("/auth/email/");
+    if (isAuthFlow) return { session: null };
     const session = await getSession();
     if (!session) throw redirect({ to: "/login" });
     return { session };
