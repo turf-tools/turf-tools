@@ -463,12 +463,7 @@ function ZonesList({
   const zoneless = zoneGroupName === null;
   return (
     <div className="flex h-full flex-col gap-2 overflow-y-auto">
-      <ConfigSummary
-        segmentName={segmentName}
-        scriptName={scriptName}
-        zoneGroupName={zoneGroupName}
-        totals={totals}
-      />
+      <ConfigSummary segmentName={segmentName} scriptName={scriptName} totals={totals} />
       {zoneless ? (
         <FullSegmentRow
           campaignId={campaignId}
@@ -500,12 +495,10 @@ function ZonesList({
 function ConfigSummary({
   segmentName,
   scriptName,
-  zoneGroupName,
   totals,
 }: {
   segmentName: string | null;
   scriptName: string | null;
-  zoneGroupName: string | null;
   totals: {
     drafts: number;
     active: number;
@@ -514,14 +507,10 @@ function ConfigSummary({
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border bg-card px-3 py-2">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col">
           <span className="text-muted-foreground">Segment</span>
           <span className="truncate">{segmentName}</span>
-        </div>
-        <div className="flex flex-col">
-          <span className="text-muted-foreground">Zones</span>
-          <span className="truncate">{zoneGroupName || "None selected"}</span>
         </div>
         <div className="flex flex-col">
           <span className="text-muted-foreground">Script</span>
