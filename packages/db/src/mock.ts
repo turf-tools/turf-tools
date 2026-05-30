@@ -7,7 +7,7 @@ import { memberships } from "./schema/memberships";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptSteps } from "./schema/scripts";
 import { segments } from "./schema/segments";
-import { surveyQuestions, surveyResponseOptions } from "./schema/surveys";
+import { questions, responseOptions } from "./schema/questions";
 import { users } from "./schema/auth/users";
 import { zoneGroups } from "./schema/zone-groups";
 import { zones } from "./schema/zones";
@@ -19,7 +19,7 @@ import { zones } from "./schema/zones";
 const ORG_ID = SEEDED_ORG_ID;
 const USER_ID = SEEDED_ADMIN_USER_ID;
 const CAMPAIGN_ID = "00000000-0000-4000-8000-000000000002";
-const SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000003";
+const QUESTION_ID = "00000000-0000-4000-8000-000000000003";
 const SCRIPT_ID = "00000000-0000-4000-8000-000000000004";
 const SEGMENT_ID = "00000000-0000-4000-8000-000000000005";
 
@@ -39,7 +39,7 @@ const QUEENS_ZONE_ID = "00000000-0000-4000-8000-00000000000e";
 // role "admin" (not "owner") so the per-org permission check is visible
 // in the UI — Users tab disappears when switched to this org.
 const SECOND_ORG_ID = "00000000-0000-4000-8000-000000000020";
-const SECOND_SURVEY_QUESTION_ID = "00000000-0000-4000-8000-000000000021";
+const SECOND_QUESTION_ID = "00000000-0000-4000-8000-000000000021";
 const SECOND_SCRIPT_ID = "00000000-0000-4000-8000-000000000022";
 const SECOND_SEGMENT_ID = "00000000-0000-4000-8000-000000000023";
 const SECOND_ZONE_GROUP_ID = "00000000-0000-4000-8000-000000000024";
@@ -54,7 +54,7 @@ const SECOND_RESPONSE_OPTION_IDS = [
 const DEFAULT_VOTER_FILE_ID = "nys_boe";
 const DEFAULT_VOTER_FILE_VERSION = 1;
 
-const SURVEY_RESPONSE_OPTIONS: Array<{ id: string; text: string }> = [
+const RESPONSE_OPTIONS: Array<{ id: string; text: string }> = [
   { id: "00000000-0000-4000-8000-000000000030", text: "Yes" },
   { id: "00000000-0000-4000-8000-000000000031", text: "Leaning yes" },
   { id: "00000000-0000-4000-8000-000000000032", text: "Undecided" },
@@ -101,27 +101,27 @@ async function mock() {
 
   const existingQuestion = await db
     .select()
-    .from(surveyQuestions)
-    .where(eq(surveyQuestions.surveyQuestionId, SURVEY_QUESTION_ID));
+    .from(questions)
+    .where(eq(questions.questionId, QUESTION_ID));
   if (existingQuestion.length === 0) {
-    await db.insert(surveyQuestions).values({
-      surveyQuestionId: SURVEY_QUESTION_ID,
+    await db.insert(questions).values({
+      questionId: QUESTION_ID,
       organizationId: ORG_ID,
       name: "Candidate support",
       responseType: "single_select",
       text: "Are you planning to vote for our candidate?",
       createdBy: USER_ID,
     });
-    await db.insert(surveyResponseOptions).values(
-      SURVEY_RESPONSE_OPTIONS.map((opt, order) => ({
-        surveyResponseOptionId: opt.id,
-        surveyQuestionId: SURVEY_QUESTION_ID,
+    await db.insert(responseOptions).values(
+      RESPONSE_OPTIONS.map((opt, order) => ({
+        responseOptionId: opt.id,
+        questionId: QUESTION_ID,
         text: opt.text,
         order,
         createdBy: USER_ID,
       })),
     );
-    console.log("Created survey question and response options");
+    console.log("Created question and response options");
   }
 
   const existingScript = await db.select().from(scripts).where(eq(scripts.scriptId, SCRIPT_ID));
@@ -136,7 +136,7 @@ async function mock() {
       scriptId: SCRIPT_ID,
       order: 0,
       stepType: "question",
-      surveyQuestionId: SURVEY_QUESTION_ID,
+      questionId: QUESTION_ID,
     });
     console.log("Created script");
   }
@@ -274,27 +274,27 @@ async function mock() {
 
   const existingSecondQuestion = await db
     .select()
-    .from(surveyQuestions)
-    .where(eq(surveyQuestions.surveyQuestionId, SECOND_SURVEY_QUESTION_ID));
+    .from(questions)
+    .where(eq(questions.questionId, SECOND_QUESTION_ID));
   if (existingSecondQuestion.length === 0) {
-    await db.insert(surveyQuestions).values({
-      surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+    await db.insert(questions).values({
+      questionId: SECOND_QUESTION_ID,
       organizationId: SECOND_ORG_ID,
       name: "Bill support",
       responseType: "single_select",
       text: "Do you support the bill?",
       createdBy: USER_ID,
     });
-    await db.insert(surveyResponseOptions).values(
+    await db.insert(responseOptions).values(
       ["Yes", "No", "Undecided"].map((text, order) => ({
-        surveyResponseOptionId: SECOND_RESPONSE_OPTION_IDS[order]!,
-        surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+        responseOptionId: SECOND_RESPONSE_OPTION_IDS[order]!,
+        questionId: SECOND_QUESTION_ID,
         text,
         order,
         createdBy: USER_ID,
       })),
     );
-    console.log("Created second-org survey question and response options");
+    console.log("Created second-org question and response options");
   }
 
   const existingSecondScript = await db
@@ -319,7 +319,7 @@ async function mock() {
         scriptId: SECOND_SCRIPT_ID,
         order: 1,
         stepType: "question",
-        surveyQuestionId: SECOND_SURVEY_QUESTION_ID,
+        questionId: SECOND_QUESTION_ID,
       },
     ]);
     console.log("Created second-org script");

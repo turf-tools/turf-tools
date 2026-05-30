@@ -15,7 +15,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
-import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { SYNC_OPTIONS, syncIntervalAtom, userSyncingAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
 import { clearPullCache, pullCanvassEvents, useSyncStatus } from "@/lib/canvass-events";
@@ -26,32 +25,12 @@ export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
   const activeTurf = useAtomValue(activeTurfAtom);
   const setActiveTurf = useSetAtom(activeTurfAtom);
-  const [createdByName, setCreatedByName] = useAtom(createdByNameAtom);
   const [syncInterval, setSyncInterval] = useAtom(syncIntervalAtom);
   // User-initiated only — module-level atom so closing and reopening
   // Settings mid-sync still shows the in-flight state. Background
   // 30s polls don't flip this; the button only reflects user intent.
   const [syncing, setSyncing] = useAtom(userSyncingAtom);
   const syncStatus = useSyncStatus(activeTurf?.turfId ?? null);
-
-  const handleEditName = () => {
-    Alert.prompt(
-      "Your name",
-      "To be included alongside all canvass results.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Save",
-          onPress: (text?: string) => {
-            const trimmed = text?.trim() ?? "";
-            setCreatedByName(trimmed || null);
-          },
-        },
-      ],
-      "plain-text",
-      createdByName ?? "",
-    );
-  };
 
   const handleSync = async () => {
     if (!activeTurf) {
@@ -118,7 +97,6 @@ export default function SettingsScreen() {
             queryClient.clear();
             clearPullCache();
             setActiveTurf(null);
-            setCreatedByName(null);
             clearHost();
             router.dismissAll();
             router.replace("/");
@@ -167,9 +145,10 @@ export default function SettingsScreen() {
             icon={<Download size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
-            title={createdByName ? `Name: ${createdByName}` : "Set your name"}
+            title="User (coming soon)"
             variant="outline"
-            onPress={handleEditName}
+            disabled
+            onPress={() => {}}
             icon={<UserRound size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button

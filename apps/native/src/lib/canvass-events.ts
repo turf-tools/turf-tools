@@ -8,16 +8,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getDefaultStore } from "jotai";
 import { useCallback, useEffect, useState } from "react";
 import type { CanvassEventPayload } from "@field-tools/db/schema";
-import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
 import { FixedReactNativeOnlineDetector } from "@/lib/online-detector";
 import { queryClient } from "@/lib/query-client";
 import { client } from "@/rpc/client";
-
-// Read at call time so the latest Settings value is used on each append.
-function currentCreatedByName(): string | undefined {
-  return getDefaultStore().get(createdByNameAtom) ?? undefined;
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,8 +21,7 @@ type CanvassEvent = {
   sequence: number;
   clientEventId: string | null;
   turfId: string;
-  userId: string | null;
-  createdByName: string | null;
+  canvasserId: string | null;
   personId: string | null;
   doorId: string | null;
   buildingId: string | null;
@@ -131,53 +124,24 @@ function createCollection_(turfId: string) {
 
 async function appendEventToServer(turfId: string, event: CanvassEvent) {
   const payload = event.payload as unknown as CanvassEventPayload;
+  const base = {
+    turfId,
+    personId: event.personId ?? undefined,
+    doorId: event.doorId ?? undefined,
+    buildingId: event.buildingId ?? undefined,
+    createdAt: event.createdAt,
+    inputType: "mobile",
+    clientEventId: event.clientEventId ?? undefined,
+  };
 
-  const createdByName = currentCreatedByName();
   if (payload.kind === "note") {
     await client.canvass.appendNote({
-      turfId,
-      personId: event.personId ?? undefined,
-      doorId: event.doorId ?? undefined,
-      buildingId: event.buildingId ?? undefined,
+      ...base,
       text: payload.text,
       canvassedAt: payload.canvassedAt,
-      createdByName,
-      inputType: "mobile",
-      clientEventId: event.clientEventId ?? undefined,
     });
-  } else if (event.personId) {
-    await client.canvass.appendPersonResult({
-      turfId,
-      buildingId: event.buildingId ?? undefined,
-      doorId: event.doorId ?? undefined,
-      personId: event.personId,
-      payload: payload as unknown as {
-        kind: "survey";
-        surveyQuestionId: string;
-        surveyResponseOptionId: string | null;
-      },
-      createdByName,
-      inputType: "mobile",
-      clientEventId: event.clientEventId ?? undefined,
-    });
-  } else if (event.doorId) {
-    await client.canvass.appendDoorResult({
-      turfId,
-      doorId: event.doorId,
-      outcome: (payload as unknown as { outcome: string }).outcome as "address_not_found",
-      createdByName,
-      inputType: "mobile",
-      clientEventId: event.clientEventId ?? undefined,
-    });
-  } else if (event.buildingId) {
-    await client.canvass.appendBuildingResult({
-      turfId,
-      buildingId: event.buildingId,
-      outcome: (payload as unknown as { outcome: string }).outcome as "inaccessible",
-      createdByName,
-      inputType: "mobile",
-      clientEventId: event.clientEventId ?? undefined,
-    });
+  } else {
+    await client.canvass.appendResult({ ...base, payload });
   }
 }
 
@@ -203,11 +167,10 @@ function createTurfContext(turfId: string): TurfContext {
   });
 
   const buildEvent = (params: RecordEventParams) => ({
-    // Placeholder values — server assigns sequence; userId is always null
-    // for canvasser-flow events (attribution flows through createdByName).
+    // Placeholder values — server assigns sequence. canvasserId is null until
+    // the canvasser identity system ships.
     sequence: 0,
-    userId: null,
-    createdByName: currentCreatedByName() ?? null,
+    canvasserId: null,
     clientEventId: crypto.randomUUID(),
     turfId,
     personId: params.personId ?? null,
@@ -364,15 +327,20 @@ export function useSyncStatus(turfId: string | null): SyncStatus {
 // ---------------------------------------------------------------------------
 
 export type PersonSummary = {
+  // Only the "unavailable" outcomes (not_home / deceased / hostile / moved)
+  // surface here — that's what the screen's mode logic switches on. A result
+  // whose outcome is "canvassed" maps to null, because the screen shows a
+  // contacted person through their responses (selectedByQuestion), not an
+  // outcome. The authoritative outcome (incl. "canvassed") lives on the result.
   currentOutcome: string | null;
   notes: CanvassEvent[];
+  // questionId -> selected optionId (single-select).
   selectedByQuestion: Map<string, string>;
 };
 
-// Replays events to compute current state. `currentOutcome` and
-// `selectedByQuestion` are mutually exclusive: a non-null survey
-// answer clears the outcome, and a non-null outcome clears the
-// answers. Un-records (null payloads) only clear their own field.
+// Current state per person = the latest "result" snapshot + all notes.
+// A result carries the entity's complete disposition, so there's no replay:
+// the newest result wins outright.
 export function derivePersonSummaries(events: CanvassEvent[]) {
   const map = new Map<string, PersonSummary>();
   const sorted = [...events].sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
@@ -385,25 +353,19 @@ export function derivePersonSummaries(events: CanvassEvent[]) {
     }
     if (event.kind === "note") {
       summary.notes.push(event);
-    } else if (event.kind === "outcome") {
-      const payload = event.payload as { outcome: string | null };
-      if (payload.outcome === null) {
-        summary.currentOutcome = null;
-      } else {
-        summary.currentOutcome = payload.outcome;
-        summary.selectedByQuestion.clear();
-      }
-    } else if (event.kind === "survey") {
+    } else if (event.kind === "result") {
       const payload = event.payload as {
-        surveyQuestionId: string;
-        surveyResponseOptionId: string | null;
+        outcome: string | null;
+        responses: Record<string, { optionIds?: string[]; text?: string }>;
       };
-      if (payload.surveyResponseOptionId === null) {
-        summary.selectedByQuestion.delete(payload.surveyQuestionId);
-      } else {
-        summary.selectedByQuestion.set(payload.surveyQuestionId, payload.surveyResponseOptionId);
-        summary.currentOutcome = null;
+      // Latest result wins (events are sorted ascending) — overwrite both fields.
+      const selected = new Map<string, string>();
+      for (const [questionId, value] of Object.entries(payload.responses ?? {})) {
+        const optionId = value?.optionIds?.[0];
+        if (optionId) selected.set(questionId, optionId);
       }
+      summary.selectedByQuestion = selected;
+      summary.currentOutcome = payload.outcome === "canvassed" ? null : payload.outcome;
     }
   }
   return map;
@@ -416,7 +378,7 @@ export function isRecorded(summaries: Map<string, PersonSummary>, personId: stri
   return s.currentOutcome != null || s.selectedByQuestion.size > 0;
 }
 
-export function hasSurvey(summaries: Map<string, PersonSummary>, personId: string): boolean {
+export function hasResponses(summaries: Map<string, PersonSummary>, personId: string): boolean {
   return (summaries.get(personId)?.selectedByQuestion.size ?? 0) > 0;
 }
 

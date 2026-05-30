@@ -13,7 +13,7 @@ import {
   type PersonSummary,
   derivePersonSummaries,
   hasNotes,
-  hasSurvey,
+  hasResponses,
   isRecorded,
   useRecordEvent,
   useCanvassEvents,
@@ -185,11 +185,11 @@ function PersonRow({
 }) {
   const recorded = isRecorded(allResults, person.personId);
   const note = hasNotes(allResults, person.personId);
-  const survey = hasSurvey(allResults, person.personId);
+  const responded = hasResponses(allResults, person.personId);
   const isDark = useAtomValue(themeAtom) === "dark";
   const iconColor = isDark ? "#ededed" : "#1b1b1b";
   const colors = useColors();
-  const role = survey ? "contacted" : "unavailable";
+  const role = responded ? "contacted" : "unavailable";
   const recordEvent = useRecordEvent(turfId);
 
   const fullName =
@@ -204,8 +204,8 @@ function PersonRow({
     if (allResults.get(person.personId)?.currentOutcome === "not_home") return;
     recordEvent({
       personId: person.personId,
-      kind: "outcome",
-      payload: { kind: "outcome", outcome: "not_home" },
+      kind: "result",
+      payload: { kind: "result", outcome: "not_home", responses: {} },
     });
   }, [person.personId, recordEvent, allResults]);
 
