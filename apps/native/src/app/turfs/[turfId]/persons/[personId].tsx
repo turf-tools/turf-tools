@@ -78,7 +78,7 @@ export default function PersonScreen() {
   const summary = summaries.get(personId);
   const formattedNotes = (summary?.notes ?? []).map((e) => ({
     text: (e.payload as { text: string }).text,
-    canvassedAt: (e.payload as { canvassedAt: string }).canvassedAt ?? e.createdAt,
+    createdAt: e.createdAt,
   }));
 
   // Optimistic mirrors: taps update local state immediately so the
@@ -331,7 +331,7 @@ export default function PersonScreen() {
                   recordEvent({
                     personId,
                     kind: "note",
-                    payload: { kind: "note", text, canvassedAt: new Date().toISOString() },
+                    payload: { kind: "note", text },
                   });
                   setMode("script");
                 }}
@@ -471,7 +471,7 @@ function NoteContent({
   onSubmitNote,
   onCancel,
 }: {
-  notes: Array<{ text: string; canvassedAt: string }>;
+  notes: Array<{ text: string; createdAt: string }>;
   onSubmitNote: (text: string) => void;
   onCancel: () => void;
 }) {
@@ -527,7 +527,7 @@ function DetailsContent({
   notes,
 }: {
   person: TurfDataPerson;
-  notes: Array<{ text: string; canvassedAt: string }>;
+  notes: Array<{ text: string; createdAt: string }>;
 }) {
   const voting = votingHistoryItems(person.votingHistory);
   const notesList = noteItems(notes);
@@ -588,9 +588,9 @@ function DetailList({ items }: { items: Array<{ label: string; date: string }> }
 // ----- Item adapters -------------------------------------------------------
 
 function noteItems(
-  notes: Array<{ text: string; canvassedAt: string }>,
+  notes: Array<{ text: string; createdAt: string }>,
 ): Array<{ label: string; date: string }> {
-  return notes.map((n) => ({ label: n.text, date: formatShortDate(n.canvassedAt) }));
+  return notes.map((n) => ({ label: n.text, date: formatShortDate(n.createdAt) }));
 }
 
 const ELECTION_TYPE_LABELS: Record<string, string> = {
