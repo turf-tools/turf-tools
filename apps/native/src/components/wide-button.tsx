@@ -18,7 +18,7 @@ type Props = {
   selectedBackgroundColor?: string;
 };
 
-// Full-width button used for survey responses, unavailable outcomes, and
+// Full-width button used for responses, unavailable outcomes, and
 // action buttons (Cancel, Submit) on the Person screen. White background
 // with a subtle shadow ring, border, and a check icon on the selected item.
 export function WideButton({

@@ -11,8 +11,8 @@ import {
   organizations,
   scripts,
   segments,
-  surveyQuestions,
-  surveyResponseOptions,
+  questions,
+  responseOptions,
   turfs,
   zoneGroups,
 } from "@field-tools/db/schema";
@@ -36,7 +36,7 @@ const cli = meow(
 
   Destroys: Postgres org row + every row that references it (memberships,
   campaigns, turfs, canvass events, segments, zone groups, scripts,
-  surveys), plus the ducklake.<slug> schema and all of its tables.
+  questions), plus the ducklake.<slug> schema and all of its tables.
 `,
   {
     importMeta: import.meta,
@@ -79,10 +79,10 @@ const turfIdsQuery = db
   .from(turfs)
   .where(inArray(turfs.campaignId, campaignIdsQuery));
 
-const surveyQuestionIdsQuery = db
-  .select({ id: surveyQuestions.surveyQuestionId })
-  .from(surveyQuestions)
-  .where(eq(surveyQuestions.organizationId, orgId));
+const questionIdsQuery = db
+  .select({ id: questions.questionId })
+  .from(questions)
+  .where(eq(questions.organizationId, orgId));
 
 async function counts() {
   const [
@@ -93,7 +93,7 @@ async function counts() {
     segmentCount,
     zoneGroupCount,
     scriptCount,
-    surveyCount,
+    questionCount,
   ] = await Promise.all([
     db.select({ n: count() }).from(memberships).where(eq(memberships.organizationId, orgId)),
     db.select({ n: count() }).from(campaigns).where(eq(campaigns.organizationId, orgId)),
@@ -105,10 +105,7 @@ async function counts() {
     db.select({ n: count() }).from(segments).where(eq(segments.organizationId, orgId)),
     db.select({ n: count() }).from(zoneGroups).where(eq(zoneGroups.organizationId, orgId)),
     db.select({ n: count() }).from(scripts).where(eq(scripts.organizationId, orgId)),
-    db
-      .select({ n: count() })
-      .from(surveyQuestions)
-      .where(eq(surveyQuestions.organizationId, orgId)),
+    db.select({ n: count() }).from(questions).where(eq(questions.organizationId, orgId)),
   ]);
   return {
     memberships: membershipCount[0].n,
@@ -118,7 +115,7 @@ async function counts() {
     segments: segmentCount[0].n,
     zoneGroups: zoneGroupCount[0].n,
     scripts: scriptCount[0].n,
-    surveyQuestions: surveyCount[0].n,
+    questions: questionCount[0].n,
   };
 }
 
@@ -132,7 +129,7 @@ log.info(`- ${totals.canvassEvents} canvass events`);
 log.info(`- ${totals.segments} segments`);
 log.info(`- ${totals.zoneGroups} zone groups (+ zones, cascaded)`);
 log.info(`- ${totals.scripts} scripts (+ script steps, cascaded)`);
-log.info(`- ${totals.surveyQuestions} survey questions (+ response options)`);
+log.info(`- ${totals.questions} questions (+ response options)`);
 log.info(`- the ducklake.${slug} schema and all tables in it`);
 
 if (!force) {
@@ -149,16 +146,14 @@ await db.transaction(async (tx) => {
   // Order matters: leaves first, then parents. canvass_events and turfs go
   // before campaigns (canvass_events → turfs → campaigns); campaigns before
   // segments/zone-groups/scripts (campaigns FK those); response options
-  // before survey questions. Tables with onDelete: "cascade" (script_steps,
+  // before questions. Tables with onDelete: "cascade" (script_steps,
   // zones, turf_data, turf_drafts) come down with their parents.
   await tx.delete(canvassEvents).where(inArray(canvassEvents.turfId, turfIdsQuery));
   await tx.delete(turfs).where(inArray(turfs.campaignId, campaignIdsQuery));
   await tx.delete(campaigns).where(eq(campaigns.organizationId, orgId));
   await tx.delete(scripts).where(eq(scripts.organizationId, orgId));
-  await tx
-    .delete(surveyResponseOptions)
-    .where(inArray(surveyResponseOptions.surveyQuestionId, surveyQuestionIdsQuery));
-  await tx.delete(surveyQuestions).where(eq(surveyQuestions.organizationId, orgId));
+  await tx.delete(responseOptions).where(inArray(responseOptions.questionId, questionIdsQuery));
+  await tx.delete(questions).where(eq(questions.organizationId, orgId));
   await tx.delete(segments).where(eq(segments.organizationId, orgId));
   await tx.delete(zoneGroups).where(eq(zoneGroups.organizationId, orgId));
   await tx.delete(memberships).where(eq(memberships.organizationId, orgId));

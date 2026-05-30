@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, Text, TextInput, View } from "react-native";
 import { Button } from "@/components/button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
-import { createdByNameAtom } from "@/lib/atoms/created-by-name";
 import { openTurf } from "@/lib/canvass-events";
 import { client, setHost } from "@/rpc/client";
 
@@ -15,7 +14,6 @@ export default function LandingScreen() {
 
   const codeRef = useRef<TextInput>(null);
   const [activeTurf, setActiveTurf] = useAtom(activeTurfAtom);
-  const [createdByName, setCreatedByName] = useAtom(createdByNameAtom);
 
   // Clear inputs only when the binding transitions from bound → null (i.e.
   // user hit "Download new turf"). Settings round-trips don't change
@@ -37,35 +35,6 @@ export default function LandingScreen() {
       );
     });
     router.push(`/turfs/${turfId}`);
-  };
-
-  const promptForName = (turfId: string) => {
-    Alert.prompt(
-      "Your name",
-      "Recorded on every canvass event so organizers know who collected the result.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-          // Declining the name prompt drops the binding — we don't proceed
-          // into the turf without an attribution.
-          onPress: () => setActiveTurf(null),
-        },
-        {
-          text: "Save",
-          onPress: (text?: string) => {
-            const trimmed = text?.trim() ?? "";
-            if (!trimmed) {
-              setActiveTurf(null);
-              return;
-            }
-            setCreatedByName(trimmed);
-            goToTurf(turfId);
-          },
-        },
-      ],
-      "plain-text",
-    );
   };
 
   const handleSubmit = async () => {
@@ -93,10 +62,6 @@ export default function LandingScreen() {
       }
       setActiveTurf({ host: trimmedHost, turfId: turf.turfId });
       setLoading(false);
-      if (!createdByName) {
-        promptForName(turf.turfId);
-        return;
-      }
       goToTurf(turf.turfId);
     } catch (err) {
       // RN's fetch surfaces offline / unreachable-host failures as

@@ -2,10 +2,11 @@ import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
 
-// A survey question is a named question with text and a
-// response type.
-export const surveyQuestions = pgTable("survey_questions", {
-  surveyQuestionId: uuid().defaultRandom().primaryKey(),
+// A question is a named question with text and a response type.
+// Standalone and org-level; referenced by script steps and reusable
+// across scripts.
+export const questions = pgTable("questions", {
+  questionId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()
     .references(() => organizations.organizationId),
@@ -19,12 +20,12 @@ export const surveyQuestions = pgTable("survey_questions", {
   archivedAt: timestamp({ withTimezone: true }),
 });
 
-// One selectable answer for a survey question. Order is per-question.
-export const surveyResponseOptions = pgTable("survey_response_options", {
-  surveyResponseOptionId: uuid().defaultRandom().primaryKey(),
-  surveyQuestionId: uuid()
+// One selectable answer for a question. Order is per-question.
+export const responseOptions = pgTable("response_options", {
+  responseOptionId: uuid().defaultRandom().primaryKey(),
+  questionId: uuid()
     .notNull()
-    .references(() => surveyQuestions.surveyQuestionId),
+    .references(() => questions.questionId),
   text: text().notNull(),
   order: integer().notNull(),
   createdBy: uuid()

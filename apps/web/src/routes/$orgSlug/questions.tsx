@@ -38,9 +38,9 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import {
   seedQuestionDetail,
-  surveyQuestionDetailQuery,
-  surveyQuestionsListQuery,
-} from "~/lib/queries/survey-questions";
+  questionDetailQuery,
+  questionsListQuery,
+} from "~/lib/queries/questions";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -63,12 +63,12 @@ export const Route = createFileRoute("/$orgSlug/questions")({
   },
   loaderDeps: ({ search }) => ({ status: search.status }),
   loader: async ({ context: { queryClient }, deps }) => {
-    const rows = await queryClient.fetchQuery(surveyQuestionsListQuery(deps.status));
+    const rows = await queryClient.fetchQuery(questionsListQuery(deps.status));
     // Pre-warm each row's detail cache so opening the edit modal hits
     // warm cache and renders the full form (including options) without
     // a fan-in flash. N parallel queries — cheap at our scale.
     await Promise.all(
-      rows.map((r) => queryClient.prefetchQuery(surveyQuestionDetailQuery(r.surveyQuestionId))),
+      rows.map((r) => queryClient.prefetchQuery(questionDetailQuery(r.questionId))),
     );
   },
   component: QuestionsPage,
@@ -91,7 +91,7 @@ function QuestionsPage() {
       ? "Active"
       : (STATUS_OPTIONS.find((o) => o.value === filterValue)?.label ?? "Active");
 
-  // `null` = closed, `"new"` = create dialog, anything else = a surveyQuestionId being edited.
+  // `null` = closed, `"new"` = create dialog, anything else = a questionId being edited.
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
@@ -113,7 +113,7 @@ function QuestionsPage() {
       <QuestionsTable status={status} onEdit={(id) => setEditing(id)} />
       {editing !== null ? (
         <QuestionModal
-          initialSurveyQuestionId={editing === "new" ? null : editing}
+          initialQuestionId={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
         />
       ) : null}
@@ -126,9 +126,9 @@ function QuestionsTable({
   onEdit,
 }: {
   status: QuestionsSearch["status"];
-  onEdit: (surveyQuestionId: string) => void;
+  onEdit: (questionId: string) => void;
 }) {
-  const { data: rows } = useSuspenseQuery(surveyQuestionsListQuery(status));
+  const { data: rows } = useSuspenseQuery(questionsListQuery(status));
 
   return (
     <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
@@ -152,28 +152,23 @@ function QuestionsTable({
           </TableRow>
         ) : null}
         {rows.map((q) => (
-          <QuestionRow
-            key={q.surveyQuestionId}
-            question={q}
-            onEdit={() => onEdit(q.surveyQuestionId)}
-          />
+          <QuestionRow key={q.questionId} question={q} onEdit={() => onEdit(q.questionId)} />
         ))}
       </TableBody>
     </Table>
   );
 }
 
-type QuestionListRow = Awaited<ReturnType<typeof client.surveyQuestions.list>>[number];
+type QuestionListRow = Awaited<ReturnType<typeof client.questions.list>>[number];
 
 function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: () => void }) {
   const queryClient = useQueryClient();
   const archived = question.archivedAt != null;
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["questions"] });
 
   const archive = useMutation({
-    mutationFn: () =>
-      client.surveyQuestions.archive({ surveyQuestionId: question.surveyQuestionId }),
+    mutationFn: () => client.questions.archive({ questionId: question.questionId }),
     onSuccess: ({ affectedScriptIds }) => {
       void invalidate();
       // Targeted invalidation per script the question was removed from —
@@ -185,8 +180,7 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
     onError: (e) => toast.error(e.message),
   });
   const unarchive = useMutation({
-    mutationFn: () =>
-      client.surveyQuestions.unarchive({ surveyQuestionId: question.surveyQuestionId }),
+    mutationFn: () => client.questions.unarchive({ questionId: question.questionId }),
     onSuccess: invalidate,
     onError: (e) => toast.error(e.message),
   });
@@ -352,15 +346,15 @@ function ArchiveQuestionDialog({
 // One Dialog wraps both create and edit phases so the overlay doesn't
 // flash on the create → edit handoff.
 function QuestionModal({
-  initialSurveyQuestionId,
+  initialQuestionId,
   onClose,
 }: {
-  initialSurveyQuestionId: string | null;
+  initialQuestionId: string | null;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const [createdId, setCreatedId] = useState<string | null>(null);
-  const surveyQuestionId = initialSurveyQuestionId ?? createdId;
+  const questionId = initialQuestionId ?? createdId;
 
   return (
     <Dialog
@@ -370,16 +364,16 @@ function QuestionModal({
       }}
     >
       <DialogContent className="max-w-xl">
-        {surveyQuestionId === null ? (
+        {questionId === null ? (
           <CreateBody
             onCreated={(question) => {
               seedQuestionDetail(queryClient, question);
-              void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
-              setCreatedId(question.surveyQuestionId);
+              void queryClient.invalidateQueries({ queryKey: ["questions"] });
+              setCreatedId(question.questionId);
             }}
           />
         ) : (
-          <EditBody surveyQuestionId={surveyQuestionId} />
+          <EditBody questionId={questionId} />
         )}
       </DialogContent>
     </Dialog>
@@ -389,14 +383,14 @@ function QuestionModal({
 function CreateBody({
   onCreated,
 }: {
-  onCreated: (question: Awaited<ReturnType<typeof client.surveyQuestions.create>>) => void;
+  onCreated: (question: Awaited<ReturnType<typeof client.questions.create>>) => void;
 }) {
   const [name, setName] = useState("");
   const [responseType, setResponseType] = useState<"single_select">("single_select");
 
   const create = useMutation({
     mutationFn: (input: { name: string; responseType: "single_select" }) =>
-      client.surveyQuestions.create(input),
+      client.questions.create(input),
     onSuccess: onCreated,
     onError: (e) => toast.error(e.message),
   });
@@ -461,24 +455,24 @@ function CreateBody({
   );
 }
 
-function EditBody({ surveyQuestionId }: { surveyQuestionId: string }) {
+function EditBody({ questionId }: { questionId: string }) {
   const queryClient = useQueryClient();
-  const { data: question } = useQuery(surveyQuestionDetailQuery(surveyQuestionId));
+  const { data: question } = useQuery(questionDetailQuery(questionId));
 
   const rename = useMutation({
-    mutationFn: (name: string) => client.surveyQuestions.rename({ surveyQuestionId, name }),
+    mutationFn: (name: string) => client.questions.rename({ questionId, name }),
     onMutate: (name) => {
-      const key = ["survey-question", surveyQuestionId];
+      const key = ["question", questionId];
       const prev = queryClient.getQueryData<typeof question>(key);
       queryClient.setQueryData<typeof question>(key, (old) => (old ? { ...old, name } : old));
       return { prev };
     },
     onError: (e, _name, ctx) => {
       toast.error(e.message);
-      if (ctx?.prev) queryClient.setQueryData(["survey-question", surveyQuestionId], ctx.prev);
+      if (ctx?.prev) queryClient.setQueryData(["question", questionId], ctx.prev);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
     },
   });
 
@@ -507,11 +501,11 @@ function EditBody({ surveyQuestionId }: { surveyQuestionId: string }) {
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-sm text-muted-foreground">Question text</label>
-          <QuestionTextEditor surveyQuestionId={surveyQuestionId} />
+          <QuestionTextEditor questionId={questionId} />
         </div>
         <div className="flex flex-col gap-2">
           <label className="text-sm text-muted-foreground">Responses</label>
-          <ResponseOptionsEditor surveyQuestionId={surveyQuestionId} />
+          <ResponseOptionsEditor questionId={questionId} />
         </div>
         <div className="mt-2 flex justify-end">
           <DialogClose render={<Button />}>Done</DialogClose>

@@ -3,7 +3,7 @@ import { webPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
 import * as scripts from "./web/scripts";
 import * as segments from "./web/segments";
-import * as surveyQuestions from "./web/survey-questions";
+import * as questions from "./web/questions";
 import * as turfDrafts from "./web/turf-drafts";
 import * as webTurfs from "./web/turfs";
 import * as webUsers from "./web/users";
@@ -85,18 +85,18 @@ export const webRouter = {
     reorderSteps: scripts.reorderSteps,
     updateTextStep: scripts.updateTextStep,
   },
-  surveyQuestions: {
-    list: surveyQuestions.list,
-    getById: surveyQuestions.getById,
-    create: surveyQuestions.create,
-    rename: surveyQuestions.rename,
-    updateText: surveyQuestions.updateText,
-    archive: surveyQuestions.archive,
-    unarchive: surveyQuestions.unarchive,
-    addResponseOption: surveyQuestions.addResponseOption,
-    removeResponseOption: surveyQuestions.removeResponseOption,
-    reorderResponseOptions: surveyQuestions.reorderResponseOptions,
-    updateResponseOptionText: surveyQuestions.updateResponseOptionText,
+  questions: {
+    list: questions.list,
+    getById: questions.getById,
+    create: questions.create,
+    rename: questions.rename,
+    updateText: questions.updateText,
+    archive: questions.archive,
+    unarchive: questions.unarchive,
+    addResponseOption: questions.addResponseOption,
+    removeResponseOption: questions.removeResponseOption,
+    reorderResponseOptions: questions.reorderResponseOptions,
+    updateResponseOptionText: questions.updateResponseOptionText,
   },
   users: {
     list: webUsers.list,
@@ -124,9 +124,7 @@ export const nativeRouter = {
     get: nativeScripts.get,
   },
   canvass: {
-    appendDoorResult: canvass.appendDoorResult,
-    appendBuildingResult: canvass.appendBuildingResult,
-    appendPersonResult: canvass.appendPersonResult,
+    appendResult: canvass.appendResult,
     appendNote: canvass.appendNote,
     pull: canvass.pull,
   },
