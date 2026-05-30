@@ -75,6 +75,6 @@ export type CanvassEventPayload =
       outcome: CanvassOutcome | null;
       responses: Record<string, ResponseValue>; // keyed by questionId
     }
-  | { kind: "note"; text: string; canvassedAt: string };
+  | { kind: "note"; text: string };
 
 export type CanvassEvent = typeof canvassEvents.$inferSelect;

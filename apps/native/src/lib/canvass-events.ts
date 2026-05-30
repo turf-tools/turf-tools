@@ -138,7 +138,6 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
     await client.canvass.appendNote({
       ...base,
       text: payload.text,
-      canvassedAt: payload.canvassedAt,
     });
   } else {
     await client.canvass.appendResult({ ...base, payload });

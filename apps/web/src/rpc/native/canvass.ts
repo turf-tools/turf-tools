@@ -80,7 +80,6 @@ export const appendNote = mut
       doorId: z.string().uuid().optional(),
       buildingId: z.string().uuid().optional(),
       text: z.string().min(1),
-      canvassedAt: z.string(),
       createdAt: z.string(),
       canvasserId: z.string().optional(),
       inputType: z.string().optional(),
@@ -98,7 +97,7 @@ export const appendNote = mut
         doorId: input.doorId,
         buildingId: input.buildingId,
         kind: "note",
-        payload: { kind: "note", text: input.text, canvassedAt: input.canvassedAt },
+        payload: { kind: "note", text: input.text },
         inputType: input.inputType,
         createdAt: new Date(input.createdAt),
       })
