@@ -12,7 +12,7 @@ import { useScreenNav } from "@/lib/nav-context";
 import {
   type PersonSummary,
   derivePersonSummaries,
-  hasSurvey,
+  hasResponses,
   isRecorded,
   useCanvassEvents,
 } from "@/lib/canvass-events";
@@ -37,7 +37,7 @@ export default function TurfListScreen() {
 
   // Per-building semantic role for the map. Only set for fully-recorded
   // buildings — partials stay uncolored so completion stands out.
-  //   "contacted"   — fully recorded AND any person had a survey response
+  //   "contacted"   — fully recorded AND any person had a response
   //   "unavailable" — fully recorded AND all results are unavailable
   //   absent        — partial or none
   const buildingRoles = useMemo(() => {
@@ -48,8 +48,8 @@ export default function TurfListScreen() {
       if (persons.length === 0) continue;
       const allRecorded = persons.every((p) => isRecorded(allResults, p.personId));
       if (!allRecorded) continue;
-      const anySurvey = persons.some((p) => hasSurvey(allResults, p.personId));
-      map.set(building.buildingId, anySurvey ? "contacted" : "unavailable");
+      const anyResponses = persons.some((p) => hasResponses(allResults, p.personId));
+      map.set(building.buildingId, anyResponses ? "contacted" : "unavailable");
     }
     return map;
   }, [allResults, turfData]);
@@ -240,7 +240,9 @@ function BuildingRow({
   const recordedCount = persons.filter((p) => isRecorded(allResults, p.personId)).length;
   const allRecorded = recordedCount > 0 && recordedCount === personCount;
   // Match the dot-coloring rule on the map: only color when fully recorded.
-  const role = persons.some((p) => hasSurvey(allResults, p.personId)) ? "contacted" : "unavailable";
+  const role = persons.some((p) => hasResponses(allResults, p.personId))
+    ? "contacted"
+    : "unavailable";
   const address = formatBuildingAddress(building);
 
   return (

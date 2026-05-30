@@ -5,7 +5,7 @@ export * from "./auth/accounts";
 export * from "./auth/verifications";
 export * from "./memberships";
 export * from "./campaigns";
-export * from "./surveys";
+export * from "./questions";
 export * from "./scripts";
 export * from "./segments";
 export * from "./turfs";

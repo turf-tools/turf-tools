@@ -14,7 +14,6 @@ import { AppState, LogBox, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { activeTurfAtom, loadActiveTurf } from "@/lib/atoms/active-turf";
-import { createdByNameAtom, loadCreatedByName } from "@/lib/atoms/created-by-name";
 import { themeAtom } from "@/lib/atoms/theme";
 import { pullCanvassEvents } from "@/lib/canvass-events";
 import { persister, queryClient } from "@/lib/query-client";
@@ -111,20 +110,18 @@ function ThemedStack() {
 function BootGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const setActiveTurf = useSetAtom(activeTurfAtom);
-  const setCreatedByName = useSetAtom(createdByNameAtom);
 
   useEffect(() => {
     void (async () => {
-      const [activeTurf, name] = await Promise.all([loadActiveTurf(), loadCreatedByName()]);
+      const activeTurf = await loadActiveTurf();
       if (activeTurf) {
         setHost(activeTurf.host);
         setActiveTurf(activeTurf);
         router.replace(`/turfs/${activeTurf.turfId}`);
       }
-      if (name) setCreatedByName(name);
       setReady(true);
     })();
-  }, [setActiveTurf, setCreatedByName]);
+  }, [setActiveTurf]);
 
   if (!ready) return null;
   return <>{children}</>;

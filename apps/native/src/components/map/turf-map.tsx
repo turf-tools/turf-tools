@@ -36,8 +36,8 @@ type BuildingProps = {
   buildingId: string;
   doorCount: number;
   personCount: number;
-  // 0 = no result, 1 = unavailable (any recorded), 2 = contacted (any survey).
-  // Encoded as a number so the cluster aggregation can take the max — survey
+  // 0 = no result, 1 = unavailable (any recorded), 2 = contacted (any response).
+  // Encoded as a number so the cluster aggregation can take the max — response
   // dominates unavailable, unavailable dominates none.
   role: 0 | 1 | 2;
 };

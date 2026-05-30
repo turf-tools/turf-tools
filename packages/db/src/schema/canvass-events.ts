@@ -9,22 +9,25 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { turfs } from "./turfs";
-import { users } from "./auth/users";
 
-// Append-only event log for canvass results. Every result change (survey
-// response, unavailable outcome, note) is an immutable append.
-// "Current state" for an entity = latest event by sequence.
+// Append-only event log for canvass results. Two kinds:
+//   - "result": the complete current disposition of an entity (outcome +
+//     responses). It's a full snapshot, not a delta — current state
+//     is simply the latest result for the entity.
+//   - "note": freeform text, append-only (never superseded).
 //
-// Exactly one of (personId, doorId, buildingId) is set per event, identifying
-// the target entity level.
+// Exactly one of (personId, doorId, buildingId) is set per event.
 //
-// Primary key is (turfId, sequence) rather than just sequence: sequence stays
-// globally unique (bigserial), but the composite PK matches the actual access
-// pattern (queries are always turf-scoped) and keeps the door open to
-// partitioning by turfId later without a PK migration on populated data.
+// PK is (turfId, sequence) rather than just sequence: sequence stays globally
+// unique (bigserial), but the composite PK matches the turf-scoped access
+// pattern and leaves room to partition by turfId later.
 //
-// `clientEventId` is the client-supplied UUID used for retry deduplication —
-// it's NOT the row's primary id, hence the explicit `client` prefix.
+// clientEventId is the client-supplied UUID for retry dedup.
+//
+// createdAt is CLIENT time (when it happened in the field); receivedAt is
+// server time (when the server ingested it). The canonical ordering key is
+// sequence. canvasserId is the universal canvasser identity (no FK — it
+// references the future central identity system); null until that ships.
 
 export const canvassEvents = pgTable(
   "canvass_events",
@@ -34,17 +37,15 @@ export const canvassEvents = pgTable(
     turfId: uuid()
       .notNull()
       .references(() => turfs.turfId),
-    // Nullable: events from the auth-less canvasser flow have no user; they
-    // attribute via `createdByName` instead. Admin-attributed events set the FK.
-    userId: uuid().references(() => users.id),
-    createdByName: text(),
+    canvasserId: text(),
     personId: text(),
     doorId: uuid(),
     buildingId: uuid(),
     kind: text().notNull(),
     payload: jsonb().notNull(),
     inputType: text(),
-    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp({ withTimezone: true }).notNull(),
+    receivedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.turfId, t.sequence] }),
@@ -52,12 +53,28 @@ export const canvassEvents = pgTable(
   ],
 );
 
+// The single disposition of a result. `null` is the deliberate cleared /
+// un-attempt state.
+export type CanvassOutcome =
+  | "canvassed" // person: made contact (responses ride along)
+  | "not_home"
+  | "deceased"
+  | "hostile"
+  | "moved"
+  | "address_not_found" // door
+  | "inaccessible"; // building
+
+// One question's answer: selected option ids (single- or multi-select) or
+// free text.
+export type ResponseValue = { optionIds: string[] } | { text: string };
+
 // Payload discriminated union — shared between server and native app.
-// A `null` value (surveyResponseOptionId or outcome) is an un-record:
-// canvasser undid their own previous answer for just that field.
 export type CanvassEventPayload =
-  | { kind: "survey"; surveyQuestionId: string; surveyResponseOptionId: string | null }
-  | { kind: "outcome"; outcome: string | null }
-  | { kind: "note"; text: string; canvassedAt: string };
+  | {
+      kind: "result";
+      outcome: CanvassOutcome | null;
+      responses: Record<string, ResponseValue>; // keyed by questionId
+    }
+  | { kind: "note"; text: string };
 
 export type CanvassEvent = typeof canvassEvents.$inferSelect;

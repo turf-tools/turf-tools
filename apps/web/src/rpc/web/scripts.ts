@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import { and, asc, eq } from "@field-tools/db";
-import { campaigns, scripts, scriptSteps, surveyQuestions } from "@field-tools/db/schema";
+import { campaigns, scripts, scriptSteps, questions } from "@field-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
 
@@ -41,7 +41,7 @@ export const getById = pub
         scriptStepId: scriptSteps.scriptStepId,
         order: scriptSteps.order,
         stepType: scriptSteps.stepType,
-        surveyQuestionId: scriptSteps.surveyQuestionId,
+        questionId: scriptSteps.questionId,
         text: scriptSteps.text,
       })
       .from(scriptSteps)
@@ -122,7 +122,7 @@ export const clone = pub
           scriptId: newScript.scriptId,
           order: s.order,
           stepType: s.stepType,
-          surveyQuestionId: s.surveyQuestionId,
+          questionId: s.questionId,
           text: s.text,
         })),
       );
@@ -189,7 +189,7 @@ const addStepInput = z.discriminatedUnion("stepType", [
   z.object({
     scriptId: z.string().uuid(),
     stepType: z.literal("question"),
-    surveyQuestionId: z.string().uuid(),
+    questionId: z.string().uuid(),
   }),
   z.object({
     scriptId: z.string().uuid(),
@@ -210,26 +210,26 @@ export const addStep = pub.input(addStepInput).handler(async ({ context, input }
 
   if (input.stepType === "question") {
     const q = await context.db
-      .select({ surveyQuestionId: surveyQuestions.surveyQuestionId })
-      .from(surveyQuestions)
+      .select({ questionId: questions.questionId })
+      .from(questions)
       .where(
         and(
-          eq(surveyQuestions.surveyQuestionId, input.surveyQuestionId),
-          eq(surveyQuestions.organizationId, context.organizationId),
+          eq(questions.questionId, input.questionId),
+          eq(questions.organizationId, context.organizationId),
         ),
       );
-    if (q.length === 0) throw new ORPCError("NOT_FOUND", { message: "Survey question not found" });
+    if (q.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
   }
 
   const existing = await context.db
-    .select({ order: scriptSteps.order, surveyQuestionId: scriptSteps.surveyQuestionId })
+    .select({ order: scriptSteps.order, questionId: scriptSteps.questionId })
     .from(scriptSteps)
     .where(eq(scriptSteps.scriptId, input.scriptId));
 
-  // Canvasser responses key per surveyQuestionId, so the same question twice
+  // Canvasser responses key per questionId, so the same question twice
   // in one script would share its answer across both occurrences.
   if (input.stepType === "question") {
-    const already = existing.some((s) => s.surveyQuestionId === input.surveyQuestionId);
+    const already = existing.some((s) => s.questionId === input.questionId);
     if (already) {
       throw new ORPCError("CONFLICT", { message: "This question is already in the script" });
     }
@@ -242,14 +242,14 @@ export const addStep = pub.input(addStepInput).handler(async ({ context, input }
       scriptId: input.scriptId,
       order: nextOrder,
       stepType: input.stepType,
-      surveyQuestionId: input.stepType === "question" ? input.surveyQuestionId : null,
+      questionId: input.stepType === "question" ? input.questionId : null,
       text: input.stepType === "text" ? input.text : null,
     })
     .returning({
       scriptStepId: scriptSteps.scriptStepId,
       order: scriptSteps.order,
       stepType: scriptSteps.stepType,
-      surveyQuestionId: scriptSteps.surveyQuestionId,
+      questionId: scriptSteps.questionId,
       text: scriptSteps.text,
     });
   return rows[0]!;

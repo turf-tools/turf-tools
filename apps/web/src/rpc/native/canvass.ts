@@ -3,95 +3,53 @@ import { canvassEvents } from "@field-tools/db/schema";
 import { z } from "zod";
 import { nativeMut as mut, nativePub as pub } from "../context";
 
-// All ids passed in (doorId, buildingId, personId, surveyQuestionId,
-// surveyResponseOptionId) are the global UUIDs assigned by the DuckLake import
-// pipeline. They flow through the turf data blob to the native app and back
-// here unchanged.
+// All ids passed in (doorId, buildingId, personId, questionId, responseOptionId)
+// are the global UUIDs assigned by the DuckLake import pipeline. They flow
+// through the turf data blob to the native app and back here unchanged.
 //
-// Every result is an immutable append to canvass_events. "Current state" for
-// an entity = latest event by sequence. The clientEventId (client-generated
-// UUID) is used for dedup on retry.
+// Every event is an immutable append to canvass_events. There are two kinds:
+//   - "result": the entity's complete current disposition (outcome +
+//     responses). It's a full snapshot — current state is the latest result.
+//   - "note": freeform, append-only.
+// clientEventId (client-generated UUID) dedups retries. createdAt is the
+// client field-time; the server stamps receivedAt.
 
-const personOutcome = z.enum(["not_home", "deceased", "hostile", "moved"]);
-const doorOutcome = z.enum(["address_not_found"]);
-const buildingOutcome = z.enum(["inaccessible"]);
+const outcome = z.enum([
+  "canvassed",
+  "not_home",
+  "deceased",
+  "hostile",
+  "moved",
+  "address_not_found",
+  "inaccessible",
+]);
 
-export const appendDoorResult = mut
+// One question's answer: selected option ids (single- or multi-select) or
+// free text.
+const responseValue = z.union([
+  z.object({ optionIds: z.array(z.string().uuid()) }),
+  z.object({ text: z.string() }),
+]);
+
+const resultPayload = z.object({
+  kind: z.literal("result"),
+  outcome: outcome.nullable(),
+  responses: z.record(z.string(), responseValue), // keyed by questionId
+});
+
+// Append a result (full disposition snapshot) for a person, door, or building.
+export const appendResult = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
-      doorId: z.string().uuid(),
-      outcome: doorOutcome,
-      createdByName: z.string().optional(),
-      inputType: z.string().optional(),
-      clientEventId: z.string().optional(),
-    }),
-  )
-  .handler(async ({ context, input }) => {
-    await context.db
-      .insert(canvassEvents)
-      .values({
-        clientEventId: input.clientEventId,
-        turfId: input.turfId,
-        createdByName: input.createdByName,
-        doorId: input.doorId,
-        kind: "outcome",
-        payload: { kind: "outcome", outcome: input.outcome },
-        inputType: input.inputType,
-      })
-      .onConflictDoNothing({ target: canvassEvents.clientEventId });
-    return { ok: true };
-  });
-
-export const appendBuildingResult = mut
-  .input(
-    z.object({
-      turfId: z.string().uuid(),
-      buildingId: z.string().uuid(),
-      outcome: buildingOutcome,
-      createdByName: z.string().optional(),
-      inputType: z.string().optional(),
-      clientEventId: z.string().optional(),
-    }),
-  )
-  .handler(async ({ context, input }) => {
-    await context.db
-      .insert(canvassEvents)
-      .values({
-        clientEventId: input.clientEventId,
-        turfId: input.turfId,
-        createdByName: input.createdByName,
-        buildingId: input.buildingId,
-        kind: "outcome",
-        payload: { kind: "outcome", outcome: input.outcome },
-        inputType: input.inputType,
-      })
-      .onConflictDoNothing({ target: canvassEvents.clientEventId });
-    return { ok: true };
-  });
-
-// Append a per-person canvass result to the event log.
-export const appendPersonResult = mut
-  .input(
-    z.object({
-      turfId: z.string().uuid(),
-      buildingId: z.string().uuid().optional(),
+      personId: z.string().optional(),
       doorId: z.string().uuid().optional(),
-      personId: z.string(),
-      createdByName: z.string().optional(),
+      buildingId: z.string().uuid().optional(),
+      payload: resultPayload,
+      createdAt: z.string(),
+      canvasserId: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
-      payload: z.discriminatedUnion("kind", [
-        z.object({
-          kind: z.literal("survey"),
-          surveyQuestionId: z.string().uuid(),
-          surveyResponseOptionId: z.string().uuid().nullable(),
-        }),
-        z.object({
-          kind: z.literal("outcome"),
-          outcome: personOutcome.nullable(),
-        }),
-      ]),
     }),
   )
   .handler(async ({ context, input }) => {
@@ -100,11 +58,14 @@ export const appendPersonResult = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
-        createdByName: input.createdByName,
+        canvasserId: input.canvasserId,
         personId: input.personId,
-        kind: input.payload.kind,
+        doorId: input.doorId,
+        buildingId: input.buildingId,
+        kind: "result",
         payload: input.payload,
         inputType: input.inputType,
+        createdAt: new Date(input.createdAt),
       })
       .onConflictDoNothing({ target: canvassEvents.clientEventId });
     return { ok: true };
@@ -119,8 +80,8 @@ export const appendNote = mut
       doorId: z.string().uuid().optional(),
       buildingId: z.string().uuid().optional(),
       text: z.string().min(1),
-      canvassedAt: z.string(),
-      createdByName: z.string().optional(),
+      createdAt: z.string(),
+      canvasserId: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
     }),
@@ -131,13 +92,14 @@ export const appendNote = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
-        createdByName: input.createdByName,
+        canvasserId: input.canvasserId,
         personId: input.personId,
         doorId: input.doorId,
         buildingId: input.buildingId,
         kind: "note",
-        payload: { kind: "note", text: input.text, canvassedAt: input.canvassedAt },
+        payload: { kind: "note", text: input.text },
         inputType: input.inputType,
+        createdAt: new Date(input.createdAt),
       })
       .onConflictDoNothing({ target: canvassEvents.clientEventId });
     return { ok: true };

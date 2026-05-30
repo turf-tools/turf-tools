@@ -1,6 +1,6 @@
 import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
-import { surveyQuestions } from "./surveys";
+import { questions } from "./questions";
 import { users } from "./auth/users";
 
 // A script is an ordered sequence of steps presented to canvassers at the
@@ -18,7 +18,7 @@ export const scripts = pgTable("scripts", {
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 });
 
-// A step is either stepType='question' (referencing a reusable survey
+// A step is either stepType='question' (referencing a reusable
 // question) or stepType='text' (carrying its copy inline). Type/payload
 // consistency is enforced at the RPC layer.
 export const scriptSteps = pgTable("script_steps", {
@@ -28,6 +28,6 @@ export const scriptSteps = pgTable("script_steps", {
     .references(() => scripts.scriptId, { onDelete: "cascade" }),
   order: integer().notNull(),
   stepType: text().notNull(),
-  surveyQuestionId: uuid().references(() => surveyQuestions.surveyQuestionId),
+  questionId: uuid().references(() => questions.questionId),
   text: text(),
 });

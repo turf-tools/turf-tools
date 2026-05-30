@@ -1,10 +1,5 @@
 import { asc, eq, inArray } from "@field-tools/db";
-import {
-  scripts,
-  scriptSteps,
-  surveyQuestions,
-  surveyResponseOptions,
-} from "@field-tools/db/schema";
+import { scripts, scriptSteps, questions, responseOptions } from "@field-tools/db/schema";
 import { z } from "zod";
 import { nativePub as pub } from "../context";
 
@@ -15,7 +10,7 @@ import { nativePub as pub } from "../context";
 // Wire shape:
 //   { scriptId, name, steps: [
 //       { stepType: "text", text, order } |
-//       { stepType: "question", surveyQuestionId, responseType, text, order, options: [...] }
+//       { stepType: "question", questionId, responseType, text, order, options: [...] }
 //   ] }
 export const get = pub
   .input(z.object({ scriptId: z.string().uuid() }))
@@ -32,7 +27,7 @@ export const get = pub
         scriptStepId: scriptSteps.scriptStepId,
         stepType: scriptSteps.stepType,
         order: scriptSteps.order,
-        surveyQuestionId: scriptSteps.surveyQuestionId,
+        questionId: scriptSteps.questionId,
         stepText: scriptSteps.text,
       })
       .from(scriptSteps)
@@ -42,42 +37,42 @@ export const get = pub
     // Batch-fetch all referenced questions + their options.
     const questionIds = stepRows
       .filter(
-        (s): s is typeof s & { surveyQuestionId: string } =>
-          s.stepType === "question" && s.surveyQuestionId !== null,
+        (s): s is typeof s & { questionId: string } =>
+          s.stepType === "question" && s.questionId !== null,
       )
-      .map((s) => s.surveyQuestionId);
+      .map((s) => s.questionId);
 
     const questionRows =
       questionIds.length === 0
         ? []
         : await context.db
             .select({
-              surveyQuestionId: surveyQuestions.surveyQuestionId,
-              responseType: surveyQuestions.responseType,
-              text: surveyQuestions.text,
+              questionId: questions.questionId,
+              responseType: questions.responseType,
+              text: questions.text,
             })
-            .from(surveyQuestions)
-            .where(inArray(surveyQuestions.surveyQuestionId, questionIds));
-    const questionById = new Map(questionRows.map((q) => [q.surveyQuestionId, q]));
+            .from(questions)
+            .where(inArray(questions.questionId, questionIds));
+    const questionById = new Map(questionRows.map((q) => [q.questionId, q]));
 
     const optionRows =
       questionIds.length === 0
         ? []
         : await context.db
             .select({
-              surveyResponseOptionId: surveyResponseOptions.surveyResponseOptionId,
-              surveyQuestionId: surveyResponseOptions.surveyQuestionId,
-              text: surveyResponseOptions.text,
-              order: surveyResponseOptions.order,
+              responseOptionId: responseOptions.responseOptionId,
+              questionId: responseOptions.questionId,
+              text: responseOptions.text,
+              order: responseOptions.order,
             })
-            .from(surveyResponseOptions)
-            .where(inArray(surveyResponseOptions.surveyQuestionId, questionIds))
-            .orderBy(asc(surveyResponseOptions.order));
+            .from(responseOptions)
+            .where(inArray(responseOptions.questionId, questionIds))
+            .orderBy(asc(responseOptions.order));
     const optionsByQuestion = new Map<string, typeof optionRows>();
     for (const opt of optionRows) {
-      const list = optionsByQuestion.get(opt.surveyQuestionId) ?? [];
+      const list = optionsByQuestion.get(opt.questionId) ?? [];
       list.push(opt);
-      optionsByQuestion.set(opt.surveyQuestionId, list);
+      optionsByQuestion.set(opt.questionId, list);
     }
 
     type NativeScriptStep =
@@ -86,10 +81,10 @@ export const get = pub
           scriptStepId: string;
           stepType: "question";
           order: number;
-          surveyQuestionId: string;
+          questionId: string;
           responseType: string;
           text: string;
-          options: Array<{ surveyResponseOptionId: string; text: string; order: number }>;
+          options: Array<{ responseOptionId: string; text: string; order: number }>;
         };
 
     const steps: NativeScriptStep[] = [];
@@ -101,18 +96,18 @@ export const get = pub
           order: s.order,
           text: s.stepText ?? "",
         });
-      } else if (s.stepType === "question" && s.surveyQuestionId) {
-        const q = questionById.get(s.surveyQuestionId);
+      } else if (s.stepType === "question" && s.questionId) {
+        const q = questionById.get(s.questionId);
         if (!q) continue;
         steps.push({
           scriptStepId: s.scriptStepId,
           stepType: "question",
           order: s.order,
-          surveyQuestionId: q.surveyQuestionId,
+          questionId: q.questionId,
           responseType: q.responseType,
           text: q.text,
-          options: (optionsByQuestion.get(q.surveyQuestionId) ?? []).map((o) => ({
-            surveyResponseOptionId: o.surveyResponseOptionId,
+          options: (optionsByQuestion.get(q.questionId) ?? []).map((o) => ({
+            responseOptionId: o.responseOptionId,
             text: o.text,
             order: o.order,
           })),
