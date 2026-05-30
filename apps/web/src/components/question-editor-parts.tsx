@@ -6,17 +6,17 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
-import { surveyQuestionDetailQuery } from "~/lib/queries/survey-questions";
+import { questionDetailQuery } from "~/lib/queries/questions";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
-// Shared editors and metadata for survey questions. Components write
-// optimistically against ["survey-question", id], so any surface that
+// Shared editors and metadata for questions. Components write
+// optimistically against ["question", id], so any surface that
 // renders them gets live-save with no coordination.
 
 export type BadgeMeta = { label: string; color: string };
 
-// Keyed by surveyQuestions.responseType. Hues from schemeObservable10.
+// Keyed by questions.responseType. Hues from schemeObservable10.
 export const RESPONSE_TYPE_META: Record<string, BadgeMeta> = {
   single_select: { label: "Single Select", color: schemeObservable10[0]! },
   multi_select: { label: "Multi Select", color: schemeObservable10[1]! },
@@ -24,13 +24,13 @@ export const RESPONSE_TYPE_META: Record<string, BadgeMeta> = {
 };
 
 type ResponseOption = {
-  surveyResponseOptionId: string;
+  responseOptionId: string;
   text: string;
   order: number;
 };
 
 type QuestionDetail = {
-  surveyQuestionId: string;
+  questionId: string;
   name: string;
   responseType: string;
   text: string;
@@ -39,13 +39,13 @@ type QuestionDetail = {
   options: ResponseOption[];
 };
 
-export function QuestionTextEditor({ surveyQuestionId }: { surveyQuestionId: string }) {
+export function QuestionTextEditor({ questionId }: { questionId: string }) {
   const queryClient = useQueryClient();
-  const { data: question } = useQuery(surveyQuestionDetailQuery(surveyQuestionId));
-  const questionKey = ["survey-question", surveyQuestionId];
+  const { data: question } = useQuery(questionDetailQuery(questionId));
+  const questionKey = ["question", questionId];
 
   const updateText = useMutation({
-    mutationFn: (text: string) => client.surveyQuestions.updateText({ surveyQuestionId, text }),
+    mutationFn: (text: string) => client.questions.updateText({ questionId, text }),
     onMutate: (text) => {
       const prev = queryClient.getQueryData<QuestionDetail>(questionKey);
       queryClient.setQueryData<QuestionDetail>(questionKey, (old) =>
@@ -55,10 +55,10 @@ export function QuestionTextEditor({ surveyQuestionId }: { surveyQuestionId: str
     },
     onSuccess: () => {
       // The questions list shows `text` per row.
-      void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
     },
     onError: (e, _text, ctx) => {
-      console.error("surveyQuestions.updateText failed", e);
+      console.error("questions.updateText failed", e);
       toast.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(questionKey, ctx.prev);
     },
@@ -76,12 +76,12 @@ export function QuestionTextEditor({ surveyQuestionId }: { surveyQuestionId: str
   );
 }
 
-export function ResponseOptionsEditor({ surveyQuestionId }: { surveyQuestionId: string }) {
+export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
   const queryClient = useQueryClient();
-  const { data: question } = useQuery(surveyQuestionDetailQuery(surveyQuestionId));
+  const { data: question } = useQuery(questionDetailQuery(questionId));
 
   const setDetail = (updater: (prev: QuestionDetail) => QuestionDetail) => {
-    queryClient.setQueryData<QuestionDetail>(["survey-question", surveyQuestionId], (old) =>
+    queryClient.setQueryData<QuestionDetail>(["question", questionId], (old) =>
       old ? updater(old) : old,
     );
   };
@@ -91,20 +91,17 @@ export function ResponseOptionsEditor({ surveyQuestionId }: { surveyQuestionId: 
   // fade-in. Bounded by mount-time count; doesn't grow with usage.
   const mountedIdsRef = useRef<Set<string> | null>(null);
   if (mountedIdsRef.current === null && question) {
-    mountedIdsRef.current = new Set(question.options.map((o) => o.surveyResponseOptionId));
+    mountedIdsRef.current = new Set(question.options.map((o) => o.responseOptionId));
   }
   const isPreExisting = (id: string): boolean => mountedIdsRef.current?.has(id) ?? true;
 
   const addOption = useMutation({
-    mutationFn: () => client.surveyQuestions.addResponseOption({ surveyQuestionId, text: "" }),
+    mutationFn: () => client.questions.addResponseOption({ questionId, text: "" }),
     onMutate: () => {
       const tempId = `temp-${crypto.randomUUID()}`;
       setDetail((d) => ({
         ...d,
-        options: [
-          ...d.options,
-          { surveyResponseOptionId: tempId, text: "", order: d.options.length },
-        ],
+        options: [...d.options, { responseOptionId: tempId, text: "", order: d.options.length }],
       }));
       return { tempId };
     },
@@ -112,76 +109,76 @@ export function ResponseOptionsEditor({ surveyQuestionId }: { surveyQuestionId: 
       // Swap the temp row for the server-assigned one.
       setDetail((d) => ({
         ...d,
-        options: d.options.map((o) => (o.surveyResponseOptionId === ctx.tempId ? row : o)),
+        options: d.options.map((o) => (o.responseOptionId === ctx.tempId ? row : o)),
       }));
     },
     onError: (e, _vars, ctx) => {
-      console.error("surveyQuestions.addResponseOption failed", e);
+      console.error("questions.addResponseOption failed", e);
       toast.error(e.message);
       if (ctx?.tempId) {
         setDetail((d) => ({
           ...d,
-          options: d.options.filter((o) => o.surveyResponseOptionId !== ctx.tempId),
+          options: d.options.filter((o) => o.responseOptionId !== ctx.tempId),
         }));
       }
     },
   });
 
   const removeOption = useMutation({
-    mutationFn: (surveyResponseOptionId: string) =>
-      client.surveyQuestions.removeResponseOption({ surveyQuestionId, surveyResponseOptionId }),
-    onMutate: (surveyResponseOptionId) => {
-      const prev = queryClient.getQueryData<QuestionDetail>(["survey-question", surveyQuestionId]);
+    mutationFn: (responseOptionId: string) =>
+      client.questions.removeResponseOption({ questionId, responseOptionId }),
+    onMutate: (responseOptionId) => {
+      const prev = queryClient.getQueryData<QuestionDetail>(["question", questionId]);
       setDetail((d) => ({
         ...d,
-        options: d.options.filter((o) => o.surveyResponseOptionId !== surveyResponseOptionId),
+        options: d.options.filter((o) => o.responseOptionId !== responseOptionId),
       }));
       return { prev };
     },
     onError: (e, _id, ctx) => {
-      console.error("surveyQuestions.removeResponseOption failed", e);
+      console.error("questions.removeResponseOption failed", e);
       toast.error(e.message);
-      if (ctx?.prev) queryClient.setQueryData(["survey-question", surveyQuestionId], ctx.prev);
+      if (ctx?.prev) queryClient.setQueryData(["question", questionId], ctx.prev);
     },
   });
 
   const reorderOptions = useMutation({
     mutationFn: (ids: string[]) =>
-      client.surveyQuestions.reorderResponseOptions({
-        surveyQuestionId,
-        surveyResponseOptionIds: ids,
+      client.questions.reorderResponseOptions({
+        questionId,
+        responseOptionIds: ids,
       }),
     onError: (e) => {
-      console.error("surveyQuestions.reorderResponseOptions failed", e);
+      console.error("questions.reorderResponseOptions failed", e);
       toast.error(e.message);
       void queryClient.invalidateQueries({
-        queryKey: ["survey-question", surveyQuestionId],
+        queryKey: ["question", questionId],
       });
     },
   });
 
   const updateOptionText = useMutation({
-    mutationFn: (input: { surveyResponseOptionId: string; text: string }) =>
-      client.surveyQuestions.updateResponseOptionText({ surveyQuestionId, ...input }),
-    onMutate: ({ surveyResponseOptionId, text }) => {
+    mutationFn: (input: { responseOptionId: string; text: string }) =>
+      client.questions.updateResponseOptionText({ questionId, ...input }),
+    onMutate: ({ responseOptionId, text }) => {
       setDetail((d) => ({
         ...d,
         options: d.options.map((o) =>
-          o.surveyResponseOptionId === surveyResponseOptionId ? { ...o, text } : o,
+          o.responseOptionId === responseOptionId ? { ...o, text } : o,
         ),
       }));
     },
     onError: (e) => {
-      console.error("surveyQuestions.updateResponseOptionText failed", e);
+      console.error("questions.updateResponseOptionText failed", e);
       toast.error(e.message);
       void queryClient.invalidateQueries({
-        queryKey: ["survey-question", surveyQuestionId],
+        queryKey: ["question", questionId],
       });
     },
   });
 
   // Write the optimistic order to the cache on every reorder tick so any
-  // observer of `surveyQuestionDetailQuery` (the script-editor preview)
+  // observer of `questionDetailQuery` (the script-editor preview)
   // updates live during drag. baselineOrderRef captures the pre-drag
   // order on the first tick; drag-end compares against it to skip the
   // mutation when the user releases at the original position.
@@ -189,7 +186,7 @@ export function ResponseOptionsEditor({ surveyQuestionId }: { surveyQuestionId: 
 
   const handleOptionsReorder = (next: ResponseOption[]) => {
     if (baselineOrderRef.current === null && question) {
-      baselineOrderRef.current = question.options.map((o) => o.surveyResponseOptionId);
+      baselineOrderRef.current = question.options.map((o) => o.responseOptionId);
     }
     setDetail((d) => ({ ...d, options: next.map((o, i) => ({ ...o, order: i })) }));
   };
@@ -198,7 +195,7 @@ export function ResponseOptionsEditor({ surveyQuestionId }: { surveyQuestionId: 
     const baseline = baselineOrderRef.current;
     baselineOrderRef.current = null;
     if (!baseline || !question) return;
-    const newOrder = question.options.map((o) => o.surveyResponseOptionId);
+    const newOrder = question.options.map((o) => o.responseOptionId);
     const changed =
       baseline.length !== newOrder.length || newOrder.some((id, i) => id !== baseline[i]);
     if (changed) reorderOptions.mutate(newOrder);
@@ -218,17 +215,17 @@ export function ResponseOptionsEditor({ surveyQuestionId }: { surveyQuestionId: 
         >
           {question.options.map((opt) => (
             <ReorderOptionRow
-              key={opt.surveyResponseOptionId}
+              key={opt.responseOptionId}
               option={opt}
               onChangeText={(text) =>
                 updateOptionText.mutate({
-                  surveyResponseOptionId: opt.surveyResponseOptionId,
+                  responseOptionId: opt.responseOptionId,
                   text,
                 })
               }
-              onRemove={() => removeOption.mutate(opt.surveyResponseOptionId)}
+              onRemove={() => removeOption.mutate(opt.responseOptionId)}
               onDragEnd={handleOptionsDragEnd}
-              isNew={!isPreExisting(opt.surveyResponseOptionId)}
+              isNew={!isPreExisting(opt.responseOptionId)}
             />
           ))}
         </Reorder.Group>

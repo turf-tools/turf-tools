@@ -30,9 +30,9 @@ import {
 import { scriptDetailQuery, scriptsListQuery } from "~/lib/queries/scripts";
 import {
   seedQuestionDetail,
-  surveyQuestionDetailQuery,
-  surveyQuestionsListQuery,
-} from "~/lib/queries/survey-questions";
+  questionDetailQuery,
+  questionsListQuery,
+} from "~/lib/queries/questions";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -40,7 +40,7 @@ type ScriptStepRow = {
   scriptStepId: string;
   order: number;
   stepType: string;
-  surveyQuestionId: string | null;
+  questionId: string | null;
   text: string | null;
 };
 
@@ -56,10 +56,10 @@ export const Route = createFileRoute("/$orgSlug/scripts/$scriptId")({
     // render synchronously without a flash. Also seed the org-wide list
     // so the "Add question" dropdown is hot.
     await Promise.all([
-      queryClient.prefetchQuery(surveyQuestionsListQuery()),
+      queryClient.prefetchQuery(questionsListQuery()),
       ...(detail?.steps ?? [])
-        .filter((s) => s.stepType === "question" && s.surveyQuestionId)
-        .map((s) => queryClient.prefetchQuery(surveyQuestionDetailQuery(s.surveyQuestionId!))),
+        .filter((s) => s.stepType === "question" && s.questionId)
+        .map((s) => queryClient.prefetchQuery(questionDetailQuery(s.questionId!))),
     ]);
   },
   component: ScriptEditor,
@@ -93,28 +93,24 @@ function ScriptEditor() {
     },
   });
 
-  const { data: surveyQuestions = [] } = useQuery(surveyQuestionsListQuery());
+  const { data: questions = [] } = useQuery(questionsListQuery());
   // A script can't repeat the same question — the canvasser response model
-  // keys per surveyQuestionId, so two occurrences would share answers.
-  const usedQuestionIds = new Set(
-    steps.filter((s) => s.surveyQuestionId).map((s) => s.surveyQuestionId!),
-  );
-  const availableQuestions = surveyQuestions.filter(
-    (q) => !usedQuestionIds.has(q.surveyQuestionId),
-  );
+  // keys per questionId, so two occurrences would share answers.
+  const usedQuestionIds = new Set(steps.filter((s) => s.questionId).map((s) => s.questionId!));
+  const availableQuestions = questions.filter((q) => !usedQuestionIds.has(q.questionId));
 
   const addExistingQuestion = useMutation({
-    mutationFn: (surveyQuestionId: string) =>
-      client.scripts.addStep({ scriptId, stepType: "question", surveyQuestionId }),
-    onMutate: (surveyQuestionId) => {
+    mutationFn: (questionId: string) =>
+      client.scripts.addStep({ scriptId, stepType: "question", questionId }),
+    onMutate: (questionId) => {
       // Warm the detail cache in parallel so the new step row renders
       // without a "Loading…" flash.
-      void queryClient.prefetchQuery(surveyQuestionDetailQuery(surveyQuestionId));
+      void queryClient.prefetchQuery(questionDetailQuery(questionId));
     },
     onSuccess: (row) => {
       setSteps((s) => [...s, row]);
       // usedCount on the questions list reflects script_step references.
-      void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
     },
     onError: (e) => {
       console.error("scripts.addStep failed", e);
@@ -126,18 +122,18 @@ function ScriptEditor() {
 
   const createAndAddQuestion = useMutation({
     mutationFn: async (input: { name: string; responseType: "single_select" }) => {
-      const question = await client.surveyQuestions.create(input);
+      const question = await client.questions.create(input);
       const step = await client.scripts.addStep({
         scriptId,
         stepType: "question",
-        surveyQuestionId: question.surveyQuestionId,
+        questionId: question.questionId,
       });
       return { question, step };
     },
     onSuccess: ({ question, step }) => {
       seedQuestionDetail(queryClient, question);
       setSteps((s) => [...s, step]);
-      void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
       setNewQuestionDialogOpen(false);
     },
     onError: (e) => {
@@ -158,7 +154,7 @@ function ScriptEditor() {
       if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
     },
   });
 
@@ -257,8 +253,8 @@ function ScriptEditor() {
               <DropdownMenuContent align="start">
                 {availableQuestions.map((q) => (
                   <DropdownMenuItem
-                    key={q.surveyQuestionId}
-                    onClick={() => addExistingQuestion.mutate(q.surveyQuestionId)}
+                    key={q.questionId}
+                    onClick={() => addExistingQuestion.mutate(q.questionId)}
                   >
                     <span className="truncate">{q.name}</span>
                   </DropdownMenuItem>
@@ -358,10 +354,10 @@ function StepRow({
 }) {
   return (
     <div className="rounded-md border border-border bg-card p-3">
-      {step.stepType === "question" && step.surveyQuestionId ? (
+      {step.stepType === "question" && step.questionId ? (
         <QuestionStepBody
           number={number}
-          surveyQuestionId={step.surveyQuestionId}
+          questionId={step.questionId}
           onRemove={onRemove}
           dragControls={dragControls}
         />
@@ -456,33 +452,33 @@ function TextStepBody({
 
 function QuestionStepBody({
   number,
-  surveyQuestionId,
+  questionId,
   onRemove,
   dragControls,
 }: {
   number: number;
-  surveyQuestionId: string;
+  questionId: string;
   onRemove: () => void;
   dragControls?: ReturnType<typeof useDragControls>;
 }) {
   const queryClient = useQueryClient();
-  const { data: question } = useQuery(surveyQuestionDetailQuery(surveyQuestionId));
+  const { data: question } = useQuery(questionDetailQuery(questionId));
 
   const renameQuestion = useMutation({
-    mutationFn: (name: string) => client.surveyQuestions.rename({ surveyQuestionId, name }),
+    mutationFn: (name: string) => client.questions.rename({ questionId, name }),
     onMutate: (name) => {
-      const key = ["survey-question", surveyQuestionId];
+      const key = ["question", questionId];
       const prev = queryClient.getQueryData<typeof question>(key);
       queryClient.setQueryData<typeof question>(key, (old) => (old ? { ...old, name } : old));
       return { prev };
     },
     onError: (e, _name, ctx) => {
-      console.error("surveyQuestions.rename failed", e);
+      console.error("questions.rename failed", e);
       toast.error(e.message);
-      if (ctx?.prev) queryClient.setQueryData(["survey-question", surveyQuestionId], ctx.prev);
+      if (ctx?.prev) queryClient.setQueryData(["question", questionId], ctx.prev);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["survey-questions"] });
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
     },
   });
 
@@ -520,9 +516,9 @@ function QuestionStepBody({
           <RemoveButton onRemove={onRemove} />
         </div>
       </div>
-      <QuestionTextEditor surveyQuestionId={surveyQuestionId} />
+      <QuestionTextEditor questionId={questionId} />
       <div className="mt-4 mb-1">
-        <ResponseOptionsEditor surveyQuestionId={surveyQuestionId} />
+        <ResponseOptionsEditor questionId={questionId} />
       </div>
     </>
   );
@@ -580,7 +576,7 @@ function DoubleClickEditInput({
   );
 }
 
-// Reads from the same survey-question cache the editor writes to, so edits flow live.
+// Reads from the same question cache the editor writes to, so edits flow live.
 function ScriptPreview({ name, steps }: { name: string; steps: ScriptStepRow[] }) {
   return (
     <div className="flex-1 min-w-0 flex flex-col rounded-md border border-border bg-card overflow-y-auto">
@@ -597,10 +593,8 @@ function ScriptPreview({ name, steps }: { name: string; steps: ScriptStepRow[] }
               </p>
             );
           }
-          if (step.surveyQuestionId) {
-            return (
-              <QuestionPreview key={step.scriptStepId} surveyQuestionId={step.surveyQuestionId} />
-            );
+          if (step.questionId) {
+            return <QuestionPreview key={step.scriptStepId} questionId={step.questionId} />;
           }
           return null;
         })}
@@ -609,8 +603,8 @@ function ScriptPreview({ name, steps }: { name: string; steps: ScriptStepRow[] }
   );
 }
 
-function QuestionPreview({ surveyQuestionId }: { surveyQuestionId: string }) {
-  const { data } = useQuery(surveyQuestionDetailQuery(surveyQuestionId));
+function QuestionPreview({ questionId }: { questionId: string }) {
+  const { data } = useQuery(questionDetailQuery(questionId));
   if (!data) return null;
   return (
     <div className="flex flex-col gap-2">
@@ -624,7 +618,7 @@ function QuestionPreview({ surveyQuestionId }: { surveyQuestionId: string }) {
       <div className="flex flex-col gap-1.5">
         {data.options.map((opt) => (
           <div
-            key={opt.surveyResponseOptionId}
+            key={opt.responseOptionId}
             className="rounded-md border border-border bg-card px-3 py-1.5 text-sm"
           >
             {opt.text?.trim() ? (

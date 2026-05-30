@@ -21,7 +21,6 @@ import {
   derivePersonSummaries,
   isRecorded,
   useRecordEvent,
-  useRecordEvents,
   useCanvassEvents,
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
@@ -30,7 +29,7 @@ import { toTitleCase } from "@/lib/format";
 import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
 import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
-import type { TurfDataPerson } from "@field-tools/db/schema";
+import type { CanvassEventPayload, TurfDataPerson } from "@field-tools/db/schema";
 
 type Mode = "script" | "unavailable" | "note" | "details";
 
@@ -69,7 +68,6 @@ export default function PersonScreen() {
   const events = useCanvassEvents(turfId);
   const summaries = useMemo(() => derivePersonSummaries(events), [events]);
   const recordEvent = useRecordEvent(turfId);
-  const recordEvents = useRecordEvents(turfId);
   const setOpenSheet = useSetAtom(openSheetAtom);
   const theme = useAtomValue(themeAtom);
   const isDark = theme === "dark";
@@ -80,7 +78,7 @@ export default function PersonScreen() {
   const summary = summaries.get(personId);
   const formattedNotes = (summary?.notes ?? []).map((e) => ({
     text: (e.payload as { text: string }).text,
-    canvassedAt: (e.payload as { canvassedAt: string }).canvassedAt ?? e.createdAt,
+    createdAt: e.createdAt,
   }));
 
   // Optimistic mirrors: taps update local state immediately so the
@@ -105,35 +103,27 @@ export default function PersonScreen() {
     if (unavailableOutcome) setMode("unavailable");
   }, [unavailableOutcome]);
 
-  const clearResult = () => {
-    if (mode === "unavailable") {
-      if (unavailableOutcome === null) return;
-      setUnavailableOutcome(null);
-      setTimeout(
-        () =>
-          recordEvent({ personId, kind: "outcome", payload: { kind: "outcome", outcome: null } }),
-        0,
-      );
-      return;
+  // Emit a full result snapshot for the current disposition. An "unavailable"
+  // outcome and responses are mutually exclusive: an outcome clears
+  // responses, and present responses imply "canvassed".
+  const emitResult = (selections: Map<string, string>, outcome: string | null) => {
+    const responses: Record<string, { optionIds: string[] }> = {};
+    let resolvedOutcome = outcome;
+    if (!outcome && selections.size > 0) {
+      resolvedOutcome = "canvassed";
+      for (const [questionId, optionId] of selections) {
+        responses[questionId] = { optionIds: [optionId] };
+      }
     }
-    if (selectedOptionByQuestion.size === 0) return;
-    const questionIds = Array.from(selectedOptionByQuestion.keys());
+    const payload = { kind: "result", outcome: resolvedOutcome, responses } as CanvassEventPayload;
+    setTimeout(() => recordEvent({ personId, kind: "result", payload }), 0);
+  };
+
+  const clearResult = () => {
+    if (unavailableOutcome === null && selectedOptionByQuestion.size === 0) return;
+    setUnavailableOutcome(null);
     setSelectedOptionByQuestion(new Map());
-    setTimeout(
-      () =>
-        recordEvents(
-          questionIds.map((surveyQuestionId) => ({
-            personId,
-            kind: "survey",
-            payload: {
-              kind: "survey" as const,
-              surveyQuestionId,
-              surveyResponseOptionId: null,
-            },
-          })),
-        ),
-      0,
-    );
+    emitResult(new Map(), null);
   };
 
   const handleListPress = () => {
@@ -215,8 +205,8 @@ export default function PersonScreen() {
   }
 
   const noteExists = formattedNotes.length > 0;
-  const surveyExists = selectedOptionByQuestion.size > 0;
-  const recorded = surveyExists || unavailableOutcome != null;
+  const responsesExist = selectedOptionByQuestion.size > 0;
+  const recorded = responsesExist || unavailableOutcome != null;
   const fullName =
     [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
 
@@ -238,7 +228,7 @@ export default function PersonScreen() {
               <Pill>{formatEnrollment(person)}</Pill>
               <View className="flex-1" />
               {(() => {
-                const role = surveyExists ? "contacted" : "unavailable";
+                const role = responsesExist ? "contacted" : "unavailable";
                 return (
                   <>
                     {noteExists && (
@@ -307,25 +297,14 @@ export default function PersonScreen() {
               <ScriptContent
                 scriptQuery={scriptQuery}
                 selectedOptionByQuestion={selectedOptionByQuestion}
-                onSelectOption={(surveyQuestionId, surveyResponseOptionId) => {
-                  const payload = {
-                    kind: "survey" as const,
-                    surveyQuestionId,
-                    surveyResponseOptionId,
-                  };
-                  // Picking a survey answer also un-marks unavailable —
-                  // mirrors the mutual exclusion in derivePersonSummaries.
-                  setSelectedOptionByQuestion((prev) => {
-                    const next = new Map(prev);
-                    if (surveyResponseOptionId === null) {
-                      next.delete(surveyQuestionId);
-                    } else {
-                      next.set(surveyQuestionId, surveyResponseOptionId);
-                      setUnavailableOutcome(null);
-                    }
-                    return next;
-                  });
-                  setTimeout(() => recordEvent({ personId, kind: "survey", payload }), 0);
+                onSelectOption={(questionId, responseOptionId) => {
+                  const next = new Map(selectedOptionByQuestion);
+                  if (responseOptionId === null) next.delete(questionId);
+                  else next.set(questionId, responseOptionId);
+                  setSelectedOptionByQuestion(next);
+                  // Picking a response also un-marks unavailable.
+                  if (responseOptionId !== null) setUnavailableOutcome(null);
+                  emitResult(next, null);
                 }}
                 onClear={clearResult}
               />
@@ -334,10 +313,9 @@ export default function PersonScreen() {
               <UnavailableContent
                 selectedOutcome={unavailableOutcome ?? undefined}
                 onSelectOption={(value) => {
-                  const payload = { kind: "outcome" as const, outcome: value };
                   setUnavailableOutcome(value);
                   setSelectedOptionByQuestion(new Map());
-                  setTimeout(() => recordEvent({ personId, kind: "outcome", payload }), 0);
+                  emitResult(new Map(), value);
                 }}
                 onClear={clearResult}
                 onCancel={() => {
@@ -353,7 +331,7 @@ export default function PersonScreen() {
                   recordEvent({
                     personId,
                     kind: "note",
-                    payload: { kind: "note", text, canvassedAt: new Date().toISOString() },
+                    payload: { kind: "note", text },
                   });
                   setMode("script");
                 }}
@@ -422,8 +400,7 @@ function ScriptContent({
 }: {
   scriptQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof client.scripts.get>>>>;
   selectedOptionByQuestion: Map<string, string>;
-  // `surveyResponseOptionId: null` un-answers just this question.
-  onSelectOption: (surveyQuestionId: string, surveyResponseOptionId: string | null) => void;
+  onSelectOption: (questionId: string, responseOptionId: string | null) => void;
   onClear: () => void;
 }) {
   const colors = useColors();
@@ -454,7 +431,7 @@ function ScriptContent({
             </Text>
           );
         }
-        const selected = selectedOptionByQuestion.get(step.surveyQuestionId);
+        const selected = selectedOptionByQuestion.get(step.questionId);
         return (
           <View key={step.scriptStepId} className="gap-2">
             <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
@@ -462,15 +439,15 @@ function ScriptContent({
             </Text>
             {step.options.map((opt) => (
               <WideButton
-                key={opt.surveyResponseOptionId}
+                key={opt.responseOptionId}
                 label={opt.text}
-                selected={selected === opt.surveyResponseOptionId}
+                selected={selected === opt.responseOptionId}
                 selectedForegroundColor={colors.contacted.foreground}
                 selectedBackgroundColor={colors.contacted.background}
                 onPress={() =>
-                  selected === opt.surveyResponseOptionId
-                    ? onSelectOption(step.surveyQuestionId, null)
-                    : onSelectOption(step.surveyQuestionId, opt.surveyResponseOptionId)
+                  selected === opt.responseOptionId
+                    ? onSelectOption(step.questionId, null)
+                    : onSelectOption(step.questionId, opt.responseOptionId)
                 }
               />
             ))}
@@ -494,7 +471,7 @@ function NoteContent({
   onSubmitNote,
   onCancel,
 }: {
-  notes: Array<{ text: string; canvassedAt: string }>;
+  notes: Array<{ text: string; createdAt: string }>;
   onSubmitNote: (text: string) => void;
   onCancel: () => void;
 }) {
@@ -550,7 +527,7 @@ function DetailsContent({
   notes,
 }: {
   person: TurfDataPerson;
-  notes: Array<{ text: string; canvassedAt: string }>;
+  notes: Array<{ text: string; createdAt: string }>;
 }) {
   const voting = votingHistoryItems(person.votingHistory);
   const notesList = noteItems(notes);
@@ -611,9 +588,9 @@ function DetailList({ items }: { items: Array<{ label: string; date: string }> }
 // ----- Item adapters -------------------------------------------------------
 
 function noteItems(
-  notes: Array<{ text: string; canvassedAt: string }>,
+  notes: Array<{ text: string; createdAt: string }>,
 ): Array<{ label: string; date: string }> {
-  return notes.map((n) => ({ label: n.text, date: formatShortDate(n.canvassedAt) }));
+  return notes.map((n) => ({ label: n.text, date: formatShortDate(n.createdAt) }));
 }
 
 const ELECTION_TYPE_LABELS: Record<string, string> = {
