@@ -35,8 +35,6 @@ type TurfContext = {
   collection: ReturnType<typeof createCollection_>;
   executor: ReturnType<typeof startOfflineExecutor>;
   recordEvent: (params: RecordEventParams) => void;
-  // Append multiple events as a single offline transaction.
-  recordEvents: (params: RecordEventParams[]) => void;
 };
 
 type RecordEventParams = {
@@ -188,16 +186,7 @@ function createTurfContext(turfId: string): TurfContext {
     },
   });
 
-  const recordEvents = executor.createOfflineAction({
-    mutationFnName: "appendEvent",
-    onMutate: (paramsList: RecordEventParams[]) => {
-      for (const params of paramsList) {
-        collection.insert(buildEvent(params));
-      }
-    },
-  });
-
-  return { collection, executor, recordEvent, recordEvents };
+  return { collection, executor, recordEvent };
 }
 
 function getTurfContext(turfId: string): TurfContext {
@@ -261,11 +250,6 @@ export function useCanvassEvents(turfId: string) {
 export function useRecordEvent(turfId: string) {
   const { recordEvent } = getTurfContext(turfId);
   return useCallback((params: RecordEventParams) => recordEvent(params), [recordEvent]);
-}
-
-export function useRecordEvents(turfId: string) {
-  const { recordEvents } = getTurfContext(turfId);
-  return useCallback((params: RecordEventParams[]) => recordEvents(params), [recordEvents]);
 }
 
 // Snapshot of sync health for the status line in Settings. Pull state

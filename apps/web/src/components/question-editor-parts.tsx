@@ -238,6 +238,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
         <Button
           variant="outline"
           size="sm"
+          press="none"
           className="h-8 flex-1 justify-start bg-card dark:bg-card"
           onClick={() => addOption.mutate()}
           loading={addOption.isPending}
