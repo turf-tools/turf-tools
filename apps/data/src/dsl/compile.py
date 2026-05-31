@@ -19,6 +19,7 @@ from .criteria import (
     AgeRangeFieldDef,
     AgeRangeFilter,
     AllFilter,
+    CanvassResultFilter,
     Criteria,
     DateRangeFieldDef,
     DateRangeFilter,
@@ -28,6 +29,7 @@ from .criteria import (
     Filter,
     KeyFilter,
     NestedFilter,
+    PersonIdSetFilter,
     TextFieldDef,
     TextFilter,
     TextMultiFieldDef,
@@ -191,6 +193,17 @@ def _filter_clause(f: Filter, params: list[Any]) -> str:
         # Empty inner → 1=1 to match the standalone "empty segment matches everyone" semantic.
         inner = _criteria_bool_expr(f.criteria, params)
         return f"({inner})" if inner else "1=1"
+    if isinstance(f, PersonIdSetFilter):
+        # Resolved canvass / operational-data filter: a literal person set.
+        # Empty set → 1=0 (no one matched), distinct from an inactive filter.
+        if not f.ids:
+            return "1=0"
+        placeholders = ", ".join("?" for _ in f.ids)
+        params.extend(f.ids)
+        return f"external_id IN ({placeholders})"
+    if isinstance(f, CanvassResultFilter):
+        # Should have been reduced to a PersonIdSetFilter in resolve.py.
+        raise CriteriaError("CanvassResultFilter reached the compiler unresolved")
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 
