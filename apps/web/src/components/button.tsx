@@ -9,7 +9,7 @@ type ButtonClickHandler = NonNullable<ButtonPrimitive.Props["onClick"]>;
 type ButtonClickEvent = Parameters<ButtonClickHandler>[0];
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-normal whitespace-nowrap outline-none select-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-normal whitespace-nowrap outline-none select-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -37,10 +37,18 @@ const buttonVariants = cva(
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
       },
+      // Press-shift affordance, on by default. Set `press="none"` for buttons
+      // whose click also moves content (e.g. adding a list row), where the
+      // shift reads as a jarring double-motion. (haspopup triggers never shift.)
+      press: {
+        shift: "active:not-aria-[haspopup]:translate-y-px",
+        none: "",
+      },
     },
     defaultVariants: {
       variant: "default",
       size: "default",
+      press: "shift",
     },
   },
 );
@@ -58,6 +66,7 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  press = "shift",
   loading = false,
   disabled,
   children,
@@ -86,7 +95,7 @@ function Button({
       data-slot="button"
       disabled={disabled || showSpinner}
       onClick={handleClick}
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(buttonVariants({ variant, size, press, className }))}
       {...props}
     >
       {showSpinner ? withLeadingSpinner(children) : children}

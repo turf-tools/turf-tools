@@ -482,6 +482,9 @@ function QuestionStepBody({
     },
   });
 
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+
   if (!question) {
     return (
       <div className="flex items-center gap-1.5">
@@ -492,17 +495,44 @@ function QuestionStepBody({
     );
   }
 
+  // Clearing edit mode and the optimistic rename happen together in this one
+  // component, so they re-render atomically.
+  const commitName = () => {
+    const next = nameDraft.trim();
+    setEditingName(false);
+    if (next && next !== question.name) renameQuestion.mutate(next);
+  };
+
   return (
     <>
       <div className="mb-3 flex h-7 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 flex-1">
           <GripHandle dragControls={dragControls} />
           <span className="text-sm text-muted-foreground pr-1">{number}</span>
-          <DoubleClickEditInput
-            value={question.name}
-            onCommit={(name) => renameQuestion.mutate(name)}
-            className="flex-1 min-w-0"
-          />
+          {editingName ? (
+            <Input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                else if (e.key === "Escape") setEditingName(false);
+              }}
+              className="h-7 px-2 flex-1 min-w-0"
+            />
+          ) : (
+            <span
+              onDoubleClick={() => {
+                setNameDraft(question.name);
+                setEditingName(true);
+              }}
+              className="text-sm select-none cursor-text truncate flex-1 min-w-0"
+              title="Double-click to rename"
+            >
+              {question.name}
+            </span>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <KindBadge
@@ -521,58 +551,6 @@ function QuestionStepBody({
         <ResponseOptionsEditor questionId={questionId} />
       </div>
     </>
-  );
-}
-
-// Empty commits revert silently to preserve the non-null DB invariant on `name`.
-function DoubleClickEditInput({
-  value,
-  onCommit,
-  className,
-}: {
-  value: string;
-  onCommit: (text: string) => void;
-  className?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [local, setLocal] = useState(value);
-  useEffect(() => {
-    if (!editing) setLocal(value);
-  }, [value, editing]);
-
-  if (!editing) {
-    return (
-      <span
-        onDoubleClick={() => setEditing(true)}
-        className={cn("text-sm select-none cursor-text truncate", className)}
-        title="Double-click to rename"
-      >
-        {value}
-      </span>
-    );
-  }
-  return (
-    <Input
-      autoFocus
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={() => {
-        const trimmed = local.trim();
-        if (trimmed && trimmed !== value) onCommit(trimmed);
-        setEditing(false);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          const target = e.currentTarget as HTMLInputElement;
-          target.blur();
-          target.closest<HTMLElement>('[role="dialog"]')?.focus();
-        } else if (e.key === "Escape") {
-          setLocal(value);
-          setEditing(false);
-        }
-      }}
-      className={cn("h-7 px-2", className)}
-    />
   );
 }
 
@@ -693,7 +671,6 @@ function NewQuestionDialog({
                     type="button"
                     variant="outline"
                     className="w-full justify-between font-normal"
-                    disabled={pending}
                   />
                 }
               >

@@ -19,7 +19,7 @@ export const Route = createFileRoute("/$orgSlug/campaigns/")({
 function CampaignsEmpty() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      No campaigns yet — create one to get started.
+      No campaigns yet, create one to get started.
     </div>
   );
 }
