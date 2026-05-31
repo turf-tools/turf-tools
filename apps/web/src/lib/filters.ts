@@ -62,6 +62,17 @@ export type AddressFilter = {
   zip: string;
 };
 
+// Canvass-result filter — reads prior canvass dispositions back out of
+// canvass_events; it is NOT a person-row column. Matches a person if any
+// of their per-turf current results has an outcome in `outcomes`.
+// Resolved server-side to a person-id set before SQL compilation (see
+// apps/data/src/dsl/resolve.py), the same way SegmentFilter is.
+export type CanvassResultFilter = {
+  kind: "canvass-result";
+  key: "canvass_result";
+  outcomes: string[];
+};
+
 // Reference to another segment by id. Authored form — what the user
 // composes and what we persist. Resolved to NestedFilter (below) on the
 // data server (see `apps/data/src/dsl/expand.py`).
@@ -89,6 +100,7 @@ export type Filter =
   | DateRangeFilter
   | VotingHistoryFilter
   | AddressFilter
+  | CanvassResultFilter
   | SegmentFilter
   | NestedFilter;
 
@@ -145,6 +157,12 @@ export type FilterDef =
       kind: "address";
       key: "address";
       label: string;
+    }
+  | {
+      kind: "canvass-result";
+      key: "canvass_result";
+      label: string;
+      values: ReadonlyArray<{ value: string; label?: string }>;
     }
   | {
       kind: "segment";
@@ -256,6 +274,23 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
       source: "column",
     },
   ],
+  // Canvass history — prior results read back from canvass_events.
+  // Only person-level outcomes are exposed (door/building dispositions
+  // like address_not_found / inaccessible aren't person results).
+  [
+    {
+      kind: "canvass-result",
+      key: "canvass_result",
+      label: "Canvass result",
+      values: [
+        { value: "canvassed", label: "Canvassed" },
+        { value: "not_home", label: "Not home" },
+        { value: "deceased", label: "Deceased" },
+        { value: "hostile", label: "Hostile" },
+        { value: "moved", label: "Moved" },
+      ],
+    },
+  ],
   // Composite — reference another segment by id.
   [{ kind: "segment", key: "segment", label: "Segment" }],
 ] as const;
@@ -282,6 +317,8 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "date-range") return { kind: "date-range", key: def.key, min: null, max: null };
   if (def.kind === "address")
     return { kind: "address", key: "address", line1: "", city: "", state: "", zip: "" };
+  if (def.kind === "canvass-result")
+    return { kind: "canvass-result", key: "canvass_result", outcomes: [] };
   if (def.kind === "segment") return { kind: "segment", key: "segment", segmentId: null };
   // Voting history default: "voted in 1+ recent primaries" (single prime).
   return {
@@ -309,6 +346,7 @@ export function isActiveFilter(f: Filter): boolean {
       f.state.trim().length > 0 ||
       f.zip.trim().length > 0
     );
+  if (f.kind === "canvass-result") return f.outcomes.length > 0;
   if (f.kind === "segment") return f.segmentId != null;
   if (f.kind === "nested") return f.criteria.steps.length > 0;
   // voting-history-count: active when window and count are non-degenerate.

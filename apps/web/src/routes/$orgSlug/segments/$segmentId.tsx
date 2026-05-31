@@ -39,6 +39,7 @@ import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AddressFilter,
   type AgeRangeFilter,
+  type CanvassResultFilter,
   type DateRangeFilter,
   definitionFor,
   emptyFilterFor,
@@ -668,6 +669,9 @@ function StepRow({
       {filter.kind === "address" && def?.kind === "address" ? (
         <AddressFilterEditor filter={filter} onChange={onChange} />
       ) : null}
+      {filter.kind === "canvass-result" && def?.kind === "canvass-result" ? (
+        <CanvassResultEditor filter={filter} def={def} onChange={onChange} />
+      ) : null}
       {filter.kind === "segment" && def?.kind === "segment" ? (
         <SegmentFilterEditor
           filter={filter}
@@ -794,6 +798,39 @@ function EnumFilterEditor({
           size="sm"
           variant="outline"
           pressed={filter.values.includes(v.value)}
+          onPressedChange={() => toggle(v.value)}
+          className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+        >
+          {v.label ?? v.value}
+        </Toggle>
+      ))}
+    </div>
+  );
+}
+
+function CanvassResultEditor({
+  filter,
+  def,
+  onChange,
+}: {
+  filter: CanvassResultFilter;
+  def: Extract<FilterDef, { kind: "canvass-result" }>;
+  onChange: (next: Filter) => void;
+}) {
+  const toggle = (value: string) => {
+    const next = filter.outcomes.includes(value)
+      ? filter.outcomes.filter((v) => v !== value)
+      : [...filter.outcomes, value];
+    onChange({ ...filter, outcomes: next });
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {def.values.map((v) => (
+        <Toggle
+          key={v.value}
+          size="sm"
+          variant="outline"
+          pressed={filter.outcomes.includes(v.value)}
           onPressedChange={() => toggle(v.value)}
           className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
         >
