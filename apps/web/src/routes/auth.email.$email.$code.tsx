@@ -88,7 +88,7 @@ function VerifyPage() {
         ) : (
           <>
             <p className="mb-8 text-center text-[16px] text-muted-foreground">
-              Click below to finish logging in.
+              Link verified, click below to finish logging in.
             </p>
             <Button
               type="button"
@@ -96,7 +96,7 @@ function VerifyPage() {
               loading={pending}
               className="h-10 w-full text-[16px]"
             >
-              Log in to Field Tools
+              Complete log in
             </Button>
           </>
         )}
