@@ -17,19 +17,16 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-// Four-state flow:
-//   email   – user types their email and submits
-//   sent    – we sent the email; user can wait for the link OR click "Enter
-//             code manually" to switch to the code-entry state
-//   code    – user pastes the OTP from the email and submits
-//   invalid – code didn't verify (typo, expired, already-burned by scanner)
-// "Back to login" links + the invalid-state button all reset to `email`.
-type Step = "email" | "sent" | "code" | "invalid";
+// Two-state flow:
+//   email – user types their email and submits
+//   sent  – we sent the login link; user clicks through from their inbox.
+// Verification happens entirely on the verify page (the email link); there's
+// no manual code-entry path — the link is the only channel.
+type Step = "email" | "sent";
 
 function LoginPage() {
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Cross-tab login signal — see __root's beforeLoad.
@@ -43,22 +40,12 @@ function LoginPage() {
     return () => channel.close();
   }, []);
 
-  // 600ms floor on both mutations so button-state transitions read as
-  // intentional even on fast networks.
+  // 600ms floor so the button-state transition reads as intentional even on
+  // fast networks.
   const sendCode = useMutation({
     mutationFn: async (target: string) => {
       const [res] = await Promise.all([
         authClient.emailOtp.sendVerificationOtp({ email: target, type: "sign-in" }),
-        new Promise((r) => setTimeout(r, 600)),
-      ]);
-      return res;
-    },
-  });
-
-  const verifyCode = useMutation({
-    mutationFn: async (input: { email: string; otp: string }) => {
-      const [res] = await Promise.all([
-        authClient.signIn.emailOtp(input),
         new Promise((r) => setTimeout(r, 600)),
       ]);
       return res;
@@ -77,24 +64,10 @@ function LoginPage() {
     setStep("sent");
   };
 
-  const onSubmitCode = async (e: FormEvent) => {
-    e.preventDefault();
-    const res = await verifyCode.mutateAsync({ email, otp: code.trim() });
-    if (res.error) {
-      setStep("invalid");
-      return;
-    }
-    // Hard-load to "/" — root's mount-time effect broadcasts the
-    // logged-in signal (with userId). Broadcasting from here would
-    // lack a userId and trip the root listener's user-switch reload.
-    window.location.replace("/");
-  };
-
-  // "Back to login" / "Return to login" — full reset.
+  // "Back to login" — full reset.
   const reset = () => {
     setStep("email");
     setEmail("");
-    setCode("");
     setError(null);
   };
 
@@ -120,18 +93,8 @@ function LoginPage() {
             onSubmit={onSubmitEmail}
             error={error}
           />
-        ) : step === "sent" ? (
-          <SentStep email={email} onEnterCode={() => setStep("code")} onBack={reset} />
-        ) : step === "code" ? (
-          <CodeStep
-            code={code}
-            setCode={setCode}
-            pending={verifyCode.isPending}
-            onSubmit={onSubmitCode}
-            onBack={reset}
-          />
         ) : (
-          <InvalidStep onReturn={reset} />
+          <SentStep email={email} onBack={reset} />
         )}
       </div>
     </div>
@@ -183,96 +146,16 @@ function EmailStep({
   );
 }
 
-function SentStep({
-  email,
-  onEnterCode,
-  onBack,
-}: {
-  email: string;
-  onEnterCode: () => void;
-  onBack: () => void;
-}) {
+function SentStep({ email, onBack }: { email: string; onBack: () => void }) {
   return (
     <>
       <p className="mb-8 text-center text-[16px] text-muted-foreground">
         We've sent a temporary login link, please check your inbox at{" "}
-        <span className="text-foreground">{email}</span>. If you have trouble with magic links, you
-        can also check the email for a code and click below to manually enter it.
+        <span className="text-foreground">{email}</span>.
       </p>
-      <Button
-        variant="outline"
-        type="button"
-        onClick={onEnterCode}
-        className="h-10 w-full text-[16px]"
-      >
-        Enter code manually
-      </Button>
-      <BackToLogin onClick={onBack} />
-    </>
-  );
-}
-
-function CodeStep({
-  code,
-  setCode,
-  pending,
-  onSubmit,
-  onBack,
-}: {
-  code: string;
-  setCode: (v: string) => void;
-  pending: boolean;
-  onSubmit: (e: FormEvent) => void;
-  onBack: () => void;
-}) {
-  return (
-    <>
-      <p className="mb-8 text-center text-[16px] text-muted-foreground">
-        Check your email for a temporary login code and enter it below.
-      </p>
-      <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <Input
-          type="text"
-          placeholder="Login code (6 digits)"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          required
-          autoFocus
-          autoComplete="one-time-code"
-          className="text-[16px] tabular-nums"
-        />
-        <Button type="submit" className="h-10 disabled:opacity-100 text-[16px]" disabled={pending}>
-          {pending ? "Signing in…" : "Continue with login code"}
-        </Button>
-      </form>
-      <BackToLogin onClick={onBack} />
-    </>
-  );
-}
-
-function InvalidStep({ onReturn }: { onReturn: () => void }) {
-  return (
-    <>
-      <p className="mb-8 text-center text-[16px] text-muted-foreground">
-        This code is no longer valid, please try again.
-      </p>
-      <Button type="button" onClick={onReturn} className="h-10 w-full text-[16px]">
-        Return to login
-      </Button>
-    </>
-  );
-}
-
-function BackToLogin({ onClick }: { onClick: () => void }) {
-  return (
-    <div className="mt-4 text-center">
-      <button
-        type="button"
-        onClick={onClick}
-        className="text-sm text-muted-foreground hover:text-foreground"
-      >
+      <Button variant="outline" type="button" onClick={onBack} className="h-10 w-full text-[16px]">
         Back to login
-      </button>
-    </div>
+      </Button>
+    </>
   );
 }
