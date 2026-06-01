@@ -113,6 +113,9 @@ export const auth = betterAuth({
     emailOTP({
       disableSignUp: true,
       expiresIn: 60 * 60,
+      // 8 digits rather than the 6-digit default — no human types it (it only
+      // rides in the verify-link URL), so the extra brute-force margin is free.
+      otpLength: 8,
       // The OTP rides only in the verify-page URL; that page verifies via a
       // client POST (never a GET), so scanners that pre-fetch the link can't
       // burn it. Deployments behind JS-executing scanners set
