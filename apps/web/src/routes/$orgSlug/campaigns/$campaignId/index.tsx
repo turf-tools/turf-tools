@@ -6,6 +6,13 @@ import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson"
 import { CircleDotDashed, DoorClosed, Scissors, Send, UserRound } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "~/components/dialog";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
@@ -28,6 +35,10 @@ import type { Criteria } from "~/lib/filters";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 import { colorFor } from "~/lib/zone-colors";
+
+// Cutting loads every building in the target into the cutter at once; above
+// this the cutter bogs down, so we hard-block and steer toward subdividing.
+const MAX_CUT_BUILDINGS = 20000;
 
 function deriveKeyFilter(
   zoneGroup: { keyGroup: string } | null | undefined,
@@ -326,6 +337,10 @@ function CampaignEditor() {
     return true;
   })();
 
+  const [limitOpen, setLimitOpen] = useState(false);
+  // Snapshot the offending count separately from the open flag so the body
+  // doesn't flash to 0 during the dialog's close animation.
+  const [limitCount, setLimitCount] = useState(0);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   useEffect(() => {
     setSelectedZoneId(null);
@@ -391,6 +406,15 @@ function CampaignEditor() {
           zoneGroupName={activeZoneGroup?.name ?? null}
           onSelect={setSelectedZoneId}
           onCut={(zoneId) => {
+            const buildings =
+              zoneId === null
+                ? (segmentTotals?.buildingCount ?? 0)
+                : (zoneCounts?.[zoneId]?.buildings ?? 0);
+            if (buildings > MAX_CUT_BUILDINGS) {
+              setLimitCount(buildings);
+              setLimitOpen(true);
+              return;
+            }
             if (zoneId === null) {
               void navigate({
                 to: "/$orgSlug/campaigns/$campaignId/cut",
@@ -418,6 +442,22 @@ function CampaignEditor() {
           loading={!ready}
         />
       </div>
+
+      <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
+        <DialogContent>
+          <DialogTitle>Too many buildings</DialogTitle>
+          <DialogDescription>
+            Turf cutting is currently limited to{" "}
+            <span className="font-bold text-foreground">{MAX_CUT_BUILDINGS.toLocaleString()}</span>{" "}
+            buildings and you have{" "}
+            <span className="font-bold text-foreground">{limitCount.toLocaleString()}</span>. Try
+            again with a smaller segment or use zones to subdivide.
+          </DialogDescription>
+          <div className="mt-2 flex justify-end">
+            <DialogClose render={<Button variant="outline" />}>Ok</DialogClose>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
