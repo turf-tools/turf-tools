@@ -113,13 +113,11 @@ export const auth = betterAuth({
     emailOTP({
       disableSignUp: true,
       expiresIn: 60 * 60,
-      // Two-channel delivery to defeat email security scanners. The OTP
-      // sits in the verify-page URL — link click triggers a client-side
-      // POST on mount that GET-based scanners can't fire by pre-fetching
-      // the page. The same OTP is also rendered as a human-typeable string
-      // in the email body and `/login`'s code-entry step accepts it as a
-      // manual fallback for the minority of scanners that execute JS and
-      // would otherwise burn the link.
+      // The OTP rides only in the verify-page URL; that page verifies via a
+      // client POST (never a GET), so scanners that pre-fetch the link can't
+      // burn it. Deployments behind JS-executing scanners set
+      // AUTH_REQUIRE_LINK_CONFIRMATION so the verify fires on a click rather
+      // than on mount — see routes/auth.email.$email.$code.tsx.
       sendVerificationOTP: async ({ email, otp, type }) => {
         // We only use the sign-in flow; other types (email-verification,
         // forget-password, change-email) aren't wired up.
@@ -162,10 +160,6 @@ export const auth = betterAuth({
       Log in to Field Tools
     </a>
   </p>
-
-  <p style="font-size: 16px;">If you have trouble with magic links, you can also enter this code on the login page:</p>
-
-  <p><span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 18px; color: #333; background-color: #f3f3f3; padding: 4px 8px; border-radius: 4px; display: inline-block;">${otp}</span></p>
 
   <p style="font-size: 16px;">If you didn't request this email, you can safely ignore it.</p>
 
