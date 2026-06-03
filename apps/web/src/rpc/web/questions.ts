@@ -70,6 +70,41 @@ export const list = pub
     return rows.map((r) => ({ ...r, usedCount: countMap.get(r.questionId) ?? 0 }));
   });
 
+// Active questions with their response options inlined — one round-trip so
+// pickers (the canvass-response filter editor) get names + options without a
+// per-question follow-up.
+export const listWithOptions = pub.handler(async ({ context }) => {
+  const qs = await context.db
+    .select({ questionId: questions.questionId, name: questions.name })
+    .from(questions)
+    .where(and(eq(questions.organizationId, context.organizationId), isNull(questions.archivedAt)))
+    .orderBy(asc(questions.createdAt));
+  if (qs.length === 0) return [];
+
+  const opts = await context.db
+    .select({
+      questionId: responseOptions.questionId,
+      responseOptionId: responseOptions.responseOptionId,
+      text: responseOptions.text,
+    })
+    .from(responseOptions)
+    .where(
+      inArray(
+        responseOptions.questionId,
+        qs.map((q) => q.questionId),
+      ),
+    )
+    .orderBy(asc(responseOptions.order));
+
+  const byQuestion = new Map<string, { responseOptionId: string; text: string }[]>();
+  for (const o of opts) {
+    const list = byQuestion.get(o.questionId) ?? [];
+    list.push({ responseOptionId: o.responseOptionId, text: o.text });
+    byQuestion.set(o.questionId, list);
+  }
+  return qs.map((q) => ({ ...q, options: byQuestion.get(q.questionId) ?? [] }));
+});
+
 export const getById = pub
   .input(z.object({ questionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {

@@ -87,6 +87,7 @@ export const webRouter = {
   },
   questions: {
     list: questions.list,
+    listWithOptions: questions.listWithOptions,
     getById: questions.getById,
     create: questions.create,
     rename: questions.rename,

@@ -13,7 +13,8 @@ from src.dsl.criteria import (
     AddressFilter,
     AgeRangeFilter,
     AllFilter,
-    CanvassResultFilter,
+    CanvassOutcomeFilter,
+    CanvassResponseFilter,
     Criteria,
     DateRangeFilter,
     EnumFilter,
@@ -633,7 +634,7 @@ def test_nested_filter_compiles_recursively() -> None:
 
 # ---------------------------------------------------------------------------
 # PersonIdSetFilter — produced by resolving operational-data filters (e.g.
-# CanvassResultFilter) to a literal set of person external_ids.
+# CanvassOutcomeFilter) to a literal set of person external_ids.
 # ---------------------------------------------------------------------------
 
 
@@ -678,12 +679,22 @@ def test_person_id_set_remove_composes_as_and_not() -> None:
     assert params == ["democratic", "abc"]
 
 
-def test_unresolved_canvass_result_filter_raises() -> None:
-    # CanvassResultFilter must be reduced to a PersonIdSetFilter in resolve.py
+def test_unresolved_canvass_outcome_filter_raises() -> None:
+    # CanvassOutcomeFilter must be reduced to a PersonIdSetFilter in resolve.py
     # before compilation; reaching the compiler is a bug.
     with pytest.raises(CriteriaError):
         criteria_to_where(
-            _narrow(CanvassResultFilter(kind="canvass-result", outcomes=["canvassed"])),
+            _narrow(CanvassOutcomeFilter(kind="canvass-outcome", outcomes=["canvassed"])),
+            None,
+            [],
+        )
+
+
+def test_unresolved_canvass_response_filter_raises() -> None:
+    # Same contract as the result filter — must be resolved before compilation.
+    with pytest.raises(CriteriaError):
+        criteria_to_where(
+            _narrow(CanvassResponseFilter(kind="canvass-response", questionId="q1", optionIds=["supportive"])),
             None,
             [],
         )

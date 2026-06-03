@@ -62,15 +62,28 @@ export type AddressFilter = {
   zip: string;
 };
 
-// Canvass-result filter — reads prior canvass dispositions back out of
+// Canvass-outcome filter — reads prior canvass dispositions back out of
 // canvass_events; it is NOT a person-row column. Matches a person if any
 // of their per-turf current results has an outcome in `outcomes`.
 // Resolved server-side to a person-id set before SQL compilation (see
 // apps/data/src/dsl/resolve.py), the same way SegmentFilter is.
-export type CanvassResultFilter = {
-  kind: "canvass-result";
-  key: "canvass_result";
+export type CanvassOutcomeFilter = {
+  kind: "canvass-outcome";
+  key: "canvass_outcome";
   outcomes: string[];
+};
+
+// Canvass-response filter — matches a person if any of their per-turf current
+// results answered `questionId` with one of `optionIds`. Like
+// CanvassOutcomeFilter it reads canvass_events and is resolved server-side to a
+// person-id set (see apps/data/src/dsl/resolve.py). Select-type questions
+// only; the option set is fetched live by the editor, so the catalog entry
+// carries no static values.
+export type CanvassResponseFilter = {
+  kind: "canvass-response";
+  key: "canvass_response";
+  questionId: string | null;
+  optionIds: string[];
 };
 
 // Reference to another segment by id. Authored form — what the user
@@ -100,7 +113,8 @@ export type Filter =
   | DateRangeFilter
   | VotingHistoryFilter
   | AddressFilter
-  | CanvassResultFilter
+  | CanvassOutcomeFilter
+  | CanvassResponseFilter
   | SegmentFilter
   | NestedFilter;
 
@@ -159,10 +173,15 @@ export type FilterDef =
       label: string;
     }
   | {
-      kind: "canvass-result";
-      key: "canvass_result";
+      kind: "canvass-outcome";
+      key: "canvass_outcome";
       label: string;
       values: ReadonlyArray<{ value: string; label?: string }>;
+    }
+  | {
+      kind: "canvass-response";
+      key: "canvass_response";
+      label: string;
     }
   | {
       kind: "segment";
@@ -279,9 +298,9 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
   // like address_not_found / inaccessible aren't person results).
   [
     {
-      kind: "canvass-result",
-      key: "canvass_result",
-      label: "Canvass result",
+      kind: "canvass-outcome",
+      key: "canvass_outcome",
+      label: "Canvass Outcome",
       values: [
         { value: "canvassed", label: "Canvassed" },
         { value: "not_home", label: "Not home" },
@@ -290,6 +309,7 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
         { value: "moved", label: "Moved" },
       ],
     },
+    { kind: "canvass-response", key: "canvass_response", label: "Canvass Response" },
   ],
   // Composite — reference another segment by id.
   [{ kind: "segment", key: "segment", label: "Segment" }],
@@ -317,8 +337,10 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "date-range") return { kind: "date-range", key: def.key, min: null, max: null };
   if (def.kind === "address")
     return { kind: "address", key: "address", line1: "", city: "", state: "", zip: "" };
-  if (def.kind === "canvass-result")
-    return { kind: "canvass-result", key: "canvass_result", outcomes: [] };
+  if (def.kind === "canvass-outcome")
+    return { kind: "canvass-outcome", key: "canvass_outcome", outcomes: [] };
+  if (def.kind === "canvass-response")
+    return { kind: "canvass-response", key: "canvass_response", questionId: null, optionIds: [] };
   if (def.kind === "segment") return { kind: "segment", key: "segment", segmentId: null };
   // Voting history default: "voted in 1+ recent primaries" (single prime).
   return {
@@ -346,7 +368,8 @@ export function isActiveFilter(f: Filter): boolean {
       f.state.trim().length > 0 ||
       f.zip.trim().length > 0
     );
-  if (f.kind === "canvass-result") return f.outcomes.length > 0;
+  if (f.kind === "canvass-outcome") return f.outcomes.length > 0;
+  if (f.kind === "canvass-response") return f.questionId != null && f.optionIds.length > 0;
   if (f.kind === "segment") return f.segmentId != null;
   if (f.kind === "nested") return f.criteria.steps.length > 0;
   // voting-history-count: active when window and count are non-degenerate.
@@ -355,6 +378,22 @@ export function isActiveFilter(f: Filter): boolean {
 
 export function isActiveStep(s: Step): boolean {
   return isActiveFilter(s.filter);
+}
+
+// True if the criteria reads a *live*, continuously-drifting source (today, the
+// canvass leaves). Such queries can't use `staleTime: Infinity` — the answer
+// drifts as canvassing happens. A versioned source (e.g. a future tag upload) is
+// different: bake a version into the query key instead, the way boundaries key
+// on `updatedAt`.
+export function criteriaTouchesLiveData(criteria: Criteria): boolean {
+  // Tolerate a steps-less object — callers (e.g. campaignKeyCountsQuery) pass a
+  // `{} as SegmentCriteria` placeholder while the query is disabled.
+  return (criteria.steps ?? []).some((step) => {
+    const f = step.filter;
+    if (f.kind === "canvass-outcome" || f.kind === "canvass-response") return true;
+    if (f.kind === "nested") return criteriaTouchesLiveData(f.criteria);
+    return false;
+  });
 }
 
 // Verb display metadata — label and accent color.

@@ -93,19 +93,32 @@ class AddressFilter(BaseModel):
     zip: str  # noqa: A003
 
 
-class CanvassResultFilter(BaseModel):
+class CanvassOutcomeFilter(BaseModel):
     """Prior canvass dispositions read back from canvass_events. Matches a
     person if any of their per-turf current results has an outcome in
     `outcomes`. Resolved to a `PersonIdSetFilter` by `resolve_canvass_refs`
     before SQL compilation — the compiler never sees this kind."""
 
-    kind: Literal["canvass-result"]
+    kind: Literal["canvass-outcome"]
     outcomes: list[str]
+
+
+class CanvassResponseFilter(BaseModel):
+    """A prior canvass answer to a specific question. Matches a person if any
+    of their per-turf current results answered `question_id` with one of
+    `option_ids`. Resolved to a `PersonIdSetFilter` before SQL compilation —
+    the compiler never sees this kind."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["canvass-response"]
+    question_id: str = Field(validation_alias="questionId")
+    option_ids: list[str] = Field(validation_alias="optionIds")
 
 
 class PersonIdSetFilter(BaseModel):
     """A literal set of person `external_id`s. Produced by resolving an
-    operational-data filter (e.g. CanvassResultFilter) down to the persons
+    operational-data filter (e.g. CanvassOutcomeFilter) down to the persons
     that match; compiles to ``external_id IN (...)``. Never persisted —
     only exists post-resolution, like NestedFilter."""
 
@@ -143,7 +156,8 @@ Filter = Annotated[
     | DateRangeFilter
     | VotingHistoryFilter
     | AddressFilter
-    | CanvassResultFilter
+    | CanvassOutcomeFilter
+    | CanvassResponseFilter
     | PersonIdSetFilter
     | NestedFilter
     | SegmentFilter,

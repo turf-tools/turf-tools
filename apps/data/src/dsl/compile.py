@@ -19,7 +19,8 @@ from .criteria import (
     AgeRangeFieldDef,
     AgeRangeFilter,
     AllFilter,
-    CanvassResultFilter,
+    CanvassOutcomeFilter,
+    CanvassResponseFilter,
     Criteria,
     DateRangeFieldDef,
     DateRangeFilter,
@@ -201,9 +202,9 @@ def _filter_clause(f: Filter, params: list[Any]) -> str:
         placeholders = ", ".join("?" for _ in f.ids)
         params.extend(f.ids)
         return f"external_id IN ({placeholders})"
-    if isinstance(f, CanvassResultFilter):
+    if isinstance(f, (CanvassOutcomeFilter, CanvassResponseFilter)):
         # Should have been reduced to a PersonIdSetFilter in resolve.py.
-        raise CriteriaError("CanvassResultFilter reached the compiler unresolved")
+        raise CriteriaError(f"{type(f).__name__} reached the compiler unresolved")
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 
