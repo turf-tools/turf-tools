@@ -86,6 +86,12 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     );
   };
 
+  // The option mutations below patch the ["question", id] detail cache directly;
+  // options also feed the questions-with-options projection under the
+  // ["questions"] prefix, so invalidate that on settle to keep them in sync.
+  const refreshQuestionProjections = () =>
+    void queryClient.invalidateQueries({ queryKey: ["questions"] });
+
   // Snapshot the option ids present at mount; anything not in the set
   // was added during the session, used to gate the X button's mount
   // fade-in. Bounded by mount-time count; doesn't grow with usage.
@@ -97,6 +103,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
 
   const addOption = useMutation({
     mutationFn: () => client.questions.addResponseOption({ questionId, text: "" }),
+    onSettled: refreshQuestionProjections,
     onMutate: () => {
       const tempId = `temp-${crypto.randomUUID()}`;
       setDetail((d) => ({
@@ -127,6 +134,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
   const removeOption = useMutation({
     mutationFn: (responseOptionId: string) =>
       client.questions.removeResponseOption({ questionId, responseOptionId }),
+    onSettled: refreshQuestionProjections,
     onMutate: (responseOptionId) => {
       const prev = queryClient.getQueryData<QuestionDetail>(["question", questionId]);
       setDetail((d) => ({
@@ -148,6 +156,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
         questionId,
         responseOptionIds: ids,
       }),
+    onSettled: refreshQuestionProjections,
     onError: (e) => {
       console.error("questions.reorderResponseOptions failed", e);
       toast.error(e.message);
@@ -160,6 +169,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
   const updateOptionText = useMutation({
     mutationFn: (input: { responseOptionId: string; text: string }) =>
       client.questions.updateResponseOptionText({ questionId, ...input }),
+    onSettled: refreshQuestionProjections,
     onMutate: ({ responseOptionId, text }) => {
       setDetail((d) => ({
         ...d,
@@ -232,7 +242,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
       )}
       <motion.div
         layout
-        transition={{ type: "tween", duration: 0.2, ease: "easeOut" }}
+        transition={{ type: "tween", duration: 0.15, ease: "easeOut" }}
         className="flex items-center gap-1.5"
       >
         <Button

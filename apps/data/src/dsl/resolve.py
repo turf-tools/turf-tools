@@ -9,7 +9,7 @@ Criteria that do reference segments pay the lookup once per request
 
 Operational-data-aware kinds each contribute a short-circuit check plus a
 resolution pass here: `SegmentFilter` inlines to `NestedFilter`, and
-`CanvassResultFilter` reduces the canvass log to the matching person-id set
+`CanvassOutcomeFilter` reduces the canvass log to the matching person-id set
 (`PersonIdSetFilter`). Segments are expanded first so a referenced segment
 that itself contains a canvass filter gets inlined before canvass resolution
 walks the tree.
@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
 
 from .criteria import (
-    CanvassResultFilter,
+    CanvassOutcomeFilter,
+    CanvassResponseFilter,
     Criteria,
     NestedFilter,
     PersonIdSetFilter,
@@ -71,7 +72,7 @@ def _has_segment_refs(criteria: Criteria) -> bool:
 def _has_canvass_refs(criteria: Criteria) -> bool:
     for step in criteria.steps:
         f = step.filter
-        if isinstance(f, CanvassResultFilter):
+        if isinstance(f, (CanvassOutcomeFilter, CanvassResponseFilter)):
             return True
         if isinstance(f, NestedFilter) and _has_canvass_refs(f.criteria):
             return True
@@ -83,17 +84,23 @@ def _resolve_canvass_refs(
     conn: duckdb.DuckDBPyConnection,
     org_slug: str,
 ) -> Criteria:
-    """Replace each `CanvassResultFilter` with the `PersonIdSetFilter` of
-    persons whose current result matches. A filter with no outcomes selected
-    is inactive — dropped entirely, exactly as the compiler skips an empty
-    filter clause (no effect under any verb), avoiding an invalid `IN ()`."""
+    """Replace each canvass filter (`CanvassOutcomeFilter`,
+    `CanvassResponseFilter`) with the `PersonIdSetFilter` of persons whose
+    current result matches. A filter with nothing selected is inactive —
+    dropped entirely, exactly as the compiler skips an empty filter clause (no
+    effect under any verb), avoiding an invalid `IN ()`."""
     new_steps: list[Step] = []
     for step in criteria.steps:
         f = step.filter
-        if isinstance(f, CanvassResultFilter):
+        if isinstance(f, CanvassOutcomeFilter):
             if not f.outcomes:
                 continue
-            ids = _canvass_person_ids(conn, org_slug, f.outcomes)
+            ids = _canvass_outcome_person_ids(conn, org_slug, f.outcomes)
+            new_steps.append(Step(verb=step.verb, filter=PersonIdSetFilter(kind="person-id-set", ids=ids)))
+        elif isinstance(f, CanvassResponseFilter):
+            if not f.option_ids:
+                continue
+            ids = _canvass_response_person_ids(conn, org_slug, f.question_id, f.option_ids)
             new_steps.append(Step(verb=step.verb, filter=PersonIdSetFilter(kind="person-id-set", ids=ids)))
         elif isinstance(f, NestedFilter):
             inner = _resolve_canvass_refs(f.criteria, conn, org_slug)
@@ -103,7 +110,7 @@ def _resolve_canvass_refs(
     return Criteria(steps=new_steps)
 
 
-def _canvass_person_ids(
+def _canvass_outcome_person_ids(
     conn: duckdb.DuckDBPyConnection,
     org_slug: str,
     outcomes: list[str],
@@ -137,6 +144,47 @@ def _canvass_person_ids(
         WHERE outcome IN ({placeholders})
         """,
         [org_slug, *outcomes],
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _canvass_response_person_ids(
+    conn: duckdb.DuckDBPyConnection,
+    org_slug: str,
+    question_id: str,
+    option_ids: list[str],
+) -> list[str]:
+    """Persons (by `external_id`) whose *current* result in some turf answered
+    `question_id` with one of `option_ids`. Same latest-per-(turf, person)
+    reduction as `_canvass_outcome_person_ids`; then overlaps the question's selected
+    option ids against the filter set. Free-text answers and unanswered
+    questions never match (no `optionIds` → NULL list). v1 is existential
+    across turfs, unscoped — see `_canvass_outcome_person_ids`."""
+    # Built here but passed as a bind param (never interpolated into the SQL),
+    # so the question id can't inject. Same json_extract idiom as the outcome
+    # query above, just pulling an array rather than a scalar.
+    options_path = f'$.responses."{question_id}".optionIds'
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT person_id FROM (
+            SELECT
+                e.person_id,
+                CAST(json_extract(CAST(e.payload AS VARCHAR), ?) AS VARCHAR[]) AS selected
+            FROM {OPERATIONAL_PG_ALIAS}.public.canvass_events e
+            JOIN {OPERATIONAL_PG_ALIAS}.public.turfs t ON t.turf_id = e.turf_id
+            JOIN {OPERATIONAL_PG_ALIAS}.public.campaigns c ON c.campaign_id = t.campaign_id
+            JOIN {OPERATIONAL_PG_ALIAS}.public.organizations o
+                ON o.organization_id = c.organization_id
+            WHERE e.kind = 'result'
+                AND e.person_id IS NOT NULL
+                AND o.slug = ?
+            QUALIFY row_number() OVER (
+                PARTITION BY e.turf_id, e.person_id ORDER BY e.sequence DESC
+            ) = 1
+        )
+        WHERE list_has_any(selected, ?)
+        """,
+        [options_path, org_slug, option_ids],
     ).fetchall()
     return [r[0] for r in rows]
 
