@@ -430,10 +430,10 @@ function TextStepBody({
 }) {
   return (
     <>
-      <div className="mb-3 flex h-7 items-center justify-between gap-2">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <GripHandle dragControls={dragControls} />
-          <span className="text-sm text-muted-foreground pr-1">{number}</span>
+          <span className="text-sm text-muted-foreground pr-0.5 tabular-nums">{number}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <KindBadge meta={TEXT_STEP_BADGE} />
@@ -489,7 +489,7 @@ function QuestionStepBody({
     return (
       <div className="flex items-center gap-1.5">
         <GripHandle dragControls={dragControls} />
-        <span className="text-sm text-muted-foreground">{number}</span>
+        <span className="text-sm text-muted-foreground tabular-nums">{number}</span>
         <span className="text-sm italic text-muted-foreground">Loading…</span>
       </div>
     );
@@ -505,10 +505,10 @@ function QuestionStepBody({
 
   return (
     <>
-      <div className="mb-3 flex h-7 items-center justify-between gap-2">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 flex-1">
           <GripHandle dragControls={dragControls} />
-          <span className="text-sm text-muted-foreground pr-1">{number}</span>
+          <span className="text-sm text-muted-foreground pr-0.5 tabular-nums">{number}</span>
           {editingName ? (
             <Input
               autoFocus
@@ -519,7 +519,10 @@ function QuestionStepBody({
                 if (e.key === "Enter") e.currentTarget.blur();
                 else if (e.key === "Escape") setEditingName(false);
               }}
-              className="h-7 px-2 flex-1 min-w-0"
+              // -my-1 lets the h-7 input render full-height while only
+              // claiming the ~20px display-text height in layout, so editing
+              // doesn't grow the row.
+              className="-my-1 h-7 px-2 flex-1 min-w-0"
             />
           ) : (
             <span

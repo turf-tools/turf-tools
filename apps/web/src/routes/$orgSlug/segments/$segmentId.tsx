@@ -633,7 +633,7 @@ function StepRow({
             <GripVertical className="size-3.5" />
           </button>
           <span className="text-sm truncate">
-            <span className="text-muted-foreground pr-2">{number}</span>
+            <span className="text-muted-foreground pr-2 tabular-nums">{number}</span>
             {def?.label ?? "—"}
           </span>
         </div>
