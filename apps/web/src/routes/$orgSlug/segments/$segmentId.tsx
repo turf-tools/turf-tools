@@ -862,10 +862,15 @@ function CanvassResponseEditor({
   // same data (no per-question fetch).
   const { data: questions } = useQuery(questionsWithOptionsQuery());
 
-  const selected = questions?.find((q) => q.questionId === filter.questionId);
+  // Mirror the selection locally so the options swap in the same frame the
+  // dropdown closes, not a tick later when the criteria write notifies.
+  const [localQuestionId, setLocalQuestionId] = useState(filter.questionId);
+  useEffect(() => setLocalQuestionId(filter.questionId), [filter.questionId]);
+
+  const selected = questions?.find((q) => q.questionId === localQuestionId);
   const triggerLabel = selected
     ? selected.name
-    : filter.questionId && questions
+    : localQuestionId && questions
       ? "(deleted)"
       : "Select question…";
   const options = selected?.options ?? [];
@@ -896,7 +901,10 @@ function CanvassResponseEditor({
               <DropdownMenuItem
                 key={q.questionId}
                 // Switching questions clears the now-irrelevant option set.
-                onClick={() => onChange({ ...filter, questionId: q.questionId, optionIds: [] })}
+                onClick={() => {
+                  setLocalQuestionId(q.questionId);
+                  onChange({ ...filter, questionId: q.questionId, optionIds: [] });
+                }}
               >
                 {q.name}
               </DropdownMenuItem>
@@ -904,7 +912,7 @@ function CanvassResponseEditor({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      {filter.questionId && options.length > 0 ? (
+      {localQuestionId && options.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {options.map((o) => (
             <Toggle
