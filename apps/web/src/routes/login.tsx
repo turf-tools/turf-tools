@@ -149,7 +149,7 @@ function EmailStep({
 function SentStep({ email, onBack }: { email: string; onBack: () => void }) {
   return (
     <>
-      <p className="mb-8 text-center text-[16px] text-muted-foreground">
+      <p className="mb-14 text-center text-[16px] text-muted-foreground">
         We've sent a temporary login link, please check your inbox at{" "}
         <span className="text-foreground">{email}</span>.
       </p>
