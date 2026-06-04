@@ -13,11 +13,14 @@ from src.dsl.criteria import (
     AddressFilter,
     AgeRangeFilter,
     AllFilter,
+    CanvassOutcomeFilter,
+    CanvassResponseFilter,
     Criteria,
     DateRangeFilter,
     EnumFilter,
     KeyFilter,
     NestedFilter,
+    PersonIdSetFilter,
     Step,
     TextFilter,
     TextMultiFilter,
@@ -627,3 +630,71 @@ def test_nested_filter_compiles_recursively() -> None:
     )
     assert where == "WHERE ((enrollment IN (?)))"
     assert params == ["democratic"]
+
+
+# ---------------------------------------------------------------------------
+# PersonIdSetFilter — produced by resolving operational-data filters (e.g.
+# CanvassOutcomeFilter) to a literal set of person external_ids.
+# ---------------------------------------------------------------------------
+
+
+def test_person_id_set_compiles_to_external_id_in() -> None:
+    params: list = []
+    where = criteria_to_where(
+        _narrow(PersonIdSetFilter(kind="person-id-set", ids=["abc", "def"])),
+        None,
+        params,
+    )
+    assert where == "WHERE external_id IN (?, ?)"
+    assert params == ["abc", "def"]
+
+
+def test_empty_person_id_set_matches_nothing() -> None:
+    # Distinct from an inactive filter: an empty *resolved* set means "no
+    # person matched", so it must compile to 1=0 (not drop out).
+    params: list = []
+    where = criteria_to_where(
+        _narrow(PersonIdSetFilter(kind="person-id-set", ids=[])),
+        None,
+        params,
+    )
+    assert where == "WHERE 1=0"
+    assert params == []
+
+
+def test_person_id_set_remove_composes_as_and_not() -> None:
+    # The canonical "remove anyone canvassed" shape.
+    params: list = []
+    where = criteria_to_where(
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="remove", filter=PersonIdSetFilter(kind="person-id-set", ids=["abc"])),
+            ]
+        ),
+        None,
+        params,
+    )
+    assert where == "WHERE (enrollment IN (?)) AND NOT (external_id IN (?))"
+    assert params == ["democratic", "abc"]
+
+
+def test_unresolved_canvass_outcome_filter_raises() -> None:
+    # CanvassOutcomeFilter must be reduced to a PersonIdSetFilter in resolve.py
+    # before compilation; reaching the compiler is a bug.
+    with pytest.raises(CriteriaError):
+        criteria_to_where(
+            _narrow(CanvassOutcomeFilter(kind="canvass-outcome", outcomes=["canvassed"])),
+            None,
+            [],
+        )
+
+
+def test_unresolved_canvass_response_filter_raises() -> None:
+    # Same contract as the result filter — must be resolved before compilation.
+    with pytest.raises(CriteriaError):
+        criteria_to_where(
+            _narrow(CanvassResponseFilter(kind="canvass-response", questionId="q1", optionIds=["supportive"])),
+            None,
+            [],
+        )

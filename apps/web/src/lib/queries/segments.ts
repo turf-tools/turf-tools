@@ -1,11 +1,20 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getCurrentOrgSlug } from "~/lib/current-route";
-import type { Criteria } from "~/lib/filters";
+import { criteriaTouchesLiveData, type Criteria } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
 export type SegmentCriteria = NonNullable<
   Awaited<ReturnType<typeof client.segments.getById>>
 >["criteria"];
+
+// `staleTime: Infinity` only holds for criteria that are pure functions of the
+// key; canvass leaves read live data and drift, so they fall back to the
+// default. `unknown` arg so loosely-typed `SegmentCriteria` callers pass through
+// without casts. See `criteriaTouchesLiveData`.
+export function liveAwareStaleTime(criteria: unknown): number | undefined {
+  const c = criteria as Criteria | null | undefined;
+  return c && criteriaTouchesLiveData(c) ? undefined : Number.POSITIVE_INFINITY;
+}
 
 export const segmentsListQuery = () =>
   queryOptions({
@@ -23,7 +32,7 @@ export const segmentCountsQuery = (criteria: Criteria) =>
   queryOptions({
     queryKey: ["segment-counts", JSON.stringify(criteria)] as const,
     queryFn: () => client.segments.count({ criteria }),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: liveAwareStaleTime(criteria),
   });
 
 export type SegmentPoints = {
@@ -37,7 +46,7 @@ export const segmentPointsQuery = (criteria: Criteria) =>
   queryOptions({
     queryKey: ["segment-points", JSON.stringify(criteria)] as const,
     queryFn: () => fetchSegmentPoints({ criteria }),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: liveAwareStaleTime(criteria),
     gcTime: 0,
   });
 
@@ -45,14 +54,14 @@ export const segmentSampleQuery = (criteria: Criteria) =>
   queryOptions({
     queryKey: ["segment-sample", JSON.stringify(criteria)] as const,
     queryFn: () => client.segments.sample({ criteria }),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: liveAwareStaleTime(criteria),
   });
 
 export const segmentCascadeQuery = (criteria: Criteria) =>
   queryOptions({
     queryKey: ["segment-cascade", JSON.stringify(criteria)] as const,
     queryFn: () => client.segments.countCascade({ criteria }),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: liveAwareStaleTime(criteria),
   });
 
 // Binary mercator-delta pairs — uploaded directly into a GPU buffer,
@@ -108,5 +117,5 @@ export const cutterBuildingsQuery = (
         criteria: segmentCriteria,
         keyFilter,
       }),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: liveAwareStaleTime(segmentCriteria),
   });
