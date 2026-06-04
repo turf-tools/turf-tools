@@ -331,7 +331,7 @@ function ReorderStepRow({
       dragControls={controls}
       as="div"
       onDragEnd={onDragEnd}
-      transition={{ layout: { type: "tween", duration: 0.2, ease: "easeOut" } }}
+      transition={{ layout: { type: "tween", duration: 0.15, ease: "easeOut" } }}
       dragTransition={{ bounceStiffness: 10000, bounceDamping: 500, power: 0 }}
     >
       <StepRow {...props} dragControls={controls} />

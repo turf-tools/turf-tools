@@ -10,6 +10,15 @@ export const questionsListQuery = (status: "active" | "archived" | "all" = "acti
     queryFn: () => client.questions.list({ status }),
   });
 
+// Active questions with options inlined (canvass-response filter editor).
+// Keyed under the `["questions"]` prefix so the question/option mutations'
+// prefix-form invalidations clear it.
+export const questionsWithOptionsQuery = () =>
+  queryOptions({
+    queryKey: ["questions", "with-options"] as const,
+    queryFn: () => client.questions.listWithOptions(),
+  });
+
 export const questionDetailQuery = (questionId: string) =>
   queryOptions({
     queryKey: ["question", questionId] as const,

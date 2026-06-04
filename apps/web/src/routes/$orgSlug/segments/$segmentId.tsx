@@ -39,6 +39,8 @@ import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import {
   type AddressFilter,
   type AgeRangeFilter,
+  type CanvassResponseFilter,
+  type CanvassOutcomeFilter,
   type DateRangeFilter,
   definitionFor,
   emptyFilterFor,
@@ -65,6 +67,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { findCyclicSegmentIds, type SegmentLike } from "~/lib/segment-refs";
 import type { CascadeStep } from "~/rpc/web/segments";
 import { cn, toTitleCase } from "~/lib/utils";
@@ -78,6 +81,8 @@ export const Route = createFileRoute("/$orgSlug/segments/$segmentId")({
       throw redirect({ to: "/$orgSlug/segments", params: { orgSlug } });
     }
     await queryClient.fetchQuery(segmentDetailQuery(segmentId));
+    // Names + options for the canvass-response filter editor.
+    await queryClient.fetchQuery(questionsWithOptionsQuery());
   },
   component: SegmentEditor,
 });
@@ -575,6 +580,9 @@ function ReorderStepRow({
       dragControls={controls}
       as="div"
       onDragEnd={onDragEnd}
+      // Animate reorder (position) but not size, so a filter's height change
+      // (e.g. switching a canvass-response question) is instant, not animated.
+      layout="position"
       transition={{ layout: { type: "tween", duration: 0.15, ease: "easeOut" } }}
       dragTransition={{ bounceStiffness: 10000, bounceDamping: 500, power: 0 }}
     >
@@ -667,6 +675,12 @@ function StepRow({
       ) : null}
       {filter.kind === "address" && def?.kind === "address" ? (
         <AddressFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {filter.kind === "canvass-outcome" && def?.kind === "canvass-outcome" ? (
+        <CanvassOutcomeEditor filter={filter} def={def} onChange={onChange} />
+      ) : null}
+      {filter.kind === "canvass-response" && def?.kind === "canvass-response" ? (
+        <CanvassResponseEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "segment" && def?.kind === "segment" ? (
         <SegmentFilterEditor
@@ -800,6 +814,116 @@ function EnumFilterEditor({
           {v.label ?? v.value}
         </Toggle>
       ))}
+    </div>
+  );
+}
+
+function CanvassOutcomeEditor({
+  filter,
+  def,
+  onChange,
+}: {
+  filter: CanvassOutcomeFilter;
+  def: Extract<FilterDef, { kind: "canvass-outcome" }>;
+  onChange: (next: Filter) => void;
+}) {
+  const toggle = (value: string) => {
+    const next = filter.outcomes.includes(value)
+      ? filter.outcomes.filter((v) => v !== value)
+      : [...filter.outcomes, value];
+    onChange({ ...filter, outcomes: next });
+  };
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {def.values.map((v) => (
+        <Toggle
+          key={v.value}
+          size="sm"
+          variant="outline"
+          pressed={filter.outcomes.includes(v.value)}
+          onPressedChange={() => toggle(v.value)}
+          className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+        >
+          {v.label ?? v.value}
+        </Toggle>
+      ))}
+    </div>
+  );
+}
+
+function CanvassResponseEditor({
+  filter,
+  onChange,
+}: {
+  filter: CanvassResponseFilter;
+  onChange: (next: Filter) => void;
+}) {
+  // Names + options in one query, so the dropdown and toggles render off the
+  // same data (no per-question fetch).
+  const { data: questions } = useQuery(questionsWithOptionsQuery());
+
+  const selected = questions?.find((q) => q.questionId === filter.questionId);
+  const triggerLabel = selected
+    ? selected.name
+    : filter.questionId && questions
+      ? "(deleted)"
+      : "Select question…";
+  const options = selected?.options ?? [];
+
+  const toggle = (optionId: string) => {
+    const next = filter.optionIds.includes(optionId)
+      ? filter.optionIds.filter((v) => v !== optionId)
+      : [...filter.optionIds, optionId];
+    onChange({ ...filter, optionIds: next });
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<Button variant="outline" className="w-full justify-between font-normal" />}
+        >
+          <span className={cn("truncate", !selected ? "text-muted-foreground" : null)}>
+            {triggerLabel}
+          </span>
+          <ChevronDown className="text-muted-foreground" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="min-w-48 max-h-[291px] overflow-y-auto">
+          {!questions || questions.length === 0 ? (
+            <DropdownMenuItem disabled>No questions available</DropdownMenuItem>
+          ) : (
+            questions.map((q) => (
+              <DropdownMenuItem
+                key={q.questionId}
+                // Switching questions clears the now-irrelevant option set.
+                onClick={() => onChange({ ...filter, questionId: q.questionId, optionIds: [] })}
+              >
+                {q.name}
+              </DropdownMenuItem>
+            ))
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {filter.questionId && options.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {options.map((o) => (
+            <Toggle
+              key={o.responseOptionId}
+              size="sm"
+              variant="outline"
+              pressed={filter.optionIds.includes(o.responseOptionId)}
+              onPressedChange={() => toggle(o.responseOptionId)}
+              className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+            >
+              {o.text.trim() ? (
+                o.text
+              ) : (
+                <span className="italic text-muted-foreground">Empty option</span>
+              )}
+            </Toggle>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
