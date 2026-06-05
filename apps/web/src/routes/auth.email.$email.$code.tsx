@@ -96,7 +96,7 @@ function VerifyPage() {
               loading={pending}
               className="h-10 w-full text-[16px]"
             >
-              Complete log in
+              Continue
             </Button>
           </>
         )}
