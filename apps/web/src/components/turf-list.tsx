@@ -1,4 +1,5 @@
 import { DoorClosed, Trash2, UserRound } from "lucide-react";
+import { memo } from "react";
 import { Button } from "~/components/button";
 import { Pill } from "~/components/pill";
 import { cn } from "~/lib/utils";
@@ -40,6 +41,84 @@ type Props = {
   emptyMessage?: string;
 };
 
+// One row, memoized so editing a single turf — which rebuilds the whole
+// `turfs` array on every pointer-move — only re-renders the row whose
+// counts actually changed. Props are primitives + stable callbacks so the
+// shallow compare skips the unchanged rows; `onSelect`/`onRemove` must be
+// referentially stable in the parent.
+const Row = memo(function Row({
+  id,
+  index,
+  selected,
+  doors,
+  people,
+  onSelect,
+  onRemove,
+}: {
+  id: string;
+  index: number;
+  selected: boolean;
+  doors: number | undefined;
+  people: number | undefined;
+  onSelect: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(id);
+        }
+      }}
+      className={cn(
+        "h-11 flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+        selected ? "border-foreground" : "border-border hover:border-muted-foreground",
+      )}
+    >
+      <span
+        aria-hidden
+        className="mr-1 size-3 shrink-0 rounded-sm border border-border"
+        style={{ backgroundColor: colorFor(index) }}
+      />
+      <span className="flex-1 truncate text-sm">Turf {index + 1}</span>
+      {doors !== undefined && people !== undefined ? (
+        <div className="flex shrink-0 items-center gap-2">
+          <Pill
+            variant="number"
+            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+          >
+            <UserRound className="size-3.5 text-foreground" />
+            {people.toLocaleString()}
+          </Pill>
+          <Pill
+            variant="number"
+            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+          >
+            <DoorClosed className="size-3.5 text-foreground" />
+            {doors.toLocaleString()}
+          </Pill>
+        </div>
+      ) : null}
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        className="-ml-[1px] h-8"
+        aria-label={`Remove turf ${index + 1}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove(id);
+        }}
+      >
+        <Trash2 className="size-4" />
+      </Button>
+    </div>
+  );
+});
+
 export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessage }: Props) {
   if (turfs.length === 0) {
     if (!emptyMessage) return <div className="h-full" />;
@@ -60,64 +139,18 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
   }
   return (
     <div className="flex h-full flex-col gap-2 overflow-y-auto">
-      {turfs.map((turf, idx) => {
-        const selected = turf.id === selectedTurfId;
-        return (
-          <div
-            key={turf.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onSelect(turf.id)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onSelect(turf.id);
-              }
-            }}
-            className={cn(
-              "h-11 flex items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
-              selected ? "border-foreground" : "border-border hover:border-muted-foreground",
-            )}
-          >
-            <span
-              aria-hidden
-              className="mr-1 size-3 shrink-0 rounded-sm border border-border"
-              style={{ backgroundColor: colorFor(idx) }}
-            />
-            <span className="flex-1 truncate text-sm">Turf {idx + 1}</span>
-            {turf.counts ? (
-              <div className="flex shrink-0 items-center gap-2">
-                <Pill
-                  variant="number"
-                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-                >
-                  <UserRound className="size-3.5 text-foreground" />
-                  {turf.counts.people.toLocaleString()}
-                </Pill>
-                <Pill
-                  variant="number"
-                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-                >
-                  <DoorClosed className="size-3.5 text-foreground" />
-                  {turf.counts.doors.toLocaleString()}
-                </Pill>
-              </div>
-            ) : null}
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="-ml-[1px] h-8"
-              aria-label={`Remove turf ${idx + 1}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(turf.id);
-              }}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
-        );
-      })}
+      {turfs.map((turf, idx) => (
+        <Row
+          key={turf.id}
+          id={turf.id}
+          index={idx}
+          selected={turf.id === selectedTurfId}
+          doors={turf.counts?.doors}
+          people={turf.counts?.people}
+          onSelect={onSelect}
+          onRemove={onRemove}
+        />
+      ))}
     </div>
   );
 }

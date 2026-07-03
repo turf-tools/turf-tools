@@ -1,5 +1,13 @@
 import { useAtomValue } from "jotai";
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  memo,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { type MapMouseEvent, useMap } from "react-map-gl/maplibre";
 import { darkAtom } from "~/lib/atoms/theme";
 import { pointInPolygon } from "~/lib/geometry";
@@ -45,6 +53,12 @@ export type Turf = {
   vertices: Array<[number, number]>;
   mode: "drawing" | "editing";
 };
+
+// The underlying MapLibre map instance (react-map-gl's `getMap()` return),
+// threaded to the memoized per-turf shape below.
+type MapInstance = NonNullable<
+  ReturnType<NonNullable<ReturnType<typeof useMap>["default"]>["getMap"]>
+>;
 
 // 12px screen-space radius is the conventional snap-to-close
 // threshold (mapbox-gl-draw, terra-draw both use roughly this).
@@ -543,246 +557,255 @@ export function TurfDrawer({
       // never need their own pointer events.
       className="pointer-events-none absolute inset-0 z-10 h-full w-full"
     >
-      {/* One <g> per turf, in render order. Each contains a <path>
-          (outline + fill) and a handles <g> with the vertex
-          circles. Position attributes (`d`, `cx`, `cy`, `r`) are
-          intentionally omitted from JSX and written imperatively
-          in the sync effect — listing them in JSX would make
-          React reapply stale values on every re-render and
-          overwrite our per-frame DOM writes. */}
-      {turfs.map((turf, i) => {
-        const isClosed = turf.mode === "editing";
-        const showHandles = turf.mode === "drawing" || turf.id === selectedTurfId;
-        const color = colorFor(i);
-        // First vertex of a drawing turf with ≥3 vertices is the
-        // snap-close target — show `pointer` so it reads as "click
-        // to close" rather than `grab` ("drag me"). Every other
-        // handle is draggable.
-        const canClose = turf.mode === "drawing" && turf.vertices.length >= 3;
-        return (
-          <g key={turf.id}>
-            <path
-              // Same fill for drawing and closed turfs — SVG fills
-              // an open path as if closed from last point back to
-              // first, so the in-progress polygon (with the cursor
-              // as its trailing vertex) shades live as the user
-              // draws. Visualizes the same polygon used for the
-              // sidebar's live count.
-              fill={color}
-              fillOpacity={0.25}
-              stroke={color}
-              strokeWidth={3}
-            />
-            <g style={showHandles ? undefined : { display: "none" }}>
-              {turf.vertices.map((_, j) => {
-                const isFresh = freshVertex?.turfId === turf.id && freshVertex?.vertexIdx === j;
-                // Alt over a vertex that's *actually* deletable — drawing
-                // turfs always are; closed turfs only above the 3-vertex
-                // floor. Below that the click no-ops, and the regular
-                // cursor stays so the user isn't promised an action that
-                // won't happen.
-                const wouldDelete =
-                  altDown && (turf.mode === "drawing" || turf.vertices.length > 3);
-                const cursor = wouldDelete
-                  ? deleteCursor(isDark)
-                  : isFresh
-                    ? "crosshair"
-                    : canClose && j === 0
-                      ? "pointer"
-                      : "grab";
-                return (
-                  <circle
-                    key={j}
-                    fill="white"
-                    stroke={color}
-                    strokeWidth={3}
-                    // Override the SVG's pointer-events: none so the
-                    // circle can receive pointerdown for drag-to-edit.
-                    // Map clicks (from MapLibre, on the canvas
-                    // underneath) still fall through anywhere except
-                    // a circle's hit area.
-                    pointerEvents="all"
-                    style={{ cursor }}
-                    onPointerLeave={() => {
-                      if (isFresh) setFreshVertex(null);
-                    }}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      // Alt-click deletes the vertex. Drawing turfs
-                      // can shrink to empty — we drop the turf
-                      // entirely and clear the selection. Editing
-                      // turfs need ≥3 vertices to stay valid; below
-                      // that we just no-op rather than convert back
-                      // to drawing mode (the user can hit Escape and
-                      // restart if they really want to redo it).
-                      if (e.altKey) {
-                        if (turf.mode === "editing" && turf.vertices.length <= 3) return;
-                        const wasEditing = turf.mode === "editing";
-                        setTurfs((ts) => {
-                          const next = ts.flatMap((t) => {
-                            if (t.id !== turf.id) return [t];
-                            const v = t.vertices.filter((_, vi) => vi !== j);
-                            if (v.length === 0) return [];
-                            return [{ ...t, vertices: v }];
-                          });
-                          if (wasEditing) onCommit?.(next);
-                          return next;
-                        });
-                        // If we just removed the last vertex of a
-                        // drawing turf the turf itself is gone; drop
-                        // the selection so the sidebar/map don't
-                        // hold a dangling id.
-                        if (turf.mode === "drawing" && turf.vertices.length === 1) {
-                          setSelectedTurfId((s) => (s === turf.id ? null : s));
-                        }
-                        setFreshVertex(null);
-                        return;
-                      }
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                      pointerStartRef.current = {
-                        turfId: turf.id,
-                        vertexIdx: j,
-                        x: e.clientX,
-                        y: e.clientY,
-                      };
-                      // Don't disable dragPan or set dragRef yet —
-                      // wait for movement past the threshold.
-                    }}
-                    onPointerMove={(e) => {
-                      // Already dragging → update vertex position.
-                      if (dragRef.current) {
-                        const rect = map.getCanvas().getBoundingClientRect();
-                        const x = e.clientX - rect.left;
-                        const y = e.clientY - rect.top;
-                        const { lng, lat } = map.unproject([x, y]);
-                        const drag = dragRef.current;
-                        setTurfs((ts) =>
-                          ts.map((t) =>
-                            t.id === drag.turfId
-                              ? {
-                                  ...t,
-                                  vertices: t.vertices.map((v, vi) =>
-                                    vi === drag.vertexIdx ? [lng, lat] : v,
-                                  ),
-                                }
-                              : t,
-                          ),
-                        );
-                        return;
-                      }
-                      // Not yet dragging — promote to drag once the
-                      // pointer has moved past the threshold.
-                      const start = pointerStartRef.current;
-                      if (!start) return;
-                      const dx = e.clientX - start.x;
-                      const dy = e.clientY - start.y;
-                      if (Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
-                        dragRef.current = { turfId: start.turfId, vertexIdx: start.vertexIdx };
-                        map.dragPan.disable();
-                      }
-                    }}
-                    onPointerUp={(e) => {
-                      e.currentTarget.releasePointerCapture(e.pointerId);
-                      if (dragRef.current) {
-                        // Was a drag — clean up. Commit if the dragged
-                        // vertex belonged to a closed turf.
-                        const wasEditing = turf.mode === "editing";
-                        dragRef.current = null;
-                        map.dragPan.enable();
-                        if (wasEditing) onCommit?.(turfsPropRef.current);
-                      } else {
-                        // Was a click on the vertex. The only click
-                        // semantic so far: snap-close the polygon
-                        // when the user clicks the first vertex of
-                        // a drawing turf with ≥3 vertices.
-                        const start = pointerStartRef.current;
-                        if (
-                          start &&
-                          start.vertexIdx === 0 &&
-                          turf.id === start.turfId &&
-                          turf.mode === "drawing" &&
-                          turf.vertices.length >= 3
-                        ) {
-                          setTurfs((ts) => {
-                            const next = ts.map((t) =>
-                              t.id === start.turfId ? { ...t, mode: "editing" as const } : t,
-                            );
-                            onCommit?.(next);
-                            return next;
-                          });
-                          setFreshVertex(null);
-                        }
-                      }
-                      pointerStartRef.current = null;
-                    }}
-                  />
-                );
-              })}
-            </g>
-            {/* Midpoint handles — small ghost circles centered on
-                each edge of a closed, selected polygon. Pointerdown
-                inserts a new vertex at the midpoint position and
-                hands the drag off to document-level listeners
-                (above) so the drag can continue past the moment
-                this midpoint element gets unmounted by the
-                insertion. Drawing-mode turfs don't get midpoints —
-                the trailing edge is being actively laid down. */}
-            {isClosed && turf.id === selectedTurfId ? (
-              <g>
-                {turf.vertices.map((_, j) => (
-                  <circle
-                    key={j}
-                    r={4}
-                    fill="white"
-                    stroke={color}
-                    strokeWidth={3}
-                    pointerEvents="all"
-                    style={{ cursor: "pointer" }}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      // Prevents the implicit `selectstart` that
-                      // would otherwise fire as the cursor moves
-                      // over text during the drag — without this
-                      // (plus the body-level `user-select: none`
-                      // we set below), dragging across the "Show
-                      // streets" label highlights its text.
-                      e.preventDefault();
-                      const v0 = turf.vertices[j]!;
-                      const v1 = turf.vertices[(j + 1) % turf.vertices.length]!;
-                      const midLng = (v0[0] + v1[0]) / 2;
-                      const midLat = (v0[1] + v1[1]) / 2;
-                      const insertAt = j + 1;
-                      setTurfs((ts) =>
-                        ts.map((t) =>
-                          t.id === turf.id
-                            ? {
-                                ...t,
-                                vertices: [
-                                  ...t.vertices.slice(0, insertAt),
-                                  [midLng, midLat],
-                                  ...t.vertices.slice(insertAt),
-                                ],
-                              }
-                            : t,
-                        ),
-                      );
-                      midpointDragRef.current = { turfId: turf.id, vertexIdx: insertAt };
-                      map.dragPan.disable();
-                      // Suppress text selection across the page
-                      // while dragging — restored on pointerup.
-                      // The vertex drag avoids this by holding
-                      // pointer capture on a stable element; the
-                      // midpoint can't (its element disappears on
-                      // insert), so we lean on user-select instead.
-                      document.body.style.userSelect = "none";
-                    }}
-                  />
-                ))}
-              </g>
-            ) : null}
-          </g>
-        );
-      })}
+      {/* One <TurfShape> per turf, in render order; the sync effect above
+          indexes these groups positionally to drive their geometry. */}
+      {turfs.map((turf, i) => (
+        <TurfShape
+          key={turf.id}
+          turf={turf}
+          index={i}
+          selected={turf.id === selectedTurfId}
+          freshVertexIdx={freshVertex?.turfId === turf.id ? freshVertex.vertexIdx : null}
+          isDark={isDark}
+          altDown={altDown}
+          map={map}
+          setTurfs={setTurfs}
+          setSelectedTurfId={setSelectedTurfId}
+          setFreshVertex={setFreshVertex}
+          onCommit={onCommit}
+          turfsPropRef={turfsPropRef}
+          dragRef={dragRef}
+          pointerStartRef={pointerStartRef}
+          midpointDragRef={midpointDragRef}
+        />
+      ))}
     </svg>
   );
 }
+
+type TurfShapeProps = {
+  turf: Turf;
+  index: number;
+  selected: boolean;
+  freshVertexIdx: number | null;
+  isDark: boolean;
+  altDown: boolean;
+  map: MapInstance;
+  setTurfs: Dispatch<SetStateAction<Turf[]>>;
+  setSelectedTurfId: Dispatch<SetStateAction<string | null>>;
+  setFreshVertex: Dispatch<SetStateAction<{ turfId: string; vertexIdx: number } | null>>;
+  onCommit?: (turfs: Turf[]) => void;
+  turfsPropRef: MutableRefObject<Turf[]>;
+  dragRef: MutableRefObject<{ turfId: string; vertexIdx: number } | null>;
+  pointerStartRef: MutableRefObject<{
+    turfId: string;
+    vertexIdx: number;
+    x: number;
+    y: number;
+  } | null>;
+  midpointDragRef: MutableRefObject<{ turfId: string; vertexIdx: number } | null>;
+};
+
+// One turf's SVG subtree, memoized so editing a single turf (which rebuilds
+// the `turfs` array on every pointer-move) only re-renders that turf's group
+// instead of reconciling all N. Props are the turf object (identity-stable
+// for unedited turfs) plus primitives and stable setters/refs, so the shallow
+// compare skips untouched turfs. Position attributes (`d`/`cx`/`cy`/`r`) are
+// deliberately absent from this JSX: the parent's sync effect writes them
+// imperatively per frame and indexes these groups positionally, so the
+// structure must stay one <path>, one handles <g>, then the optional
+// midpoints <g>.
+const TurfShape = memo(function TurfShape({
+  turf,
+  index,
+  selected,
+  freshVertexIdx,
+  isDark,
+  altDown,
+  map,
+  setTurfs,
+  setSelectedTurfId,
+  setFreshVertex,
+  onCommit,
+  turfsPropRef,
+  dragRef,
+  pointerStartRef,
+  midpointDragRef,
+}: TurfShapeProps) {
+  const isClosed = turf.mode === "editing";
+  const showHandles = turf.mode === "drawing" || selected;
+  const color = colorFor(index);
+  const canClose = turf.mode === "drawing" && turf.vertices.length >= 3;
+  return (
+    <g>
+      <path fill={color} fillOpacity={0.25} stroke={color} strokeWidth={3} />
+      <g style={showHandles ? undefined : { display: "none" }}>
+        {turf.vertices.map((_, j) => {
+          const isFresh = freshVertexIdx === j;
+          const wouldDelete = altDown && (turf.mode === "drawing" || turf.vertices.length > 3);
+          const cursor = wouldDelete
+            ? deleteCursor(isDark)
+            : isFresh
+              ? "crosshair"
+              : canClose && j === 0
+                ? "pointer"
+                : "grab";
+          return (
+            <circle
+              key={j}
+              fill="white"
+              stroke={color}
+              strokeWidth={3}
+              pointerEvents="all"
+              style={{ cursor }}
+              onPointerLeave={() => {
+                if (isFresh) setFreshVertex(null);
+              }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                // Alt-click deletes the vertex. Drawing turfs can shrink to
+                // empty — drop the turf and clear selection. Editing turfs
+                // need ≥3 vertices; below that we no-op.
+                if (e.altKey) {
+                  if (turf.mode === "editing" && turf.vertices.length <= 3) return;
+                  const wasEditing = turf.mode === "editing";
+                  setTurfs((ts) => {
+                    const next = ts.flatMap((t) => {
+                      if (t.id !== turf.id) return [t];
+                      const v = t.vertices.filter((_, vi) => vi !== j);
+                      if (v.length === 0) return [];
+                      return [{ ...t, vertices: v }];
+                    });
+                    if (wasEditing) onCommit?.(next);
+                    return next;
+                  });
+                  if (turf.mode === "drawing" && turf.vertices.length === 1) {
+                    setSelectedTurfId((s) => (s === turf.id ? null : s));
+                  }
+                  setFreshVertex(null);
+                  return;
+                }
+                e.currentTarget.setPointerCapture(e.pointerId);
+                // Don't disable dragPan / set dragRef yet — wait for movement
+                // past the threshold (this might be a snap-close click).
+                pointerStartRef.current = {
+                  turfId: turf.id,
+                  vertexIdx: j,
+                  x: e.clientX,
+                  y: e.clientY,
+                };
+              }}
+              onPointerMove={(e) => {
+                if (dragRef.current) {
+                  const rect = map.getCanvas().getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+                  const { lng, lat } = map.unproject([x, y]);
+                  const drag = dragRef.current;
+                  setTurfs((ts) =>
+                    ts.map((t) =>
+                      t.id === drag.turfId
+                        ? {
+                            ...t,
+                            vertices: t.vertices.map((v, vi) =>
+                              vi === drag.vertexIdx ? [lng, lat] : v,
+                            ),
+                          }
+                        : t,
+                    ),
+                  );
+                  return;
+                }
+                // Promote to a drag once movement exceeds the threshold.
+                const start = pointerStartRef.current;
+                if (!start) return;
+                const dx = e.clientX - start.x;
+                const dy = e.clientY - start.y;
+                if (Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
+                  dragRef.current = { turfId: start.turfId, vertexIdx: start.vertexIdx };
+                  map.dragPan.disable();
+                }
+              }}
+              onPointerUp={(e) => {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                if (dragRef.current) {
+                  const wasEditing = turf.mode === "editing";
+                  dragRef.current = null;
+                  map.dragPan.enable();
+                  if (wasEditing) onCommit?.(turfsPropRef.current);
+                } else {
+                  // Click on vertex 0 of a drawing turf with ≥3 vertices
+                  // snap-closes the polygon.
+                  const start = pointerStartRef.current;
+                  if (
+                    start &&
+                    start.vertexIdx === 0 &&
+                    turf.id === start.turfId &&
+                    turf.mode === "drawing" &&
+                    turf.vertices.length >= 3
+                  ) {
+                    setTurfs((ts) => {
+                      const next = ts.map((t) =>
+                        t.id === start.turfId ? { ...t, mode: "editing" as const } : t,
+                      );
+                      onCommit?.(next);
+                      return next;
+                    });
+                    setFreshVertex(null);
+                  }
+                }
+                pointerStartRef.current = null;
+              }}
+            />
+          );
+        })}
+      </g>
+      {/* Midpoint handles on a closed, selected polygon. Pointerdown inserts
+          a vertex and hands the drag to document-level listeners (in the
+          parent) so it survives this element unmounting on insert. */}
+      {isClosed && selected ? (
+        <g>
+          {turf.vertices.map((_, j) => (
+            <circle
+              key={j}
+              r={4}
+              fill="white"
+              stroke={color}
+              strokeWidth={3}
+              pointerEvents="all"
+              style={{ cursor: "pointer" }}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                // Suppress the selectstart that would highlight page text as
+                // the drag moves (paired with the body-level user-select).
+                e.preventDefault();
+                const v0 = turf.vertices[j]!;
+                const v1 = turf.vertices[(j + 1) % turf.vertices.length]!;
+                const midLng = (v0[0] + v1[0]) / 2;
+                const midLat = (v0[1] + v1[1]) / 2;
+                const insertAt = j + 1;
+                setTurfs((ts) =>
+                  ts.map((t) =>
+                    t.id === turf.id
+                      ? {
+                          ...t,
+                          vertices: [
+                            ...t.vertices.slice(0, insertAt),
+                            [midLng, midLat],
+                            ...t.vertices.slice(insertAt),
+                          ],
+                        }
+                      : t,
+                  ),
+                );
+                midpointDragRef.current = { turfId: turf.id, vertexIdx: insertAt };
+                map.dragPan.disable();
+                document.body.style.userSelect = "none";
+              }}
+            />
+          ))}
+        </g>
+      ) : null}
+    </g>
+  );
+});

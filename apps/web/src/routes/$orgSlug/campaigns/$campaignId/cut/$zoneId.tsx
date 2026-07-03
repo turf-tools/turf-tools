@@ -244,32 +244,90 @@ export function Cutter({
   // count (cursor closes the polygon implicitly) and by per-point colors.
   const [cursorLngLat, setCursorLngLat] = useState<[number, number] | null>(null);
 
-  // Per-turf door + people aggregates. Drawing turfs include the cursor as
-  // implicit closing vertex when there are ≥2 vertices.
-  const turfCounts = useMemo(() => {
-    const out: Record<string, { doors: number; people: number }> = {};
-    if (!buildings) return out;
-    for (const turf of turfs) {
-      let polygon: Array<[number, number]>;
-      if (turf.mode === "editing") {
-        polygon = turf.vertices;
-      } else if (turf.vertices.length >= 2 && cursorLngLat) {
-        polygon = [...turf.vertices, cursorLngLat];
-      } else {
-        continue;
-      }
-      let doors = 0;
-      let people = 0;
-      for (const b of buildings) {
-        if (pointInPolygon([b.longitude, b.latitude], polygon)) {
-          doors += b.doorCount;
-          people += b.personCount;
+  // Incremental per-turf containment cache: the building indices each turf
+  // contains, keyed on the turf's `vertices` identity (plus the cursor for
+  // the drawing turf, whose polygon closes through it). `setTurfs` keeps the
+  // referential identity of every turf it doesn't touch, so a single-turf
+  // edit (dragging a vertex, or the cursor moving while drawing) misses the
+  // cache for only that turf and recomputes only it — per-interaction cost
+  // is independent of turf count. Counts and point colors both derive from it.
+  type ContainEntry = {
+    verts: Turf["vertices"];
+    cursor: [number, number] | null;
+    indices: number[];
+    doors: number;
+    people: number;
+  };
+  const containCacheRef = useRef<Record<string, ContainEntry>>({});
+  const cacheBuildingsRef = useRef(buildings);
+  const perTurf = useMemo(() => {
+    // Buildings changing (initial load / zone switch) invalidates every
+    // cached containment set — the indices point into a different array.
+    if (cacheBuildingsRef.current !== buildings) {
+      containCacheRef.current = {};
+      cacheBuildingsRef.current = buildings;
+    }
+    const cache = containCacheRef.current;
+    const rows: Array<{ id: string; indices: number[]; doors: number; people: number }> = [];
+    const live = new Set<string>();
+    if (buildings) {
+      for (const turf of turfs) {
+        live.add(turf.id);
+        // Only the drawing turf depends on the cursor; closed turfs pin it
+        // to null so cursor moves never invalidate their entry.
+        const cursor = turf.mode === "drawing" ? cursorLngLat : null;
+        const prev = cache[turf.id];
+        const cursorSame =
+          prev?.cursor === cursor ||
+          (!!prev?.cursor &&
+            !!cursor &&
+            prev.cursor[0] === cursor[0] &&
+            prev.cursor[1] === cursor[1]);
+        if (prev && prev.verts === turf.vertices && cursorSame) {
+          rows.push({ id: turf.id, indices: prev.indices, doors: prev.doors, people: prev.people });
+          continue;
         }
+        let polygon: Array<[number, number]> | null;
+        if (turf.mode === "editing") polygon = turf.vertices;
+        else if (turf.vertices.length >= 2 && cursor) polygon = [...turf.vertices, cursor];
+        else polygon = null;
+        const indices: number[] = [];
+        let doors = 0;
+        let people = 0;
+        if (polygon) {
+          for (let i = 0; i < buildings.length; i++) {
+            const b = buildings[i]!;
+            if (pointInPolygon([b.longitude, b.latitude], polygon)) {
+              indices.push(i);
+              doors += b.doorCount;
+              people += b.personCount;
+            }
+          }
+        }
+        cache[turf.id] = { verts: turf.vertices, cursor, indices, doors, people };
+        rows.push({ id: turf.id, indices, doors, people });
       }
-      out[turf.id] = { doors, people };
+    }
+    // Evict entries for removed turfs so the cache can't grow unbounded.
+    for (const id of Object.keys(cache)) if (!live.has(id)) delete cache[id];
+    return rows;
+  }, [turfs, buildings, cursorLngLat]);
+
+  // A drawing turf contributes a count only with ≥2 vertices and a cursor
+  // (its polygon closes through the cursor); below that, no entry. Cheap
+  // O(turfs) pass over the cache above.
+  const turfCounts = useMemo(() => {
+    const byId: Record<string, { doors: number; people: number }> = {};
+    for (const t of perTurf) byId[t.id] = { doors: t.doors, people: t.people };
+    const out: Record<string, { doors: number; people: number }> = {};
+    for (const turf of turfs) {
+      const hasPolygon = turf.mode === "editing" || (turf.vertices.length >= 2 && !!cursorLngLat);
+      if (!hasPolygon) continue;
+      const r = byId[turf.id];
+      if (r) out[turf.id] = r;
     }
     return out;
-  }, [turfs, buildings, cursorLngLat]);
+  }, [perTurf, turfs, cursorLngLat]);
 
   const turfRows = useMemo(
     () => turfs.map((t) => ({ id: t.id, counts: turfCounts[t.id] })),
@@ -305,49 +363,26 @@ export function Cutter({
     },
   });
 
-  // Per-point colors. Each building gets the palette color of the first
-  // turf that contains it, or a theme-matched default (near-black on
-  // light, near-white on dark — matches the segment view's dot color).
-  // Recomputes on every cursor move when there's a drawing turf —
-  // bounded work (~600 buildings × handful of turfs × ~10 vertices),
-  // stays under a frame.
+  // Per-point colors, derived from the same per-turf containment cache.
+  // Each building gets the palette color of the first turf that contains it
+  // (painted in reverse so the lowest index wins on any transient overlap),
+  // or a theme-matched default (near-black on light, near-white on dark).
+  // O(buildings) per change and independent of turf count — the containment
+  // work already happened incrementally in `perTurf`.
   const pointColors = useMemo(() => {
     if (!buildings) return null;
     const colors = new Uint8Array(buildings.length * 3);
-    const DEFAULT_R = isDark ? 229 : 26;
-    const DEFAULT_G = isDark ? 229 : 26;
-    const DEFAULT_B = isDark ? 229 : 26;
-    const polygons: Array<Array<[number, number]> | null> = turfs.map((t) => {
-      if (t.mode === "editing") return t.vertices;
-      if (t.vertices.length >= 2 && cursorLngLat) return [...t.vertices, cursorLngLat];
-      return null;
-    });
-    const palette: Array<[number, number, number]> = turfs.map((_, ti) =>
-      parseHexRgb(colorFor(ti)),
-    );
-    for (let i = 0; i < buildings.length; i++) {
-      const b = buildings[i]!;
-      let assigned: [number, number, number] | null = null;
-      for (let ti = 0; ti < polygons.length; ti++) {
-        const poly = polygons[ti];
-        if (!poly) continue;
-        if (pointInPolygon([b.longitude, b.latitude], poly)) {
-          assigned = palette[ti]!;
-          break;
-        }
-      }
-      if (assigned) {
-        colors[i * 3] = assigned[0];
-        colors[i * 3 + 1] = assigned[1];
-        colors[i * 3 + 2] = assigned[2];
-      } else {
-        colors[i * 3] = DEFAULT_R;
-        colors[i * 3 + 1] = DEFAULT_G;
-        colors[i * 3 + 2] = DEFAULT_B;
+    colors.fill(isDark ? 229 : 26); // grayscale default (R=G=B)
+    for (let ti = perTurf.length - 1; ti >= 0; ti--) {
+      const [r, g, b] = parseHexRgb(colorFor(ti));
+      for (const idx of perTurf[ti]!.indices) {
+        colors[idx * 3] = r;
+        colors[idx * 3 + 1] = g;
+        colors[idx * 3 + 2] = b;
       }
     }
     return colors;
-  }, [buildings, turfs, cursorLngLat, isDark]);
+  }, [perTurf, buildings, isDark]);
 
   // Per-point sizes — sqrt-scaled relative to a fixed reference. Off
   // returns null so the layer falls back to scale 1 across the board.
@@ -362,14 +397,17 @@ export function Cutter({
     return sizes;
   }, [buildings, sizeByDoors]);
 
-  const removeTurf = (id: string) => {
-    setTurfs((ts) => {
-      const next = ts.filter((t) => t.id !== id);
-      save(next);
-      return next;
-    });
-    setSelectedTurfId((s) => (s === id ? null : s));
-  };
+  const removeTurf = useCallback(
+    (id: string) => {
+      setTurfs((ts) => {
+        const next = ts.filter((t) => t.id !== id);
+        save(next);
+        return next;
+      });
+      setSelectedTurfId((s) => (s === id ? null : s));
+    },
+    [save],
+  );
 
   // Document-level deselect-on-outside-click. Clicks on a turf row trigger
   // the deselect (which then reselects via the row's onClick) — that
