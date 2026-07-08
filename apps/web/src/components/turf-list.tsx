@@ -1,5 +1,5 @@
 import { DoorClosed, Trash2, UserRound } from "lucide-react";
-import { memo } from "react";
+import { memo, type Ref } from "react";
 import { Button } from "~/components/button";
 import { Pill } from "~/components/pill";
 import { cn } from "~/lib/utils";
@@ -39,6 +39,8 @@ type Props = {
   // makes the empty-state row flash before the user has any reason
   // to know the list is genuinely empty.
   emptyMessage?: string;
+  // Scroll container ref, so the parent can auto-scroll to a newly added turf.
+  scrollRef?: Ref<HTMLDivElement>;
 };
 
 // One row, memoized so editing a single turf — which rebuilds the whole
@@ -119,7 +121,14 @@ const Row = memo(function Row({
   );
 });
 
-export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessage }: Props) {
+export function TurfList({
+  turfs,
+  selectedTurfId,
+  onSelect,
+  onRemove,
+  emptyMessage,
+  scrollRef,
+}: Props) {
   if (turfs.length === 0) {
     if (!emptyMessage) return <div className="h-full" />;
     return (
@@ -138,7 +147,7 @@ export function TurfList({ turfs, selectedTurfId, onSelect, onRemove, emptyMessa
     );
   }
   return (
-    <div className="flex h-full flex-col gap-2 overflow-y-auto">
+    <div ref={scrollRef} className="flex h-full flex-col gap-2 overflow-y-auto">
       {turfs.map((turf, idx) => (
         <Row
           key={turf.id}
