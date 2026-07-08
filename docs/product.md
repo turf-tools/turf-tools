@@ -60,6 +60,16 @@ The active entity id lives in URL search params, not in the path. Loaders
 redirect to the alphabetical-first survivor when the URL id is missing or
 invalid — handles delete, bookmark, and direct-link cases automatically.
 
+### Creating entities
+
+Creation is **dialog-free** by default: "New segment" / "New script" immediately
+creates an auto-named `Untitled segment` (numbered — `Untitled segment 2`, …) and
+drops the user into the editor; they rename later. The name is deferrable, so a
+naming step is pure friction — especially for the throwaway "scratch" segments
+users spin up to try an idea. A creation **dialog** is reserved for the cases
+where creation needs up-front config that can't be edited in afterward: **zones**
+(key type) and **campaigns** (the segment × zone group × script bindings).
+
 ### Separation of concerns
 
 - **Segments reference voter fields only.** No `zoneRef` in the criteria DSL.

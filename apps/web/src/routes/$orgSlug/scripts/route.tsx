@@ -1,7 +1,8 @@
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -19,7 +20,7 @@ import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
-import { cn } from "~/lib/utils";
+import { cn, nextUntitledName } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
@@ -58,7 +59,8 @@ function ScriptsLayout() {
     },
   });
 
-  const createScript = useDialogMutation({
+  // New scripts are created immediately as "Untitled script" (no naming step).
+  const createScript = useMutation({
     mutationFn: (input: { name: string }) => client.scripts.create(input),
     onSuccess: (created) => {
       queryClient.setQueryData<typeof scripts>(["scripts"], (old) =>
@@ -68,6 +70,7 @@ function ScriptsLayout() {
       void queryClient.invalidateQueries({ queryKey: ["scripts"] });
       return goToScript(created.scriptId);
     },
+    onError: (e) => toast.error(e.message),
   });
 
   const cloneScript = useDialogMutation({
@@ -137,7 +140,12 @@ function ScriptsLayout() {
               onRename={renameScript.open}
             />
           ))}
-          <Rail.New label="New script" onClick={createScript.open} />
+          <Rail.New
+            label="New script"
+            onClick={() =>
+              createScript.mutate({ name: nextUntitledName("Untitled script", scripts) })
+            }
+          />
         </Rail>
 
         <EditorPage>
@@ -173,14 +181,6 @@ function ScriptsLayout() {
           </div>
         </EditorPage>
       </div>
-
-      <CreateScriptDialog
-        open={createScript.isOpen}
-        onOpenChange={createScript.onOpenChange}
-        pending={createScript.isPending}
-        error={createScript.error}
-        onSubmit={(name) => createScript.mutate({ name })}
-      />
 
       <SaveAsDialog
         open={cloneScript.isOpen}
@@ -234,61 +234,6 @@ function DialogError({ error }: { error: string | null }) {
     >
       {error}
     </div>
-  );
-}
-
-function CreateScriptDialog({
-  open,
-  onOpenChange,
-  pending,
-  error,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  pending: boolean;
-  error: string | null;
-  onSubmit: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  useEffect(() => {
-    if (open) setName("");
-  }, [open]);
-  const valid = name.trim().length > 0;
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle>Create new script</DialogTitle>
-        <DialogDescription>
-          A script is an ordered sequence of questions and text for collecting responses.
-        </DialogDescription>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid || pending) return;
-            onSubmit(name.trim());
-          }}
-          className="flex flex-col gap-4"
-        >
-          <div className="flex flex-col gap-1.5">
-            <Input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter a name..."
-              disabled={pending}
-            />
-          </div>
-          <DialogError error={error} />
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!valid} loading={pending}>
-              Create
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
 

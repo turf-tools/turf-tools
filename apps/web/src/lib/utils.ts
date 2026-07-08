@@ -22,6 +22,17 @@ export function parseHexRgb(css: string): [number, number, number] {
   ];
 }
 
+// Next default name for a scratch entity: `base` if free, else the lowest
+// `"base N"` (N ≥ 2) not taken. Names aren't unique-constrained, so
+// collisions are only cosmetic.
+export function nextUntitledName(base: string, existing: ReadonlyArray<{ name: string }>): string {
+  const taken = new Set(existing.map((e) => e.name));
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base} ${n}`)) n++;
+  return `${base} ${n}`;
+}
+
 // Render an ALL-CAPS voter-file string (name, address, city) as
 // title case. Capitalizes the first letter of each word *and* of
 // each segment after a hyphen or apostrophe — "O'BRIEN" → "O'Brien",
