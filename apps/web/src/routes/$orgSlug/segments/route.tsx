@@ -1,7 +1,8 @@
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -19,7 +20,7 @@ import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
-import { cn } from "~/lib/utils";
+import { cn, nextUntitledName } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
@@ -59,7 +60,8 @@ function SegmentsLayout() {
     },
   });
 
-  const createSegment = useDialogMutation({
+  // New segments are created immediately as "Untitled segment" (no naming step).
+  const createSegment = useMutation({
     mutationFn: (input: { name: string }) => client.segments.create(input),
     onSuccess: (created) => {
       // Inject and navigate synchronously so React batches both updates
@@ -72,6 +74,7 @@ function SegmentsLayout() {
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
       return goToSegment(created.segmentId);
     },
+    onError: (e) => toast.error(e.message),
   });
 
   const cloneSegment = useDialogMutation({
@@ -144,7 +147,12 @@ function SegmentsLayout() {
               onRename={renameSegment.open}
             />
           ))}
-          <Rail.New label="New segment" onClick={createSegment.open} />
+          <Rail.New
+            label="New segment"
+            onClick={() =>
+              createSegment.mutate({ name: nextUntitledName("Untitled segment", segments) })
+            }
+          />
         </Rail>
 
         <EditorPage>
@@ -180,14 +188,6 @@ function SegmentsLayout() {
           </div>
         </EditorPage>
       </div>
-
-      <CreateSegmentDialog
-        open={createSegment.isOpen}
-        onOpenChange={createSegment.onOpenChange}
-        pending={createSegment.isPending}
-        error={createSegment.error}
-        onSubmit={(name) => createSegment.mutate({ name })}
-      />
 
       <SaveAsDialog
         open={cloneSegment.isOpen}
@@ -241,61 +241,6 @@ function DialogError({ error }: { error: string | null }) {
     >
       {error}
     </div>
-  );
-}
-
-function CreateSegmentDialog({
-  open,
-  onOpenChange,
-  pending,
-  error,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  pending: boolean;
-  error: string | null;
-  onSubmit: (name: string) => void;
-}) {
-  const [name, setName] = useState("");
-  useEffect(() => {
-    if (open) setName("");
-  }, [open]);
-  const valid = name.trim().length > 0;
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle>Create new segment</DialogTitle>
-        <DialogDescription>
-          A segment is a named query over people. Start with a name and add filters in the editor.
-        </DialogDescription>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid || pending) return;
-            onSubmit(name.trim());
-          }}
-          className="flex flex-col gap-4"
-        >
-          <div className="flex flex-col gap-1.5">
-            <Input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter a name..."
-              disabled={pending}
-            />
-          </div>
-          <DialogError error={error} />
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!valid} loading={pending}>
-              Create
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
 
