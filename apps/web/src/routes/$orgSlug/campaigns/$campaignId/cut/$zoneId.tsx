@@ -1,7 +1,15 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "jotai";
-import { ArrowLeft, Eraser, Send, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  DoorClosed,
+  Eraser,
+  type LucideIcon,
+  Send,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
 import { darkAtom } from "~/lib/atoms/theme";
@@ -53,6 +61,17 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/cut/$zoneI
   },
   component: CutterPage,
 });
+
+// A metric cell for the cutter's upper-right inset: an icon + a right-aligned
+// value (em dash when null).
+function StatValue({ icon: Icon, value }: { icon: LucideIcon; value: number | null }) {
+  return (
+    <span className="flex items-center justify-end gap-1 tabular-nums">
+      <Icon className="size-3.5 text-foreground" />
+      {value?.toLocaleString() ?? "—"}
+    </span>
+  );
+}
 
 // Thin shell so `key={zoneId}` remounts the Cutter on zone change,
 // resetting in-progress drawing state, selection, auto-save timer, etc.
@@ -350,6 +369,42 @@ export function Cutter({
     return { count, doors, people };
   }, [turfs, turfCounts]);
 
+  // Upper-right inset tallies: uncut people/doors (buildings in no turf —
+  // matches the default-colored dots, so it ticks down live while drawing)
+  // and average people/doors per committed turf.
+  const insetStats = useMemo(() => {
+    if (!buildings) return null;
+    const assigned = new Set<number>();
+    for (const t of perTurf) for (const idx of t.indices) assigned.add(idx);
+    let uncutDoors = 0;
+    let uncutPeople = 0;
+    for (let i = 0; i < buildings.length; i++) {
+      if (assigned.has(i)) continue;
+      uncutDoors += buildings[i]!.doorCount;
+      uncutPeople += buildings[i]!.personCount;
+    }
+    const n = publishSummary.count;
+    return {
+      uncutPeople,
+      uncutDoors,
+      avgPeople: n ? Math.round(publishSummary.people / n) : null,
+      avgDoors: n ? Math.round(publishSummary.doors / n) : null,
+    };
+  }, [buildings, perTurf, publishSummary]);
+
+  // Auto-scroll the turf list to the newest turf on add (mirrors the scripts
+  // editor). Cutter remounts per zone (`key={zoneId}`), so the ref resets and
+  // the initial drafts don't trigger a scroll.
+  const turfListRef = useRef<HTMLDivElement>(null);
+  const prevTurfCountRef = useRef(turfs.length);
+  useEffect(() => {
+    const el = turfListRef.current;
+    if (el && turfs.length > prevTurfCountRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+    prevTurfCountRef.current = turfs.length;
+  }, [turfs.length]);
+
   const [sizeByDoors, setSizeByDoors] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -500,6 +555,7 @@ export function Cutter({
             onSelect={setSelectedTurfId}
             onRemove={removeTurf}
             emptyMessage="Click the map to draw a turf"
+            scrollRef={turfListRef}
           />
         </div>
         <div ref={mapAreaRef} className="flex-1 relative h-full">
@@ -511,11 +567,23 @@ export function Cutter({
               pointSizes={pointSizes}
               fitBounds={fitBounds}
               loading={mapLoading}
-              cornerControls={
+              cornerLowerRight={
                 <label className="flex items-center gap-3 px-3 py-3 -mt-3">
                   <Switch checked={sizeByDoors} onCheckedChange={setSizeByDoors} />
                   <span>Show door counts</span>
                 </label>
+              }
+              cornerUpperRight={
+                insetStats ? (
+                  <div className="grid grid-cols-[auto_auto_auto] items-center gap-x-4 gap-y-1.5 px-3 py-2.5">
+                    <span className="text-muted-foreground">Uncut</span>
+                    <StatValue icon={UserRound} value={insetStats.uncutPeople} />
+                    <StatValue icon={DoorClosed} value={insetStats.uncutDoors} />
+                    <span className="text-muted-foreground">Avg</span>
+                    <StatValue icon={UserRound} value={insetStats.avgPeople} />
+                    <StatValue icon={DoorClosed} value={insetStats.avgDoors} />
+                  </div>
+                ) : undefined
               }
             />
             <TurfDrawer

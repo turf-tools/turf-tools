@@ -112,11 +112,13 @@ type MapProps = {
   // unused by the points layer (which loads everything once); kept
   // around for callers that still want viewport awareness.
   onViewportChange?: (viewport: Viewport) => void;
-  // Extra controls to stack above the built-in "Show streets" toggle
-  // in the bottom-right corner. Single column, gap-2, full-width.
-  // Lets routes add their own toggles without each one re-inventing
-  // an absolute-positioned inset.
-  cornerControls?: ReactNode;
+  // Content for the bottom-right inset, rendered below the built-in
+  // "Show streets" toggle in the same card. Lets routes drop in extra
+  // rows without re-inventing an absolute-positioned inset.
+  cornerLowerRight?: ReactNode;
+  // Content for the upper-right inset — same card styling and edge offsets
+  // as the lower-right slot. Positional slot; the route owns the content.
+  cornerUpperRight?: ReactNode;
 };
 
 const DEFAULT_VIEW: Partial<ViewState> = {
@@ -166,7 +168,8 @@ export function Map({
   pointColors,
   pointSizes,
   onViewportChange,
-  cornerControls,
+  cornerLowerRight,
+  cornerUpperRight,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
   const [showLabels, setShowLabels] = useState(false);
@@ -804,13 +807,13 @@ export function Map({
 
       {/* Bottom-right inset. Single rounded card with one row per
           toggle; built-in "Show streets" is the first row, routes
-          add extra rows via `cornerControls` (which render below).
+          add extra rows via `cornerLowerRight` (which render below).
           `divide-y` puts a separator between rows, so the
-          cornerControls labels just need padding/gap, not their
+          cornerLowerRight labels just need padding/gap, not their
           own border or background. */}
       <div
         className={
-          "absolute right-3 bottom-[11px] z-20 flex flex-col items-stretch " +
+          "absolute right-3 bottom-3 z-20 flex flex-col items-stretch " +
           "rounded-md border border-border bg-background text-sm"
         }
       >
@@ -818,8 +821,21 @@ export function Map({
           <Switch checked={showLabels} onCheckedChange={setShowLabels} />
           <span>Show streets</span>
         </label>
-        {cornerControls}
+        {cornerLowerRight}
       </div>
+
+      {/* Upper-right inset — same card + edge offsets as the lower slots;
+          positional, content supplied by the route. */}
+      {cornerUpperRight ? (
+        <div
+          className={
+            "absolute top-3 right-3 z-20 flex flex-col items-stretch " +
+            "rounded-md border border-border bg-background text-sm"
+          }
+        >
+          {cornerUpperRight}
+        </div>
+      ) : null}
 
       <div
         aria-hidden

@@ -101,10 +101,18 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
   }
   const isPreExisting = (id: string): boolean => mountedIdsRef.current?.has(id) ?? true;
 
+  // Scroll a newly added option into view. `justAddedRef` is set on add and
+  // consumed once the card's grow animation finishes (onLayoutAnimationComplete
+  // on the button row below) — scrolling mid-animation lands short and clips
+  // the card.
+  const optionsEndRef = useRef<HTMLDivElement>(null);
+  const justAddedRef = useRef(false);
+
   const addOption = useMutation({
     mutationFn: () => client.questions.addResponseOption({ questionId, text: "" }),
     onSettled: refreshQuestionProjections,
     onMutate: () => {
+      justAddedRef.current = true;
       const tempId = `temp-${crypto.randomUUID()}`;
       setDetail((d) => ({
         ...d,
@@ -241,9 +249,15 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
         </Reorder.Group>
       )}
       <motion.div
+        ref={optionsEndRef}
         layout
         transition={{ type: "tween", duration: 0.15, ease: "easeOut" }}
-        className="flex items-center gap-1.5"
+        onLayoutAnimationComplete={() => {
+          if (!justAddedRef.current) return;
+          justAddedRef.current = false;
+          optionsEndRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }}
+        className="flex scroll-mb-[18px] items-center gap-1.5"
       >
         <Button
           variant="outline"
@@ -280,7 +294,7 @@ function ReorderOptionRow({
       dragControls={controls}
       as="div"
       onDragEnd={onDragEnd}
-      transition={{ layout: { type: "tween", duration: 0.2, ease: "easeOut" } }}
+      transition={{ layout: { type: "tween", duration: 0.15, ease: "easeOut" } }}
       dragTransition={{ bounceStiffness: 10000, bounceDamping: 500, power: 0 }}
     >
       <OptionRow {...props} dragControls={controls} />
