@@ -20,6 +20,14 @@ export function LoadingIndicator() {
     select: (s) => s.isLoading || s.matches.some((m) => m.status === "pending"),
   });
   const active = !hydrated || fetching || mutating || routing;
+
+  // Pause the spin while hidden because an invisible animation still burns
+  // compositor frames forever. Paused once the fade-out ends (transitionend).
+  const [resting, setResting] = useState(false);
+  useEffect(() => {
+    if (active) setResting(false);
+  }, [active]);
+
   return (
     <div
       className={cn(
@@ -27,8 +35,14 @@ export function LoadingIndicator() {
         active ? "opacity-100" : "opacity-0 transition-opacity duration-200",
       )}
       aria-hidden={!active}
+      onTransitionEnd={(e) => {
+        if (e.propertyName === "opacity" && !active) setResting(true);
+      }}
     >
-      <Spinner size={22} />
+      <Spinner
+        size={22}
+        className={!active && resting ? "[animation-play-state:paused]" : undefined}
+      />
     </div>
   );
 }
