@@ -1,12 +1,16 @@
 import array
 import asyncio
 import logging
+import os
+import tempfile
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.background import BackgroundTask
 
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
@@ -350,6 +354,81 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
             "people": int(people),
         }
     return {"counts": counts}
+
+
+class _SegmentExportRequest(_WireBaseModel):
+    criteria: Criteria = Criteria()
+    org_slug: str = Field(validation_alias="orgSlug")
+    format: str = "csv"
+
+
+# Canonical voter-file columns for a segment export.
+_EXPORT_SELECT = """
+    SELECT
+        external_id,
+        first_name,
+        last_name,
+        address_line_1 AS address,
+        address_line_2 AS unit,
+        city,
+        state,
+        zip5 AS zip,
+        gender,
+        date_of_birth,
+        enrollment,
+        registration_date,
+        registration_status,
+        last_voted_date,
+        county_code AS county,
+        precinct,
+        assembly_district,
+        senate_district,
+        congressional_district
+    FROM {persons_geocoded}
+"""
+
+
+@app.post("/segments/export")
+async def segments_export(req: _SegmentExportRequest):
+    """Stream a segment's matched persons as CSV or Parquet.
+
+    Resolves the criteria (same path as /persons/count), writes the canonical
+    columns to a temp file via DuckDB COPY, and returns it as a download. A
+    background task removes the temp file after the response is sent.
+    `X-Export-Rows` carries the row count so the caller can log it.
+    """
+    if req.format not in ("csv", "parquet"):
+        raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
+
+    conn = get_connection(settings, read_only=True)
+    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+    params: list = []
+    where = criteria_to_where(criteria, None, params)
+    select_sql = resolve(_EXPORT_SELECT + where, slug=req.org_slug)
+
+    suffix = ".parquet" if req.format == "parquet" else ".csv"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
+    os.close(fd)
+    # `tmp_path` is server-generated and the COPY options are from a fixed
+    # allowlist, so the only untrusted input (criteria) stays in bound `params`.
+    copy_opts = "FORMAT parquet" if req.format == "parquet" else "FORMAT csv, HEADER"
+    copy_sql = f"COPY ({select_sql}) TO '{tmp_path}' ({copy_opts})"
+    try:
+        row = conn.execute(copy_sql, params).fetchone()
+    except Exception:
+        with suppress(OSError):
+            os.remove(tmp_path)
+        raise
+    row_count = int(row[0]) if row else 0
+
+    media = "application/octet-stream" if req.format == "parquet" else "text/csv"
+    return FileResponse(
+        tmp_path,
+        media_type=media,
+        filename=f"segment-export{suffix}",
+        background=BackgroundTask(os.remove, tmp_path),
+        headers={"X-Export-Rows": str(row_count)},
+    )
 
 
 class _BuildingsListRequest(_WireBaseModel):
