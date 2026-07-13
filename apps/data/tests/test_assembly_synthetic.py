@@ -14,7 +14,7 @@ import pytest
 
 from src.dags import assembly
 from src.models import TableRef
-from src.tables import ensure_org_schema, org_fqn
+from src.tables import ensure_schema, table_fqn
 
 ORG = "asm_test"
 
@@ -29,7 +29,7 @@ def _ref(table: str) -> TableRef:
 
 
 def _create_persons_validated(conn) -> TableRef:
-    fqn = org_fqn(ORG, "persons_validated")
+    fqn = table_fqn(ORG, "persons_validated")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -63,7 +63,7 @@ def _create_persons_validated(conn) -> TableRef:
 
 
 def _create_persons_decomposed(conn) -> TableRef:
-    fqn = org_fqn(ORG, "persons_decomposed")
+    fqn = table_fqn(ORG, "persons_decomposed")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -81,7 +81,7 @@ def _create_persons_decomposed(conn) -> TableRef:
 
 
 def _create_persons_best_match(conn) -> TableRef:
-    fqn = org_fqn(ORG, "persons_best_match")
+    fqn = table_fqn(ORG, "persons_best_match")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -104,7 +104,7 @@ def _create_persons_best_match(conn) -> TableRef:
 
 
 def _create_refined_positions(conn) -> TableRef:
-    fqn = org_fqn(ORG, "refined_positions")
+    fqn = table_fqn(ORG, "refined_positions")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -120,7 +120,7 @@ def _create_refined_positions(conn) -> TableRef:
 
 
 def _create_osm_only_matches(conn) -> TableRef:
-    fqn = org_fqn(ORG, "osm_only_matches")
+    fqn = table_fqn(ORG, "osm_only_matches")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -139,7 +139,7 @@ def _create_osm_only_matches(conn) -> TableRef:
 @pytest.fixture()
 def synth(dual_conn):
     """A connection with empty synthetic-upstream tables in the test org."""
-    ensure_org_schema(dual_conn, ORG)
+    ensure_schema(dual_conn, ORG)
     refs = {
         "validated": _create_persons_validated(dual_conn),
         "decomposed": _create_persons_decomposed(dual_conn),
@@ -178,7 +178,7 @@ class TestCanonicalAddresses:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
@@ -206,7 +206,7 @@ class TestCanonicalAddresses:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
@@ -236,7 +236,7 @@ class TestCanonicalAddresses:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
@@ -266,7 +266,7 @@ class TestCanonicalAddresses:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
@@ -290,7 +290,7 @@ class TestCanonicalAddresses:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         line1 = conn.execute(f"SELECT address_line_1 FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
@@ -336,7 +336,7 @@ class TestPersonsGeocoded:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         ref = assembly.persons_geocoded(
@@ -345,7 +345,7 @@ class TestPersonsGeocoded:
             canonical_addresses=canon,
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         rows = conn.execute(f"SELECT external_id, position_source, blockface_id FROM {ref.fqn}").fetchall()
@@ -363,7 +363,7 @@ class TestPersonsGeocoded:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         ref = assembly.persons_geocoded(
@@ -372,7 +372,7 @@ class TestPersonsGeocoded:
             canonical_addresses=canon,
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         ids = {r[0] for r in conn.execute(f"SELECT external_id FROM {ref.fqn}").fetchall()}
@@ -412,7 +412,7 @@ class TestPersonsGeocoded:
             persons_decomposed=refs["decomposed"],
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         ref = assembly.persons_geocoded(
@@ -421,7 +421,7 @@ class TestPersonsGeocoded:
             canonical_addresses=canon,
             refined_positions=refs["refined"],
             osm_only_matches=refs["osm_only"],
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         rows = {

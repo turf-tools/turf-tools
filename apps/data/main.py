@@ -19,7 +19,7 @@ from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.settings import get_settings
-from src.tables import org_fqn, resolve
+from src.tables import resolve, resolve_schema, table_fqn
 
 logger = logging.getLogger("uvicorn")
 
@@ -152,9 +152,10 @@ async def key_group_geojson(key_group: str, org_slug: str):
     the call site to bust browser caches.
     """
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, org_slug)
     # Validate the table exists before querying — keeps the error message
     # friendlier than a generic SQL failure.
-    fqn = org_fqn(org_slug, key_group)
+    fqn = table_fqn(schema, key_group)
     try:
         conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
     except Exception as e:
@@ -208,6 +209,7 @@ async def persons_count(req: _PersonsCountRequest):
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(criteria, req.key_filter, params)
@@ -220,7 +222,7 @@ async def persons_count(req: _PersonsCountRequest):
         FROM {{persons_geocoded}}
         {where}
         """,
-        slug=req.org_slug,
+        schema,
     )
     row = conn.execute(sql, params).fetchone()
     if row is None:
@@ -246,9 +248,10 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     prior row. The step verb (add/narrow/remove) determines how each step
     modifies the running set.
     """
-    persons_table = resolve("{persons_geocoded}", slug=req.org_slug)
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+    persons_table = resolve("{persons_geocoded}", schema)
     params: list = []
     sql = cascade_sql(criteria, persons_table, params)
     row = conn.execute(sql, params).fetchone()
@@ -279,6 +282,7 @@ async def persons_sample(req: _PersonsSampleRequest):
     """
     limit = max(1, min(req.limit, 500))
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(criteria, req.key_filter, params)
@@ -290,7 +294,7 @@ async def persons_sample(req: _PersonsSampleRequest):
             {where}
         ) USING SAMPLE {limit} ROWS
         """,
-        slug=req.org_slug,
+        schema,
     )
     rows = conn.execute(sql, params).fetchall()
     return {
@@ -327,6 +331,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     """
     group_expr = boundary_key_expr_for(req.key_group)
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(criteria, req.key_filter, params)
@@ -341,7 +346,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         {where}
         GROUP BY {group_expr}
         """,
-        slug=req.org_slug,
+        schema,
     )
     rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
@@ -401,10 +406,11 @@ async def segments_export(req: _SegmentExportRequest):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
 
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(criteria, None, params)
-    select_sql = resolve(_EXPORT_SELECT + where, slug=req.org_slug)
+    select_sql = resolve(_EXPORT_SELECT + where, schema)
 
     suffix = ".parquet" if req.format == "parquet" else ".csv"
     fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
@@ -447,6 +453,7 @@ async def buildings_list(req: _BuildingsListRequest):
     polygon" client-side.
     """
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(criteria, req.key_filter, params)
@@ -464,7 +471,7 @@ async def buildings_list(req: _BuildingsListRequest):
         ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
-        slug=req.org_slug,
+        schema,
     )
     cursor = conn.execute(sql, params)
     cols = [d[0] for d in cursor.description]
@@ -494,6 +501,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
     instead of meter-scale.
     """
     conn = get_connection(settings, read_only=True)
+    schema = resolve_schema(conn, settings, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(criteria, req.key_filter, params)
@@ -512,7 +520,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
         SELECT pts.mx - o.ox, pts.my - o.oy, o.ox, o.oy
         FROM pts, o
         """,
-        slug=req.org_slug,
+        schema,
     )
     cursor = conn.execute(sql, params)
     rows = cursor.fetchall()

@@ -33,7 +33,7 @@ from src.addressing import (
     tokenize_street_sql,
 )
 from src.models import TableRef
-from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
+from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -63,7 +63,7 @@ def refined_positions(
     persons_decomposed: TableRef,
     blockface_final: TableRef,
     osm_building_lookup: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Per-voter (latitude, longitude, position_source, osm_street).
@@ -111,8 +111,8 @@ def refined_positions(
     else's rank.
     """
     table_suffix = "refined_positions"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
 
     pbm = persons_best_match.fqn
     pd_ = persons_decomposed.fqn
@@ -385,7 +385,7 @@ def refined_positions(
 
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=_current_version(conn),
     )
@@ -402,7 +402,7 @@ def osm_only_matches(
     osm_building_lookup: TableRef,
     blockface_final: TableRef,
     address_tokens: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Voters TIGER couldn't match, rescued by direct OSM lookup.
@@ -426,8 +426,8 @@ def osm_only_matches(
     Non-incremental: drops + recreates every run.
     """
     table_suffix = "osm_only_matches"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
 
     pd_ = persons_decomposed.fqn
     pbm = persons_best_match.fqn
@@ -541,7 +541,7 @@ def osm_only_matches(
 
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=_current_version(conn),
     )

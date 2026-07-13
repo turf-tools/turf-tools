@@ -36,7 +36,7 @@ def quote_ident(name: str) -> str:
     """Return `name` as a SQL identifier, quoted only when necessary.
 
     Embedded double quotes are escaped by doubling. Used by `TableRef.fqn`
-    and `tables.org_fqn` to keep generated SQL readable when
+    and `tables.table_fqn` to keep generated SQL readable when
     slugs are plain (`default`, `acme`) and still safe when they aren't
     (`nyc-dsa`).
     """
@@ -96,11 +96,11 @@ class QuickwitBuildManifestStub:
 
 class Person(BaseModel):
     """A person to be canvassed. This is the canonical output schema
-    that every voter file transformation query must produce.
+    that every importer's transform must produce.
 
-    Each state's transformation populates whatever canonical fields it
-    has and leaves the rest None. Anything genuinely state-specific
-    that doesn't fit the canonical fields goes in `other_properties`.
+    Each importer populates whatever canonical fields its source has and
+    leaves the rest None. Anything genuinely source-specific that doesn't
+    fit the canonical fields goes in `other_properties`.
     """
 
     external_id: str

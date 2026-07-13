@@ -3,6 +3,7 @@ import { db } from "./index";
 import { SEEDED_ADMIN_USER_ID, SEEDED_ORG_ID } from "./ids";
 import { seedReferenceData } from "./seed";
 import { campaigns } from "./schema/campaigns";
+import { datasetOrganizations, datasets, datasetVersions } from "./schema/datasets";
 import { memberships } from "./schema/memberships";
 import { organizations } from "./schema/organizations";
 import { scripts, scriptSteps } from "./schema/scripts";
@@ -51,8 +52,10 @@ const SECOND_RESPONSE_OPTION_IDS = [
   "00000000-0000-4000-8000-000000000042",
 ];
 
-const DEFAULT_VOTER_FILE_ID = "nys_boe";
-const DEFAULT_VOTER_FILE_VERSION = 1;
+// Deployment-level dataset shared by the seeded orgs (mirrors how
+// mirror-org-data shares one voter file across orgs).
+const DEFAULT_DATASET_ID = "00000000-0000-4000-8000-0000000000d1";
+const DEFAULT_DATASET_VERSION_ID = "00000000-0000-4000-8000-0000000000d2";
 
 const RESPONSE_OPTIONS: Array<{ id: string; text: string }> = [
   { id: "00000000-0000-4000-8000-000000000030", text: "Yes" },
@@ -141,6 +144,36 @@ async function mock() {
     console.log("Created script");
   }
 
+  // Deployment-level dataset the seeded orgs reference (float target for their
+  // segments). One dataset shared across orgs via datasetOrganizations.
+  const existingDataset = await db
+    .select()
+    .from(datasets)
+    .where(eq(datasets.datasetId, DEFAULT_DATASET_ID));
+  if (existingDataset.length === 0) {
+    await db.insert(datasets).values({
+      datasetId: DEFAULT_DATASET_ID,
+      slug: "nys_voter_file",
+      name: "NY State Voter File",
+    });
+    await db.insert(datasetVersions).values({
+      datasetVersionId: DEFAULT_DATASET_VERSION_ID,
+      datasetId: DEFAULT_DATASET_ID,
+      versionNumber: 1,
+      status: "ready",
+      createdBy: USER_ID,
+    });
+    await db
+      .update(datasets)
+      .set({ activeVersionId: DEFAULT_DATASET_VERSION_ID })
+      .where(eq(datasets.datasetId, DEFAULT_DATASET_ID));
+    console.log("Created default dataset + version");
+  }
+  await db
+    .insert(datasetOrganizations)
+    .values({ datasetId: DEFAULT_DATASET_ID, organizationId: ORG_ID })
+    .onConflictDoNothing();
+
   const segmentSeeds: Array<{
     id: string;
     name: string;
@@ -160,8 +193,7 @@ async function mock() {
         organizationId: ORG_ID,
         name: s.name,
         criteria: { steps: [] },
-        voterFileId: DEFAULT_VOTER_FILE_ID,
-        voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
+        datasetId: DEFAULT_DATASET_ID,
         doorCount: s.doorCount,
         personCount: s.personCount,
         createdBy: USER_ID,
@@ -330,13 +362,16 @@ async function mock() {
     .from(segments)
     .where(eq(segments.segmentId, SECOND_SEGMENT_ID));
   if (existingSecondSegment.length === 0) {
+    await db
+      .insert(datasetOrganizations)
+      .values({ datasetId: DEFAULT_DATASET_ID, organizationId: SECOND_ORG_ID })
+      .onConflictDoNothing();
     await db.insert(segments).values({
       segmentId: SECOND_SEGMENT_ID,
       organizationId: SECOND_ORG_ID,
       name: "Other Segment",
       criteria: { steps: [] },
-      voterFileId: DEFAULT_VOTER_FILE_ID,
-      voterFileVersion: DEFAULT_VOTER_FILE_VERSION,
+      datasetId: DEFAULT_DATASET_ID,
       createdBy: USER_ID,
     });
     console.log("Created second-org segment");
