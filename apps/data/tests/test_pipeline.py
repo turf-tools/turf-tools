@@ -30,8 +30,8 @@ import pytest
 from hamilton import driver
 
 import duckdb
-from src.dags import aggregate, assembly, geocode, matching, osm, tiger, voter_file_loader
-from src.transformations import nys_sboe_transformation_query
+from src.dags import aggregate, assembly, geocode, matching, osm, tiger
+from src.importers.nys_voter_file import NysVoterFileImporter
 
 VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-nyc.parquet"
 
@@ -89,10 +89,10 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute("USE ducklake")
 
+        persons_validated = NysVoterFileImporter().load(str(VOTER_FILE), "default", conn)
         dr = (
             driver.Builder()
             .with_modules(
-                voter_file_loader,
                 tiger,
                 osm,
                 matching,
@@ -105,9 +105,8 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         dr.execute(
             final_vars=["persons_geocoded", "geocoding_summary", "buildings_geocoded", "doors_geocoded"],
             inputs={
-                "voter_file_url": str(VOTER_FILE),
-                "organization_slug": "default",
-                "transformation_query": nys_sboe_transformation_query(),
+                "persons_validated": persons_validated,
+                "schema": "default",
                 "tiger_year": "2024",
                 "tiger_state_fips": "36",
                 # All five NYC counties — matches the seed-persons default.

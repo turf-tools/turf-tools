@@ -22,7 +22,7 @@
     "mock": "pnpm data:mock",
     "data:clear": "rm -f apps/data/ducklake.ducklake && rm -rf apps/data/local_data apps/data/qwdata apps/data/local_turfs && mkdir -p apps/data/qwdata",
     "data:clear:all": "pnpm data:clear && rm -f apps/data/geo_ducklake.ducklake && rm -rf apps/data/geo_local_data",
-    "data:mock": "cd apps/data && uv run seed-persons && uv run seed-boundaries && uv run mirror-org-data --from default --to other",
+    "data:mock": "cd apps/data && uv run seed-persons && uv run seed-boundaries",
     "db:setup": "pnpm db:push && pnpm db:seed && pnpm db:mock",
     "db:clear": "docker compose -f docker-compose.dev.yml down -v",
     "db:up": "docker compose -f docker-compose.dev.yml up -d postgres && wait-on tcp:127.0.0.1:5432",

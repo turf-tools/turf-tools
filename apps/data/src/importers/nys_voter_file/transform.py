@@ -88,12 +88,15 @@ def _iso_date_sql(col: str) -> str:
 
 
 def nys_sboe_transformation_query(
+    source_table: str,
     county_codes: list[str] | None = None,
     zip5_filter: list[str] | None = None,
 ) -> str:
     """SQL transformation from NYS SBOE raw voter file → Person schema.
 
     Args:
+        source_table: fully-qualified `persons_raw` table the query reads from,
+            aliased to ``raw`` so the column expressions below resolve.
         county_codes: optional list of NYS BOE county codes (e.g. ``['31']``
             for Manhattan). When provided, the query restricts to those
             counties and to active voters (status = 'A').
@@ -170,6 +173,6 @@ SELECT
     -- Empty for NYS — every field has a canonical column. Forward-compat
     -- slot for future state-specific extras.
     '{{}}'::JSON AS other_properties
-FROM raw
+FROM {source_table} AS raw
 {where}
 """

@@ -14,22 +14,20 @@ from src.dags import (
     osm,
     quickwit,
     tiger,
-    voter_file_loader,
 )
 from src.duckdb import get_connection
+from src.importers.nys_voter_file import NysVoterFileImporter
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
 from src.settings import get_settings
 from src.tables import (
     PERSON_CATALOG,
-    ensure_org_schema,
-    org_fqn,
-    org_schema_fqn,
+    ensure_schema,
+    schema_fqn,
 )
 from src.tables import (
-    drop_org_schema as _drop_org_schema_helper,
+    drop_schema as _drop_schema_helper,
 )
-from src.transformations import nys_sboe_transformation_query
 
 
 def _render(dr: driver.Driver, filename: str) -> None:
@@ -41,8 +39,12 @@ def _render(dr: driver.Driver, filename: str) -> None:
 
 
 def update_visualizations() -> None:
-    """Render all Hamilton graph visualizations into docs/."""
-    _render(driver.Builder().with_modules(voter_file_loader).build(), "voter_file_loader_graph.png")
+    """Render all Hamilton graph visualizations into docs/.
+
+    The importer front (source → persons_validated) is no longer a Hamilton
+    module — it's `importers/nys_voter_file` — so the graphs below start from
+    `persons_validated`, which the shared pipeline takes as an input.
+    """
     _render(driver.Builder().with_modules(tiger).build(), "tiger_graph.png")
     _render(driver.Builder().with_modules(matching).build(), "matching_graph.png")
     _render(driver.Builder().with_modules(osm).build(), "osm_graph.png")
@@ -52,9 +54,7 @@ def update_visualizations() -> None:
     _render(driver.Builder().with_modules(quickwit).build(), "quickwit_graph.png")
     _render(driver.Builder().with_modules(boundaries).build(), "boundaries_graph.png")
     _render(
-        driver.Builder()
-        .with_modules(voter_file_loader, tiger, osm, matching, geocode, assembly, aggregate, quickwit)
-        .build(),
+        driver.Builder().with_modules(tiger, osm, matching, geocode, assembly, aggregate, quickwit).build(),
         "pipeline_graph.png",
     )
 
@@ -70,61 +70,50 @@ def _fixtures_dir(settings) -> Path:  # noqa: ANN001 — settings is a Settings 
     return Path(__file__).resolve().parent.parent / settings.fixtures_dir
 
 
+# Dataset-version schema the dev seed writes into. Matches the dataset the mock
+# seeds in packages/db/src/mock.ts (slug `nys_voter_file`, version 1), which the
+# seeded orgs resolve to via `resolve_schema`.
+_DEFAULT_SCHEMA = "nys_voter_file_v1"
+
+
 def seed_boundaries() -> None:
-    """Derive every key group's polygons from the voter file + TIGER blocks.
+    """Derive every key group's polygons from the persons data + TIGER blocks.
 
     For each configured key group, downloads (if missing) the TIGER
-    census-block polygons for the configured counties and unions the
-    blocks where voters tagged with each distinct key live. Output goes
-    to ``ducklake.<org>.{key_group}`` — same per-org schema as
-    `persons_geocoded`, `buildings_geocoded`, etc.
+    census-block polygons for the configured counties and unions the blocks
+    where persons tagged with each distinct key live. Output goes to the
+    dataset-version schema, alongside `persons_geocoded`, `buildings_geocoded`.
 
-    Requires ``seed-persons`` to have run first — we read from
-    ``ducklake.<org>.persons_geocoded`` for the keys + coordinates.
-    Pair `--org-slug` here with whatever you passed to `seed-persons`
-    if you used a non-default schema:
+    Requires ``seed-persons`` to have run first. Pair `--schema` here with
+    whatever you passed to `seed-persons` if you used a non-default schema:
 
-        uv run seed-boundaries --org-slug sample_10k
-
-    Add a new entry to ``key_group_sources`` to seed another key group;
-    each entry is the destination key-group name plus the SQL expression
-    that produces the key from a row of the persons table.
+        uv run seed-boundaries --schema nys_voter_file_v1
     """
     parser = argparse.ArgumentParser(prog="seed-boundaries", description=seed_boundaries.__doc__)
     parser.add_argument(
-        "--org-slug",
-        default=_DEFAULT_ORG_SLUG,
-        help=f"Org schema to read persons from (default: {_DEFAULT_ORG_SLUG!r}).",
+        "--schema",
+        default=_DEFAULT_SCHEMA,
+        help=f"Dataset-version schema to read persons from (default: {_DEFAULT_SCHEMA!r}).",
     )
     args = parser.parse_args()
 
     key_group_sources = [
-        {
-            "key_group": "nyc_eds",
-            "key_expression": "precinct",
-        },
-        {
-            "key_group": "nyc_zips",
-            "key_expression": "zip5",
-        },
+        {"key_group": "nyc_eds", "key_expression": "precinct"},
+        {"key_group": "nyc_zips", "key_expression": "zip5"},
     ]
 
     settings = get_settings()
     conn = get_connection(settings)
 
     # Single driver — Hamilton resolves the tiger_tabblock_raw →
-    # boundary_from_blocks edge itself and we don't have to plumb the
-    # TableRef through manually. tiger_tabblock_raw is idempotent
-    # (skips counties already loaded) so re-running it once per
-    # key-group iteration is cheap after the first pass.
+    # boundary_from_blocks edge itself. tiger_tabblock_raw is idempotent so
+    # re-running it once per key-group iteration is cheap after the first pass.
     dr = driver.Builder().with_modules(tiger, boundaries).build()
 
-    # Persons table referenced by FQN — must already exist
-    # (seed_persons output). The persons reference is the same for
-    # every key group; only `key_group` and `key_expression` vary.
+    # Persons table referenced by FQN — must already exist (seed_persons output).
     persons_ref = TableRef(
         catalog=PERSON_CATALOG,
-        schema=args.org_slug,
+        schema=args.schema,
         table="persons_geocoded",
         version=0,
     )
@@ -135,12 +124,12 @@ def seed_boundaries() -> None:
         "tiger_county_fips": settings.tiger_county_fips,
         "tiger_data_dir": settings.tiger_data_dir,
         "persons_geocoded": persons_ref,
-        "organization_slug": args.org_slug,
+        "schema": args.schema,
         "conn": conn,
     }
 
     for source in key_group_sources:
-        print(f"Deriving {source['key_group']} from voter file…")
+        print(f"Deriving {source['key_group']}…")
         result = dr.execute(
             final_vars=["boundary_from_blocks"],
             inputs={
@@ -163,53 +152,28 @@ def seed_boundaries() -> None:
 # ---------------------------------------------------------------------------
 
 
-# Org slug to seed under. Must match `slug: "default"` in
-# packages/db/src/mock.ts so the web app's RPC layer can resolve voter
-# data for the seeded organization.
-_DEFAULT_ORG_SLUG = "default"
-
-
 def seed_persons() -> None:
-    """Run voter_file_loader → tiger → osm → matching → geocode → assembly →
-    aggregate against a voter file fixture.
+    """Import a voter-file fixture → geocode → aggregate into buildings/doors.
 
-    Defaults to `{fixtures_dir}/{voter_file_fixture}` (configured in
-    settings — usually `apps/data/fixtures/ny-voters-2026-03-08-nyc.parquet`)
-    and writes into the `default` org schema (matching `slug: "default"`
-    in `packages/db/src/mock.ts` so the web app finds it).
-
-    Override either with flags:
+    Writes into the dataset-version schema (default `nys_voter_file_v1`, the
+    dataset the mock seeds and the seeded orgs resolve to). Override the target
+    with `--schema` and the input file with `--fixture`:
 
         uv run seed-persons --fixture ny-voters-2026-03-08-10k-sample.parquet
-        uv run seed-persons --fixture <sample> --org-slug sample_10k
+        uv run seed-persons --schema nys_voter_file_v1
 
-    Using a non-default org slug writes to a separate DuckLake schema
-    (`ducklake.<slug>.persons_geocoded`), so iterating on samples doesn't
-    overwrite the default schema the web app reads from.
+    Pass `--reset` to drop the schema first so the next run rebuilds every
+    table from scratch (intermediate DAG nodes are incremental, so a pipeline
+    schema change won't otherwise auto-apply).
 
-    Most intermediate DAG nodes are incremental (`CREATE TABLE IF NOT
-    EXISTS` + `WHERE external_id NOT IN (...)`), which is fast on
-    re-runs but means schema changes inside the pipeline don't
-    auto-apply. Pass `--reset` to drop the org's DuckLake schema
-    before running so the next pipeline run rebuilds every table from
-    scratch:
-
-        uv run seed-persons --reset
-
-    If the fixture is missing, prints a hint pointing at the source URL
-    and the script that materialises it.
-
-    Final outputs (under ``ducklake.<org>``):
-    - ``persons_geocoded`` — canonical "person record": Person fields
-      with canonicalized addresses, lat/lng, blockface match metadata,
-      derived `building_id` and `door_id`.
+    Final outputs (under the dataset-version schema):
+    - ``persons_geocoded`` — canonical person record (canonicalized address,
+      lat/lng, blockface metadata, derived `building_id` / `door_id`).
     - ``buildings_geocoded`` — one row per distinct building.
     - ``doors_geocoded`` — one row per distinct door.
 
-    TIGER counties pulled from settings (defaults to all 5 NYC boroughs).
-    First run downloads the TIGER shapefiles for each county (a few minutes
-    on a fresh machine); subsequent runs reuse the on-disk cache and are
-    fast.
+    First run downloads the TIGER shapefiles for each county (a few minutes);
+    subsequent runs reuse the on-disk cache.
     """
     parser = argparse.ArgumentParser(prog="seed-persons", description=seed_persons.__doc__)
     parser.add_argument(
@@ -218,14 +182,14 @@ def seed_persons() -> None:
         help="Fixture filename inside `fixtures_dir` (default: settings.voter_file_fixture).",
     )
     parser.add_argument(
-        "--org-slug",
-        default=_DEFAULT_ORG_SLUG,
-        help=f"Target DuckLake schema (default: {_DEFAULT_ORG_SLUG!r}).",
+        "--schema",
+        default=_DEFAULT_SCHEMA,
+        help=f"Target dataset-version schema (default: {_DEFAULT_SCHEMA!r}).",
     )
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Drop the org's DuckLake schema before running. Use after a pipeline schema change.",
+        help="Drop the schema before running. Use after a pipeline schema change.",
     )
     parser.add_argument(
         "--timing",
@@ -238,9 +202,9 @@ def seed_persons() -> None:
     conn = get_connection(settings)
 
     if args.reset:
-        print(f"Dropping schema ducklake.{args.org_slug}…")
-        _drop_org_schema_helper(conn, args.org_slug)
-        ensure_org_schema(conn, args.org_slug)
+        print(f"Dropping schema {schema_fqn(args.schema)}…")
+        _drop_schema_helper(conn, args.schema)
+        ensure_schema(conn, args.schema)
 
     fixture_name = args.fixture or settings.voter_file_fixture
     fixture_path = _fixtures_dir(settings) / fixture_name
@@ -253,14 +217,19 @@ def seed_persons() -> None:
         )
         return
 
-    print(f"Seeding persons from {fixture_path} (org={args.org_slug})…")
+    print(f"Seeding persons from {fixture_path} (schema={args.schema})…")
     print(f"  TIGER counties: {settings.tiger_county_fips} (cache: {settings.tiger_data_dir})")
     if settings.voter_zip5_filter:
         print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
+    # Import the voter file (source → persons_validated) outside Hamilton, then
+    # run the shared pipeline from that seam. Fixture is already NYC-only so no
+    # county filter; `voter_zip5_filter` scopes dev runs to a small slice.
+    importer = NysVoterFileImporter(zip5_filter=settings.voter_zip5_filter)
+    persons_validated = importer.load(str(fixture_path), args.schema, conn)
+
     timing = TimingHook() if args.timing else None
     builder = driver.Builder().with_modules(
-        voter_file_loader,
         tiger,
         osm,
         matching,
@@ -279,14 +248,8 @@ def seed_persons() -> None:
             "doors_geocoded",
         ],
         inputs={
-            "voter_file_url": str(fixture_path),
-            "organization_slug": args.org_slug,
-            # Fixture is already NYC-only so we skip the county filter.
-            # `voter_zip5_filter` from settings scopes dev runs to a small
-            # geographic slice.
-            "transformation_query": nys_sboe_transformation_query(
-                zip5_filter=settings.voter_zip5_filter,
-            ),
+            "persons_validated": persons_validated,
+            "schema": args.schema,
             "tiger_year": settings.tiger_year,
             "tiger_state_fips": settings.tiger_state_fips,
             "tiger_county_fips": settings.tiger_county_fips,
@@ -327,71 +290,17 @@ def seed_persons() -> None:
     print("Persons seeded.")
 
 
-def mirror_org_data() -> None:
-    """Copy every table in ``ducklake.<src>.*`` to ``ducklake.<dst>.*``.
+def rename_schema() -> None:
+    """Rename a DuckLake schema (``ducklake.<from>`` → ``ducklake.<to>``).
 
-    Cheap way to give a second org a working dataset for local multi-tenancy
-    testing without re-running the full seed pipeline against a separate
-    fixture. Drops the destination schema first so the mirror is a clean
-    replica rather than a merge.
+    Used when a dataset's slug changes so its version schemas stay addressable.
+    No-op if the source schema doesn't exist.
 
-        uv run mirror-org-data --from default --to other
-
-    For realistic differentiated data across orgs, run ``seed-persons``
-    twice with different ``--fixture`` and ``--org-slug`` instead.
+        uv run rename-schema --from old-slug_v1 --to new-slug_v1
     """
-    parser = argparse.ArgumentParser(prog="mirror-org-data", description=mirror_org_data.__doc__)
-    parser.add_argument("--from", dest="src", required=True, help="Source org slug.")
-    parser.add_argument("--to", dest="dst", required=True, help="Destination org slug.")
-    args = parser.parse_args()
-
-    if args.src == args.dst:
-        print("--from and --to must differ.")
-        return
-
-    settings = get_settings()
-    conn = get_connection(settings)
-
-    tables = [
-        r[0]
-        for r in conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_catalog = ? AND table_schema = ? "
-            "ORDER BY table_name",
-            [PERSON_CATALOG, args.src],
-        ).fetchall()
-    ]
-    if not tables:
-        print(f"No tables in {org_schema_fqn(args.src)}. Run `uv run seed-persons --org-slug {args.src}` first.")
-        conn.close()
-        return
-
-    print(f"Resetting {org_schema_fqn(args.dst)}…")
-    _drop_org_schema_helper(conn, args.dst)
-    ensure_org_schema(conn, args.dst)
-
-    for table in tables:
-        src_fqn = org_fqn(args.src, table)
-        dst_fqn = org_fqn(args.dst, table)
-        print(f"  → {table}")
-        conn.execute(f"CREATE TABLE {dst_fqn} AS SELECT * FROM {src_fqn}")
-
-    conn.close()
-    print(f"Mirrored {len(tables)} table(s): {args.src} → {args.dst}.")
-
-
-def rename_org_schema() -> None:
-    """Rename ``ducklake.<from>`` to ``ducklake.<to>``.
-
-    Used after a Postgres-side org slug change so the per-org DuckLake
-    schema stays addressable by the new slug. No-op if the source schema
-    doesn't exist (the org may have been created without seeding data yet).
-
-        uv run rename-org-schema --from old-slug --to new-slug
-    """
-    parser = argparse.ArgumentParser(prog="rename-org-schema", description=rename_org_schema.__doc__)
-    parser.add_argument("--from", dest="src", required=True, help="Current org slug.")
-    parser.add_argument("--to", dest="dst", required=True, help="New org slug.")
+    parser = argparse.ArgumentParser(prog="rename-schema", description=rename_schema.__doc__)
+    parser.add_argument("--from", dest="src", required=True, help="Current schema name.")
+    parser.add_argument("--to", dest="dst", required=True, help="New schema name.")
     args = parser.parse_args()
 
     if args.src == args.dst:
@@ -409,28 +318,26 @@ def rename_org_schema() -> None:
         is not None
     )
     if not src_exists:
-        print(f"No schema {org_schema_fqn(args.src)} — nothing to rename.")
+        print(f"No schema {schema_fqn(args.src)} — nothing to rename.")
         conn.close()
         return
 
-    conn.execute(f"ALTER SCHEMA {org_schema_fqn(args.src)} RENAME TO {quote_ident(args.dst)}")
+    conn.execute(f"ALTER SCHEMA {schema_fqn(args.src)} RENAME TO {quote_ident(args.dst)}")
     conn.close()
     print(f"Renamed schema: {args.src} → {args.dst}.")
 
 
-def drop_org_schema() -> None:
-    """Drop ``ducklake.<slug>`` and all tables in it (CASCADE).
+def drop_schema() -> None:
+    """Drop ``ducklake.<schema>`` and all tables in it (CASCADE). Idempotent.
 
-    Idempotent — no-op if the schema doesn't exist.
-
-        uv run drop-org-schema --slug myorg
+    uv run drop-schema --schema nys_voter_file_v1
     """
-    parser = argparse.ArgumentParser(prog="drop-org-schema", description=drop_org_schema.__doc__)
-    parser.add_argument("--slug", required=True, help="Org slug whose schema to drop.")
+    parser = argparse.ArgumentParser(prog="drop-schema", description=drop_schema.__doc__)
+    parser.add_argument("--schema", required=True, help="Schema to drop.")
     args = parser.parse_args()
 
     settings = get_settings()
     conn = get_connection(settings)
-    _drop_org_schema_helper(conn, args.slug)
+    _drop_schema_helper(conn, args.schema)
     conn.close()
-    print(f"Dropped schema {org_schema_fqn(args.slug)}.")
+    print(f"Dropped schema {schema_fqn(args.schema)}.")

@@ -49,8 +49,7 @@ const segmentSelect = {
   name: segments.name,
   doorCount: segments.doorCount,
   personCount: segments.personCount,
-  voterFileId: segments.voterFileId,
-  voterFileVersion: segments.voterFileVersion,
+  datasetId: segments.datasetId,
   createdAt: segments.createdAt,
 };
 
@@ -152,8 +151,7 @@ export const clone = pub
         organizationId: context.organizationId,
         name: input.newName,
         criteria: src.criteria,
-        voterFileId: src.voterFileId,
-        voterFileVersion: src.voterFileVersion,
+        datasetId: src.datasetId,
         createdBy: context.user.id,
       })
       .returning({ ...segmentSelect, criteria: segments.criteria });

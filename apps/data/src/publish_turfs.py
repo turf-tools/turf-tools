@@ -25,7 +25,7 @@ from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
-from src.tables import resolve
+from src.tables import resolve, resolve_schema
 
 if TYPE_CHECKING:
     import duckdb
@@ -90,6 +90,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    schema = resolve_schema(conn, settings, req.orgSlug)
     scope = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
@@ -97,7 +98,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
     # spans the whole segment.
     key_filter = KeyFilter(keyGroup=scope.key_group, keys=scope.keys) if scope.key_group is not None else None
     where_sql = criteria_to_where(criteria, key_filter, where_params)
-    _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
+    _check_no_ambiguous_assignments(conn, req, schema, where_sql, where_params)
 
     # Retry budget exists only to swallow the rare turf_code collision
     # against the partial unique index on active turfs. Each attempt
@@ -107,7 +108,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
         try:
             conn.execute("BEGIN TRANSACTION")
             conn.execute(
-                _build_publish_temp_table_sql(req.orgSlug, where_sql),
+                _build_publish_temp_table_sql(schema, where_sql),
                 [
                     req.campaignId,
                     req.zoneId,
@@ -150,6 +151,7 @@ def _is_turf_code_collision(exc: BaseException) -> bool:
 def _check_no_ambiguous_assignments(
     conn: duckdb.DuckDBPyConnection,
     req: PublishTurfsRequest,
+    schema: str,
     where_sql: str,
     where_params: list[Any],
 ) -> None:
@@ -164,8 +166,8 @@ def _check_no_ambiguous_assignments(
     the conflict. Failing here forces the user to redraw the cuts so each
     matched building has exactly one home.
     """
-    persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
-    buildings_table = resolve("{buildings_geocoded}", slug=req.orgSlug)
+    persons_table = resolve("{persons_geocoded}", schema)
+    buildings_table = resolve("{buildings_geocoded}", schema)
     # `IS NOT DISTINCT FROM` matches null-to-null, so the same predicate
     # works for zoned (zoneId is a UUID) and zoneless (zoneId is NULL)
     # publishes — no SQL branching needed.
@@ -301,7 +303,7 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
     )
 
 
-def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
+def _build_publish_temp_table_sql(schema: str, where_sql: str) -> str:
     """Build the per-draft payload in a DuckDB TEMP TABLE.
 
     One row per draft, with: a generated turf_id, a generated 8-digit
@@ -318,8 +320,8 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
       campaign_id, segment_id, zone_id, zone_group_id, script_id, created_by
       (all as UUID strings, in `generated`)
     """
-    persons_table = resolve("{persons_geocoded}", slug=org_slug)
-    buildings_table = resolve("{buildings_geocoded}", slug=org_slug)
+    persons_table = resolve("{persons_geocoded}", schema)
+    buildings_table = resolve("{buildings_geocoded}", schema)
     return f"""
     CREATE OR REPLACE TEMP TABLE published_turf_rows AS
     WITH drafts AS (

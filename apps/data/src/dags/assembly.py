@@ -22,7 +22,7 @@ consumers query.
 import duckdb
 from src.addressing import housenumber_display_sql, housenumber_norm_sql
 from src.models import TableRef
-from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
+from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -39,7 +39,7 @@ def canonical_addresses(
     persons_decomposed: TableRef,
     refined_positions: TableRef,
     osm_only_matches: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Per-person canonical (address_line_1, matched_tokens).
@@ -68,8 +68,8 @@ def canonical_addresses(
     `data:clear:all` to force a rebuild when this SQL changes.
     """
     table_suffix = "canonical_addresses"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     match_fqn = persons_best_match.fqn
     decomposed_fqn = persons_decomposed.fqn
     refined_fqn = refined_positions.fqn
@@ -137,7 +137,7 @@ def canonical_addresses(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -154,7 +154,7 @@ def persons_geocoded(
     canonical_addresses: TableRef,
     refined_positions: TableRef,
     osm_only_matches: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Canonical geocoded persons table — the single "person record" that
@@ -192,8 +192,8 @@ def persons_geocoded(
     while the canonical-record shape is being settled.
     """
     table_suffix = "persons_geocoded"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     persons_fqn = persons_validated.fqn
     match_fqn = persons_best_match.fqn
     canonical_fqn = canonical_addresses.fqn
@@ -286,7 +286,7 @@ def persons_geocoded(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -300,7 +300,7 @@ def persons_geocoded(
 def geocoding_summary(
     persons_geocoded: TableRef,
     persons_validated: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Match-rate diagnostics: total comes from persons_validated (the
@@ -314,8 +314,8 @@ def geocoding_summary(
     the current state of both tables.
     """
     table_suffix = "geocoding_summary"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     geocoded_fqn = persons_geocoded.fqn
     persons_fqn = persons_validated.fqn
 
@@ -360,7 +360,7 @@ def geocoding_summary(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
