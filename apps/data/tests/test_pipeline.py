@@ -291,7 +291,7 @@ def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
 
 def test_promoted_voter_fields_present(nyc_pipeline):
     """The canonical voter-file scalars and voting_history are top-level
-    columns on persons_geocoded, not inside other_properties."""
+    columns on persons_geocoded."""
     row = nyc_pipeline.execute("""
         SELECT
           count(*) FILTER (WHERE enrollment           IS NOT NULL) AS has_enrollment,
@@ -306,17 +306,6 @@ def test_promoted_voter_fields_present(nyc_pipeline):
     assert has_reg_status == total
     assert has_reg_date == total
     assert has_voting_history == total  # empty list also counts as present
-
-
-def test_other_properties_is_empty_for_nys(nyc_pipeline):
-    """Every NYS field has a canonical column home; other_properties is
-    a forward-compat empty bag for this state."""
-    non_empty = nyc_pipeline.execute("""
-        SELECT count(*)
-        FROM ducklake."default".persons_geocoded
-        WHERE other_properties IS DISTINCT FROM '{}'::JSON
-    """).fetchone()[0]
-    assert non_empty == 0
 
 
 def test_dates_are_iso_8601(nyc_pipeline):

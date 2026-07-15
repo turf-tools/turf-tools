@@ -4,7 +4,7 @@ DuckLake is laid out one schema per dataset version: a version's tables live in
 `ducklake.<slug>_v<n>.<table>` (e.g. `ducklake.nys_voter_file_v1.persons_geocoded`).
 Schemas are created on demand by `ensure_schema(conn, schema)` before any DAG
 node writes; FQNs are built with `table_fqn(schema, table)`. An org's data is
-resolved *through* its active dataset version — see `resolve_schema`.
+resolved *through* its active dataset version — see `resolve_version`.
 
 Endpoint SQL templates reference logical table names like `{persons_geocoded}`
 instead of hard-coded FQNs, and `resolve(sql, schema)` substitutes them at
@@ -19,10 +19,13 @@ intentionally aren't in `QUERYABLE_TABLES` because the HTTP API
 shouldn't reach into them.
 """
 
+import json
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
+from src.importers.base import Manifest
 from src.models import quote_ident
 
 if TYPE_CHECKING:
@@ -112,22 +115,51 @@ def dataset_version_schema(dataset_slug: str, version_number: int) -> str:
     return f"{dataset_slug}_v{version_number}"
 
 
-def resolve_schema(
+@dataclass(frozen=True)
+class ResolvedVersion:
+    """A resolved dataset version. Both the DuckLake `schema` and the field
+    `manifest` are just properties of the version — a live segment resolves the
+    active version, a published turf its pinned one, and each then derives the
+    schema it queries and the manifest it compiles against from the same place.
+    """
+
+    dataset_version_id: str
+    dataset_slug: str
+    version_number: int
+    manifest: Manifest
+
+    @property
+    def schema(self) -> str:
+        return dataset_version_schema(self.dataset_slug, self.version_number)
+
+
+def _parse_manifest(manifest: object) -> Manifest:
+    """Parse a `dataset_versions.manifest` value into a `Manifest`. The Postgres
+    jsonb comes back over the DuckDB attach as a JSON string (or an
+    already-decoded container); reject NULL — an active/pinned version must
+    carry its manifest."""
+    if manifest is None:
+        raise MissingManifestError()
+    data = json.loads(manifest) if isinstance(manifest, str) else manifest
+    return Manifest.model_validate(data)
+
+
+def resolve_version(
     conn: "duckdb.DuckDBPyConnection",
     settings: "Settings",
     org_slug: str,
-) -> str:
-    """Resolve an org to its active dataset version's DuckLake schema.
+) -> ResolvedVersion:
+    """Resolve an org to its active dataset version.
 
-    org → dataset_organizations → dataset → active version → `<slug>_v<n>`.
-    Raises `NoActiveDatasetError` when the org has no active dataset (the
-    empty state — the web app gates data-dependent views until an import
-    completes). Reads the operational Postgres via the shared attach.
+    org → dataset_organizations → dataset → active version. Raises
+    `NoActiveDatasetError` when the org has no active dataset (the empty state —
+    the web app gates data-dependent views until an import completes). Reads the
+    operational Postgres via the shared attach.
     """
     attach_operational_postgres(conn, settings)
     row = conn.execute(
         f"""
-        SELECT d.slug, v.version_number
+        SELECT d.slug, v.version_number, v.dataset_version_id, v.manifest
         FROM {OPERATIONAL_PG_ALIAS}.public.dataset_organizations dorg
         JOIN {OPERATIONAL_PG_ALIAS}.public.organizations o
             ON o.organization_id = dorg.organization_id
@@ -142,8 +174,93 @@ def resolve_schema(
     ).fetchone()
     if row is None:
         raise NoActiveDatasetError(org_slug)
-    dataset_slug, version_number = row
-    return dataset_version_schema(dataset_slug, version_number)
+    dataset_slug, version_number, dataset_version_id, manifest = row
+    return ResolvedVersion(
+        dataset_version_id=str(dataset_version_id),
+        dataset_slug=dataset_slug,
+        version_number=version_number,
+        manifest=_parse_manifest(manifest),
+    )
+
+
+def load_manifest(
+    conn: "duckdb.DuckDBPyConnection",
+    settings: "Settings",
+    dataset_version_id: str,
+) -> Manifest:
+    """Load one version's field manifest by id — the single manifest path. A
+    live segment feeds the dataset's active version id, a published turf its
+    pinned id; both land here."""
+    attach_operational_postgres(conn, settings)
+    row = conn.execute(
+        f"""
+        SELECT manifest
+        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_versions
+        WHERE dataset_version_id = ?
+        """,
+        [dataset_version_id],
+    ).fetchone()
+    if row is None:
+        raise MissingManifestError(dataset_version_id)
+    return _parse_manifest(row[0])
+
+
+def version_id_for_schema(
+    conn: "duckdb.DuckDBPyConnection",
+    settings: "Settings",
+    schema: str,
+) -> str | None:
+    """Find the `dataset_versions` row whose `<slug>_v<n>` schema equals
+    `schema`. Returns None when no version row exists yet (e.g. the dev seed run
+    before `db:mock`), letting the caller skip the manifest write rather than
+    fail."""
+    attach_operational_postgres(conn, settings)
+    row = conn.execute(
+        f"""
+        SELECT v.dataset_version_id
+        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_versions v
+        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d ON d.dataset_id = v.dataset_id
+        WHERE d.slug || '_v' || v.version_number = ?
+        """,
+        [schema],
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def finalize_version(
+    conn: "duckdb.DuckDBPyConnection",
+    settings: "Settings",
+    dataset_version_id: str,
+    manifest: Manifest,
+    row_count: int,
+) -> None:
+    """Dev-seed manifest write: land a version's `manifest` + `row_count` and
+    mark it `ready`, once `seed-persons` has built its DuckLake tables.
+
+    This is **not** the production path. In prod the import job *returns* the
+    manifest and the **web persists it via drizzle** (which writes jsonb natively)
+    alongside the version-row lifecycle. The dev seed has no web to hand off to,
+    so it writes the manifest itself. `active_version_id` is left untouched either
+    way — activation is the web's float-pointer concern.
+
+    Postgres implicit-casts json→jsonb on INSERT but not on UPDATE, and DuckDB
+    (no native jsonb type) sends the value as varchar — so a bound-param UPDATE
+    into the jsonb `manifest` column fails. The maintainer-blessed workaround is
+    to run the UPDATE natively on Postgres via `postgres_execute` with an explicit
+    `::jsonb` cast (duckdb/duckdb#16195). The manifest is our own serialized model,
+    not user input; single quotes are doubled for the Postgres string literal and
+    the statement is dollar-quoted for DuckDB.
+    """
+    attach_operational_postgres(conn, settings)
+    manifest_literal = manifest.model_dump_json().replace("'", "''")
+    conn.execute(
+        f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
+        f"UPDATE public.dataset_versions "
+        f"SET manifest = '{manifest_literal}'::jsonb, "
+        f"row_count = {int(row_count)}, status = 'ready' "
+        f"WHERE dataset_version_id = '{dataset_version_id}'"
+        f"$ft$)"
+    )
 
 
 class NoActiveDatasetError(RuntimeError):
@@ -152,3 +269,12 @@ class NoActiveDatasetError(RuntimeError):
     def __init__(self, org_slug: str) -> None:
         super().__init__(f"org {org_slug!r} has no active dataset")
         self.org_slug = org_slug
+
+
+class MissingManifestError(RuntimeError):
+    """A dataset version has no `manifest` (should be impossible for an
+    active/pinned version — a data-integrity failure, not an empty state)."""
+
+    def __init__(self, dataset_version_id: str | None = None) -> None:
+        super().__init__(f"dataset version {dataset_version_id!r} has no manifest")
+        self.dataset_version_id = dataset_version_id

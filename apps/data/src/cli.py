@@ -15,7 +15,7 @@ from src.dags import (
     quickwit,
     tiger,
 )
-from src.duckdb import get_connection
+from src.duckdb import attach_operational_postgres, get_connection
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
@@ -23,7 +23,9 @@ from src.settings import get_settings
 from src.tables import (
     PERSON_CATALOG,
     ensure_schema,
+    finalize_version,
     schema_fqn,
+    version_id_for_schema,
 )
 from src.tables import (
     drop_schema as _drop_schema_helper,
@@ -72,7 +74,7 @@ def _fixtures_dir(settings) -> Path:  # noqa: ANN001 — settings is a Settings 
 
 # Dataset-version schema the dev seed writes into. Matches the dataset the mock
 # seeds in packages/db/src/mock.ts (slug `nys_voter_file`, version 1), which the
-# seeded orgs resolve to via `resolve_schema`.
+# seeded orgs resolve to via `resolve_version`.
 _DEFAULT_SCHEMA = "nys_voter_file_v1"
 
 
@@ -201,6 +203,10 @@ def seed_persons() -> None:
     settings = get_settings()
     conn = get_connection(settings)
 
+    # Fail fast: the manifest write at the end needs operational Postgres, so
+    # attach up front rather than crashing after the minute-long geocode.
+    attach_operational_postgres(conn, settings)
+
     if args.reset:
         print(f"Dropping schema {schema_fqn(args.schema)}…")
         _drop_schema_helper(conn, args.schema)
@@ -283,6 +289,17 @@ def seed_persons() -> None:
         f"  → {building_count:,} buildings, {door_count:,} doors.\n"
         f"  → Outputs: {geocoded_ref.fqn}, {buildings_ref.fqn}, {doors_ref.fqn}"
     )
+
+    # Dev-only: land the manifest + row count on the version row that `db:mock`
+    # created, and mark it ready. In prod the web persists the manifest instead
+    # (see finalize_version). Skipped if no version row exists yet.
+    person_count = conn.sql(f"SELECT count(*) FROM {geocoded_ref.fqn}").fetchone()[0]
+    version_id = version_id_for_schema(conn, settings, args.schema)
+    if version_id is None:
+        print(f"  → No dataset_versions row for schema {args.schema!r}; skipping manifest write (run `pnpm db:mock`).")
+    else:
+        finalize_version(conn, settings, version_id, importer.manifest(), person_count)
+        print(f"  → Wrote manifest + row_count={person_count:,} to dataset version {version_id}.")
 
     if timing is not None:
         timing.print_summary()

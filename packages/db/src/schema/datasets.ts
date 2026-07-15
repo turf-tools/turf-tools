@@ -39,8 +39,8 @@ export type DatasetVersionStatus = "importing" | "ready" | "failed";
 
 // An immutable, retained version of a dataset. Never deleted, so any pinned
 // reference (a published turf, a canvass event) always resolves. Its data lives
-// in the DuckLake schema `${dataset.slug}_v${versionNumber}`. `columnSpec` is
-// the field manifest (what's filterable/zonable — see the importer's Manifest).
+// in the DuckLake schema `${dataset.slug}_v${versionNumber}`. `manifest` is the
+// field catalog (what's filterable/zonable — the serialized importer Manifest).
 export const datasetVersions = pgTable(
   "dataset_versions",
   {
@@ -49,7 +49,7 @@ export const datasetVersions = pgTable(
       .notNull()
       .references(() => datasets.datasetId),
     versionNumber: integer().notNull(),
-    columnSpec: jsonb(),
+    manifest: jsonb(),
     sourceUri: text(),
     rowCount: integer(),
     status: text().$type<DatasetVersionStatus>().notNull().default("importing"),

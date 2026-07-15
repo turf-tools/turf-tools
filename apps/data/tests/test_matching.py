@@ -41,8 +41,7 @@ def _create_persons_validated(conn) -> TableRef:
             city             VARCHAR,
             state            VARCHAR,
             zip5             VARCHAR,
-            zip4             VARCHAR,
-            other_properties JSON
+            zip4             VARCHAR
         )
     """)
     return _ref("persons_validated")
@@ -84,7 +83,7 @@ def _insert_validated(
 ):
     conn.execute(
         f"""INSERT INTO {table_fqn(ORG, "persons_validated")} VALUES
-           (?, 'ny_sboe', 'Test', 'Person', ?, ?, ?, 'NEW YORK', 'NY', ?, NULL, '{{}}')""",
+           (?, 'ny_sboe', 'Test', 'Person', ?, ?, ?, 'NEW YORK', 'NY', ?, NULL)""",
         [external_id, address_line_1, address_line_2, half_code, zip5],
     )
 

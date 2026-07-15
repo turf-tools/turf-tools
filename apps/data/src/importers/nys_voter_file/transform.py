@@ -1,13 +1,13 @@
 """Curated voter-file transformation queries.
 
 Each transformation maps a state/source-specific raw voter-file schema onto
-the canonical `Person` schema (see `src/models.py`). State-specific raw
-codes are normalized to canonical cross-state labels via the maps defined
-in this module.
+the `Person` required core (see `src/models.py`) plus the dataset's filterable
+fields. State-specific raw codes are normalized to canonical cross-state labels
+via the maps defined in this module.
 
-Fields that have a canonical home on `Person` (enrollment, dates, districts,
-etc.) become typed top-level columns. Genuinely state-specific extras go in
-``other_properties``.
+Every field — the Person core and each filterable extra (enrollment, dates,
+districts, …) — is a typed top-level column; the importer's manifest describes
+which are filterable. There is no catch-all JSON blob.
 """
 
 from __future__ import annotations
@@ -169,10 +169,7 @@ SELECT
     raw.congressional_district AS congressional_district,
     -- Transient raw column consumed by the downstream `persons_voting_history`
     -- node, which parses it into the structured `voting_history` STRUCT[].
-    raw.voter_history AS voter_history,
-    -- Empty for NYS — every field has a canonical column. Forward-compat
-    -- slot for future state-specific extras.
-    '{{}}'::JSON AS other_properties
+    raw.voter_history AS voter_history
 FROM {source_table} AS raw
 {where}
 """

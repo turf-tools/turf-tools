@@ -27,7 +27,6 @@ _REQUIRED_COLUMNS = [
     "state",
     "zip5",
     "zip4",
-    "other_properties",
 ]
 
 
@@ -101,11 +100,7 @@ def quickwit_local_ingest_result(
                     city := city,
                     state := state,
                     zip5 := zip5,
-                    zip4 := zip4,
-                    other_properties := CASE
-                        WHEN other_properties IS NULL THEN json('{{}}')
-                        ELSE json(other_properties)
-                    END
+                    zip4 := zip4
                 )
             ) AS ndjson_line
         FROM {source_fqn}

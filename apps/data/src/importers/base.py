@@ -60,12 +60,11 @@ class FieldDef(BaseModel):
     union of what the web editor and the SQL compiler each need — now data.
     """
 
-    column: str  # the `persons_geocoded` column (also the filter `key`)
+    # Every field is a top-level `persons_geocoded` column (shredded for Parquet
+    # pruning + Bloom filters). `column` doubles as the filter `key`.
+    column: str
     label: str  # editor display label
     filter_kind: FilterKind
-    # SQL location: a top-level column (shredded for Parquet pruning + Bloom
-    # filters) or a JSONB key inside `other_properties`.
-    source: Literal["column", "other_properties"] = "column"
     # `text` only — names use `contains`, codes/zips use `equals`.
     op: Literal["equals", "contains"] | None = None
     # `enum` / `code-multi` / `tags` value catalog. None → no fixed catalog

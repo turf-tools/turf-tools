@@ -13,13 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.settings import get_settings
-from src.tables import resolve, resolve_schema, table_fqn
+from src.tables import resolve, resolve_version, table_fqn
 
 logger = logging.getLogger("uvicorn")
 
@@ -152,7 +152,7 @@ async def key_group_geojson(key_group: str, org_slug: str):
     the call site to bust browser caches.
     """
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, org_slug)
+    schema = resolve_version(conn, settings, org_slug).schema
     # Validate the table exists before querying — keeps the error message
     # friendlier than a generic SQL failure.
     fqn = table_fqn(schema, key_group)
@@ -209,10 +209,12 @@ async def persons_count(req: _PersonsCountRequest):
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -249,11 +251,12 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     modifies the running set.
     """
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    persons_table = resolve("{persons_geocoded}", schema)
+    persons_table = resolve("{persons_geocoded}", version.schema)
     params: list = []
-    sql = cascade_sql(criteria, persons_table, params)
+    sql = cascade_sql(catalog, criteria, persons_table, params)
     row = conn.execute(sql, params).fetchone()
     counts = list(row)
     steps_result = []
@@ -282,10 +285,12 @@ async def persons_sample(req: _PersonsSampleRequest):
     """
     limit = max(1, min(req.limit, 500))
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
@@ -329,12 +334,14 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    group_expr = boundary_key_expr_for(req.key_group)
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
+    group_expr = boundary_key_expr_for(catalog, req.key_group)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -406,10 +413,12 @@ async def segments_export(req: _SegmentExportRequest):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
 
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, None, params)
+    where = criteria_to_where(catalog, criteria, None, params)
     select_sql = resolve(_EXPORT_SELECT + where, schema)
 
     suffix = ".parquet" if req.format == "parquet" else ".csv"
@@ -453,10 +462,12 @@ async def buildings_list(req: _BuildingsListRequest):
     polygon" client-side.
     """
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -501,10 +512,12 @@ async def buildings_points(req: _BuildingsPointsRequest):
     instead of meter-scale.
     """
     conn = get_connection(settings, read_only=True)
-    schema = resolve_schema(conn, settings, req.org_slug)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         WITH pts AS (
