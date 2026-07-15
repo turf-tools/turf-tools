@@ -38,9 +38,6 @@ doc_mapping:
       type: text
       tokenizer: raw
       stored: true
-    - name: other_properties
-      type: json
-      stored: true
 search_settings:
   default_search_fields:
     - first_name

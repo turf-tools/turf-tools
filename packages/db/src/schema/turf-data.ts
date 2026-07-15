@@ -59,8 +59,6 @@ export type TurfDataPerson = {
   senateDistrict: string | null; // state senate
   congressionalDistrict: string | null;
   votingHistory: VotingHistoryEntry[];
-  // Forward-compat slot for genuinely state-specific extras. Empty for NYS.
-  otherProperties: Record<string, string | null>;
 };
 
 export type TurfDataDoor = {

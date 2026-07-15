@@ -5,15 +5,13 @@ Used by the typed query endpoints (`/persons/count`, `/persons/by-key`,
 the persons-side filter portion of their SQL.
 
 User values flow through `params` (DuckDB `?` bind), never through
-string interpolation. Field metadata from the catalog (column names,
-JSONB keys) is the only thing that lands directly in the SQL string.
+string interpolation. Field metadata from the catalog (column names) is
+the only thing that lands directly in the SQL string.
 """
 
 from typing import Any
 
 from .criteria import (
-    FIELDS,
-    KEY_GROUPS,
     AddressFieldDef,
     AddressFilter,
     AgeRangeFieldDef,
@@ -26,6 +24,7 @@ from .criteria import (
     DateRangeFilter,
     EnumFieldDef,
     EnumFilter,
+    FieldCatalog,
     FieldDef,
     Filter,
     KeyFilter,
@@ -45,6 +44,7 @@ class CriteriaError(ValueError):
 
 
 def criteria_to_where(
+    catalog: FieldCatalog,
     criteria: Criteria,
     key_filter: KeyFilter | None,
     params: list[Any],
@@ -65,14 +65,14 @@ def criteria_to_where(
     Params are appended in-place. Returns ``""`` (no WHERE) for empty
     criteria with no key_filter.
     """
-    expr = _criteria_bool_expr(criteria, params)
-    clauses = [c for c in [expr, _key_filter_clause(key_filter, params) if key_filter else ""] if c]
+    expr = _criteria_bool_expr(catalog, criteria, params)
+    clauses = [c for c in [expr, _key_filter_clause(catalog, key_filter, params) if key_filter else ""] if c]
     if not clauses:
         return ""
     return f"WHERE {' AND '.join(clauses)}"
 
 
-def cascade_sql(criteria: Criteria, persons_table: str, params: list[Any]) -> str:
+def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, params: list[Any]) -> str:
     """Build a single SQL query returning N+1 waterfall counts in one scan.
 
     Emits ``COUNT(*) FILTER (WHERE expr_i)`` per prefix so each row is
@@ -83,7 +83,7 @@ def cascade_sql(criteria: Criteria, persons_table: str, params: list[Any]) -> st
     for i in range(1, len(criteria.steps) + 1):
         prefix = Criteria(steps=criteria.steps[:i])
         prefix_params: list[Any] = []
-        expr = _criteria_bool_expr(prefix, prefix_params)
+        expr = _criteria_bool_expr(catalog, prefix, prefix_params)
         params.extend(prefix_params)
         if expr:
             selects.append(f"count(*) FILTER (WHERE {expr}) AS step_{i}")
@@ -92,24 +92,21 @@ def cascade_sql(criteria: Criteria, persons_table: str, params: list[Any]) -> st
     return f"SELECT {', '.join(selects)} FROM {persons_table}"
 
 
-def column_expr_for(field_key: str) -> str:
-    """SQL expression for a field. Top-level columns are bare names;
-    other_properties extracts use ``->>``.
-    """
-    field_def = FIELDS.get(field_key)
-    if field_def is None:
+def column_expr_for(catalog: FieldCatalog, field_key: str) -> str:
+    """SQL expression for a field — every field is a bare top-level column."""
+    if field_key not in catalog.fields:
         raise CriteriaError(f"Unknown field: {field_key}")
-    return _column_expr(field_key, field_def.source)
+    return field_key
 
 
-def boundary_key_expr_for(key_group: str) -> str:
+def boundary_key_expr_for(catalog: FieldCatalog, key_group: str) -> str:
     """SQL expression producing each person's boundary key for the given
     keyGroup. Used as the GROUP BY target in per-key aggregation.
     """
-    field_key = KEY_GROUPS.get(key_group)
+    field_key = catalog.key_groups.get(key_group)
     if field_key is None:
         raise CriteriaError(f"Unknown keyGroup: {key_group}")
-    return column_expr_for(field_key)
+    return column_expr_for(catalog, field_key)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +114,7 @@ def boundary_key_expr_for(key_group: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _criteria_bool_expr(criteria: Criteria, params: list[Any]) -> str:
+def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[Any]) -> str:
     """Reduce criteria to a Boolean SQL expression string.
 
     Returns ``""`` for empty / fully-inactive criteria (match all).
@@ -125,7 +122,7 @@ def _criteria_bool_expr(criteria: Criteria, params: list[Any]) -> str:
     current: str | None = None  # None = True (full universe)
 
     for step in criteria.steps:
-        fc = _filter_clause(step.filter, params)
+        fc = _filter_clause(catalog, step.filter, params)
         if not fc:
             # Inactive filter (empty enum values, unbounded age range, etc.)
             # has no effect on the set regardless of verb.
@@ -144,55 +141,33 @@ def _criteria_bool_expr(criteria: Criteria, params: list[Any]) -> str:
     return current or ""
 
 
-def _column_expr(key: str, source: str) -> str:
-    if source == "column":
-        return key
-    # other_properties JSONB extract — parenthesized to dodge DuckDB's
-    # precedence trap where ``->>`` binds looser than ``IN/=/ILIKE``.
-    return f"(other_properties->>'{key}')"
+def _field(catalog: FieldCatalog, key: str) -> FieldDef:
+    field_def = catalog.fields.get(key)
+    if field_def is None:
+        raise CriteriaError(f"Unknown field: {key}")
+    return field_def
 
 
-def _filter_clause(f: Filter, params: list[Any]) -> str:
+def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
     if isinstance(f, AllFilter):
         return "1=1"
     if isinstance(f, EnumFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _enum_clause(f, field_def, params)
+        return _enum_clause(f, _field(catalog, f.key), params)
     if isinstance(f, AgeRangeFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _age_range_clause(f, field_def, params)
+        return _age_range_clause(f, _field(catalog, f.key), params)
     if isinstance(f, TextFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _text_clause(f, field_def, params)
+        return _text_clause(f, _field(catalog, f.key), params)
     if isinstance(f, TextMultiFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _text_multi_clause(f, field_def, params)
+        return _text_multi_clause(f, _field(catalog, f.key), params)
     if isinstance(f, DateRangeFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _date_range_clause(f, field_def, params)
+        return _date_range_clause(f, _field(catalog, f.key), params)
     if isinstance(f, VotingHistoryFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _voting_history_clause(f, field_def, params)
+        return _voting_history_clause(f, _field(catalog, f.key), params)
     if isinstance(f, AddressFilter):
-        field_def = FIELDS.get(f.key)
-        if field_def is None:
-            raise CriteriaError(f"Unknown field: {f.key}")
-        return _address_clause(f, field_def, params)
+        return _address_clause(f, _field(catalog, f.key), params)
     if isinstance(f, NestedFilter):
         # Empty inner → 1=1 to match the standalone "empty segment matches everyone" semantic.
-        inner = _criteria_bool_expr(f.criteria, params)
+        inner = _criteria_bool_expr(catalog, f.criteria, params)
         return f"({inner})" if inner else "1=1"
     if isinstance(f, PersonIdSetFilter):
         # Resolved canvass / operational-data filter: a literal person set.
@@ -213,7 +188,7 @@ def _enum_clause(f: EnumFilter, def_: FieldDef, params: list[Any]) -> str:
         raise CriteriaError(f"Field {f.key} is not an enum field")
     if not f.values:
         return ""
-    expr = _column_expr(f.key, def_.source)
+    expr = f.key
     placeholders = ", ".join("?" for _ in f.values)
     params.extend(f.values)
     return f"{expr} IN ({placeholders})"
@@ -224,7 +199,7 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
         raise CriteriaError(f"Field {f.key} is not an age-range field")
     if f.min is None and f.max is None:
         return ""
-    expr = _column_expr(f.key, def_.source)
+    expr = f.key
     dob = f"try_strptime({expr}, '%Y-%m-%d')::DATE"
     age_years = f"extract(year from age(current_date, {dob}))"
     parts: list[str] = []
@@ -242,7 +217,7 @@ def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
         raise CriteriaError(f"Field {f.key} is not a text field")
     if not f.value.strip():
         return ""
-    expr = _column_expr(f.key, def_.source)
+    expr = f.key
     if def_.op == "equals":
         params.append(f.value)
         return f"{expr} = ?"
@@ -256,7 +231,7 @@ def _text_multi_clause(f: TextMultiFilter, def_: FieldDef, params: list[Any]) ->
     vals = [v.strip() for v in f.values if v.strip()]
     if not vals:
         return ""
-    expr = _column_expr(f.key, def_.source)
+    expr = f.key
     placeholders = ", ".join("?" for _ in vals)
     params.extend(vals)
     return f"{expr} IN ({placeholders})"
@@ -267,7 +242,7 @@ def _date_range_clause(f: DateRangeFilter, def_: FieldDef, params: list[Any]) ->
         raise CriteriaError(f"Field {f.key} is not a date-range field")
     if not f.min and not f.max:
         return ""
-    expr = _column_expr(f.key, def_.source)
+    expr = f.key
     parts: list[str] = []
     if f.min:
         parts.append(f"{expr} >= ?")
@@ -325,10 +300,10 @@ def _voting_history_clause(f: VotingHistoryFilter, def_: FieldDef, params: list[
     return f"{inner} {op} ?"
 
 
-def _key_filter_clause(kf: KeyFilter, params: list[Any]) -> str:
+def _key_filter_clause(catalog: FieldCatalog, kf: KeyFilter, params: list[Any]) -> str:
     if not kf.keys:
         return "1=0"
-    expr = boundary_key_expr_for(kf.key_group)
+    expr = boundary_key_expr_for(catalog, kf.key_group)
     placeholders = ", ".join("?" for _ in kf.keys)
     params.extend(kf.keys)
     return f"{expr} IN ({placeholders})"

@@ -156,11 +156,14 @@ async function mock() {
       slug: "nys_voter_file",
       name: "NY State Voter File",
     });
+    // Created as `importing` with no manifest — this mirrors the web's role in a
+    // real import (insert the version row, set the active pointer). `seed-persons`
+    // then writes the manifest + row_count and flips it to `ready`.
     await db.insert(datasetVersions).values({
       datasetVersionId: DEFAULT_DATASET_VERSION_ID,
       datasetId: DEFAULT_DATASET_ID,
       versionNumber: 1,
-      status: "ready",
+      status: "importing",
       createdBy: USER_ID,
     });
     await db

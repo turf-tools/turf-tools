@@ -21,11 +21,11 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from src.dsl.compile import criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
-from src.tables import resolve, resolve_schema
+from src.tables import resolve, resolve_version
 
 if TYPE_CHECKING:
     import duckdb
@@ -90,14 +90,16 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    schema = resolve_schema(conn, settings, req.orgSlug)
+    version = resolve_version(conn, settings, req.orgSlug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     scope = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
     # Zoned: scope to the zone's keys. Zoneless: no key filter — publish
     # spans the whole segment.
     key_filter = KeyFilter(keyGroup=scope.key_group, keys=scope.keys) if scope.key_group is not None else None
-    where_sql = criteria_to_where(criteria, key_filter, where_params)
+    where_sql = criteria_to_where(catalog, criteria, key_filter, where_params)
     _check_no_ambiguous_assignments(conn, req, schema, where_sql, where_params)
 
     # Retry budget exists only to swallow the rare turf_code collision
@@ -353,7 +355,6 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str) -> str:
             p.county_code, p.precinct, p.assembly_district,
             p.senate_district, p.congressional_district,
             p.voting_history,
-            p.other_properties,
             p.building_id, p.door_id,
             b.latitude, b.longitude,
             b.address_line_1 AS street, b.city, b.state, b.zip5 AS zip
@@ -371,9 +372,8 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str) -> str:
             any_value(latitude) AS latitude, any_value(longitude) AS longitude,
             any_value(street) AS street, any_value(city) AS city,
             any_value(state) AS state, any_value(zip) AS zip,
-            -- Per-person wire payload mirrors the typed Person schema:
-            -- voter-file scalars as first-class fields; other_properties
-            -- carries genuinely state-specific extras only.
+            -- Per-person wire payload. Still a hardcoded voter-file field list —
+            -- making it manifest-driven is a tracked follow-up.
             json_group_array(json_object(
                 'personId', external_id,
                 'firstName', first_name,
@@ -389,8 +389,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str) -> str:
                 'assemblyDistrict', assembly_district,
                 'senateDistrict', senate_district,
                 'congressionalDistrict', congressional_district,
-                'votingHistory', coalesce(to_json(voting_history), json('[]')),
-                'otherProperties', coalesce(json(other_properties::VARCHAR), json('{{}}'))
+                'votingHistory', coalesce(to_json(voting_history), json('[]'))
             )) AS persons
         FROM assigned
         GROUP BY polygon_idx, building_id, door_id, unit

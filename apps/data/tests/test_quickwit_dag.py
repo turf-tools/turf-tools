@@ -77,8 +77,7 @@ SELECT
     NULL::VARCHAR AS assembly_district,
     NULL::VARCHAR AS senate_district,
     NULL::VARCHAR AS congressional_district,
-    NULL::VARCHAR AS voter_history,
-    '{}'::JSON AS other_properties
+    NULL::VARCHAR AS voter_history
 FROM raw
 """
 

@@ -55,8 +55,7 @@ def _create_persons_validated(conn) -> TableRef:
             assembly_district      VARCHAR,
             senate_district        VARCHAR,
             congressional_district VARCHAR,
-            voting_history         STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[],
-            other_properties       JSON
+            voting_history         STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]
         )
     """)
     return _ref("persons_validated")
@@ -308,12 +307,12 @@ class TestPersonsGeocoded:
             INSERT INTO {refs["validated"].fqn}
                 (external_id, external_id_type, first_name, last_name,
                  address_line_1, address_line_2, city, state, zip5,
-                 voting_history, other_properties)
+                 voting_history)
             VALUES
             ('v1', 'ny_sboe', 'Alice', 'Smith', '123 BROADWAY', NULL,
-             'NEW YORK', 'NY', '10001', [], '{{}}'),
+             'NEW YORK', 'NY', '10001', []),
             ('v2', 'ny_sboe', 'Bob',   'Jones', '200 AMSTERDAM AVE', 'APT 3B',
-             'NEW YORK', 'NY', '10024', [], '{{}}')
+             'NEW YORK', 'NY', '10024', [])
         """)
 
     def test_osm_only_voter_included_in_persons_geocoded(self, synth):

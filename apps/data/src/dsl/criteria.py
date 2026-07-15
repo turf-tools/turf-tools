@@ -1,17 +1,21 @@
-"""Pydantic models for the criteria DSL + the field/key-group catalog.
+"""Pydantic models for the criteria DSL + the compiler's field catalog.
 
-Mirror of `apps/web/src/lib/filters.ts` (filter shapes + FILTERS catalog)
-and `apps/web/src/lib/key-groups.ts` (KEY_GROUPS catalog). The TS side
-keeps these for the editor UI; data side keeps them for SQL compilation.
+The filter *shapes* (`EnumFilter`, `TextFilter`, …) mirror the wire contract in
+`apps/web/src/lib/filters.ts` — the fixed vocabulary of filter kinds both sides
+speak. Adding a *kind* touches both languages; that duplication is types-only
+(compiler logic lives here, see `compile.py`).
 
-Adding a new filter kind / catalog entry requires updating both sides —
-the duplication is types-only (compiler logic lives in one language;
-see `compile.py`).
+The *field list*, by contrast, is no longer hardcoded: `build_field_catalog`
+derives the compiler's `FieldCatalog` from a dataset version's `Manifest` (the
+authority). The `*FieldDef` classes below are the compiler's internal typed form.
 """
 
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from src.importers.base import Manifest
 
 # ---------------------------------------------------------------------------
 # Filter instances — what flows in the request body.
@@ -205,38 +209,32 @@ NestedFilter.model_rebuild()
 class EnumFieldDef(BaseModel):
     kind: Literal["enum"]
     key: str
-    source: Literal["column", "other_properties"]
 
 
 class AgeRangeFieldDef(BaseModel):
     kind: Literal["age-range"]
     key: str
-    source: Literal["column", "other_properties"]
 
 
 class TextFieldDef(BaseModel):
     kind: Literal["text"]
     key: str
-    source: Literal["column", "other_properties"]
     op: Literal["equals", "contains"]
 
 
 class TextMultiFieldDef(BaseModel):
     kind: Literal["text-multi"]
     key: str
-    source: Literal["column", "other_properties"]
 
 
 class DateRangeFieldDef(BaseModel):
     kind: Literal["date-range"]
     key: str
-    source: Literal["column", "other_properties"]
 
 
 class VotingHistoryFieldDef(BaseModel):
     kind: Literal["voting-history-count"]
     key: str  # the STRUCT[] column name, e.g. "voting_history"
-    source: Literal["column"]  # always a top-level STRUCT[]; no JSON path here
 
 
 class AddressFieldDef(BaseModel):
@@ -255,49 +253,54 @@ FieldDef = (
 )
 
 
-# Catalog of filterable fields. `source` says whether the field is a
-# top-level column on `persons_geocoded` or a JSONB key inside
-# `other_properties`. `op` on text fields is fixed per-field — names use
-# `contains`, codes/zips use `equals`. If a field needs both, add it
-# twice with different keys.
-#
-# Keep in sync with FILTERS in `apps/web/src/lib/filters.ts`.
-FIELDS: dict[str, FieldDef] = {
-    # All filterable voter-file fields are top-level columns on `persons_geocoded`.
-    # Storage is shredded for filter perf (Parquet column pruning + Bloom filters).
-    # Listed alphabetically by key.
-    "assembly_district": TextMultiFieldDef(kind="text-multi", key="assembly_district", source="column"),
-    "congressional_district": TextMultiFieldDef(kind="text-multi", key="congressional_district", source="column"),
-    "date_of_birth": AgeRangeFieldDef(kind="age-range", key="date_of_birth", source="column"),
-    "enrollment": EnumFieldDef(kind="enum", key="enrollment", source="column"),
-    "address": AddressFieldDef(kind="address", key="address"),
-    "county_code": EnumFieldDef(kind="enum", key="county_code", source="column"),
-    "first_name": TextFieldDef(kind="text", key="first_name", source="column", op="contains"),
-    "gender": EnumFieldDef(kind="enum", key="gender", source="column"),
-    "last_name": TextFieldDef(kind="text", key="last_name", source="column", op="contains"),
-    "precinct": TextMultiFieldDef(kind="text-multi", key="precinct", source="column"),
-    "registration_date": DateRangeFieldDef(kind="date-range", key="registration_date", source="column"),
-    "registration_status": EnumFieldDef(kind="enum", key="registration_status", source="column"),
-    "senate_district": TextMultiFieldDef(kind="text-multi", key="senate_district", source="column"),
-    "voting_history": VotingHistoryFieldDef(kind="voting-history-count", key="voting_history", source="column"),
-    # Also queried directly by `nyc_zips` boundary-key resolution — the
-    # text-multi shape supports both the multi-value editor filter and the
-    # single-key resolver path (one-element values list).
-    "zip5": TextMultiFieldDef(kind="text-multi", key="zip5", source="column"),
-}
-
-
 # ---------------------------------------------------------------------------
-# Key group catalog — boundary keyGroup → field that carries the key on
-# persons_geocoded. Mirror of `apps/web/src/lib/key-groups.ts`.
+# Field catalog — the compiler's per-version view of a dataset's fields, built
+# from the `Manifest` (the authority). The `*FieldDef` classes above stay the
+# compiler's internal typed form; `build_field_catalog` derives them from the
+# manifest, replacing what used to be the hardcoded `FIELDS`/`KEY_GROUPS` dicts
+# duplicated against `apps/web/src/lib/filters.ts`.
 # ---------------------------------------------------------------------------
 
 
-# Maps a boundary keyGroup name (used in zone groups + boundary tables)
-# to the field key on persons_geocoded that carries each person's
-# region key. Used to compose `keyFilter` clauses and per-key
-# aggregation GROUP BYs.
-KEY_GROUPS: dict[str, str] = {
-    "nyc_eds": "precinct",
-    "nyc_zips": "zip5",
-}
+@dataclass(frozen=True)
+class FieldCatalog:
+    """A resolved version's compilable fields.
+
+    `fields` maps a filter `key` → the compiler's typed `FieldDef`. `key_groups`
+    maps a boundary keyGroup → the field key carrying that key on
+    persons_geocoded (drives `keyFilter` clauses + per-key aggregation GROUP BYs).
+    """
+
+    fields: dict[str, FieldDef]
+    key_groups: dict[str, str]
+
+
+def build_field_catalog(manifest: Manifest) -> FieldCatalog:
+    """Derive the compiler catalog from a dataset version's `Manifest`.
+
+    Maps each manifest field's `filter_kind` onto the compiler's typed
+    `FieldDef`. Kinds the SQL compiler doesn't yet support (`tags`, plain
+    non-birthdate `number`) are skipped — a filter referencing one then fails
+    loudly as an unknown field at compile time rather than silently.
+    """
+    fields: dict[str, FieldDef] = {}
+    key_groups: dict[str, str] = {}
+    for fd in manifest.fields:
+        key = fd.column
+        if fd.filter_kind == "text":
+            fields[key] = TextFieldDef(kind="text", key=key, op=fd.op or "contains")
+        elif fd.filter_kind == "enum":
+            fields[key] = EnumFieldDef(kind="enum", key=key)
+        elif fd.filter_kind == "code-multi":
+            fields[key] = TextMultiFieldDef(kind="text-multi", key=key)
+        elif fd.filter_kind == "number" and fd.role == "birthdate":
+            fields[key] = AgeRangeFieldDef(kind="age-range", key=key)
+        elif fd.filter_kind == "date":
+            fields[key] = DateRangeFieldDef(kind="date-range", key=key)
+        elif fd.filter_kind == "voting-history":
+            fields[key] = VotingHistoryFieldDef(kind="voting-history-count", key=key)
+        elif fd.filter_kind == "address":
+            fields[key] = AddressFieldDef(kind="address", key="address")
+        if fd.key_group:
+            key_groups[fd.key_group] = key
+    return FieldCatalog(fields=fields, key_groups=key_groups)

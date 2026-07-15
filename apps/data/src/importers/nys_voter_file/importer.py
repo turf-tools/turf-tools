@@ -106,8 +106,8 @@ class NysVoterFileImporter:
         """)
         conn.unregister("_parsed_voting_history_df")
 
-        # 4. Validate the result matches the Person schema (columns + a sample of
-        #    rows through the model). Raises on drift.
+        # 4. Validate the result carries the Person-required columns + a sample of
+        #    rows through the model. Extra (manifest) columns are allowed.
         self._validate(validated_fqn, conn)
 
         return TableRef(
@@ -120,16 +120,16 @@ class NysVoterFileImporter:
     @staticmethod
     def _validate(fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
         rel = conn.table(fqn)
-        actual = set(rel.columns)
-        missing = _EXPECTED_COLUMNS - actual
+        # Required-subset, not exact-match: `persons_validated` must contain the
+        # Person core, but also carries the dataset's extra filterable columns
+        # (described by the manifest), which are legitimately present.
+        missing = _EXPECTED_COLUMNS - set(rel.columns)
         if missing:
             raise ValueError(f"persons_validated missing columns required by Person: {sorted(missing)}")
-        extra = actual - _EXPECTED_COLUMNS
-        if extra:
-            raise ValueError(f"persons_validated has unexpected columns not in Person: {sorted(extra)}")
         columns = rel.columns
         for i, row in enumerate(rel.limit(100).fetchall()):
             try:
+                # Person ignores the extra columns; only the required core is validated.
                 Person.model_validate(dict(zip(columns, row, strict=True)))
             except Exception as e:
                 raise ValueError(f"Row {i} failed Person validation: {e}") from e
