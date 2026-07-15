@@ -219,7 +219,6 @@ class AgeRangeFieldDef(BaseModel):
 class TextFieldDef(BaseModel):
     kind: Literal["text"]
     key: str
-    op: Literal["equals", "contains"]
 
 
 class TextMultiFieldDef(BaseModel):
@@ -278,26 +277,25 @@ class FieldCatalog:
 def build_field_catalog(manifest: Manifest) -> FieldCatalog:
     """Derive the compiler catalog from a dataset version's `Manifest`.
 
-    Maps each manifest field's `filter_kind` onto the compiler's typed
-    `FieldDef`. Kinds the SQL compiler doesn't yet support (`tags`, plain
-    non-birthdate `number`) are skipped — a filter referencing one then fails
-    loudly as an unknown field at compile time rather than silently.
+    Manifest `filter_kind` values mirror the compiler's `FieldDef` kinds 1:1, so
+    this is near-identity.
     """
     fields: dict[str, FieldDef] = {}
     key_groups: dict[str, str] = {}
-    for fd in manifest.fields:
+    # Sections are a display concern; the compiler flattens them away.
+    for fd in (fd for section in manifest.fields for fd in section):
         key = fd.column
         if fd.filter_kind == "text":
-            fields[key] = TextFieldDef(kind="text", key=key, op=fd.op or "contains")
+            fields[key] = TextFieldDef(kind="text", key=key)
         elif fd.filter_kind == "enum":
             fields[key] = EnumFieldDef(kind="enum", key=key)
-        elif fd.filter_kind == "code-multi":
+        elif fd.filter_kind == "text-multi":
             fields[key] = TextMultiFieldDef(kind="text-multi", key=key)
-        elif fd.filter_kind == "number" and fd.role == "birthdate":
+        elif fd.filter_kind == "age-range":
             fields[key] = AgeRangeFieldDef(kind="age-range", key=key)
-        elif fd.filter_kind == "date":
+        elif fd.filter_kind == "date-range":
             fields[key] = DateRangeFieldDef(kind="date-range", key=key)
-        elif fd.filter_kind == "voting-history":
+        elif fd.filter_kind == "voting-history-count":
             fields[key] = VotingHistoryFieldDef(kind="voting-history-count", key=key)
         elif fd.filter_kind == "address":
             fields[key] = AddressFieldDef(kind="address", key="address")

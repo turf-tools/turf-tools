@@ -217,12 +217,10 @@ def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
         raise CriteriaError(f"Field {f.key} is not a text field")
     if not f.value.strip():
         return ""
-    expr = f.key
-    if def_.op == "equals":
-        params.append(f.value)
-        return f"{expr} = ?"
+    # Text filters are substring matches; exact-match would be a per-filter
+    # option on the instance, not field metadata.
     params.append(f"%{f.value}%")
-    return f"{expr} ILIKE ?"
+    return f"{f.key} ILIKE ?"
 
 
 def _text_multi_clause(f: TextMultiFilter, def_: FieldDef, params: list[Any]) -> str:

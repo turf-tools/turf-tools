@@ -14,7 +14,7 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { Rail } from "~/components/rail";
-import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
+import { useFilterCatalog } from "~/lib/manifest";
 import { zoneGroupsQuery } from "~/lib/queries/zones";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -342,17 +342,18 @@ function CreateZoneGroupDialog({
   error: string | null;
   onSubmit: (values: { name: string; keyGroup: string }) => void;
 }) {
+  const { keyGroups } = useFilterCatalog();
   const [name, setName] = useState("");
-  const [keyGroup, setKeyGroup] = useState(KEY_GROUPS_AVAILABLE[0]!.value);
+  const [keyGroup, setKeyGroup] = useState("");
 
   useEffect(() => {
     if (open) {
       setName("");
-      setKeyGroup(KEY_GROUPS_AVAILABLE[0]!.value);
+      setKeyGroup(keyGroups[0]?.value ?? "");
     }
-  }, [open]);
+  }, [open, keyGroups]);
 
-  const valid = name.trim().length > 0;
+  const valid = name.trim().length > 0 && keyGroup.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -383,7 +384,7 @@ function CreateZoneGroupDialog({
           <div className="flex flex-col gap-1.5 mt-1">
             <label className="text-sm font-medium text-foreground">Unit type</label>
             <div className="flex flex-wrap gap-1.5">
-              {KEY_GROUPS_AVAILABLE.map((kg) => {
+              {keyGroups.map((kg) => {
                 const selected = keyGroup === kg.value;
                 return (
                   <button
