@@ -1,7 +1,7 @@
-// Filterable fields for segment criteria. Single source of truth
-// for the editor UI (which renders inputs by `kind`) and the SQL
-// emitter in `criteria-to-sql.ts` (which resolves keys to columns or
-// JSONB extracts).
+// The segment-criteria DSL: filter instance types, the `FilterDef` editor
+// metadata, and helpers. The dataset field catalog is built from the manifest
+// (see `lib/manifest.ts`); only the dataset-independent system filters are
+// hardcoded here. The data server compiles criteria → SQL.
 
 // In-query filter instances
 export type AllFilter = { kind: "all" };
@@ -123,179 +123,45 @@ export type Verb = "add" | "narrow" | "remove";
 export type Step = { id: string; verb: Verb; filter: Filter };
 export type Criteria = { steps: Step[] };
 
-// Catalog of available filters. `source` tells the SQL translator where
-// the field lives (top level "column" or "other_properties").
+// A filterable field's editor metadata. The dataset-field defs are built from
+// the manifest (see `lib/manifest.ts`); the system defs below are hardcoded.
 // `op` on text filters is fixed per-field: names use substring `contains`,
-// codes/zips use `equals`. If a field needs both, add it twice (one per op).
+// codes/zips use `equals`.
 export type FilterDef =
   | { kind: "all"; key: "all"; label: string }
   | {
       kind: "enum";
       key: string;
       label: string;
-      source: "column" | "other_properties";
       values: ReadonlyArray<{ value: string; label?: string }>;
     }
-  | {
-      kind: "age-range";
-      key: string;
-      label: string;
-      source: "column" | "other_properties";
-    }
-  | {
-      kind: "text";
-      key: string;
-      label: string;
-      source: "column" | "other_properties";
-      op: "equals" | "contains";
-    }
-  | {
-      kind: "text-multi";
-      key: string;
-      label: string;
-      source: "column" | "other_properties";
-    }
-  | {
-      kind: "date-range";
-      key: string;
-      label: string;
-      source: "column" | "other_properties";
-    }
-  | {
-      kind: "voting-history-count";
-      key: string;
-      label: string;
-      source: "column";
-    }
-  | {
-      kind: "address";
-      key: "address";
-      label: string;
-    }
+  | { kind: "age-range"; key: string; label: string }
+  | { kind: "text"; key: string; label: string }
+  | { kind: "text-multi"; key: string; label: string }
+  | { kind: "date-range"; key: string; label: string }
+  | { kind: "voting-history-count"; key: string; label: string }
+  | { kind: "address"; key: "address"; label: string }
   | {
       kind: "canvass-outcome";
       key: "canvass_outcome";
       label: string;
       values: ReadonlyArray<{ value: string; label?: string }>;
     }
-  | {
-      kind: "canvass-response";
-      key: "canvass_response";
-      label: string;
-    }
-  | {
-      kind: "segment";
-      key: "segment";
-      label: string;
-    };
+  | { kind: "canvass-response"; key: "canvass_response"; label: string }
+  | { kind: "segment"; key: "segment"; label: string };
 
-// Catalog organized into sections — the editor's "add filter" dropdown
-// renders a separator between each group. Keep the flat FILTERS export
-// derived from this so other consumers (definitionFor, etc.) don't care.
-export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
-  // Universal — the empty / "everyone" filter, useful under every verb
-  // (narrow to universe, add everyone, or remove everyone to start fresh).
-  [{ kind: "all", key: "all", label: "Everyone" }],
-  // Identity + demographics
-  [
-    { kind: "text", key: "first_name", label: "First name", source: "column", op: "contains" },
-    { kind: "text", key: "last_name", label: "Last name", source: "column", op: "contains" },
-    { kind: "address", key: "address", label: "Address" },
-    { kind: "text-multi", key: "zip5", label: "Zip Code", source: "column" },
-    {
-      // The field is canonical (`county_code`) but the enum values are
-      // state-local. NYC: 5 NYS-BOE county codes → borough names.
-      kind: "enum",
-      key: "county_code",
-      label: "County",
-      source: "column",
-      values: [
-        { value: "03", label: "Bronx" },
-        { value: "24", label: "Kings" },
-        { value: "31", label: "New York" },
-        { value: "41", label: "Queens" },
-        { value: "43", label: "Richmond" },
-      ],
-    },
-    {
-      kind: "enum",
-      key: "gender",
-      label: "Gender",
-      source: "column",
-      values: [
-        { value: "M", label: "Male" },
-        { value: "F", label: "Female" },
-        { value: "U", label: "Unknown" },
-      ],
-    },
-    { kind: "age-range", key: "date_of_birth", label: "Age", source: "column" },
-  ],
-  // Geographic divisions
-  [
-    { kind: "text-multi", key: "precinct", label: "Precint", source: "column" },
-    {
-      kind: "text-multi",
-      key: "assembly_district",
-      label: "Assembly District",
-      source: "column",
-    },
-    {
-      kind: "text-multi",
-      key: "senate_district",
-      label: "Senate District",
-      source: "column",
-    },
-    {
-      kind: "text-multi",
-      key: "congressional_district",
-      label: "Congressional District",
-      source: "column",
-    },
-  ],
-  // Voter behavior
-  [
-    {
-      kind: "enum",
-      key: "enrollment",
-      label: "Party",
-      source: "column",
-      values: [
-        { value: "democratic", label: "Democratic" },
-        { value: "republican", label: "Republican" },
-        { value: "conservative", label: "Conservative" },
-        { value: "working_families", label: "Working Families" },
-        { value: "unaffiliated", label: "Unaffiliated" },
-        { value: "independence", label: "Independence" },
-        { value: "green", label: "Green" },
-        { value: "libertarian", label: "Libertarian" },
-        { value: "reform", label: "Reform" },
-        { value: "other", label: "Other" },
-      ],
-    },
-    { kind: "date-range", key: "registration_date", label: "Registration Date", source: "column" },
-    {
-      kind: "enum",
-      key: "registration_status",
-      label: "Registration Status",
-      source: "column",
-      values: [
-        { value: "active", label: "Active" },
-        { value: "inactive", label: "Inactive" },
-        { value: "federal_only", label: "Federal-only" },
-        { value: "preregistered", label: "Pre-registered" },
-        { value: "unknown", label: "Unknown" },
-      ],
-    },
-    {
-      kind: "voting-history-count",
-      key: "voting_history",
-      label: "Voting History",
-      source: "column",
-    },
-  ],
-  // Canvass history — prior results read back from canvass_events.
-  // Only person-level outcomes are exposed (door/building dispositions
-  // like address_not_found / inaccessible aren't person results).
+// System filters are dataset-independent — they match everyone, read
+// canvass_events, or reference another segment, so they live outside the
+// manifest. The web frames the manifest's field sections with these: `all` on
+// top, canvass + segment at the bottom (see `buildFilterCatalog`).
+export const SYSTEM_TOP_SECTION: ReadonlyArray<FilterDef> = [
+  { kind: "all", key: "all", label: "Everyone" },
+];
+
+export const SYSTEM_BOTTOM_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
+  // Canvass history — prior results read back from canvass_events. Only
+  // person-level outcomes are exposed (door/building dispositions like
+  // address_not_found / inaccessible aren't person results).
   [
     {
       kind: "canvass-outcome",
@@ -313,19 +179,13 @@ export const FILTER_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
   ],
   // Composite — reference another segment by id.
   [{ kind: "segment", key: "segment", label: "Segment" }],
-] as const;
-
-export const FILTERS: ReadonlyArray<FilterDef> = FILTER_SECTIONS.flatMap((s) => s);
+];
 
 // Helpers
 export function filterKey(f: Filter): string {
   if (f.kind === "all") return "all";
   if (f.kind === "nested") return "nested";
   return f.key;
-}
-
-export function definitionFor(key: string): FilterDef | undefined {
-  return FILTERS.find((d) => d.key === key);
 }
 
 export function emptyFilterFor(def: FilterDef): Filter {

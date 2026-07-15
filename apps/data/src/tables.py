@@ -252,7 +252,7 @@ def finalize_version(
     the statement is dollar-quoted for DuckDB.
     """
     attach_operational_postgres(conn, settings)
-    manifest_literal = manifest.model_dump_json().replace("'", "''")
+    manifest_literal = manifest.model_dump_json(by_alias=True).replace("'", "''")
     conn.execute(
         f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
         f"UPDATE public.dataset_versions "

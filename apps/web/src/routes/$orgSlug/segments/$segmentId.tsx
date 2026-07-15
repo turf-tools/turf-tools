@@ -42,13 +42,11 @@ import {
   type CanvassResponseFilter,
   type CanvassOutcomeFilter,
   type DateRangeFilter,
-  definitionFor,
   emptyFilterFor,
   type EnumFilter,
   type Filter,
   type FilterDef,
   filterKey,
-  FILTER_SECTIONS,
   isActiveStep,
   type Criteria,
   type SegmentFilter,
@@ -68,6 +66,7 @@ import {
   segmentsListQuery,
 } from "~/lib/queries/segments";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
+import { useFilterCatalog } from "~/lib/manifest";
 import { findCyclicSegmentIds, type SegmentLike } from "~/lib/segment-refs";
 import type { CascadeStep } from "~/rpc/web/segments";
 import { cn, toTitleCase } from "~/lib/utils";
@@ -90,6 +89,7 @@ export const Route = createFileRoute("/$orgSlug/segments/$segmentId")({
 function SegmentEditor() {
   const queryClient = useQueryClient();
   const { segmentId } = Route.useParams();
+  const { sections } = useFilterCatalog();
 
   // Loader prefetched, so this is a cache hit.
   const { data: activeSegmentDetail } = useQuery({
@@ -279,11 +279,7 @@ function SegmentEditor() {
                 "after:content-[''] after:absolute after:inset-x-0 after:top-full after:h-2 after:bg-background after:-z-10",
               )}
             >
-              <AddStepMenu
-                sections={FILTER_SECTIONS}
-                isFirstStep={steps.length === 0}
-                onAdd={addStep}
-              />
+              <AddStepMenu sections={sections} isFirstStep={steps.length === 0} onAdd={addStep} />
             </div>
             <Reorder.Group
               axis="y"
@@ -420,6 +416,7 @@ function WaterfallPanel({
   segmentsById: ReadonlyMap<string, { name: string }>;
   firstLoad: boolean;
 }) {
+  const { definitionFor } = useFilterCatalog();
   const [anchor, setAnchor] = useState(0);
   const effectiveAnchor = Math.min(anchor, steps.length - 1);
   const anchorCount = steps[effectiveAnchor]?.count ?? 0;
@@ -608,6 +605,7 @@ function StepRow({
   currentSegmentId: string;
   allSegments: ReadonlyArray<{ segmentId: string; name: string; criteria: unknown }>;
 }) {
+  const { definitionFor } = useFilterCatalog();
   const { filter, verb } = step;
   const { color, label: verbLabel } = VERB_META[verb];
   const def =
@@ -662,7 +660,7 @@ function StepRow({
         <AgeRangeFilterEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "text" && def?.kind === "text" ? (
-        <TextFilterEditor filter={filter} def={def} onChange={onChange} />
+        <TextFilterEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "text-multi" && def?.kind === "text-multi" ? (
         <TextMultiFilterEditor filter={filter} onChange={onChange} />
@@ -696,11 +694,9 @@ function StepRow({
 
 function TextFilterEditor({
   filter,
-  def,
   onChange,
 }: {
   filter: TextFilter;
-  def: Extract<FilterDef, { kind: "text" }>;
   onChange: (next: Filter) => void;
 }) {
   // Local input state so typing doesn't fire onChange per keystroke
@@ -713,7 +709,7 @@ function TextFilterEditor({
   };
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">{def.op === "contains" ? "Contains" : "Equals"}</span>
+      <span className="text-muted-foreground">Contains</span>
       <Input
         value={local}
         onChange={(e) => setLocal(e.target.value)}
@@ -725,7 +721,7 @@ function TextFilterEditor({
           }
         }}
         className="h-8 text-sm"
-        placeholder={def.op === "contains" ? "any substring" : "exact match"}
+        placeholder="any substring"
       />
     </div>
   );
