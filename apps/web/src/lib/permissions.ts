@@ -7,6 +7,7 @@ export type Role = (typeof ROLES)[number];
 
 export type Permission =
   | "users.manage"
+  | "datasets.manage"
   | "campaigns.write"
   | "segments.write"
   | "zones.write"

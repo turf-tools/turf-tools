@@ -5,6 +5,7 @@ from pathlib import Path
 
 from hamilton import driver
 
+import duckdb
 from src.dags import (
     aggregate,
     assembly,
@@ -15,7 +16,8 @@ from src.dags import (
     quickwit,
     tiger,
 )
-from src.duckdb import attach_operational_postgres, get_connection
+from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
+from src.import_progress import NullProgress
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
@@ -25,7 +27,6 @@ from src.tables import (
     ensure_schema,
     finalize_version,
     schema_fqn,
-    version_id_for_schema,
 )
 from src.tables import (
     drop_schema as _drop_schema_helper,
@@ -72,9 +73,9 @@ def _fixtures_dir(settings) -> Path:  # noqa: ANN001 — settings is a Settings 
     return Path(__file__).resolve().parent.parent / settings.fixtures_dir
 
 
-# Dataset-version schema the dev seed writes into. Matches the dataset the mock
-# seeds in packages/db/src/mock.ts (slug `nys_voter_file`, version 1), which the
-# seeded orgs resolve to via `resolve_version`.
+# Dataset-version schema the dev seed writes into (slug `nys_voter_file`, v1).
+# `seed-persons` creates the matching dataset row and activates it for the seeded
+# orgs; `resolve_version` resolves an org to it.
 _DEFAULT_SCHEMA = "nys_voter_file_v1"
 
 
@@ -148,10 +149,84 @@ def seed_boundaries() -> None:
     print("Boundaries seeded.")
 
 
+def reset_ducklake(include_geo: bool = False) -> None:
+    """Drop the DuckLake metadata catalog(s) in Postgres so a data reset stays
+    consistent. The catalog lives in Postgres (not a local file), so deleting
+    `local_data/` alone leaves it referencing removed Parquet — the next write
+    then fails on a missing file. Dropping the metadata schema makes the next
+    attach recreate it empty. Person catalog by default; `include_geo` also drops
+    the TIGER/OSM reference catalog. No-op when a catalog isn't Postgres-backed."""
+    settings = get_settings()
+    targets = [(settings.ducklake_metadata_postgres_url, settings.ducklake_meta_schema)]
+    if include_geo:
+        targets.append((settings.geo_ducklake_metadata_postgres_url, settings.geo_ducklake_meta_schema))
+
+    conn = duckdb.connect()
+    conn.install_extension("postgres")
+    conn.load_extension("postgres")
+    try:
+        for i, (url, schema) in enumerate(targets):
+            if not url or not schema:
+                continue
+            alias = f"_reset_meta_{i}"
+            conn.execute(f"ATTACH '{url}' AS {alias} (TYPE postgres)")
+            conn.execute(f"CALL postgres_execute('{alias}', $ft$DROP SCHEMA IF EXISTS {schema} CASCADE$ft$)")
+            conn.execute(f"DETACH {alias}")
+            print(f"  → Dropped DuckLake metadata schema {schema!r}.")
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Seed persons: load the NYC sample voter file → transform to Person schema
 # → geocode against TIGER blockfaces → aggregate into buildings/doors.
 # ---------------------------------------------------------------------------
+
+
+def _ensure_seed_dataset(conn: duckdb.DuckDBPyConnection, schema: str) -> str:
+    """Dev seed: create the dataset + v1 row this DuckLake schema backs and grant
+    it to every seeded org, returning the version id. This is what an import would
+    write to Postgres, minus the UI — `db:mock` no longer creates it, so a clean
+    boot without `data:mock` has no active dataset (the empty state). Idempotent.
+    The version starts `importing`; `finalize_version` marks it `ready` once the
+    pipeline finishes and only then does the caller activate it, so a half-run
+    seed leaves orgs with no active version rather than a pointer to empty data."""
+    slug, _, version_number = schema.rpartition("_v")
+    pg = OPERATIONAL_PG_ALIAS
+    conn.execute(
+        f"CALL postgres_execute('{pg}', $ft$"
+        f"INSERT INTO public.datasets (slug, name, importer) "
+        f"VALUES ('{slug}', 'NY State Voter File', 'nys_voter_file') "
+        f"ON CONFLICT (slug) DO NOTHING$ft$)"
+    )
+    dataset_id = conn.execute(f"SELECT dataset_id FROM {pg}.public.datasets WHERE slug = ?", [slug]).fetchone()[0]
+    conn.execute(
+        f"CALL postgres_execute('{pg}', $ft$"
+        f"INSERT INTO public.dataset_versions (dataset_id, version_number, status) "
+        f"SELECT '{dataset_id}', {int(version_number)}, 'importing' "
+        f"WHERE NOT EXISTS (SELECT 1 FROM public.dataset_versions "
+        f"WHERE dataset_id = '{dataset_id}' AND version_number = {int(version_number)})$ft$)"
+    )
+    version_id = conn.execute(
+        f"SELECT dataset_version_id FROM {pg}.public.dataset_versions WHERE dataset_id = ? AND version_number = ?",
+        [dataset_id, int(version_number)],
+    ).fetchone()[0]
+    conn.execute(
+        f"CALL postgres_execute('{pg}', $ft$"
+        f"INSERT INTO public.dataset_organizations (dataset_id, organization_id) "
+        f"SELECT '{dataset_id}', organization_id FROM public.organizations "
+        f"ON CONFLICT (dataset_id, organization_id) DO NOTHING$ft$)"
+    )
+    return str(version_id)
+
+
+def _activate_for_all_orgs(conn: duckdb.DuckDBPyConnection, version_id: str) -> None:
+    """Dev seed: point every org at the freshly-seeded version. Real orgs choose
+    theirs via "Make active"; the seed just wires it up so the UI has data."""
+    conn.execute(
+        f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
+        f"UPDATE public.organizations SET active_dataset_version_id = '{version_id}'$ft$)"
+    )
 
 
 def seed_persons() -> None:
@@ -207,6 +282,10 @@ def seed_persons() -> None:
     # attach up front rather than crashing after the minute-long geocode.
     attach_operational_postgres(conn, settings)
 
+    # Create the dataset/version rows the pipeline fills (grant them to the seeded
+    # orgs). Activation waits until the pipeline finishes — see below.
+    version_id = _ensure_seed_dataset(conn, args.schema)
+
     if args.reset:
         print(f"Dropping schema {schema_fqn(args.schema)}…")
         _drop_schema_helper(conn, args.schema)
@@ -232,7 +311,7 @@ def seed_persons() -> None:
     # run the shared pipeline from that seam. Fixture is already NYC-only so no
     # county filter; `voter_zip5_filter` scopes dev runs to a small slice.
     importer = NysVoterFileImporter(zip5_filter=settings.voter_zip5_filter)
-    persons_validated = importer.load(str(fixture_path), args.schema, conn)
+    persons_validated = importer.load(str(fixture_path), args.schema, conn, NullProgress())
 
     timing = TimingHook() if args.timing else None
     builder = driver.Builder().with_modules(
@@ -290,16 +369,13 @@ def seed_persons() -> None:
         f"  → Outputs: {geocoded_ref.fqn}, {buildings_ref.fqn}, {doors_ref.fqn}"
     )
 
-    # Dev-only: land the manifest + row count on the version row that `db:mock`
-    # created, and mark it ready. In prod the web persists the manifest instead
-    # (see finalize_version). Skipped if no version row exists yet.
+    # Land the manifest + row count on the version and mark it `ready`, then
+    # activate it for the seeded orgs — only now that the data exists, so a
+    # crash mid-pipeline never leaves an org pointing at an empty dataset.
     person_count = conn.sql(f"SELECT count(*) FROM {geocoded_ref.fqn}").fetchone()[0]
-    version_id = version_id_for_schema(conn, settings, args.schema)
-    if version_id is None:
-        print(f"  → No dataset_versions row for schema {args.schema!r}; skipping manifest write (run `pnpm db:mock`).")
-    else:
-        finalize_version(conn, settings, version_id, importer.manifest(), person_count)
-        print(f"  → Wrote manifest + row_count={person_count:,} to dataset version {version_id}.")
+    finalize_version(conn, settings, version_id, importer.manifest(), person_count)
+    _activate_for_all_orgs(conn, version_id)
+    print(f"  → Wrote manifest + row_count={person_count:,}; activated version {version_id} for all orgs.")
 
     if timing is not None:
         timing.print_summary()

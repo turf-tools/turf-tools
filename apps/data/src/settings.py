@@ -11,6 +11,21 @@ def _default_database_url() -> str:
     return "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 
 
+def _default_ducklake_metadata_url() -> str | None:
+    """Dev defaults DuckLake to a Postgres catalog (concurrency-safe, so import
+    jobs don't fight the serving connection over a single-writer local file).
+    Prod sets it explicitly; unset in prod → local-file fallback."""
+    if os.environ.get("NODE_ENV") == "production":
+        return None
+    return _default_database_url()
+
+
+def _dev_meta_schema(name: str) -> str | None:
+    """Dev shares one Postgres DB across catalogs via distinct schemas; prod uses
+    a DB per catalog (default schema), so no META_SCHEMA there."""
+    return None if os.environ.get("NODE_ENV") == "production" else name
+
+
 class S3StorageConfig(BaseSettings):
     """Configuration for an S3-compatible object storage bucket."""
 
@@ -68,16 +83,21 @@ class Settings(BaseSettings):
     )
 
     ducklake_metadata_postgres_url: str | None = Field(
-        default=None,
+        default_factory=_default_ducklake_metadata_url,
         description="PostgreSQL connection URL for the DuckLake metadata catalog. If not set, uses local DuckDB file.",
     )
+    # Postgres schema holding this catalog's metadata tables. Lets several
+    # catalogs share one Postgres DB (dev points both at the dev Postgres). Unset
+    # in prod, where each catalog has its own DB and uses the default schema.
+    ducklake_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("ducklake"))
 
     geo_ducklake_metadata_postgres_url: str | None = Field(
-        default=None,
+        default_factory=_default_ducklake_metadata_url,
         description=(
             "PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file."
         ),
     )
+    geo_ducklake_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("geo_ducklake"))
 
     database_url: str = Field(
         default_factory=_default_database_url,

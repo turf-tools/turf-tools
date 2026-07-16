@@ -121,6 +121,8 @@ SELECT
     'ny_sboe' AS external_id_type,
     raw.first_name,
     raw.last_name,
+    nullif(raw.middle_name, '') AS middle_name,
+    nullif(raw.name_suffix, '') AS name_suffix,
     -- concat_ws skips NULL but emits empty strings as separators-with-blanks,
     -- so wrap every column in nullif(CAST..., '') to convert empty inputs into
     -- NULL. Without this, an empty res_post_direction leaves a trailing space

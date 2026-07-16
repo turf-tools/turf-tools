@@ -24,6 +24,7 @@ import pytest
 from hamilton import driver
 
 from src.dags import quickwit
+from src.import_progress import NullProgress
 from src.importers.nys_voter_file import NysVoterFileImporter
 
 VOTER_FILE_URL = str(Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-10k-sample.parquet")
@@ -219,7 +220,7 @@ def _run_quickwit_benchmark(
     # Search/Quickwit is a separate later chunk (tests skipped); the importer
     # replaces the old voter_file_loader DAG. `row_limit` no longer scopes the
     # load here — revisit when the search chunk is picked back up.
-    persons_validated = NysVoterFileImporter().load(VOTER_FILE_URL, schema, dual_conn)
+    persons_validated = NysVoterFileImporter().load(VOTER_FILE_URL, schema, dual_conn, NullProgress())
     loader_elapsed = time.perf_counter() - loader_start
 
     quickwit_driver = driver.Builder().with_modules(quickwit).build()

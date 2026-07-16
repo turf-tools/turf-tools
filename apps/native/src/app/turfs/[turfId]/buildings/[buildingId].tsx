@@ -193,7 +193,10 @@ function PersonRow({
   const recordEvent = useRecordEvent(turfId);
 
   const fullName =
-    [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
+    [person.firstName, person.middleName, person.lastName, person.nameSuffix]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || "Unknown";
 
   const onPress = () => {
     router.push(`/turfs/${turfId}/persons/${person.personId}`);
@@ -236,9 +239,9 @@ function PersonRow({
             {toTitleCase(fullName)}
           </Text>
           <View className="flex-row items-center gap-1.5 mt-1">
-            <Pill>{formatAge(person)}</Pill>
-            <Pill>{formatGender(person)}</Pill>
-            <Pill>{formatEnrollment(person)}</Pill>
+            {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
+            {person.gender !== undefined && <Pill>{formatGender(person)}</Pill>}
+            {person.enrollment !== undefined && <Pill>{formatEnrollment(person)}</Pill>}
             <View className="flex-1" />
             {note && (
               <Pill

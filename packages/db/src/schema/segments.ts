@@ -13,9 +13,9 @@ export const segments = pgTable("segments", {
     .references(() => organizations.organizationId),
   name: text().notNull(),
   criteria: jsonb(),
-  // The dataset this segment filters. It *floats* — evaluated against the
-  // dataset's active version at query time (no version pinned here; that's the
-  // turf's job). See docs/plans/dataset-import-model.md.
+  // The dataset this segment filters. Resolved against the org's active version
+  // at query time — no fixed version is stored here (a published turf records
+  // the version it was cut against instead).
   datasetId: uuid().references(() => datasets.datasetId),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),

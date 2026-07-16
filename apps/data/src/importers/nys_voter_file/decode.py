@@ -100,13 +100,25 @@ def sql_str(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _open_source(path: str):
+    """Open a raw source for streaming reads. A bare path is a local file; a URL
+    (`s3://`, `http(s)://`, …) is streamed via smart_open, so a multi-GB
+    distribution never lands on local disk. smart_open uses boto3's credential
+    chain — the same one the DuckDB S3 secret relies on."""
+    if "://" in path:
+        import smart_open
+
+        return smart_open.open(path, "rb")
+    return open(path, "rb")
+
+
 def _feed_transcoded(input_path: str, dest_path: str, encoding: str, err: dict) -> None:
     """Stream `input_path` decoded as `encoding`, re-encoded UTF-8, to `dest_path`
     (a FIFO or file). Incremental decoder so multi-byte sequences split safely
     across read boundaries; C1 control bytes dropped. Any failure stored in `err`."""
     try:
         decoder = codecs.getincrementaldecoder(encoding)()
-        with open(input_path, "rb") as src, open(dest_path, "w", encoding="utf-8", newline="") as out:
+        with _open_source(input_path) as src, open(dest_path, "w", encoding="utf-8", newline="") as out:
             while True:
                 chunk = src.read(1 << 22)  # 4 MiB
                 if not chunk:

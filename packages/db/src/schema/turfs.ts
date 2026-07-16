@@ -34,13 +34,13 @@ export const turfs = pgTable(
       .notNull()
       .references(() => campaigns.campaignId),
     segmentId: uuid().notNull(),
-    // The dataset version this turf was cut against — *pinned* here at publish
-    // time (not derived through the floating segment), so the historical record
-    // stays accurate across dataset updates. Unlike segmentId/zoneId above (kept
-    // FK-free because admins delete/reorganize them), dataset versions are
-    // immutable and retained forever, so this IS a real FK: it enforces that
-    // guarantee — a version a turf pins can't be deleted — and gives integrity.
-    // Nullable until the pin lands during publish. See docs/plans/dataset-import-model.md.
+    // The dataset version this turf was cut against — stamped here at publish
+    // time (not derived through the segment, which stores no version), so the
+    // historical record stays accurate across dataset updates. Unlike
+    // segmentId/zoneId above (kept FK-free because admins delete/reorganize
+    // them), dataset versions are immutable and retained forever, so this IS a
+    // real FK: it enforces that a version a turf references can't be deleted.
+    // Nullable until set at publish.
     datasetVersionId: uuid().references(() => datasetVersions.datasetVersionId),
     // Source zone (the cutter scope) and its parent group. Both kept
     // as plain values rather than FKs — see comment above. Null when

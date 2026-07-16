@@ -11,6 +11,7 @@ dependencies = [
   "pydantic-settings>=2.9.1",
   "requests>=2.33.1",
   "sf-hamilton[visualization]>=1.89.0",
+  "smart-open[s3]>=7.0",
   "uvicorn[standard]>=0.42.0",
 ]
 

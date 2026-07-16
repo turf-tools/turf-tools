@@ -3,6 +3,7 @@ import { and, asc, eq } from "@field-tools/db";
 import { campaigns } from "@field-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
+import { activeDatasetId } from "./active-dataset";
 
 const campaignSelect = {
   campaignId: campaigns.campaignId,
@@ -17,10 +18,15 @@ const campaignSelect = {
 
 // List campaigns in the current user's organization, oldest first.
 export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
+  // Scoped to the active-dataset workspace. No active dataset → empty list.
+  const datasetId = await activeDatasetId(context.db, context.organizationId);
+  if (!datasetId) return [];
   const rows = await context.db
     .select(campaignSelect)
     .from(campaigns)
-    .where(eq(campaigns.organizationId, context.organizationId))
+    .where(
+      and(eq(campaigns.organizationId, context.organizationId), eq(campaigns.datasetId, datasetId)),
+    )
     .orderBy(asc(campaigns.createdAt));
   return rows;
 });
@@ -56,10 +62,16 @@ export const create = pub
     }),
   )
   .handler(async ({ context, input }) => {
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Activate a dataset in Data before creating a campaign.",
+      });
     const rows = await context.db
       .insert(campaigns)
       .values({
         organizationId: context.organizationId,
+        datasetId,
         name: input.name,
         segmentId: input.segmentId ?? null,
         zoneGroupId: input.zoneGroupId ?? null,
@@ -153,6 +165,7 @@ export const clone = pub
       .insert(campaigns)
       .values({
         organizationId: context.organizationId,
+        datasetId: src.datasetId,
         name: input.newName,
         startsAt: src.startsAt,
         endsAt: src.endsAt,
