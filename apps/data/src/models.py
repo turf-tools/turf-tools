@@ -97,6 +97,9 @@ class Person(BaseModel):
 
     first_name: str
     last_name: str
+    middle_name: str | None = None
+    # Jr/Sr/III — disambiguates same-name voters at one address for canvassers.
+    name_suffix: str | None = None
 
     # Geocodable address — consumed by the matching/geocoding DAG nodes.
     address_line_1: str

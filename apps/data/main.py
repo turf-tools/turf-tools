@@ -8,10 +8,11 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+import src.import_job  # noqa: F401 — registers the `import_dataset_version` job with the worker
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
 from src.dsl.resolve import resolve_criteria
@@ -19,7 +20,7 @@ from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.settings import get_settings
-from src.tables import resolve, resolve_version, table_fqn
+from src.tables import NoActiveDatasetError, resolve, resolve_version, table_fqn
 
 logger = logging.getLogger("uvicorn")
 
@@ -59,6 +60,15 @@ async def _refresh_s3_secret_forever() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # A read-only attach can't create a DuckLake catalog that doesn't exist yet
+    # (a fresh box, before any import or seed). Build a write connection first —
+    # its attach creates the empty catalogs if missing — so the read-only warmup
+    # and serving paths can attach them. Idempotent; a no-op once they exist.
+    try:
+        get_connection(settings, read_only=False).close()
+    except Exception:
+        logger.exception("DuckLake catalog init failed; continuing")
+
     # Warm the shared connection's buffer pool so the first user request
     # doesn't pay cold S3 round-trips for Parquet footers + page reads.
     try:
@@ -118,6 +128,18 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(NoActiveDatasetError)
+async def _no_active_dataset_handler(_request, exc: NoActiveDatasetError) -> JSONResponse:
+    # An org that hasn't activated a dataset version yet is an expected empty
+    # state, not a server fault. The web gates data-dependent views on this
+    # (`organizations.active_dataset_version_id` is null), but any request that slips
+    # through gets a clean 409 with a stable `code` instead of a 500 stack trace.
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "code": "no_active_dataset"},
+    )
 
 
 @app.get("/healthcheck")
@@ -279,8 +301,8 @@ class _PersonsSampleRequest(_WireBaseModel):
 async def persons_sample(req: _PersonsSampleRequest):
     """Row-level sample of people matching the criteria.
 
-    Response shape: ``{persons: [{firstName, lastName, addressLine1,
-    addressLine2, city, state, zip5}, ...]}``. Used by the segment
+    Response shape: ``{persons: [{firstName, middleName, lastName, nameSuffix,
+    addressLine1, addressLine2, city, state, zip5}, ...]}``. Used by the segment
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
     limit = max(1, min(req.limit, 500))
@@ -294,7 +316,8 @@ async def persons_sample(req: _PersonsSampleRequest):
     sql = resolve(
         f"""
         SELECT * FROM (
-            SELECT first_name, last_name, address_line_1, address_line_2, city, state, zip5
+            SELECT first_name, middle_name, last_name, name_suffix,
+                   address_line_1, address_line_2, city, state, zip5
             FROM {{persons_geocoded}}
             {where}
         ) USING SAMPLE {limit} ROWS
@@ -306,12 +329,14 @@ async def persons_sample(req: _PersonsSampleRequest):
         "persons": [
             {
                 "firstName": r[0],
-                "lastName": r[1],
-                "addressLine1": r[2],
-                "addressLine2": r[3],
-                "city": r[4],
-                "state": r[5],
-                "zip5": r[6],
+                "middleName": r[1],
+                "lastName": r[2],
+                "nameSuffix": r[3],
+                "addressLine1": r[4],
+                "addressLine2": r[5],
+                "city": r[6],
+                "state": r[7],
+                "zip5": r[8],
             }
             for r in rows
         ]
@@ -374,28 +399,23 @@ class _SegmentExportRequest(_WireBaseModel):
     format: str = "csv"
 
 
-# Canonical voter-file columns for a segment export.
+# The canonical Person fields — identity + geocodable address — present in every
+# dataset regardless of importer. Dataset-specific columns are not exported.
 _EXPORT_SELECT = """
     SELECT
         external_id,
+        external_id_type,
         first_name,
+        middle_name,
         last_name,
+        name_suffix,
         address_line_1 AS address,
         address_line_2 AS unit,
+        half_code,
         city,
         state,
         zip5 AS zip,
-        gender,
-        date_of_birth,
-        enrollment,
-        registration_date,
-        registration_status,
-        last_voted_date,
-        county_code AS county,
-        precinct,
-        assembly_district,
-        senate_district,
-        congressional_district
+        zip4
     FROM {persons_geocoded}
 """
 

@@ -11,6 +11,7 @@ is the shared, source-agnostic pipeline.
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING
 
 from src.importers.nys_voter_file.decode import decode_txt_to_table
@@ -22,7 +23,7 @@ from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 if TYPE_CHECKING:
     import duckdb
-    from src.importers.base import Manifest
+    from src.importers.base import Manifest, Progress
 
 _EXPECTED_COLUMNS = set(Person.model_fields.keys())
 
@@ -44,6 +45,7 @@ class NysVoterFileImporter:
     """
 
     name = "nys_voter_file"
+    PROGRESS_STEPS = 3  # decode, transform, parse+validate
 
     def __init__(
         self,
@@ -62,9 +64,18 @@ class NysVoterFileImporter:
         source: str,
         schema: str,
         conn: duckdb.DuckDBPyConnection,
+        progress: Progress,
     ) -> TableRef:
         """Decode/read `source` → transform → parse voting history → validate.
-        Returns the `persons_validated` TableRef the shared pipeline reads from."""
+        Returns the `persons_validated` TableRef the shared pipeline reads from.
+        Reports one progress step per stage (`PROGRESS_STEPS`)."""
+        # Expand `~` and verify a local source exists up front. A missing path
+        # would otherwise *deadlock* the fixed-width decode: the transcode feeder
+        # can't open the file, so it never opens the FIFO's write end and
+        # `read_csv` blocks forever. Fail fast instead. (`://` = object-storage key.)
+        source = os.path.expanduser(source)
+        if "://" not in source and not os.path.exists(source):
+            raise FileNotFoundError(f"Import source not found: {source!r}")
         ensure_schema(conn, schema)
         raw_fqn = table_fqn(schema, "persons_raw")
         transformed_fqn = table_fqn(schema, "persons_transformed")
@@ -77,6 +88,7 @@ class NysVoterFileImporter:
         else:
             conn.execute(f"DROP TABLE IF EXISTS {raw_fqn}")
             conn.read_parquet(source).create(raw_fqn)
+        progress.advance()
 
         # 2. Transform to the canonical Person schema (raw NYS codes → canonical
         #    labels, address assembly, etc.). `voter_history` rides through as a
@@ -87,6 +99,7 @@ class NysVoterFileImporter:
             zip5_filter=self._zip5_filter,
         )
         conn.execute(f"CREATE OR REPLACE TABLE {transformed_fqn} AS {query}")
+        progress.advance()
 
         # 3. Parse the raw voter_history string → typed STRUCT[]; drop the
         #    transient column. Producing the final validated table.
@@ -109,6 +122,7 @@ class NysVoterFileImporter:
         # 4. Validate the result carries the Person-required columns + a sample of
         #    rows through the model. Extra (manifest) columns are allowed.
         self._validate(validated_fqn, conn)
+        progress.advance()
 
         return TableRef(
             catalog=PERSON_CATALOG,

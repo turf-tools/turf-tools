@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import {
   CheckCheck,
   CircleUser,
+  Database,
   LayoutDashboard,
   Layers,
   type LucideIcon,
@@ -36,6 +37,7 @@ const PRIMARY: NavItem[] = [
 
 const SECONDARY: NavItem[] = [
   { to: "/$orgSlug/users", label: "Users", icon: Users, requires: "users.manage" },
+  { to: "/$orgSlug/data", label: "Data", icon: Database, requires: "datasets.manage" },
   { to: "/$orgSlug/settings", label: "Settings", icon: Settings },
   { to: "/$orgSlug/account", label: "Account", icon: CircleUser },
 ];

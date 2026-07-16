@@ -101,6 +101,14 @@ class Manifest(_CamelModel):
     fields: list[list[FieldDef]]
 
 
+class Progress(Protocol):
+    """What `load` reports against — a step counter shared with the DAG. `advance`
+    is called once per load stage; the job sizes the total from `PROGRESS_STEPS`
+    plus the DAG's node count."""
+
+    def advance(self, n: int = 1) -> None: ...
+
+
 class Importer(Protocol):
     """Turns a source into `(persons_validated, manifest)`.
 
@@ -117,6 +125,9 @@ class Importer(Protocol):
     """
 
     name: str
+    # Number of times `load` calls `progress.advance()`, so the job can size the
+    # progress total (these stages + the DAG's nodes) before running.
+    PROGRESS_STEPS: int
 
     def manifest(self) -> Manifest: ...
 
@@ -125,4 +136,5 @@ class Importer(Protocol):
         source: str,
         schema: str,
         conn: duckdb.DuckDBPyConnection,
+        progress: Progress,
     ) -> TableRef: ...

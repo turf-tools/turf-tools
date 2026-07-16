@@ -31,6 +31,7 @@ from hamilton import driver
 
 import duckdb
 from src.dags import aggregate, assembly, geocode, matching, osm, tiger
+from src.import_progress import NullProgress
 from src.importers.nys_voter_file import NysVoterFileImporter
 
 VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-nyc.parquet"
@@ -89,7 +90,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute("USE ducklake")
 
-        persons_validated = NysVoterFileImporter().load(str(VOTER_FILE), "default", conn)
+        persons_validated = NysVoterFileImporter().load(str(VOTER_FILE), "default", conn, NullProgress())
         dr = (
             driver.Builder()
             .with_modules(

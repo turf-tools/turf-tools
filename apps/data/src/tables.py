@@ -105,8 +105,7 @@ def resolve(sql: str, schema: str) -> str:
 # Dataset-version schema resolution. Each dataset version's tables live in
 # their own DuckLake schema `<dataset_slug>_v<versionNumber>` (e.g.
 # `nys_voter_file_v1`). An org's data is resolved *through* its active dataset
-# version — replacing the old per-org-schema model. See
-# docs/plans/dataset-import-model.md.
+# version.
 # ---------------------------------------------------------------------------
 
 
@@ -160,15 +159,12 @@ def resolve_version(
     row = conn.execute(
         f"""
         SELECT d.slug, v.version_number, v.dataset_version_id, v.manifest
-        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_organizations dorg
-        JOIN {OPERATIONAL_PG_ALIAS}.public.organizations o
-            ON o.organization_id = dorg.organization_id
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d
-            ON d.dataset_id = dorg.dataset_id
+        FROM {OPERATIONAL_PG_ALIAS}.public.organizations o
         JOIN {OPERATIONAL_PG_ALIAS}.public.dataset_versions v
-            ON v.dataset_version_id = d.active_version_id
+            ON v.dataset_version_id = o.active_dataset_version_id
+        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d
+            ON d.dataset_id = v.dataset_id
         WHERE o.slug = ?
-        LIMIT 1
         """,
         [org_slug],
     ).fetchone()
@@ -234,14 +230,14 @@ def finalize_version(
     manifest: Manifest,
     row_count: int,
 ) -> None:
-    """Dev-seed manifest write: land a version's `manifest` + `row_count` and
-    mark it `ready`, once `seed-persons` has built its DuckLake tables.
-
-    This is **not** the production path. In prod the import job *returns* the
-    manifest and the **web persists it via drizzle** (which writes jsonb natively)
-    alongside the version-row lifecycle. The dev seed has no web to hand off to,
-    so it writes the manifest itself. `active_version_id` is left untouched either
-    way — activation is the web's float-pointer concern.
+    """Land a version's `manifest` + `row_count` and mark it `ready`, once its
+    DuckLake tables are built. The single write point for both callers: the
+    `import_dataset_version` job (production) and `seed-persons` (dev). The
+    importer *derives* the manifest and the DuckDB connection already has the
+    Postgres attach, so writing it here — rather than handing it back for the web
+    to persist — keeps the version's data and its manifest landed in one place.
+    `active_dataset_version_id` is left untouched: activation is the web's concern
+    ("Make active"), which then invalidates the web's manifest cache.
 
     Postgres implicit-casts json→jsonb on INSERT but not on UPDATE, and DuckDB
     (no native jsonb type) sends the value as varchar — so a bound-param UPDATE

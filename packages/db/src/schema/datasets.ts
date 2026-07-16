@@ -1,14 +1,4 @@
-import {
-  type AnyPgColumn,
-  integer,
-  jsonb,
-  pgTable,
-  text,
-  timestamp,
-  uniqueIndex,
-  uuid,
-} from "drizzle-orm/pg-core";
-import { organizations } from "./organizations";
+import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { users } from "./auth/users";
 
 // A dataset is a deployment-level source of canvassable persons (a state voter
@@ -16,7 +6,7 @@ import { users } from "./auth/users";
 // `datasetOrganizations`, so one dataset can be shared across orgs on a
 // deployment (upload once, update once → all referencing orgs move together).
 // Data lives once per version, each version in its own DuckLake schema
-// (`ducklake.<slug>_v<versionNumber>`). See docs/plans/dataset-import-model.md.
+// (`ducklake.<slug>_v<versionNumber>`).
 export const datasets = pgTable(
   "datasets",
   {
@@ -26,10 +16,13 @@ export const datasets = pgTable(
     // slug is effectively immutable — a rename means renaming those schemas.
     slug: text().notNull(),
     name: text().notNull(),
-    // The version segments float to. Null until the first import completes.
-    // Circular with `datasetVersions.datasetId`; nullable so inserts don't
-    // deadlock (create dataset → create version → point active at it).
-    activeVersionId: uuid().references((): AnyPgColumn => datasetVersions.datasetVersionId),
+    // Which curated importer decodes this dataset's sources (e.g.
+    // "nys_voter_file"). Fixed at creation — every version is the same kind of
+    // data — and resolved to a class through the data-side importer registry.
+    importer: text().notNull(),
+    // Pure identity: name + importer + slug, shared across all its versions.
+    // Which version is *live* is the org's concern (`organizations.activeDatasetVersionId`),
+    // not the dataset's — a version can be active for one org and not another.
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("datasets_slug").on(t.slug)],
@@ -52,27 +45,15 @@ export const datasetVersions = pgTable(
     manifest: jsonb(),
     sourceUri: text(),
     rowCount: integer(),
+    // Coarse import progress (step / total), shown as a % while `importing`.
+    importStep: integer(),
+    importTotalSteps: integer(),
     status: text().$type<DatasetVersionStatus>().notNull().default("importing"),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     createdBy: uuid().references(() => users.id),
+    // Soft-hide from the Data list; versions are never deleted (published turfs
+    // reference them).
+    archivedAt: timestamp({ withTimezone: true }),
   },
   (t) => [uniqueIndex("dataset_versions_number").on(t.datasetId, t.versionNumber)],
-);
-
-// Access grant: which orgs can reference a dataset. Two rows on one dataset =
-// shared. Active version stays on the dataset (shared orgs move together); a
-// per-org `activeVersionOverride` could land here later for staged rollout.
-export const datasetOrganizations = pgTable(
-  "dataset_organizations",
-  {
-    datasetOrganizationId: uuid().defaultRandom().primaryKey(),
-    datasetId: uuid()
-      .notNull()
-      .references(() => datasets.datasetId),
-    organizationId: uuid()
-      .notNull()
-      .references(() => organizations.organizationId),
-    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [uniqueIndex("dataset_organizations_dataset_org").on(t.datasetId, t.organizationId)],
 );

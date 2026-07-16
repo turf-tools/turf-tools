@@ -388,7 +388,11 @@ function SamplePanel({
             persons.map((p, idx) => (
               <TableRow key={idx}>
                 <TableCell className="truncate px-2">
-                  {toTitleCase([p.firstName, p.lastName].filter(Boolean).join(" ") || "—")}
+                  {toTitleCase(
+                    [p.firstName, p.middleName, p.lastName, p.nameSuffix]
+                      .filter(Boolean)
+                      .join(" ") || "—",
+                  )}
                 </TableCell>
                 <TableCell className="truncate px-2">
                   {[toTitleCase(p.addressLine1), p.addressLine2].filter(Boolean).join(", ") || "—"}

@@ -44,21 +44,16 @@ export type TurfDataPerson = {
   personId: string;
   firstName: string | null;
   lastName: string | null;
-  // Canonical voter-file scalars. Top-level fields so storage is shredded
-  // (column pruning + Bloom filters server-side) and the wire shape mirrors
-  // the canonical Person schema.
-  enrollment: string | null;
-  gender: string | null;
-  dateOfBirth: string | null; // ISO 8601 YYYY-MM-DD
-  registrationDate: string | null; // ISO 8601
-  registrationStatus: string | null; // active|inactive|federal_only|preregistered|unknown
-  lastVotedDate: string | null; // ISO 8601
-  countyCode: string | null;
-  precinct: string | null; // NYC: "AA-EEE"
-  assemblyDistrict: string | null; // state lower chamber
-  senateDistrict: string | null; // state senate
-  congressionalDistrict: string | null;
-  votingHistory: VotingHistoryEntry[];
+  middleName: string | null;
+  // Jr/Sr/III — disambiguates same-name voters at a door.
+  nameSuffix: string | null;
+  // Optional display fields the walk-list card shows. The publish payload omits
+  // any the dataset doesn't provide (so `undefined` means "not in this dataset,"
+  // vs `null` meaning "present but unknown") — the card hides absent ones.
+  enrollment?: string | null;
+  gender?: string | null;
+  dateOfBirth?: string | null; // ISO 8601 YYYY-MM-DD
+  votingHistory?: VotingHistoryEntry[];
 };
 
 export type TurfDataDoor = {

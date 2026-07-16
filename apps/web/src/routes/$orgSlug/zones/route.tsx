@@ -13,8 +13,11 @@ import {
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail } from "~/components/rail";
 import { useFilterCatalog } from "~/lib/manifest";
+import { manifestQuery } from "~/lib/queries/manifest";
+import { hasPermission } from "~/lib/permissions";
 import { zoneGroupsQuery } from "~/lib/queries/zones";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -28,7 +31,11 @@ function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
 }
 
 export const Route = createFileRoute("/$orgSlug/zones")({
-  loader: ({ context: { queryClient } }) => queryClient.fetchQuery(zoneGroupsQuery()),
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.fetchQuery(zoneGroupsQuery()),
+      queryClient.fetchQuery(manifestQuery()),
+    ]),
   component: ZonesLayout,
 });
 
@@ -41,6 +48,8 @@ function ZonesLayout() {
   const shouldFade = useFadeOnce("/zones");
 
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  const { role } = Route.useRouteContext();
   const sortedZoneGroups = sortByName(zoneGroups);
   const activeGroup = zoneGroups.find((g) => g.zoneGroupId === activeGroupId) ?? null;
 
@@ -142,6 +151,18 @@ function ZonesLayout() {
       })();
     },
   });
+
+  // No active dataset → nothing to build against; block the editor behind a
+  // modal pointing to Data (dismiss returns to Overview).
+  if (!manifest) {
+    return (
+      <NoActiveDataset
+        entity="zones"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  }
 
   return (
     <>

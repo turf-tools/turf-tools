@@ -29,6 +29,12 @@ export const webRouter = {
     remove: campaigns.remove,
   },
   datasets: {
+    list: datasets.list,
+    create: datasets.create,
+    update: datasets.update,
+    makeActive: datasets.makeActive,
+    archive: datasets.archive,
+    unarchive: datasets.unarchive,
     manifest: datasets.manifest,
   },
   segments: {

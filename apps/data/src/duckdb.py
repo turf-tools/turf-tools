@@ -60,10 +60,10 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     conn.install_extension("spatial")
     conn.load_extension("spatial")
 
-    # Production paths use S3 storage; the SECRET tells DuckDB to walk
-    # the AWS credential chain (env vars → shared config → EC2 instance
-    # metadata) so we don't have to wire access keys explicitly.
-    using_s3 = bool(settings.ducklake_metadata_postgres_url) or bool(settings.geo_ducklake_metadata_postgres_url)
+    # S3 storage (identified by a configured bucket) needs the SECRET so DuckDB
+    # walks the AWS credential chain. Catalog backend (Postgres vs local file) is
+    # an *independent* axis — dev runs a Postgres catalog with *local* storage.
+    using_s3 = bool(settings.ducklake_storage.bucket) or bool(settings.geo_ducklake_storage.bucket)
     if using_s3:
         conn.install_extension("httpfs")
         conn.load_extension("httpfs")
@@ -82,29 +82,68 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     conn.execute("SET enable_object_cache = true")
 
     ro = ", READ_ONLY" if read_only else ""
-
-    if settings.ducklake_metadata_postgres_url:
-        # Production: Postgres catalog + S3 storage
-        catalog_url = settings.ducklake_metadata_postgres_url
-        data_path = f"s3://{settings.ducklake_storage.bucket}/"
-        conn.execute(f"ATTACH 'ducklake:postgres:{catalog_url}' AS ducklake (DATA_PATH '{data_path}'{ro})")
-    else:
-        # Local dev: DuckDB file catalog + local filesystem
-        Path(LOCAL_DATA_DIR).mkdir(exist_ok=True)
-        conn.execute(f"ATTACH 'ducklake:{LOCAL_CATALOG}' AS ducklake (DATA_PATH '{LOCAL_DATA_DIR}'{ro})")
-
-    if settings.geo_ducklake_metadata_postgres_url:
-        # Production: separate Postgres catalog + S3 storage for geo data
-        geo_catalog_url = settings.geo_ducklake_metadata_postgres_url
-        geo_data_path = f"s3://{settings.geo_ducklake_storage.bucket}/"
-        conn.execute(f"ATTACH 'ducklake:postgres:{geo_catalog_url}' AS geo_ducklake (DATA_PATH '{geo_data_path}'{ro})")
-    else:
-        # Local dev: separate DuckDB file catalog + local filesystem for geo data
-        Path(LOCAL_GEO_DATA_DIR).mkdir(exist_ok=True)
-        conn.execute(f"ATTACH 'ducklake:{LOCAL_GEO_CATALOG}' AS geo_ducklake (DATA_PATH '{LOCAL_GEO_DATA_DIR}'{ro})")
+    _attach_ducklake(
+        conn,
+        "ducklake",
+        pg_url=settings.ducklake_metadata_postgres_url,
+        meta_schema=settings.ducklake_meta_schema,
+        local_catalog=LOCAL_CATALOG,
+        local_data_dir=LOCAL_DATA_DIR,
+        bucket=settings.ducklake_storage.bucket,
+        read_only_opt=ro,
+    )
+    _attach_ducklake(
+        conn,
+        "geo_ducklake",
+        pg_url=settings.geo_ducklake_metadata_postgres_url,
+        meta_schema=settings.geo_ducklake_meta_schema,
+        local_catalog=LOCAL_GEO_CATALOG,
+        local_data_dir=LOCAL_GEO_DATA_DIR,
+        bucket=settings.geo_ducklake_storage.bucket,
+        read_only_opt=ro,
+    )
 
     conn.execute("USE ducklake")
     return conn
+
+
+def _attach_ducklake(
+    conn: duckdb.DuckDBPyConnection,
+    alias: str,
+    *,
+    pg_url: str | None,
+    meta_schema: str | None,
+    local_catalog: str,
+    local_data_dir: str,
+    bucket: str,
+    read_only_opt: str,
+) -> None:
+    """Attach one DuckLake catalog. Catalog backend (Postgres vs local DuckDB
+    file) and storage (S3 vs local dir) are independent axes:
+
+    - **prod:** Postgres catalog + S3 storage (bucket set).
+    - **dev:** Postgres catalog (concurrency-safe, unlike a single-writer local
+      file) + local storage. Two catalogs share one dev Postgres DB via distinct
+      `META_SCHEMA`s; DuckLake requires the schema to pre-exist, so we ensure it.
+    - **file fallback:** local DuckDB-file catalog + local dir (no Postgres).
+    """
+    data_path = f"s3://{bucket}/" if bucket else local_data_dir
+    if not bucket:
+        Path(local_data_dir).mkdir(exist_ok=True)
+
+    if not pg_url:
+        conn.execute(f"ATTACH 'ducklake:{local_catalog}' AS {alias} (DATA_PATH '{data_path}'{read_only_opt})")
+        return
+
+    conn.install_extension("postgres")
+    conn.load_extension("postgres")
+    schema_opt = ""
+    if meta_schema:
+        conn.execute(f"ATTACH '{pg_url}' AS _meta_{alias} (TYPE postgres)")
+        conn.execute(f"CREATE SCHEMA IF NOT EXISTS _meta_{alias}.{meta_schema}")
+        conn.execute(f"DETACH _meta_{alias}")
+        schema_opt = f", META_SCHEMA '{meta_schema}'"
+    conn.execute(f"ATTACH 'ducklake:postgres:{pg_url}' AS {alias} (DATA_PATH '{data_path}'{schema_opt}{read_only_opt})")
 
 
 def _create_or_replace_s3_secret(conn: duckdb.DuckDBPyConnection) -> None:

@@ -256,8 +256,7 @@ FieldDef = (
 # Field catalog — the compiler's per-version view of a dataset's fields, built
 # from the `Manifest` (the authority). The `*FieldDef` classes above stay the
 # compiler's internal typed form; `build_field_catalog` derives them from the
-# manifest, replacing what used to be the hardcoded `FIELDS`/`KEY_GROUPS` dicts
-# duplicated against `apps/web/src/lib/filters.ts`.
+# manifest — the single field catalog `apps/web/src/lib/filters.ts` also reads.
 # ---------------------------------------------------------------------------
 
 
