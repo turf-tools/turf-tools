@@ -26,7 +26,7 @@ from src.addressing import (
 )
 from src.dags import geocode, tiger
 from src.models import TableRef
-from src.tables import ensure_org_schema, org_fqn
+from src.tables import ensure_schema, table_fqn
 
 ORG = "geocode_test"
 
@@ -36,7 +36,7 @@ def _org_ref(table: str) -> TableRef:
 
 
 def _create_persons_decomposed(conn) -> TableRef:
-    fqn = org_fqn(ORG, "persons_decomposed")
+    fqn = table_fqn(ORG, "persons_decomposed")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -54,7 +54,7 @@ def _create_persons_decomposed(conn) -> TableRef:
 
 
 def _create_persons_best_match(conn) -> TableRef:
-    fqn = org_fqn(ORG, "persons_best_match")
+    fqn = table_fqn(ORG, "persons_best_match")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -179,7 +179,7 @@ def _canonical_key(conn, street):
 
 @pytest.fixture()
 def synth(dual_conn):
-    ensure_org_schema(dual_conn, ORG)
+    ensure_schema(dual_conn, ORG)
     pd = _create_persons_decomposed(dual_conn)
     pbm = _create_persons_best_match(dual_conn)
     bf = _create_blockface_final(dual_conn)
@@ -192,7 +192,7 @@ def _insert_decomposed(conn, eid, hn, street, zip5="10001", prefix="", half_code
     toks = _tokens(conn, street)
     nt = "odd" if hn % 2 == 1 else "even"
     conn.execute(
-        f"INSERT INTO {org_fqn(ORG, 'persons_decomposed')} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        f"INSERT INTO {table_fqn(ORG, 'persons_decomposed')} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [eid, hn, prefix, half_code, street, toks, nt, zip5],
     )
 
@@ -211,7 +211,7 @@ def _insert_best_match(
     if tiger_line_id is None:
         tiger_line_id = blockface_id.split(":")[0]
     conn.execute(
-        f"INSERT INTO {org_fqn(ORG, 'persons_best_match')} VALUES "
+        f"INSERT INTO {table_fqn(ORG, 'persons_best_match')} VALUES "
         "(?, ?, ?, ?, 1, 199, ?, ?, 'n1', 'n2', "
         f"ST_GeomFromText('{bf_geom}'), ?, 2)",
         [eid, blockface_id, tiger_line_id, side, prefix, full_name, hn],
@@ -271,7 +271,7 @@ class TestRefinedPositionsBranches:
             persons_decomposed=pd,
             blockface_final=bf,
             osm_building_lookup=obl,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
 
@@ -367,7 +367,7 @@ class TestRefinedPositionsRankPartition:
             persons_decomposed=pd,
             blockface_final=bf,
             osm_building_lookup=obl,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         rows = {
@@ -401,7 +401,7 @@ class TestOsmOnlyMatches:
             osm_building_lookup=obl,
             blockface_final=bf,
             address_tokens=tokens,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         row = conn.execute(f"SELECT external_id, latitude, longitude, blockface_id FROM {ref.fqn}").fetchone()
@@ -428,7 +428,7 @@ class TestOsmOnlyMatches:
             osm_building_lookup=obl,
             blockface_final=bf,
             address_tokens=tokens,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         count = conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0]

@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { datasets } from "./datasets";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
 
@@ -15,6 +16,7 @@ export const zoneGroups = pgTable("zone_groups", {
   organizationId: uuid()
     .notNull()
     .references(() => organizations.organizationId),
+  datasetId: uuid().references(() => datasets.datasetId),
   name: text().notNull(),
   // Opaque identifier resolved by the data service (e.g. "nyc_eds").
   // Web doesn't interpret this; it's the contract with apps/data.

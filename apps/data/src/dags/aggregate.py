@@ -15,7 +15,7 @@ one door per building. lat/lng is the centroid of contained persons
 
 import duckdb
 from src.models import TableRef
-from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
+from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -24,7 +24,7 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 def buildings_geocoded(
     persons_geocoded: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """One row per distinct `building_id`, derived from `persons_geocoded`.
@@ -37,8 +37,8 @@ def buildings_geocoded(
     so coordinates differ only by float noise).
     """
     table = "buildings_geocoded"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table)
     persons_fqn = persons_geocoded.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -63,7 +63,7 @@ def buildings_geocoded(
 
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table,
         version=_current_version(conn),
     )
@@ -71,7 +71,7 @@ def buildings_geocoded(
 
 def doors_geocoded(
     persons_geocoded: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """One row per distinct `door_id`, derived from `persons_geocoded`.
@@ -87,8 +87,8 @@ def doors_geocoded(
     canonical unit string (e.g. "APT 3B").
     """
     table = "doors_geocoded"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table)
     persons_fqn = persons_geocoded.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -107,7 +107,7 @@ def doors_geocoded(
 
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table,
         version=_current_version(conn),
     )

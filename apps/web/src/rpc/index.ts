@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { webPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
+import * as datasets from "./web/datasets";
 import * as scripts from "./web/scripts";
 import * as segments from "./web/segments";
 import * as questions from "./web/questions";
@@ -26,6 +27,15 @@ export const webRouter = {
     update: campaigns.update,
     clone: campaigns.clone,
     remove: campaigns.remove,
+  },
+  datasets: {
+    list: datasets.list,
+    create: datasets.create,
+    update: datasets.update,
+    makeActive: datasets.makeActive,
+    archive: datasets.archive,
+    unarchive: datasets.unarchive,
+    manifest: datasets.manifest,
   },
   segments: {
     list: segments.list,

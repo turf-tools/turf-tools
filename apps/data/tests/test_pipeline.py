@@ -30,8 +30,9 @@ import pytest
 from hamilton import driver
 
 import duckdb
-from src.dags import aggregate, assembly, geocode, matching, osm, tiger, voter_file_loader
-from src.transformations import nys_sboe_transformation_query
+from src.dags import aggregate, assembly, geocode, matching, osm, tiger
+from src.import_progress import NullProgress
+from src.importers.nys_voter_file import NysVoterFileImporter
 
 VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-nyc.parquet"
 
@@ -89,10 +90,10 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute("USE ducklake")
 
+        persons_validated = NysVoterFileImporter().load(str(VOTER_FILE), "default", conn, NullProgress())
         dr = (
             driver.Builder()
             .with_modules(
-                voter_file_loader,
                 tiger,
                 osm,
                 matching,
@@ -105,9 +106,8 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         dr.execute(
             final_vars=["persons_geocoded", "geocoding_summary", "buildings_geocoded", "doors_geocoded"],
             inputs={
-                "voter_file_url": str(VOTER_FILE),
-                "organization_slug": "default",
-                "transformation_query": nys_sboe_transformation_query(),
+                "persons_validated": persons_validated,
+                "schema": "default",
                 "tiger_year": "2024",
                 "tiger_state_fips": "36",
                 # All five NYC counties — matches the seed-persons default.
@@ -292,7 +292,7 @@ def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
 
 def test_promoted_voter_fields_present(nyc_pipeline):
     """The canonical voter-file scalars and voting_history are top-level
-    columns on persons_geocoded, not inside other_properties."""
+    columns on persons_geocoded."""
     row = nyc_pipeline.execute("""
         SELECT
           count(*) FILTER (WHERE enrollment           IS NOT NULL) AS has_enrollment,
@@ -307,17 +307,6 @@ def test_promoted_voter_fields_present(nyc_pipeline):
     assert has_reg_status == total
     assert has_reg_date == total
     assert has_voting_history == total  # empty list also counts as present
-
-
-def test_other_properties_is_empty_for_nys(nyc_pipeline):
-    """Every NYS field has a canonical column home; other_properties is
-    a forward-compat empty bag for this state."""
-    non_empty = nyc_pipeline.execute("""
-        SELECT count(*)
-        FROM ducklake."default".persons_geocoded
-        WHERE other_properties IS DISTINCT FROM '{}'::JSON
-    """).fetchone()[0]
-    assert non_empty == 0
 
 
 def test_dates_are_iso_8601(nyc_pipeline):

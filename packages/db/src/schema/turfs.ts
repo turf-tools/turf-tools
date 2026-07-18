@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { campaigns } from "./campaigns";
+import { datasetVersions } from "./datasets";
 import { scripts } from "./scripts";
 import { users } from "./auth/users";
 
@@ -33,6 +34,14 @@ export const turfs = pgTable(
       .notNull()
       .references(() => campaigns.campaignId),
     segmentId: uuid().notNull(),
+    // The dataset version this turf was cut against — stamped here at publish
+    // time (not derived through the segment, which stores no version), so the
+    // historical record stays accurate across dataset updates. Unlike
+    // segmentId/zoneId above (kept FK-free because admins delete/reorganize
+    // them), dataset versions are immutable and retained forever, so this IS a
+    // real FK: it enforces that a version a turf references can't be deleted.
+    // Nullable until set at publish.
+    datasetVersionId: uuid().references(() => datasetVersions.datasetVersionId),
     // Source zone (the cutter scope) and its parent group. Both kept
     // as plain values rather than FKs — see comment above. Null when
     // the campaign has no zone group (cut against the full segment).

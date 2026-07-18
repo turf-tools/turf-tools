@@ -6,6 +6,11 @@ import type { Criteria } from "~/lib/filters";
 import { detectSegmentCycles, SegmentRefError, type SegmentLike } from "~/lib/segment-refs";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
+import { activeDatasetId } from "./active-dataset";
+
+// Shared guard for create paths: a data-dependent entity can't be created
+// without an active dataset to belong to (the UI gates on this too).
+const NO_ACTIVE_DATASET = "Activate a dataset in Data before creating this.";
 
 // Wire shapes returned by the data service. Kept here (next to the
 // handlers that produce them) rather than at the query layer so the
@@ -23,7 +28,9 @@ type PersonsCountByKey = {
 type PersonsSample = {
   persons: Array<{
     firstName: string | null;
+    middleName: string | null;
     lastName: string | null;
+    nameSuffix: string | null;
     addressLine1: string | null;
     addressLine2: string | null;
     city: string | null;
@@ -49,8 +56,7 @@ const segmentSelect = {
   name: segments.name,
   doorCount: segments.doorCount,
   personCount: segments.personCount,
-  voterFileId: segments.voterFileId,
-  voterFileVersion: segments.voterFileVersion,
+  datasetId: segments.datasetId,
   createdAt: segments.createdAt,
 };
 
@@ -58,10 +64,16 @@ const segmentSelect = {
 // Criteria is included so the segment-ref filter editor can resolve
 // references and detect cycles without an extra round trip.
 export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
+  // Scoped to the active-dataset workspace: segments on other datasets belong
+  // to other workspaces and stay hidden. No active dataset → empty list.
+  const datasetId = await activeDatasetId(context.db, context.organizationId);
+  if (!datasetId) return [];
   const rows = await context.db
     .select({ ...segmentSelect, criteria: segments.criteria })
     .from(segments)
-    .where(eq(segments.organizationId, context.organizationId))
+    .where(
+      and(eq(segments.organizationId, context.organizationId), eq(segments.datasetId, datasetId)),
+    )
     .orderBy(asc(segments.createdAt));
   return rows;
 });
@@ -87,10 +99,13 @@ export const getById = pub
 export const create = pub
   .input(z.object({ name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId) throw new ORPCError("BAD_REQUEST", { message: NO_ACTIVE_DATASET });
     const rows = await context.db
       .insert(segments)
       .values({
         organizationId: context.organizationId,
+        datasetId,
         name: input.name,
         criteria: { steps: [] },
         createdBy: context.user.id,
@@ -152,8 +167,7 @@ export const clone = pub
         organizationId: context.organizationId,
         name: input.newName,
         criteria: src.criteria,
-        voterFileId: src.voterFileId,
-        voterFileVersion: src.voterFileVersion,
+        datasetId: src.datasetId,
         createdBy: context.user.id,
       })
       .returning({ ...segmentSelect, criteria: segments.criteria });

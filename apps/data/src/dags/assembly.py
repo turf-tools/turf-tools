@@ -22,7 +22,7 @@ consumers query.
 import duckdb
 from src.addressing import housenumber_display_sql, housenumber_norm_sql
 from src.models import TableRef
-from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
+from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 
 def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
@@ -39,7 +39,7 @@ def canonical_addresses(
     persons_decomposed: TableRef,
     refined_positions: TableRef,
     osm_only_matches: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Per-person canonical (address_line_1, matched_tokens).
@@ -68,8 +68,8 @@ def canonical_addresses(
     `data:clear:all` to force a rebuild when this SQL changes.
     """
     table_suffix = "canonical_addresses"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     match_fqn = persons_best_match.fqn
     decomposed_fqn = persons_decomposed.fqn
     refined_fqn = refined_positions.fqn
@@ -137,7 +137,7 @@ def canonical_addresses(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -154,7 +154,7 @@ def persons_geocoded(
     canonical_addresses: TableRef,
     refined_positions: TableRef,
     osm_only_matches: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Canonical geocoded persons table — the single "person record" that
@@ -192,8 +192,8 @@ def persons_geocoded(
     while the canonical-record shape is being settled.
     """
     table_suffix = "persons_geocoded"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     persons_fqn = persons_validated.fqn
     match_fqn = persons_best_match.fqn
     canonical_fqn = canonical_addresses.fqn
@@ -204,29 +204,15 @@ def persons_geocoded(
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         WITH normalized_persons AS (
+          -- Carry every importer-produced column through generically so any
+          -- manifest field reaches persons_geocoded with no pipeline edit. Only
+          -- the address columns assembly rewrites are excluded and re-derived:
+          -- address_line_1 (canonical), address_line_2 (normalized), half_code
+          -- (consumed into the canonical address). These three are Person-core,
+          -- so EXCLUDE always finds them.
           SELECT
-              p.external_id,
-              p.external_id_type,
-              p.first_name,
-              p.last_name,
-              TRIM(UPPER(p.address_line_2)) AS address_line_2,
-              p.city,
-              p.state,
-              p.zip5,
-              p.zip4,
-              p.enrollment,
-              p.gender,
-              p.date_of_birth,
-              p.registration_date,
-              p.registration_status,
-              p.last_voted_date,
-              p.county_code,
-              p.precinct,
-              p.assembly_district,
-              p.senate_district,
-              p.congressional_district,
-              p.voting_history,
-              p.other_properties
+              p.* EXCLUDE (address_line_1, address_line_2, half_code),
+              TRIM(UPPER(p.address_line_2)) AS address_line_2
           FROM {persons_fqn} p
         ),
         -- Coordinates come from refined_positions for TIGER-matched
@@ -245,29 +231,13 @@ def persons_geocoded(
           FROM {osm_only_fqn}
         )
         SELECT
-            np.external_id,
-            np.external_id_type,
-            np.first_name,
-            np.last_name,
+            -- np.* carries all passthrough person columns (incl. any extra
+            -- manifest fields). address_line_1 is the canonical rebuild; the geo
+            -- columns are derived from the position/match joins. Reserved geo
+            -- names (latitude, longitude, building_id, …) must not collide with
+            -- an importer column — none do today.
+            np.*,
             c.address_line_1,
-            np.address_line_2,
-            np.city,
-            np.state,
-            np.zip5,
-            np.zip4,
-            np.enrollment,
-            np.gender,
-            np.date_of_birth,
-            np.registration_date,
-            np.registration_status,
-            np.last_voted_date,
-            np.county_code,
-            np.precinct,
-            np.assembly_district,
-            np.senate_district,
-            np.congressional_district,
-            np.voting_history,
-            np.other_properties,
             p.latitude,
             p.longitude,
             p.position_source,
@@ -286,7 +256,7 @@ def persons_geocoded(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -300,7 +270,7 @@ def persons_geocoded(
 def geocoding_summary(
     persons_geocoded: TableRef,
     persons_validated: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Match-rate diagnostics: total comes from persons_validated (the
@@ -314,8 +284,8 @@ def geocoding_summary(
     the current state of both tables.
     """
     table_suffix = "geocoding_summary"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     geocoded_fqn = persons_geocoded.fqn
     persons_fqn = persons_validated.fqn
 
@@ -360,7 +330,7 @@ def geocoding_summary(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )

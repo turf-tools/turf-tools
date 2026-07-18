@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { check, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { datasetVersions } from "./datasets";
 
 export const organizations = pgTable(
   "organizations",
@@ -11,6 +12,12 @@ export const organizations = pgTable(
     // the only layer nothing can bypass.
     slug: text().notNull().unique(),
     name: text().notNull(),
+    // The dataset version this org is currently working against — the single
+    // "active" pointer, set by "Make active". Null until the first import is
+    // activated. It names both the current dataset and its live version at once.
+    // Segments, campaigns, and zones resolve through it; published turfs ignore
+    // it (each records the version it was published against).
+    activeDatasetVersionId: uuid().references(() => datasetVersions.datasetVersionId),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

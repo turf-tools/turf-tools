@@ -4,6 +4,7 @@ import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@field-
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
+import { activeDatasetId } from "./active-dataset";
 
 const zoneGroupSelect = {
   zoneGroupId: zoneGroups.zoneGroupId,
@@ -15,10 +16,18 @@ const zoneGroupSelect = {
 
 // List zone groups in the current user's organization, oldest first.
 export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
+  // Scoped to the active-dataset workspace. No active dataset → empty list.
+  const datasetId = await activeDatasetId(context.db, context.organizationId);
+  if (!datasetId) return [];
   const rows = await context.db
     .select(zoneGroupSelect)
     .from(zoneGroups)
-    .where(eq(zoneGroups.organizationId, context.organizationId))
+    .where(
+      and(
+        eq(zoneGroups.organizationId, context.organizationId),
+        eq(zoneGroups.datasetId, datasetId),
+      ),
+    )
     .orderBy(asc(zoneGroups.createdAt));
   return rows;
 });
@@ -74,10 +83,16 @@ export const create = pub
     }),
   )
   .handler(async ({ context, input }) => {
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Activate a dataset in Data before creating a zone group.",
+      });
     const rows = await context.db
       .insert(zoneGroups)
       .values({
         organizationId: context.organizationId,
+        datasetId,
         name: input.name,
         keyGroup: input.keyGroup,
         createdBy: context.user.id,
@@ -166,6 +181,7 @@ export const clone = pub
       .insert(zoneGroups)
       .values({
         organizationId: context.organizationId,
+        datasetId: src.datasetId,
         name: input.newName,
         keyGroup: src.keyGroup,
         createdBy: context.user.id,
@@ -216,6 +232,12 @@ export const createWithDefaultZone = pub
     }),
   )
   .handler(async ({ context, input }) => {
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Activate a dataset in Data before creating a zone group.",
+      });
+
     // 1. Pull the segment's criteria, scoped to org.
     const segmentRows = await context.db
       .select({ criteria: segmentsTable.criteria })
@@ -250,6 +272,7 @@ export const createWithDefaultZone = pub
         .insert(zoneGroups)
         .values({
           organizationId: context.organizationId,
+          datasetId,
           name: input.name,
           keyGroup: input.keyGroup,
           createdBy: context.user.id,

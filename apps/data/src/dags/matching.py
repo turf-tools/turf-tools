@@ -17,7 +17,7 @@ from src.addressing import (
     tokenize_street_sql,
 )
 from src.models import TableRef
-from src.tables import PERSON_CATALOG, ensure_org_schema, org_fqn
+from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 _GENERIC_SQL = "[" + ", ".join(f"'{t}'" for t in GENERIC_STREET_TOKENS) + "]"
 
@@ -33,7 +33,7 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 def persons_decomposed(
     persons_validated: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Parse person address strings into structured fields for blockface matching.
@@ -55,8 +55,8 @@ def persons_decomposed(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_decomposed"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     source_fqn = persons_validated.fqn
 
     conn.execute(f"""
@@ -119,7 +119,7 @@ def persons_decomposed(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -133,7 +133,7 @@ def persons_decomposed(
 def persons_candidates(
     persons_decomposed: TableRef,
     blockface_final: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Match each decomposed person address to candidate blockfaces.
@@ -185,8 +185,8 @@ def persons_candidates(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_candidates"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     persons_fqn = persons_decomposed.fqn
     blockface_fqn = blockface_final.fqn
 
@@ -343,7 +343,7 @@ def persons_candidates(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -357,7 +357,7 @@ def persons_candidates(
 def persons_scored(
     persons_candidates: TableRef,
     persons_decomposed: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Score each person–blockface candidate pair for match quality.
@@ -375,8 +375,8 @@ def persons_scored(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_scored"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     candidates_fqn = persons_candidates.fqn
     persons_fqn = persons_decomposed.fqn
 
@@ -435,7 +435,7 @@ def persons_scored(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )
@@ -448,7 +448,7 @@ def persons_scored(
 
 def persons_best_match(
     persons_scored: TableRef,
-    organization_slug: str,
+    schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Select the single highest-scoring blockface candidate per person.
@@ -460,8 +460,8 @@ def persons_best_match(
     Incremental: skips external_ids already present.
     """
     table_suffix = "persons_best_match"
-    ensure_org_schema(conn, organization_slug)
-    fqn = org_fqn(organization_slug, table_suffix)
+    ensure_schema(conn, schema)
+    fqn = table_fqn(schema, table_suffix)
     scored_fqn = persons_scored.fqn
 
     conn.execute(f"""
@@ -514,7 +514,7 @@ def persons_best_match(
     version = _current_version(conn)
     return TableRef(
         catalog=PERSON_CATALOG,
-        schema=organization_slug,
+        schema=schema,
         table=table_suffix,
         version=version,
     )

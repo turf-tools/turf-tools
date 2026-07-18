@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import meow from "meow";
 import { db, eq, inArray } from "@field-tools/db";
@@ -7,6 +5,7 @@ import { count } from "drizzle-orm";
 import {
   campaigns,
   canvassEvents,
+  datasetOrganizations,
   memberships,
   organizations,
   scripts,
@@ -16,7 +15,7 @@ import {
   turfs,
   zoneGroups,
 } from "@field-tools/db/schema";
-import { REPO_ROOT, createLogger } from "./_logging";
+import { createLogger } from "./_logging";
 
 const log = createLogger("remove-org");
 
@@ -156,25 +155,13 @@ await db.transaction(async (tx) => {
   await tx.delete(questions).where(eq(questions.organizationId, orgId));
   await tx.delete(segments).where(eq(segments.organizationId, orgId));
   await tx.delete(zoneGroups).where(eq(zoneGroups.organizationId, orgId));
+  // Drop the org's dataset access grants. The datasets themselves are
+  // deployment-level (possibly shared with other orgs) and their DuckLake
+  // schemas are dataset-derived, so removing an org never drops dataset data.
+  await tx.delete(datasetOrganizations).where(eq(datasetOrganizations.organizationId, orgId));
   await tx.delete(memberships).where(eq(memberships.organizationId, orgId));
   await tx.delete(organizations).where(eq(organizations.organizationId, orgId));
 });
-
-log.info("postgres rows deleted; dropping ducklake schema");
-
-const py = spawnSync("uv", ["run", "drop-org-schema", "--slug", slug], {
-  cwd: resolve(REPO_ROOT, "apps/data"),
-  stdio: "inherit",
-});
-
-if (py.status !== 0) {
-  log.error(
-    `DuckLake schema drop failed (exit ${py.status}). ` +
-      `Postgres rows are deleted but ducklake.${slug} may still exist. ` +
-      `Re-run \`uv run drop-org-schema --slug ${slug}\` from apps/data once fixed.`,
-  );
-  process.exit(py.status ?? 1);
-}
 
 log.success(`removed organization "${slug}"`);
 process.exit(0);

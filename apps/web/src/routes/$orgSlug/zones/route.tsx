@@ -13,8 +13,11 @@ import {
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail } from "~/components/rail";
-import { KEY_GROUPS_AVAILABLE } from "~/lib/key-groups";
+import { useFilterCatalog } from "~/lib/manifest";
+import { manifestQuery } from "~/lib/queries/manifest";
+import { hasPermission } from "~/lib/permissions";
 import { zoneGroupsQuery } from "~/lib/queries/zones";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -28,7 +31,11 @@ function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
 }
 
 export const Route = createFileRoute("/$orgSlug/zones")({
-  loader: ({ context: { queryClient } }) => queryClient.fetchQuery(zoneGroupsQuery()),
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.fetchQuery(zoneGroupsQuery()),
+      queryClient.fetchQuery(manifestQuery()),
+    ]),
   component: ZonesLayout,
 });
 
@@ -41,6 +48,8 @@ function ZonesLayout() {
   const shouldFade = useFadeOnce("/zones");
 
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  const { role } = Route.useRouteContext();
   const sortedZoneGroups = sortByName(zoneGroups);
   const activeGroup = zoneGroups.find((g) => g.zoneGroupId === activeGroupId) ?? null;
 
@@ -142,6 +151,18 @@ function ZonesLayout() {
       })();
     },
   });
+
+  // No active dataset → nothing to build against; block the editor behind a
+  // modal pointing to Data (dismiss returns to Overview).
+  if (!manifest) {
+    return (
+      <NoActiveDataset
+        entity="zones"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  }
 
   return (
     <>
@@ -342,17 +363,18 @@ function CreateZoneGroupDialog({
   error: string | null;
   onSubmit: (values: { name: string; keyGroup: string }) => void;
 }) {
+  const { keyGroups } = useFilterCatalog();
   const [name, setName] = useState("");
-  const [keyGroup, setKeyGroup] = useState(KEY_GROUPS_AVAILABLE[0]!.value);
+  const [keyGroup, setKeyGroup] = useState("");
 
   useEffect(() => {
     if (open) {
       setName("");
-      setKeyGroup(KEY_GROUPS_AVAILABLE[0]!.value);
+      setKeyGroup(keyGroups[0]?.value ?? "");
     }
-  }, [open]);
+  }, [open, keyGroups]);
 
-  const valid = name.trim().length > 0;
+  const valid = name.trim().length > 0 && keyGroup.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -383,7 +405,7 @@ function CreateZoneGroupDialog({
           <div className="flex flex-col gap-1.5 mt-1">
             <label className="text-sm font-medium text-foreground">Unit type</label>
             <div className="flex flex-wrap gap-1.5">
-              {KEY_GROUPS_AVAILABLE.map((kg) => {
+              {keyGroups.map((kg) => {
                 const selected = keyGroup === kg.value;
                 return (
                   <button

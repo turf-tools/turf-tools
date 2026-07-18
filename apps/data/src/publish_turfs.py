@@ -21,11 +21,11 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from src.dsl.compile import criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
-from src.tables import resolve
+from src.tables import resolve, resolve_version
 
 if TYPE_CHECKING:
     import duckdb
@@ -90,14 +90,22 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    version = resolve_version(conn, settings, req.orgSlug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     scope = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
     # Zoned: scope to the zone's keys. Zoneless: no key filter — publish
     # spans the whole segment.
     key_filter = KeyFilter(keyGroup=scope.key_group, keys=scope.keys) if scope.key_group is not None else None
-    where_sql = criteria_to_where(criteria, key_filter, where_params)
-    _check_no_ambiguous_assignments(conn, req, where_sql, where_params)
+    where_sql = criteria_to_where(catalog, criteria, key_filter, where_params)
+    _check_no_ambiguous_assignments(conn, req, schema, where_sql, where_params)
+
+    # Which optional payload fields this dataset actually has — the rest are left
+    # out of the per-person blob so publish works for any importer.
+    persons_columns = {row[0] for row in conn.execute(f"DESCRIBE {resolve('{persons_geocoded}', schema)}").fetchall()}
+    present_optional = [f for f in _OPTIONAL_PAYLOAD_FIELDS if f[0] in persons_columns]
 
     # Retry budget exists only to swallow the rare turf_code collision
     # against the partial unique index on active turfs. Each attempt
@@ -107,7 +115,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
         try:
             conn.execute("BEGIN TRANSACTION")
             conn.execute(
-                _build_publish_temp_table_sql(req.orgSlug, where_sql),
+                _build_publish_temp_table_sql(schema, where_sql, present_optional),
                 [
                     req.campaignId,
                     req.zoneId,
@@ -118,6 +126,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
                     scope.zone_group_id,
                     scope.script_id,
                     req.createdBy,
+                    version.dataset_version_id,
                 ],
             )
             conn.execute(_insert_turfs_sql())
@@ -150,6 +159,7 @@ def _is_turf_code_collision(exc: BaseException) -> bool:
 def _check_no_ambiguous_assignments(
     conn: duckdb.DuckDBPyConnection,
     req: PublishTurfsRequest,
+    schema: str,
     where_sql: str,
     where_params: list[Any],
 ) -> None:
@@ -164,8 +174,8 @@ def _check_no_ambiguous_assignments(
     the conflict. Failing here forces the user to redraw the cuts so each
     matched building has exactly one home.
     """
-    persons_table = resolve("{persons_geocoded}", slug=req.orgSlug)
-    buildings_table = resolve("{buildings_geocoded}", slug=req.orgSlug)
+    persons_table = resolve("{persons_geocoded}", schema)
+    buildings_table = resolve("{buildings_geocoded}", schema)
     # `IS NOT DISTINCT FROM` matches null-to-null, so the same predicate
     # works for zoned (zoneId is a UUID) and zoneless (zoneId is NULL)
     # publishes — no SQL branching needed.
@@ -301,7 +311,24 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
     )
 
 
-def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
+# Non-canonical person fields the native card renders (party, gender, age, and
+# voting history). Emitted into the canvasser payload only when the dataset
+# provides the column, so publishing works for any importer; the native card
+# hides what isn't sent. `date_of_birth` drives the age pill client-side.
+_OPTIONAL_PAYLOAD_FIELDS: list[tuple[str, str, str]] = [
+    # (persons_geocoded column, assigned-CTE select, json_object entry)
+    ("enrollment", "p.enrollment", "'enrollment', enrollment"),
+    ("gender", "p.gender", "'gender', gender"),
+    ("date_of_birth", "p.date_of_birth", "'dateOfBirth', date_of_birth"),
+    (
+        "voting_history",
+        "p.voting_history",
+        "'votingHistory', coalesce(to_json(voting_history), json('[]'))",
+    ),
+]
+
+
+def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional: list[tuple[str, str, str]]) -> str:
     """Build the per-draft payload in a DuckDB TEMP TABLE.
 
     One row per draft, with: a generated turf_id, a generated 8-digit
@@ -310,16 +337,23 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
     The two INSERTs that follow read from this table, so the turf_id is
     consistent across both target tables without RETURNING.
 
+    `present_optional` is the subset of `_OPTIONAL_PAYLOAD_FIELDS` the dataset
+    actually has — its members are added to the per-person payload; the rest
+    are left out entirely.
+
     Parameter order (positional `?`):
       $1 campaign_id (UUID)         — for the drafts CTE
       $2 zone_id (UUID)             — for the drafts CTE
       $3..    where_params          — variable, from to_where
       then:
-      campaign_id, segment_id, zone_id, zone_group_id, script_id, created_by
-      (all as UUID strings, in `generated`)
+      campaign_id, segment_id, zone_id, zone_group_id, script_id, created_by,
+      dataset_version_id  (all as UUID strings, in `generated`) — the last stamps
+      the version the turf was published against onto the immutable turf row.
     """
-    persons_table = resolve("{persons_geocoded}", slug=org_slug)
-    buildings_table = resolve("{buildings_geocoded}", slug=org_slug)
+    persons_table = resolve("{persons_geocoded}", schema)
+    buildings_table = resolve("{buildings_geocoded}", schema)
+    optional_cols = "".join(f"            {select},\n" for _, select, _ in present_optional)
+    optional_json = "".join(f",\n                {entry}" for _, _, entry in present_optional)
     return f"""
     CREATE OR REPLACE TEMP TABLE published_turf_rows AS
     WITH drafts AS (
@@ -344,15 +378,9 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
         -- Buildings outside every polygon are silently dropped.
         SELECT
             assignment.polygon_idx,
-            p.external_id, p.first_name, p.last_name,
+            p.external_id, p.first_name, p.last_name, p.middle_name, p.name_suffix,
             p.address_line_2 AS unit,
-            p.enrollment, p.gender, p.date_of_birth,
-            p.registration_date, p.registration_status, p.last_voted_date,
-            p.county_code, p.precinct, p.assembly_district,
-            p.senate_district, p.congressional_district,
-            p.voting_history,
-            p.other_properties,
-            p.building_id, p.door_id,
+{optional_cols}            p.building_id, p.door_id,
             b.latitude, b.longitude,
             b.address_line_1 AS street, b.city, b.state, b.zip5 AS zip
         FROM filtered_persons p
@@ -369,26 +397,14 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
             any_value(latitude) AS latitude, any_value(longitude) AS longitude,
             any_value(street) AS street, any_value(city) AS city,
             any_value(state) AS state, any_value(zip) AS zip,
-            -- Per-person wire payload mirrors the typed Person schema:
-            -- voter-file scalars as first-class fields; other_properties
-            -- carries genuinely state-specific extras only.
+            -- Per-person wire payload: the canonical identity/name fields every
+            -- dataset has, plus whatever optional fields it provides.
             json_group_array(json_object(
                 'personId', external_id,
                 'firstName', first_name,
                 'lastName', last_name,
-                'enrollment', enrollment,
-                'gender', gender,
-                'dateOfBirth', date_of_birth,
-                'registrationDate', registration_date,
-                'registrationStatus', registration_status,
-                'lastVotedDate', last_voted_date,
-                'countyCode', county_code,
-                'precinct', precinct,
-                'assemblyDistrict', assembly_district,
-                'senateDistrict', senate_district,
-                'congressionalDistrict', congressional_district,
-                'votingHistory', coalesce(to_json(voting_history), json('[]')),
-                'otherProperties', coalesce(json(other_properties::VARCHAR), json('{{}}'))
+                'middleName', middle_name,
+                'nameSuffix', name_suffix{optional_json}
             )) AS persons
         FROM assigned
         GROUP BY polygon_idx, building_id, door_id, unit
@@ -452,6 +468,8 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
             coalesce(c.door_count, 0) AS door_count,
             coalesce(c.person_count, 0) AS person_count,
             ?::UUID AS created_by,
+            -- Record the dataset version this turf was published against.
+            ?::UUID AS dataset_version_id,
             coalesce(tb.buildings, json('[]')) AS buildings
         FROM drafts d
         LEFT JOIN counts c ON c.polygon_idx = d.idx
@@ -462,7 +480,7 @@ def _build_publish_temp_table_sql(org_slug: str, where_sql: str) -> str:
         campaign_id, segment_id, zone_id, zone_group_id, script_id,
         name, geometry_json,
         door_count, person_count,
-        created_by,
+        created_by, dataset_version_id,
         json_object(
             'turfId', turf_id::VARCHAR,
             'turfCode', turf_code,
@@ -479,12 +497,12 @@ def _insert_turfs_sql() -> str:
     INSERT INTO {OPERATIONAL_PG_ALIAS}.public.turfs (
         turf_id, campaign_id, segment_id, zone_id, zone_group_id,
         script_id, name, turf_code, geometry, door_count, person_count,
-        created_by
+        created_by, dataset_version_id
     )
     SELECT
         turf_id, campaign_id, segment_id, zone_id, zone_group_id,
         script_id, name, turf_code, json(geometry_json),
-        door_count, person_count, created_by
+        door_count, person_count, created_by, dataset_version_id
     FROM published_turf_rows;
     """
 

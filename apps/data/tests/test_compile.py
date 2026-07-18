@@ -25,7 +25,12 @@ from src.dsl.criteria import (
     TextFilter,
     TextMultiFilter,
     VotingHistoryFilter,
+    build_field_catalog,
 )
+from src.importers.nys_voter_file.manifest import NYS_MANIFEST
+
+# The compiler is manifest-driven; exercise it against the real NYS field set.
+CATALOG = build_field_catalog(NYS_MANIFEST)
 
 
 def _narrow(*filters) -> Criteria:
@@ -39,7 +44,7 @@ def _narrow(*filters) -> Criteria:
 
 def test_empty_criteria_returns_empty_clause() -> None:
     params: list = []
-    where = criteria_to_where(Criteria(), None, params)
+    where = criteria_to_where(CATALOG, Criteria(), None, params)
     assert where == ""
     assert params == []
 
@@ -49,6 +54,7 @@ def test_step_with_inactive_filter_drops_out() -> None:
     # produce no clause, regardless of verb.
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(
             EnumFilter(kind="enum", key="enrollment", values=[]),
             TextFilter(kind="text", key="last_name", value=""),
@@ -69,6 +75,7 @@ def test_step_with_inactive_filter_drops_out() -> None:
 def test_enum_filter_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic", "working_families"])),
         None,
         params,
@@ -80,6 +87,7 @@ def test_enum_filter_on_top_level_column() -> None:
 def test_text_multi_filter_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(TextMultiFilter(kind="text-multi", key="zip5", values=["10001", "10002"])),
         None,
         params,
@@ -91,6 +99,7 @@ def test_text_multi_filter_on_top_level_column() -> None:
 def test_text_filter_contains_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(TextFilter(kind="text", key="last_name", value="smith")),
         None,
         params,
@@ -102,6 +111,7 @@ def test_text_filter_contains_on_top_level_column() -> None:
 def test_age_range_with_both_bounds() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(AgeRangeFilter(kind="age-range", key="date_of_birth", min=18, max=64)),
         None,
         params,
@@ -117,6 +127,7 @@ def test_age_range_with_both_bounds() -> None:
 def test_age_range_min_only() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(AgeRangeFilter(kind="age-range", key="date_of_birth", min=18, max=None)),
         None,
         params,
@@ -129,6 +140,7 @@ def test_age_range_min_only() -> None:
 def test_age_range_max_only() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(AgeRangeFilter(kind="age-range", key="date_of_birth", min=None, max=64)),
         None,
         params,
@@ -141,6 +153,7 @@ def test_age_range_max_only() -> None:
 def test_all_filter_compiles_to_match_all() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(AllFilter(kind="all")),
         None,
         params,
@@ -152,6 +165,7 @@ def test_all_filter_compiles_to_match_all() -> None:
 def test_date_range_both_bounds() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(
             DateRangeFilter(
                 kind="date-range",
@@ -171,6 +185,7 @@ def test_date_range_both_bounds() -> None:
 def test_date_range_min_only() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(DateRangeFilter(kind="date-range", key="registration_date", min="2020-01-01", max=None)),
         None,
         params,
@@ -183,6 +198,7 @@ def test_date_range_min_only() -> None:
 def test_date_range_both_null_is_inactive() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(DateRangeFilter(kind="date-range", key="registration_date", min=None, max=None)),
         None,
         params,
@@ -195,6 +211,7 @@ def test_voting_history_at_least_primary() -> None:
     """Triple-prime targeting: voted in 3+ primaries (incl. presidential) in last 4y."""
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(
             VotingHistoryFilter(
                 kind="voting-history-count",
@@ -219,6 +236,7 @@ def test_address_all_four_fields() -> None:
     """Address filter AND-joins clauses for every non-empty sub-field."""
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(
             AddressFilter(
                 kind="address",
@@ -244,6 +262,7 @@ def test_address_partial_fields() -> None:
     """Only non-empty sub-fields contribute clauses."""
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(AddressFilter(kind="address", key="address", line1="", city="brooklyn", state="", zip="")),
         None,
         params,
@@ -258,6 +277,7 @@ def test_address_partial_fields() -> None:
 def test_address_all_empty_is_inactive() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(AddressFilter(kind="address", key="address", line1="", city="", state="", zip="")),
         None,
         params,
@@ -269,6 +289,7 @@ def test_address_all_empty_is_inactive() -> None:
 def test_voting_history_exactly_general() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(
             VotingHistoryFilter(
                 kind="voting-history-count",
@@ -295,6 +316,7 @@ def test_voting_history_exactly_general() -> None:
 def test_narrow_chain_ands_filters() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(
             EnumFilter(kind="enum", key="enrollment", values=["democratic"]),
             TextFilter(kind="text", key="last_name", value="smith"),
@@ -311,6 +333,7 @@ def test_narrow_chain_ands_filters() -> None:
 def test_add_step_compiles_as_or() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
@@ -327,6 +350,7 @@ def test_add_step_compiles_as_or() -> None:
 def test_remove_step_compiles_as_and_not() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
@@ -343,6 +367,7 @@ def test_remove_step_compiles_as_and_not() -> None:
 def test_remove_as_first_step_negates() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="remove", filter=TextFilter(kind="text", key="last_name", value="smith")),
@@ -359,6 +384,7 @@ def test_remove_all_resets_to_empty_set() -> None:
     # `remove: all` is the "build mode" escape hatch — should match nothing.
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(steps=[Step(verb="remove", filter=AllFilter(kind="all"))]),
         None,
         params,
@@ -370,6 +396,7 @@ def test_mixed_verb_sequence_preserves_order() -> None:
     # narrow D, add R, remove last_name — final: (D OR R) AND NOT name
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
@@ -394,6 +421,7 @@ def test_mixed_verb_sequence_preserves_order() -> None:
 def test_key_filter_alone() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(),
         KeyFilter(key_group="nyc_zips", keys=["10001", "10002"]),
         params,
@@ -405,6 +433,7 @@ def test_key_filter_alone() -> None:
 def test_key_filter_combines_with_criteria() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
         KeyFilter(key_group="nyc_eds", keys=["75-001"]),
         params,
@@ -420,6 +449,7 @@ def test_empty_key_set_short_circuits_to_match_nothing() -> None:
     # than emit a `IN ()` SQL syntax error.
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(),
         KeyFilter(key_group="nyc_zips", keys=[]),
         params,
@@ -435,7 +465,7 @@ def test_empty_key_set_short_circuits_to_match_nothing() -> None:
 
 def test_cascade_empty_criteria_emits_baseline_only() -> None:
     params: list = []
-    sql = cascade_sql(Criteria(), "persons", params)
+    sql = cascade_sql(CATALOG, Criteria(), "persons", params)
     assert sql == "SELECT count(*) AS step_0 FROM persons"
     assert params == []
 
@@ -443,6 +473,7 @@ def test_cascade_empty_criteria_emits_baseline_only() -> None:
 def test_cascade_emits_one_filter_per_step() -> None:
     params: list = []
     sql = cascade_sql(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
@@ -468,6 +499,7 @@ def test_cascade_emits_one_filter_per_step() -> None:
 def test_unknown_field_raises() -> None:
     with pytest.raises(CriteriaError):
         criteria_to_where(
+            CATALOG,
             _narrow(EnumFilter(kind="enum", key="not_a_field", values=["x"])),
             None,
             [],
@@ -478,6 +510,7 @@ def test_kind_field_def_mismatch_raises() -> None:
     # `zip5` is a text field; using it as an enum should error.
     with pytest.raises(CriteriaError):
         criteria_to_where(
+            CATALOG,
             _narrow(EnumFilter(kind="enum", key="zip5", values=["10001"])),
             None,
             [],
@@ -486,7 +519,7 @@ def test_kind_field_def_mismatch_raises() -> None:
 
 def test_unknown_key_group_raises() -> None:
     with pytest.raises(CriteriaError):
-        boundary_key_expr_for("not_a_group")
+        boundary_key_expr_for(CATALOG, "not_a_group")
 
 
 # ---------------------------------------------------------------------------
@@ -495,16 +528,16 @@ def test_unknown_key_group_raises() -> None:
 
 
 def test_column_expr_for_top_level() -> None:
-    assert column_expr_for("zip5") == "zip5"
+    assert column_expr_for(CATALOG, "zip5") == "zip5"
 
 
 def test_column_expr_for_promoted_field() -> None:
-    assert column_expr_for("enrollment") == "enrollment"
+    assert column_expr_for(CATALOG, "enrollment") == "enrollment"
 
 
 def test_boundary_key_expr_for_known_groups() -> None:
-    assert boundary_key_expr_for("nyc_zips") == "zip5"
-    assert boundary_key_expr_for("nyc_eds") == "precinct"
+    assert boundary_key_expr_for(CATALOG, "nyc_zips") == "zip5"
+    assert boundary_key_expr_for(CATALOG, "nyc_eds") == "precinct"
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +557,7 @@ def _inner_dem() -> NestedFilter:
 def test_nested_filter_narrow_composes_as_and() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
@@ -540,6 +574,7 @@ def test_nested_filter_narrow_composes_as_and() -> None:
 def test_nested_filter_add_composes_as_or() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
@@ -556,6 +591,7 @@ def test_nested_filter_add_composes_as_or() -> None:
 def test_nested_filter_remove_composes_as_and_not() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
@@ -575,6 +611,7 @@ def test_empty_nested_filter_matches_universe() -> None:
     # after "remove: Everyone" correctly produce everyone.
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="remove", filter=AllFilter(kind="all")),
@@ -599,6 +636,7 @@ def test_nested_filter_with_internal_verbs_preserves_composition() -> None:
     )
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=TextFilter(kind="text", key="last_name", value="smith")),
@@ -624,6 +662,7 @@ def test_nested_filter_compiles_recursively() -> None:
     )
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(steps=[Step(verb="narrow", filter=middle)]),
         None,
         params,
@@ -641,6 +680,7 @@ def test_nested_filter_compiles_recursively() -> None:
 def test_person_id_set_compiles_to_external_id_in() -> None:
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(PersonIdSetFilter(kind="person-id-set", ids=["abc", "def"])),
         None,
         params,
@@ -654,6 +694,7 @@ def test_empty_person_id_set_matches_nothing() -> None:
     # person matched", so it must compile to 1=0 (not drop out).
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         _narrow(PersonIdSetFilter(kind="person-id-set", ids=[])),
         None,
         params,
@@ -666,6 +707,7 @@ def test_person_id_set_remove_composes_as_and_not() -> None:
     # The canonical "remove anyone canvassed" shape.
     params: list = []
     where = criteria_to_where(
+        CATALOG,
         Criteria(
             steps=[
                 Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
@@ -684,6 +726,7 @@ def test_unresolved_canvass_outcome_filter_raises() -> None:
     # before compilation; reaching the compiler is a bug.
     with pytest.raises(CriteriaError):
         criteria_to_where(
+            CATALOG,
             _narrow(CanvassOutcomeFilter(kind="canvass-outcome", outcomes=["canvassed"])),
             None,
             [],
@@ -694,6 +737,7 @@ def test_unresolved_canvass_response_filter_raises() -> None:
     # Same contract as the result filter — must be resolved before compilation.
     with pytest.raises(CriteriaError):
         criteria_to_where(
+            CATALOG,
             _narrow(CanvassResponseFilter(kind="canvass-response", questionId="q1", optionIds=["supportive"])),
             None,
             [],
