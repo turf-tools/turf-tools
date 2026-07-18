@@ -17,7 +17,7 @@ import pytest
 from src.addressing import tokenize_street_sql
 from src.dags import matching
 from src.models import TableRef
-from src.tables import ensure_org_schema, org_fqn
+from src.tables import ensure_schema, table_fqn
 
 ORG = "matching_test"
 
@@ -27,7 +27,7 @@ def _ref(table: str) -> TableRef:
 
 
 def _create_persons_validated(conn) -> TableRef:
-    fqn = org_fqn(ORG, "persons_validated")
+    fqn = table_fqn(ORG, "persons_validated")
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} (
@@ -41,8 +41,7 @@ def _create_persons_validated(conn) -> TableRef:
             city             VARCHAR,
             state            VARCHAR,
             zip5             VARCHAR,
-            zip4             VARCHAR,
-            other_properties JSON
+            zip4             VARCHAR
         )
     """)
     return _ref("persons_validated")
@@ -83,8 +82,8 @@ def _insert_validated(
     address_line_2=None,
 ):
     conn.execute(
-        f"""INSERT INTO {org_fqn(ORG, "persons_validated")} VALUES
-           (?, 'ny_sboe', 'Test', 'Person', ?, ?, ?, 'NEW YORK', 'NY', ?, NULL, '{{}}')""",
+        f"""INSERT INTO {table_fqn(ORG, "persons_validated")} VALUES
+           (?, 'ny_sboe', 'Test', 'Person', ?, ?, ?, 'NEW YORK', 'NY', ?, NULL)""",
         [external_id, address_line_1, address_line_2, half_code, zip5],
     )
 
@@ -135,7 +134,7 @@ def _insert_blockface(
 @pytest.fixture()
 def synth(dual_conn):
     """Connection with empty synthetic persons_validated + blockface_final."""
-    ensure_org_schema(dual_conn, ORG)
+    ensure_schema(dual_conn, ORG)
     validated = _create_persons_validated(dual_conn)
     bf = _create_blockface_final(dual_conn)
     return dual_conn, validated, bf
@@ -152,7 +151,7 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v1", "123 BROADWAY")
         ref = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         row = conn.execute(
@@ -166,7 +165,7 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v1", "34-12 BROADWAY")
         ref = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         row = conn.execute(
@@ -179,7 +178,7 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v1", "47 BROADWAY", half_code="1/2")
         ref = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         half = conn.execute(f"SELECT half_code FROM {ref.fqn} WHERE external_id = 'v1'").fetchone()[0]
@@ -193,7 +192,7 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v2", "123 BROADWAY")
         ref = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         ids = {r[0] for r in conn.execute(f"SELECT external_id FROM {ref.fqn}").fetchall()}
@@ -207,7 +206,7 @@ class TestPersonsDecomposed:
         _insert_validated(conn, "v2", "100 FRANKLIN D ROOSEVELT DRIVE")
         ref = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         rows = {
@@ -228,13 +227,13 @@ class TestPersonsCandidates:
     def _run(self, conn, validated, bf):
         decomposed = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         return matching.persons_candidates(
             persons_decomposed=decomposed,
             blockface_final=bf,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
 
@@ -336,24 +335,24 @@ class TestPersonsBestMatch:
         _insert_blockface(conn, "T2:left", "Broadway East", 1, 199, number_type="even")
         decomposed = matching.persons_decomposed(
             persons_validated=validated,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         candidates = matching.persons_candidates(
             persons_decomposed=decomposed,
             blockface_final=bf,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         scored = matching.persons_scored(
             persons_candidates=candidates,
             persons_decomposed=decomposed,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         best = matching.persons_best_match(
             persons_scored=scored,
-            organization_slug=ORG,
+            schema=ORG,
             conn=conn,
         )
         row = conn.execute(f"SELECT blockface_id FROM {best.fqn} WHERE external_id = 'v1'").fetchone()
@@ -371,24 +370,24 @@ class TestPersonsBestMatch:
         def _run():
             d = matching.persons_decomposed(
                 persons_validated=validated,
-                organization_slug=ORG,
+                schema=ORG,
                 conn=conn,
             )
             c = matching.persons_candidates(
                 persons_decomposed=d,
                 blockface_final=bf,
-                organization_slug=ORG,
+                schema=ORG,
                 conn=conn,
             )
             s = matching.persons_scored(
                 persons_candidates=c,
                 persons_decomposed=d,
-                organization_slug=ORG,
+                schema=ORG,
                 conn=conn,
             )
             return matching.persons_best_match(
                 persons_scored=s,
-                organization_slug=ORG,
+                schema=ORG,
                 conn=conn,
             )
 
@@ -398,7 +397,7 @@ class TestPersonsBestMatch:
         chosen1 = conn.execute(f"SELECT blockface_id FROM {ref1.fqn} WHERE external_id = 'v1'").fetchone()[0]
         # Drop and re-run.
         for t in ("persons_best_match", "persons_scored", "persons_candidates", "persons_decomposed"):
-            conn.execute(f"DROP TABLE IF EXISTS {org_fqn(ORG, t)}")
+            conn.execute(f"DROP TABLE IF EXISTS {table_fqn(ORG, t)}")
         ref2 = _run()
         chosen2 = conn.execute(f"SELECT blockface_id FROM {ref2.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert chosen1 == chosen2 == "T1:left"

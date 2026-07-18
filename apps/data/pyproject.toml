@@ -11,6 +11,7 @@ dependencies = [
   "pydantic-settings>=2.9.1",
   "requests>=2.33.1",
   "sf-hamilton[visualization]>=1.89.0",
+  "smart-open[s3]>=7.0",
   "uvicorn[standard]>=0.42.0",
 ]
 
@@ -18,9 +19,8 @@ dependencies = [
 update-visualizations = "src.cli:update_visualizations"
 seed-boundaries = "src.cli:seed_boundaries"
 seed-persons = "src.cli:seed_persons"
-mirror-org-data = "src.cli:mirror_org_data"
-rename-org-schema = "src.cli:rename_org_schema"
-drop-org-schema = "src.cli:drop_org_schema"
+rename-schema = "src.cli:rename_schema"
+drop-schema = "src.cli:drop_schema"
 
 [build-system]
 requires = ["hatchling>=1.27.0"]

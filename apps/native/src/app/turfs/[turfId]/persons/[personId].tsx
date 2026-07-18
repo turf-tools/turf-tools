@@ -208,7 +208,10 @@ export default function PersonScreen() {
   const responsesExist = selectedOptionByQuestion.size > 0;
   const recorded = responsesExist || unavailableOutcome != null;
   const fullName =
-    [person.firstName, person.lastName].filter(Boolean).join(" ").trim() || "Unknown";
+    [person.firstName, person.middleName, person.lastName, person.nameSuffix]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || "Unknown";
 
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
@@ -223,9 +226,9 @@ export default function PersonScreen() {
               {toTitleCase(fullName)}
             </Text>
             <View className="flex-row items-center gap-2">
-              <Pill>{formatAge(person)}</Pill>
-              <Pill>{formatGender(person)}</Pill>
-              <Pill>{formatEnrollment(person)}</Pill>
+              {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
+              {person.gender !== undefined && <Pill>{formatGender(person)}</Pill>}
+              {person.enrollment !== undefined && <Pill>{formatEnrollment(person)}</Pill>}
               <View className="flex-1" />
               {(() => {
                 const role = responsesExist ? "contacted" : "unavailable";
@@ -602,8 +605,9 @@ const ELECTION_TYPE_LABELS: Record<string, string> = {
 function votingHistoryItems(
   history: TurfDataPerson["votingHistory"],
 ): Array<{ label: string; date: string }> {
-  // Sort most-recent first; fall back to year when `date` is missing.
-  const sorted = [...history].sort((a, b) => {
+  // Sort most-recent first; fall back to year when `date` is missing. Absent
+  // (dataset without voting history) → no items, so the section hides.
+  const sorted = [...(history ?? [])].sort((a, b) => {
     const aKey = a.date ?? `${a.year}-12-31`;
     const bKey = b.date ?? `${b.year}-12-31`;
     return bKey.localeCompare(aKey);

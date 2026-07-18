@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { datasets } from "./datasets";
 import { organizations } from "./organizations";
 import { scripts } from "./scripts";
 import { segments } from "./segments";
@@ -15,6 +16,8 @@ export const campaigns = pgTable("campaigns", {
   organizationId: uuid()
     .notNull()
     .references(() => organizations.organizationId),
+  // Set at creation, not derived through the (nullable) segmentId.
+  datasetId: uuid().references(() => datasets.datasetId),
   name: text().notNull(),
   startsAt: timestamp({ withTimezone: true }),
   endsAt: timestamp({ withTimezone: true }),

@@ -8,18 +8,19 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+import src.import_job  # noqa: F401 — registers the `import_dataset_version` job with the worker
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.settings import get_settings
-from src.tables import org_fqn, resolve
+from src.tables import NoActiveDatasetError, resolve, resolve_version, table_fqn
 
 logger = logging.getLogger("uvicorn")
 
@@ -59,6 +60,15 @@ async def _refresh_s3_secret_forever() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # A read-only attach can't create a DuckLake catalog that doesn't exist yet
+    # (a fresh box, before any import or seed). Build a write connection first —
+    # its attach creates the empty catalogs if missing — so the read-only warmup
+    # and serving paths can attach them. Idempotent; a no-op once they exist.
+    try:
+        get_connection(settings, read_only=False).close()
+    except Exception:
+        logger.exception("DuckLake catalog init failed; continuing")
+
     # Warm the shared connection's buffer pool so the first user request
     # doesn't pay cold S3 round-trips for Parquet footers + page reads.
     try:
@@ -120,6 +130,18 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(NoActiveDatasetError)
+async def _no_active_dataset_handler(_request, exc: NoActiveDatasetError) -> JSONResponse:
+    # An org that hasn't activated a dataset version yet is an expected empty
+    # state, not a server fault. The web gates data-dependent views on this
+    # (`organizations.active_dataset_version_id` is null), but any request that slips
+    # through gets a clean 409 with a stable `code` instead of a 500 stack trace.
+    return JSONResponse(
+        status_code=409,
+        content={"detail": str(exc), "code": "no_active_dataset"},
+    )
+
+
 @app.get("/healthcheck")
 async def healthcheck():
     return {"status": "ok"}
@@ -152,9 +174,10 @@ async def key_group_geojson(key_group: str, org_slug: str):
     the call site to bust browser caches.
     """
     conn = get_connection(settings, read_only=True)
+    schema = resolve_version(conn, settings, org_slug).schema
     # Validate the table exists before querying — keeps the error message
     # friendlier than a generic SQL failure.
-    fqn = org_fqn(org_slug, key_group)
+    fqn = table_fqn(schema, key_group)
     try:
         conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
     except Exception as e:
@@ -208,9 +231,12 @@ async def persons_count(req: _PersonsCountRequest):
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -220,7 +246,7 @@ async def persons_count(req: _PersonsCountRequest):
         FROM {{persons_geocoded}}
         {where}
         """,
-        slug=req.org_slug,
+        schema,
     )
     row = conn.execute(sql, params).fetchone()
     if row is None:
@@ -246,11 +272,13 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     prior row. The step verb (add/narrow/remove) determines how each step
     modifies the running set.
     """
-    persons_table = resolve("{persons_geocoded}", slug=req.org_slug)
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+    persons_table = resolve("{persons_geocoded}", version.schema)
     params: list = []
-    sql = cascade_sql(criteria, persons_table, params)
+    sql = cascade_sql(catalog, criteria, persons_table, params)
     row = conn.execute(sql, params).fetchone()
     counts = list(row)
     steps_result = []
@@ -273,36 +301,42 @@ class _PersonsSampleRequest(_WireBaseModel):
 async def persons_sample(req: _PersonsSampleRequest):
     """Row-level sample of people matching the criteria.
 
-    Response shape: ``{persons: [{firstName, lastName, addressLine1,
-    addressLine2, city, state, zip5}, ...]}``. Used by the segment
+    Response shape: ``{persons: [{firstName, middleName, lastName, nameSuffix,
+    addressLine1, addressLine2, city, state, zip5}, ...]}``. Used by the segment
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
     limit = max(1, min(req.limit, 500))
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT * FROM (
-            SELECT first_name, last_name, address_line_1, address_line_2, city, state, zip5
+            SELECT first_name, middle_name, last_name, name_suffix,
+                   address_line_1, address_line_2, city, state, zip5
             FROM {{persons_geocoded}}
             {where}
         ) USING SAMPLE {limit} ROWS
         """,
-        slug=req.org_slug,
+        schema,
     )
     rows = conn.execute(sql, params).fetchall()
     return {
         "persons": [
             {
                 "firstName": r[0],
-                "lastName": r[1],
-                "addressLine1": r[2],
-                "addressLine2": r[3],
-                "city": r[4],
-                "state": r[5],
-                "zip5": r[6],
+                "middleName": r[1],
+                "lastName": r[2],
+                "nameSuffix": r[3],
+                "addressLine1": r[4],
+                "addressLine2": r[5],
+                "city": r[6],
+                "state": r[7],
+                "zip5": r[8],
             }
             for r in rows
         ]
@@ -325,11 +359,14 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    group_expr = boundary_key_expr_for(req.key_group)
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
+    group_expr = boundary_key_expr_for(catalog, req.key_group)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -341,7 +378,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         {where}
         GROUP BY {group_expr}
         """,
-        slug=req.org_slug,
+        schema,
     )
     rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
@@ -362,28 +399,23 @@ class _SegmentExportRequest(_WireBaseModel):
     format: str = "csv"
 
 
-# Canonical voter-file columns for a segment export.
+# The canonical Person fields — identity + geocodable address — present in every
+# dataset regardless of importer. Dataset-specific columns are not exported.
 _EXPORT_SELECT = """
     SELECT
         external_id,
+        external_id_type,
         first_name,
+        middle_name,
         last_name,
+        name_suffix,
         address_line_1 AS address,
         address_line_2 AS unit,
+        half_code,
         city,
         state,
         zip5 AS zip,
-        gender,
-        date_of_birth,
-        enrollment,
-        registration_date,
-        registration_status,
-        last_voted_date,
-        county_code AS county,
-        precinct,
-        assembly_district,
-        senate_district,
-        congressional_district
+        zip4
     FROM {persons_geocoded}
 """
 
@@ -401,10 +433,13 @@ async def segments_export(req: _SegmentExportRequest):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
 
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, None, params)
-    select_sql = resolve(_EXPORT_SELECT + where, slug=req.org_slug)
+    where = criteria_to_where(catalog, criteria, None, params)
+    select_sql = resolve(_EXPORT_SELECT + where, schema)
 
     suffix = ".parquet" if req.format == "parquet" else ".csv"
     fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
@@ -447,9 +482,12 @@ async def buildings_list(req: _BuildingsListRequest):
     polygon" client-side.
     """
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         SELECT
@@ -464,7 +502,7 @@ async def buildings_list(req: _BuildingsListRequest):
         ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
-        slug=req.org_slug,
+        schema,
     )
     cursor = conn.execute(sql, params)
     cols = [d[0] for d in cursor.description]
@@ -494,9 +532,12 @@ async def buildings_points(req: _BuildingsPointsRequest):
     instead of meter-scale.
     """
     conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    schema = version.schema
+    catalog = build_field_catalog(version.manifest)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
-    where = criteria_to_where(criteria, req.key_filter, params)
+    where = criteria_to_where(catalog, criteria, req.key_filter, params)
     sql = resolve(
         f"""
         WITH pts AS (
@@ -512,7 +553,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
         SELECT pts.mx - o.ox, pts.my - o.oy, o.ox, o.oy
         FROM pts, o
         """,
-        slug=req.org_slug,
+        schema,
     )
     cursor = conn.execute(sql, params)
     rows = cursor.fetchall()

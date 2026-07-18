@@ -20,8 +20,11 @@ import {
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail } from "~/components/rail";
 import type { Criteria } from "~/lib/filters";
+import { manifestQuery } from "~/lib/queries/manifest";
+import { hasPermission } from "~/lib/permissions";
 import { segmentCountsQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -44,7 +47,11 @@ function approxCount(n: number): string {
 }
 
 export const Route = createFileRoute("/$orgSlug/segments")({
-  loader: ({ context: { queryClient } }) => queryClient.fetchQuery(segmentsListQuery()),
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.fetchQuery(segmentsListQuery()),
+      queryClient.fetchQuery(manifestQuery()),
+    ]),
   component: SegmentsLayout,
 });
 
@@ -58,6 +65,8 @@ function SegmentsLayout() {
 
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
   const sortedSegments = sortByName(segments);
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  const { role } = Route.useRouteContext();
   const activeSegment = segments.find((s) => s.segmentId === activeSegmentId) ?? null;
 
   const goToSegment = (id: string) =>
@@ -185,6 +194,18 @@ function SegmentsLayout() {
       })();
     },
   });
+
+  // No active dataset → nothing to build against; block the editor behind a
+  // modal pointing to Data (dismiss returns to Overview).
+  if (!manifest) {
+    return (
+      <NoActiveDataset
+        entity="segments"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  }
 
   return (
     <>

@@ -1,7 +1,10 @@
 """Unit tests for the voting-history parser and canonical-label maps."""
 
-from src.transformations import NYS_ENROLLMENT_LABELS, NYS_REGISTRATION_STATUS_LABELS
-from src.voting_history import (
+from src.importers.nys_voter_file.transform import (
+    NYS_ENROLLMENT_LABELS,
+    NYS_REGISTRATION_STATUS_LABELS,
+)
+from src.importers.nys_voter_file.voting_history import (
     ELECTION_TYPE_LABELS,
     VOTING_METHOD_LABELS,
     parse_entry,

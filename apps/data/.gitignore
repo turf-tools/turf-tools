@@ -30,6 +30,7 @@ osm_cache/
 # sample. Larger samples (50k, 1M, full statewide) are regeneratable via
 # `scripts/sample_voter_file.py`.
 fixtures/*.parquet
+fixtures/*.txt
 !fixtures/*-ed-*.parquet
 !fixtures/*-10k-sample.parquet
 

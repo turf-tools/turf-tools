@@ -1,13 +1,13 @@
 """Curated voter-file transformation queries.
 
 Each transformation maps a state/source-specific raw voter-file schema onto
-the canonical `Person` schema (see `src/models.py`). State-specific raw
-codes are normalized to canonical cross-state labels via the maps defined
-in this module.
+the `Person` required core (see `src/models.py`) plus the dataset's filterable
+fields. State-specific raw codes are normalized to canonical cross-state labels
+via the maps defined in this module.
 
-Fields that have a canonical home on `Person` (enrollment, dates, districts,
-etc.) become typed top-level columns. Genuinely state-specific extras go in
-``other_properties``.
+Every field — the Person core and each filterable extra (enrollment, dates,
+districts, …) — is a typed top-level column; the importer's manifest describes
+which are filterable. There is no catch-all JSON blob.
 """
 
 from __future__ import annotations
@@ -88,12 +88,15 @@ def _iso_date_sql(col: str) -> str:
 
 
 def nys_sboe_transformation_query(
+    source_table: str,
     county_codes: list[str] | None = None,
     zip5_filter: list[str] | None = None,
 ) -> str:
     """SQL transformation from NYS SBOE raw voter file → Person schema.
 
     Args:
+        source_table: fully-qualified `persons_raw` table the query reads from,
+            aliased to ``raw`` so the column expressions below resolve.
         county_codes: optional list of NYS BOE county codes (e.g. ``['31']``
             for Manhattan). When provided, the query restricts to those
             counties and to active voters (status = 'A').
@@ -118,6 +121,8 @@ SELECT
     'ny_sboe' AS external_id_type,
     raw.first_name,
     raw.last_name,
+    nullif(raw.middle_name, '') AS middle_name,
+    nullif(raw.name_suffix, '') AS name_suffix,
     -- concat_ws skips NULL but emits empty strings as separators-with-blanks,
     -- so wrap every column in nullif(CAST..., '') to convert empty inputs into
     -- NULL. Without this, an empty res_post_direction leaves a trailing space
@@ -166,10 +171,7 @@ SELECT
     raw.congressional_district AS congressional_district,
     -- Transient raw column consumed by the downstream `persons_voting_history`
     -- node, which parses it into the structured `voting_history` STRUCT[].
-    raw.voter_history AS voter_history,
-    -- Empty for NYS — every field has a canonical column. Forward-compat
-    -- slot for future state-specific extras.
-    '{{}}'::JSON AS other_properties
-FROM raw
+    raw.voter_history AS voter_history
+FROM {source_table} AS raw
 {where}
 """

@@ -1,11 +1,9 @@
 """Shared data models for Hamilton graph nodes."""
 
-import json
 import re
 from dataclasses import dataclass
-from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator
+from pydantic import BaseModel
 
 # A SQL identifier is "safe" to leave unquoted if it starts with a letter
 # or underscore and is followed only by lowercase letters, digits, or
@@ -16,27 +14,11 @@ from pydantic import BaseModel, BeforeValidator
 _SAFE_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
-def _parse_json_string(v: object) -> object:
-    """Accept a JSON string, or any already-deserialized container."""
-    if isinstance(v, str):
-        return json.loads(v)
-    return v
-
-
-class VotingHistoryEntry(BaseModel):
-    """One past election a voter participated in."""
-
-    year: int
-    type: str
-    date: str | None  # ISO 8601 YYYY-MM-DD; null for legacy year-only entries
-    method: str
-
-
 def quote_ident(name: str) -> str:
     """Return `name` as a SQL identifier, quoted only when necessary.
 
     Embedded double quotes are escaped by doubling. Used by `TableRef.fqn`
-    and `tables.org_fqn` to keep generated SQL readable when
+    and `tables.table_fqn` to keep generated SQL readable when
     slugs are plain (`default`, `acme`) and still safe when they aren't
     (`nyc-dsa`).
     """
@@ -95,12 +77,19 @@ class QuickwitBuildManifestStub:
 
 
 class Person(BaseModel):
-    """A person to be canvassed. This is the canonical output schema
-    that every voter file transformation query must produce.
+    """The core person record every importer's transform must produce — the
+    columns the shared geocoding pipeline consumes by name: identity, name, and
+    the geocodable address.
 
-    Each state's transformation populates whatever canonical fields it
-    has and leaves the rest None. Anything genuinely state-specific
-    that doesn't fit the canonical fields goes in `other_properties`.
+    This is the *required* contract, not the full column set. An importer's
+    `persons_validated` also carries whatever additional, filterable fields its
+    dataset has (enrollment, districts, voting history, …); those are described
+    by the importer's `Manifest` and are not modeled here. `assembly` carries
+    every such column into `persons_geocoded` generically, so adding a field
+    needs no pipeline change — hence `_validate` checks these columns are
+    *present* (a subset), not that they're the *only* columns. Extra fields are
+    plain top-level columns (fast: Parquet pruning + Bloom filters); there is no
+    catch-all JSON blob — the manifest is the performant equivalent.
     """
 
     external_id: str
@@ -108,8 +97,11 @@ class Person(BaseModel):
 
     first_name: str
     last_name: str
+    middle_name: str | None = None
+    # Jr/Sr/III — disambiguates same-name voters at one address for canvassers.
+    name_suffix: str | None = None
 
-    # Address
+    # Geocodable address — consumed by the matching/geocoding DAG nodes.
     address_line_1: str
     address_line_2: str | None = None
     half_code: str | None = None
@@ -117,21 +109,3 @@ class Person(BaseModel):
     state: str
     zip5: str
     zip4: str | None = None
-
-    # Canonical filterable scalar properties
-    enrollment: str | None = None  # party affiliation, canonical labels
-    gender: str | None = None
-    date_of_birth: str | None = None  # ISO 8601 YYYY-MM-DD
-    registration_date: str | None = None  # ISO 8601
-    registration_status: str | None = None  # canonical: active|inactive|federal_only|preregistered|unknown
-    last_voted_date: str | None = None  # ISO 8601
-    county_code: str | None = None  # opaque state-specific code
-    precinct: str | None = None  # smallest unit; NYC uses "AA-EEE"
-    assembly_district: str | None = None  # state lower chamber
-    senate_district: str | None = None  # state senate (no federal senate has districts)
-    congressional_district: str | None = None  # US House
-
-    voting_history: Annotated[list[VotingHistoryEntry], BeforeValidator(_parse_json_string)] = []
-
-    # State-specific extras
-    other_properties: Annotated[dict[str, str | None], BeforeValidator(_parse_json_string)] = {}

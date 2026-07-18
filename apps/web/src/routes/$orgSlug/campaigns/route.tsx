@@ -26,6 +26,7 @@ import {
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail } from "~/components/rail";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
@@ -34,8 +35,10 @@ import {
   campaignsListQuery,
   type KeyFilter,
 } from "~/lib/queries/campaigns";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { scriptsListQuery } from "~/lib/queries/scripts";
 import { segmentsListQuery } from "~/lib/queries/segments";
+import { hasPermission } from "~/lib/permissions";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
@@ -70,6 +73,7 @@ export const Route = createFileRoute("/$orgSlug/campaigns")({
       queryClient.fetchQuery(segmentsListQuery()),
       queryClient.fetchQuery(zoneGroupsQuery()),
       queryClient.fetchQuery(scriptsListQuery()),
+      queryClient.fetchQuery(manifestQuery()),
     ]);
   },
   component: CampaignsLayout,
@@ -95,6 +99,8 @@ function CampaignsLayout() {
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
   const { data: scripts } = useSuspenseQuery(scriptsListQuery());
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  const { role } = Route.useRouteContext();
 
   const sortedCampaigns = sortByName(campaigns);
   const activeCampaign = campaigns.find((c) => c.campaignId === activeCampaignId) ?? null;
@@ -351,6 +357,18 @@ function CampaignsLayout() {
     }
     setPendingZoneChange({ patch, draftCount });
   };
+
+  // No active dataset → nothing to build against; block the editor behind a
+  // modal pointing to Data (dismiss returns to Overview).
+  if (!manifest) {
+    return (
+      <NoActiveDataset
+        entity="campaigns"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  }
 
   return (
     <>
