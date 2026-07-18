@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, Check, MoreHorizontal, Plus, Upload } from "lucide-react";
+import {
+  Activity,
+  Archive,
+  ArchiveRestore,
+  Check,
+  ChevronDown,
+  MoreHorizontal,
+  Plus,
+  Upload,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -16,6 +25,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
@@ -28,6 +39,7 @@ import { AVAILABLE_IMPORTERS, importerLabel } from "~/lib/importers";
 import { hasPermission } from "~/lib/permissions";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -70,8 +82,21 @@ function DataPage() {
   });
 
   const importDialog = useDialogMutation({
-    mutationFn: (input: { name: string; importer: string; sourceUri: string }) =>
-      client.datasets.create(input),
+    mutationFn: async (
+      input:
+        | { mode: "new"; name: string; importer: string; sourceUri: string }
+        | { mode: "update"; datasetId: string; sourceUri: string },
+    ): Promise<void> => {
+      if (input.mode === "new") {
+        await client.datasets.create({
+          name: input.name,
+          importer: input.importer,
+          sourceUri: input.sourceUri,
+        });
+      } else {
+        await client.datasets.update({ datasetId: input.datasetId, sourceUri: input.sourceUri });
+      }
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
   });
 
@@ -116,6 +141,16 @@ function DataPage() {
     datasets.filter((r) => r.status === "importing").map((r) => r.datasetId),
   );
 
+  // Distinct datasets with a ready, non-archived version and no import in flight
+  // — what the import dialog's "Update existing" mode can target.
+  const updatableById = new Map<string, { datasetId: string; name: string }>();
+  for (const r of datasets) {
+    if (r.status === "ready" && !r.isArchived && !importingDatasetIds.has(r.datasetId)) {
+      updatableById.set(r.datasetId, { datasetId: r.datasetId, name: r.name });
+    }
+  }
+  const updatableDatasets = [...updatableById.values()];
+
   const rows = datasets.filter((r) => {
     if (statusFilter === null && r.isArchived) return false;
     if (statusFilter === "archived" && !r.isArchived) return false;
@@ -130,7 +165,7 @@ function DataPage() {
     <Page>
       <EditorHeader title="Data" subtitle="Voter files and other imported datasets">
         <Filter
-          icon={<Archive className="size-3.5" />}
+          icon={<Activity className="size-3.5" />}
           label={statusLabel}
           value={statusFilter}
           options={STATUS_OPTIONS}
@@ -149,6 +184,7 @@ function DataPage() {
         pending={importDialog.isPending}
         error={importDialog.error}
         clearError={importDialog.reset}
+        datasets={updatableDatasets}
         onSubmit={(input) => importDialog.mutate(input)}
       />
 
@@ -271,12 +307,17 @@ function DataPage() {
   );
 }
 
+type ImportSubmit =
+  | { mode: "new"; name: string; importer: string; sourceUri: string }
+  | { mode: "update"; datasetId: string; sourceUri: string };
+
 function ImportDialog({
   open,
   onOpenChange,
   pending,
   error,
   clearError,
+  datasets,
   onSubmit,
 }: {
   open: boolean;
@@ -284,10 +325,13 @@ function ImportDialog({
   pending: boolean;
   error: string | null;
   clearError: () => void;
-  onSubmit: (input: { name: string; importer: string; sourceUri: string }) => void;
+  datasets: Array<{ datasetId: string; name: string }>;
+  onSubmit: (input: ImportSubmit) => void;
 }) {
+  const [mode, setMode] = useState<"new" | "update">("new");
   const [name, setName] = useState("");
   const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
+  const [datasetId, setDatasetId] = useState<string>("");
   const [source, setSource] = useState("");
 
   // Editing after a failed submit clears the stale error.
@@ -302,68 +346,122 @@ function ImportDialog({
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
+      setMode("new");
       setName("");
       setImporter(AVAILABLE_IMPORTERS[0].name);
+      setDatasetId(datasets[0]?.datasetId ?? "");
       setSource("");
     }
   }
 
-  const valid = name.trim().length > 0 && source.trim().length > 0;
+  // "Update existing" is only offered when there's a ready dataset to target.
+  const canUpdate = datasets.length > 0;
+  const valid =
+    source.trim().length > 0 && (mode === "new" ? name.trim().length > 0 : datasetId.length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Import dataset</DialogTitle>
+        <DialogTitle>Import</DialogTitle>
         <DialogDescription>
-          Creates a <span className="font-medium text-foreground">new</span> dataset. To load a
-          newer version of an existing dataset, use “Update” from its row instead. A dataset's type
-          is fixed at creation.
+          Create a new dataset or update an existing one. Type will be fixed after creating a new
+          dataset. Segments and campaigns will carry over on updates.
         </DialogDescription>
         <form
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid || pending) return;
-            onSubmit({ name: name.trim(), importer, sourceUri: source.trim() });
+            onSubmit(
+              mode === "new"
+                ? { mode: "new", name: name.trim(), importer, sourceUri: source.trim() }
+                : { mode: "update", datasetId, sourceUri: source.trim() },
+            );
           }}
           className="flex flex-col gap-4"
         >
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Name</label>
-            <Input
-              value={name}
-              onChange={(e) => edit(setName)(e.target.value)}
-              placeholder="e.g. NY State Voter File"
-              disabled={pending}
-            />
-          </div>
-          <div className="mt-1 flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Type</label>
-            <div className="flex flex-wrap gap-1.5">
-              {AVAILABLE_IMPORTERS.map((imp) => {
-                const selected = importer === imp.name;
-                return (
-                  <button
-                    type="button"
-                    key={imp.name}
-                    onClick={() => setImporter(imp.name)}
-                    disabled={pending}
-                    className={cn(
-                      "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                      selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                    )}
-                  >
-                    {imp.label}
-                  </button>
-                );
-              })}
+          {canUpdate ? (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Create or update</label>
+              <div className="flex flex-wrap gap-1.5">
+                {(["new", "update"] as const).map((m) => {
+                  const selected = mode === m;
+                  return (
+                    <button
+                      type="button"
+                      key={m}
+                      onClick={() => {
+                        if (error) clearError();
+                        setMode(m);
+                      }}
+                      disabled={pending}
+                      className={cn(
+                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+                        selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                      )}
+                    >
+                      {m === "new" ? "New dataset" : "Update existing"}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          ) : null}
+
+          {mode === "new" ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">Name</label>
+                <Input
+                  value={name}
+                  onChange={(e) => edit(setName)(e.target.value)}
+                  placeholder="Name of dataset..."
+                  disabled={pending}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">Type</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {AVAILABLE_IMPORTERS.map((imp) => {
+                    const selected = importer === imp.name;
+                    return (
+                      <button
+                        type="button"
+                        key={imp.name}
+                        onClick={() => setImporter(imp.name)}
+                        disabled={pending}
+                        className={cn(
+                          "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+                          selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                        )}
+                      >
+                        {imp.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Dataset</label>
+              <DatasetSelect
+                value={datasetId}
+                datasets={datasets}
+                onChange={(id) => {
+                  if (error) clearError();
+                  setDatasetId(id);
+                }}
+                disabled={pending}
+              />
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium">Source</label>
             <Input
               value={source}
               onChange={(e) => edit(setSource)(e.target.value)}
-              placeholder="s3://bucket/ALLNYVOTERS20260629.txt"
+              placeholder="Path to file (e.g. s3://bucket/file)"
               disabled={pending}
             />
             <span className="text-sm text-muted-foreground italic">
@@ -389,6 +487,41 @@ function ImportDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DatasetSelect({
+  value,
+  datasets,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  datasets: Array<{ datasetId: string; name: string }>;
+  onChange: (id: string) => void;
+  disabled?: boolean;
+}) {
+  const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v) });
+  const selected = datasets.find((d) => d.datasetId === value);
+  return (
+    <DropdownMenu {...dd.menu}>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        render={<Button variant="outline" type="button" className="w-full justify-between" />}
+      >
+        <span className="truncate">{selected?.name ?? "Select a dataset"}</span>
+        <ChevronDown className="size-3.5 text-muted-foreground" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuRadioGroup {...dd.radio} value={value}>
+          {datasets.map((d) => (
+            <DropdownMenuRadioItem key={d.datasetId} value={d.datasetId}>
+              <span className="truncate">{d.name}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
