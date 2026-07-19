@@ -28,7 +28,8 @@ NYS_MANIFEST = Manifest(
         [
             FieldDef(column="first_name", label="First name", filter_kind="text"),
             FieldDef(column="last_name", label="Last name", filter_kind="text"),
-            FieldDef(column="address", label="Address", filter_kind="address"),
+            # Composite: reads several columns directly, so no single `column`.
+            FieldDef(key="address", label="Address", filter_kind="address"),
             # zip5 doubles as the `nyc_zips` boundary key (derivable from the address,
             # so any geocoded dataset can zone by zip).
             FieldDef(
@@ -105,7 +106,23 @@ NYS_MANIFEST = Manifest(
                     _enum("unknown", "Unknown"),
                 ],
             ),
-            FieldDef(column="voting_history", label="Voting History", filter_kind="voting-history-count"),
+            # Two filters over the one `voting_history` STRUCT[] column, so both
+            # carry an explicit `key` to disambiguate. Detail's picker values are
+            # precomputed per version at import (see `compute_derived_metadata`)
+            # and read from `dataset_versions.derived_metadata`, so no static
+            # `values` here.
+            FieldDef(
+                column="voting_history",
+                key="voting_history_count",
+                label="Voting History Count",
+                filter_kind="voting-history-count",
+            ),
+            FieldDef(
+                column="voting_history",
+                key="voting_history_detail",
+                label="Voting History Detail",
+                filter_kind="voting-history-detail",
+            ),
         ],
     ]
 )

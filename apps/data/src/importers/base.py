@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
 if TYPE_CHECKING:
@@ -37,6 +37,7 @@ FilterKind = Literal[
     "age-range",  # numeric age range derived from a birthdate column
     "date-range",  # date range
     "voting-history-count",  # count of matching elections in a recency window
+    "voting-history-detail",  # membership in specific named elections (multi-select)
     "address",  # the geocodable composite (canonical; also filters)
 ]
 
@@ -62,9 +63,17 @@ class FieldDef(_CamelModel):
     """One filterable field — the union of what the web editor and the SQL
     compiler each need, as data."""
 
-    # Every field is a top-level `persons_geocoded` column (shredded for Parquet
-    # pruning + Bloom filters). `column` doubles as the filter `key`.
-    column: str
+    # The physical `persons_geocoded` column this filter reads (shredded for
+    # Parquet pruning + Bloom filters). How it's read is the compiler clause's
+    # business — a scalar `age-range` computes age from its `date_of_birth`
+    # column; a `voting-history-*` kind array-scans its `voting_history` STRUCT[].
+    # None for a column-less composite (`address` reads several columns directly).
+    column: str | None = None
+    # Unique field identifier — the filter `key` the editor and compiler match on.
+    # Defaults to `column`; set explicitly only to disambiguate two filters over
+    # one column (the `voting_history` count/detail pair) or to name a column-less
+    # composite (`address`). Use `identifier` for the resolved value.
+    key: str | None = None
     label: str  # editor display label
     filter_kind: FilterKind
     # `enum` / `text-multi` value catalog. None → no fixed catalog (freetext
@@ -78,6 +87,18 @@ class FieldDef(_CamelModel):
     # editor, e.g. "Election districts") rides alongside it. Compiler ignores both.
     key_group: str | None = None
     key_group_label: str | None = None
+
+    @model_validator(mode="after")
+    def _require_identifier(self) -> FieldDef:
+        if self.key is None and self.column is None:
+            raise ValueError("FieldDef requires `column` or `key`")
+        return self
+
+    @property
+    def identifier(self) -> str:
+        ident = self.key or self.column
+        assert ident is not None  # guaranteed by _require_identifier
+        return ident
 
 
 class Manifest(_CamelModel):

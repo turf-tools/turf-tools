@@ -20,12 +20,17 @@ export type ManifestFilterKind =
   | "age-range"
   | "date-range"
   | "voting-history-count"
+  | "voting-history-detail"
   | "address";
 
 export type ManifestEnumValue = { value: string; label?: string | null };
 
 export type ManifestFieldDef = {
-  column: string;
+  // Physical column this field reads; absent for a column-less composite
+  // (`address`). `key` is the field identifier, defaulting to `column`; set
+  // explicitly to disambiguate two filters over one column (voting_history).
+  column?: string | null;
+  key?: string | null;
   label: string;
   filterKind: ManifestFilterKind;
   values?: ManifestEnumValue[] | null;
@@ -40,24 +45,29 @@ export type Manifest = { fields: ManifestFieldDef[][] };
 // this is near-identity.
 function fieldToFilterDef(fd: ManifestFieldDef): FilterDef {
   const label = fd.label;
+  // Field identifier: explicit `key`, else the column (mirrors the data side's
+  // `FieldDef.identifier`). A field with neither is malformed.
+  const key = fd.key ?? fd.column ?? "";
   switch (fd.filterKind) {
     case "text":
-      return { kind: "text", key: fd.column, label };
+      return { kind: "text", key, label };
     case "enum":
       return {
         kind: "enum",
-        key: fd.column,
+        key,
         label,
         values: (fd.values ?? []).map((v) => ({ value: v.value, label: v.label ?? undefined })),
       };
     case "text-multi":
-      return { kind: "text-multi", key: fd.column, label };
+      return { kind: "text-multi", key, label };
     case "age-range":
-      return { kind: "age-range", key: fd.column, label };
+      return { kind: "age-range", key, label };
     case "date-range":
-      return { kind: "date-range", key: fd.column, label };
+      return { kind: "date-range", key, label };
     case "voting-history-count":
-      return { kind: "voting-history-count", key: fd.column, label };
+      return { kind: "voting-history-count", key, label };
+    case "voting-history-detail":
+      return { kind: "voting-history-detail", key, label };
     case "address":
       return { kind: "address", key: "address", label };
   }

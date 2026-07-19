@@ -102,12 +102,14 @@ function DataPage() {
 
   const makeActive = useMutation({
     mutationFn: (versionId: string) => client.datasets.makeActive({ versionId }),
-    // A new active version replaces the manifest that gates the editors. Remove
-    // it (not just invalidate) so those editors re-fetch clean — useSuspenseQuery
-    // would otherwise render the stale manifest for a frame. Invalidate the rest —
-    // counts, dataset-scoped lists — so they re-resolve on next read.
+    // A new active version replaces the manifest that gates the editors, and the
+    // election list the voting-history-detail filter picks from. Remove both (not
+    // just invalidate) so those editors re-fetch clean — a hard-cached query
+    // would otherwise render stale for a frame. Invalidate the rest — counts,
+    // dataset-scoped lists — so they re-resolve on next read.
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ["manifest"] });
+      queryClient.removeQueries({ queryKey: ["elections"] });
       void queryClient.invalidateQueries();
     },
     onError: (e) => toast.error(e.message),

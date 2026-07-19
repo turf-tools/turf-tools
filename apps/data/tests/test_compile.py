@@ -24,7 +24,8 @@ from src.dsl.criteria import (
     Step,
     TextFilter,
     TextMultiFilter,
-    VotingHistoryFilter,
+    VotingHistoryCountFilter,
+    VotingHistoryDetailFilter,
     build_field_catalog,
 )
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
@@ -213,9 +214,9 @@ def test_voting_history_at_least_primary() -> None:
     where = criteria_to_where(
         CATALOG,
         _narrow(
-            VotingHistoryFilter(
+            VotingHistoryCountFilter(
                 kind="voting-history-count",
-                key="voting_history",
+                key="voting_history_count",
                 type="primary",
                 window_years=4,
                 comparator="at_least",
@@ -291,9 +292,9 @@ def test_voting_history_exactly_general() -> None:
     where = criteria_to_where(
         CATALOG,
         _narrow(
-            VotingHistoryFilter(
+            VotingHistoryCountFilter(
                 kind="voting-history-count",
-                key="voting_history",
+                key="voting_history_count",
                 type="general",
                 window_years=4,
                 comparator="exactly",
@@ -306,6 +307,66 @@ def test_voting_history_exactly_general() -> None:
     assert "list_filter(voting_history" in where
     assert ") = ?" in where
     assert params == [4, "general", 1]
+
+
+def test_voting_history_detail_any_membership() -> None:
+    """`any` mode matches persons who voted in at least one selected election."""
+    params: list = []
+    where = criteria_to_where(
+        CATALOG,
+        _narrow(
+            VotingHistoryDetailFilter(
+                kind="voting-history-detail",
+                key="voting_history_detail",
+                mode="any",
+                elections=["2024-primary", "2022-general"],
+            )
+        ),
+        None,
+        params,
+    )
+    # Reads the physical voting_history column (not the synthetic catalog key).
+    assert "list_has_any(list_transform(voting_history" in where
+    assert params == ["2024-primary", "2022-general"]
+
+
+def test_voting_history_detail_all_membership() -> None:
+    """`all` mode requires every selected election."""
+    params: list = []
+    where = criteria_to_where(
+        CATALOG,
+        _narrow(
+            VotingHistoryDetailFilter(
+                kind="voting-history-detail",
+                key="voting_history_detail",
+                mode="all",
+                elections=["2024-primary", "2022-general"],
+            )
+        ),
+        None,
+        params,
+    )
+    assert "list_has_all(list_transform(voting_history" in where
+    assert params == ["2024-primary", "2022-general"]
+
+
+def test_voting_history_detail_empty_is_inactive() -> None:
+    params: list = []
+    where = criteria_to_where(
+        CATALOG,
+        _narrow(
+            VotingHistoryDetailFilter(
+                kind="voting-history-detail",
+                key="voting_history_detail",
+                mode="any",
+                elections=[],
+            )
+        ),
+        None,
+        params,
+    )
+    assert where == ""
+    assert params == []
 
 
 # ---------------------------------------------------------------------------

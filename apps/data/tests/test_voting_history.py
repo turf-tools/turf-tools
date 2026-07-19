@@ -145,6 +145,13 @@ def test_parse_entry_unknown_method_code_buckets_to_other():
     assert result["method"] == "other"
 
 
+def test_parse_entry_implausible_year_dropped():
+    """A corrupt 8-digit date yielding an out-of-range year is dropped, not
+    surfaced as a bogus election (e.g. the observed '3812 November General')."""
+    assert parse_entry("38120810 GE(P)") is None  # modern format
+    assert parse_entry("GE 38120810(P)") is None  # code-first format
+
+
 # ---------------------------------------------------------------------------
 # parse_voting_history — full-string parsing
 # ---------------------------------------------------------------------------

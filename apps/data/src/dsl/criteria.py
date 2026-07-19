@@ -68,7 +68,7 @@ class DateRangeFilter(BaseModel):
     max: str | None = None
 
 
-class VotingHistoryFilter(BaseModel):
+class VotingHistoryCountFilter(BaseModel):
     """Count of recent elections matching a type within a year window.
 
     ``primary`` covers both `primary` and `presidential_primary` canonical
@@ -83,6 +83,18 @@ class VotingHistoryFilter(BaseModel):
     window_years: int = Field(validation_alias="windowYears")
     comparator: Literal["at_least", "exactly"]
     count: int
+
+
+class VotingHistoryDetailFilter(BaseModel):
+    """Membership in specific named elections, each identified by its stable key
+    (see `dsl/elections.py`), e.g. `2024-06-primary`. `mode` picks the set
+    semantics: ``any`` matches a person who voted in at least one selected
+    election (OR); ``all`` requires every selected election (AND)."""
+
+    kind: Literal["voting-history-detail"]
+    key: str
+    mode: Literal["any", "all"]
+    elections: list[str]
 
 
 class AddressFilter(BaseModel):
@@ -158,7 +170,8 @@ Filter = Annotated[
     | TextFilter
     | TextMultiFilter
     | DateRangeFilter
-    | VotingHistoryFilter
+    | VotingHistoryCountFilter
+    | VotingHistoryDetailFilter
     | AddressFilter
     | CanvassOutcomeFilter
     | CanvassResponseFilter
@@ -231,9 +244,16 @@ class DateRangeFieldDef(BaseModel):
     key: str
 
 
-class VotingHistoryFieldDef(BaseModel):
+class VotingHistoryCountFieldDef(BaseModel):
     kind: Literal["voting-history-count"]
-    key: str  # the STRUCT[] column name, e.g. "voting_history"
+    key: str  # catalog identifier, e.g. "voting_history_count"
+    column: str  # the STRUCT[] column the clause array-scans, e.g. "voting_history"
+
+
+class VotingHistoryDetailFieldDef(BaseModel):
+    kind: Literal["voting-history-detail"]
+    key: str  # catalog identifier, e.g. "voting_history_detail"
+    column: str  # the STRUCT[] column the clause array-scans (shared with count)
 
 
 class AddressFieldDef(BaseModel):
@@ -247,7 +267,8 @@ FieldDef = (
     | TextFieldDef
     | TextMultiFieldDef
     | DateRangeFieldDef
-    | VotingHistoryFieldDef
+    | VotingHistoryCountFieldDef
+    | VotingHistoryDetailFieldDef
     | AddressFieldDef
 )
 
@@ -281,9 +302,12 @@ def build_field_catalog(manifest: Manifest) -> FieldCatalog:
     """
     fields: dict[str, FieldDef] = {}
     key_groups: dict[str, str] = {}
-    # Sections are a display concern; the compiler flattens them away.
+    # Sections are a display concern; the compiler flattens them away. `key` is
+    # the field's catalog identifier (defaults to its column); scalar clauses use
+    # it directly as the SQL column, so for them identifier == column. The
+    # voting-history kinds carry `column` separately (identifier != column).
     for fd in (fd for section in manifest.fields for fd in section):
-        key = fd.column
+        key = fd.identifier
         if fd.filter_kind == "text":
             fields[key] = TextFieldDef(kind="text", key=key)
         elif fd.filter_kind == "enum":
@@ -295,7 +319,9 @@ def build_field_catalog(manifest: Manifest) -> FieldCatalog:
         elif fd.filter_kind == "date-range":
             fields[key] = DateRangeFieldDef(kind="date-range", key=key)
         elif fd.filter_kind == "voting-history-count":
-            fields[key] = VotingHistoryFieldDef(kind="voting-history-count", key=key)
+            fields[key] = VotingHistoryCountFieldDef(kind="voting-history-count", key=key, column=fd.column or key)
+        elif fd.filter_kind == "voting-history-detail":
+            fields[key] = VotingHistoryDetailFieldDef(kind="voting-history-detail", key=key, column=fd.column or key)
         elif fd.filter_kind == "address":
             fields[key] = AddressFieldDef(kind="address", key="address")
         if fd.key_group:

@@ -16,6 +16,7 @@ from src.dags import (
     quickwit,
     tiger,
 )
+from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import NullProgress
 from src.importers.nys_voter_file import NysVoterFileImporter
@@ -372,9 +373,11 @@ def seed_persons() -> None:
     # Land the manifest + row count on the version and mark it `ready`, then
     # activate it for the seeded orgs — only now that the data exists, so a
     # crash mid-pipeline never leaves an org pointing at an empty dataset.
-    person_count = conn.sql(f"SELECT count(*) FROM {geocoded_ref.fqn}").fetchone()[0]
-    finalize_version(conn, settings, version_id, importer.manifest(), person_count)
+    manifest = importer.manifest()
+    derived = compute_derived_metadata(conn, geocoded_ref.fqn, manifest)
+    finalize_version(conn, settings, version_id, manifest, derived)
     _activate_for_all_orgs(conn, version_id)
+    person_count = derived["rowCount"]
     print(f"  → Wrote manifest + row_count={person_count:,}; activated version {version_id} for all orgs.")
 
     if timing is not None:
