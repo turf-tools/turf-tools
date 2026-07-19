@@ -3,7 +3,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { Check, Scroll } from "lucide-react-native";
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from "react-native";
-import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@field-tools/db/schema";
+import type { TurfDataBuilding, TurfDataDoor, TurfDataPerson } from "@turf-tools/db/schema";
 import { SwipeAction } from "@/components/swipe-action";
 import { Pill } from "@/components/pill";
 import { useColors } from "@/lib/colors";

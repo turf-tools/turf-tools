@@ -9,7 +9,7 @@ Incomplete by design — deferrable questions are flagged at the end.
 
 | Term             | What it is                                                               | Notes                                                                                   |
 | ---------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| **Organization** | The tenant — an org using Field Tools.                                   | Has a `slug` (URL/SQL-safe id) used to namespace DuckLake tables.                       |
+| **Organization** | The tenant — an org using Turf Tools.                                    | Has a `slug` (URL/SQL-safe id) used to namespace DuckLake tables.                       |
 | **Person**       | A canvassable record. The canonical schema in `apps/data/src/models.py`. | Usually sourced from a state/BOE voter file, but the schema is general.                 |
 | **Segment**      | A criteria definition (filter set) over Person data.                     | Standalone, reusable across campaigns.                                                  |
 | **Zone group**   | A container for a set of zones, pinned to one key group.                 | Key group is immutable once set.                                                        |

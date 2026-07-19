@@ -10,7 +10,7 @@ import {
 import type { SessionOrg } from "~/lib/server/session";
 import { cn } from "~/lib/utils";
 
-// Static "Field Tools / <org>" identifier; the org name is also an
+// Static "Turf Tools / <org>" identifier; the org name is also an
 // org-switcher trigger when the user has memberships in multiple orgs.
 // Single-membership users just see the name as plain text.
 type BreadcrumbProps = {
@@ -24,7 +24,7 @@ export function Breadcrumb({ orgSlug, orgName, orgs, children }: BreadcrumbProps
   const isMulti = orgs.length > 1;
   return (
     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <span className="font-bold text-foreground italic">Field Tools</span>
+      <span className="font-bold text-foreground italic">Turf Tools</span>
       <Separator />
       <span className="italic text-foreground">{orgName}</span>
       {isMulti ? <OrgSwitcher currentSlug={orgSlug} orgs={orgs} /> : null}

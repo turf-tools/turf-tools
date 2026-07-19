@@ -3,8 +3,8 @@ import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { emailOTP } from "better-auth/plugins";
 import { Resend } from "resend";
-import { and, db, eq, isNull } from "@field-tools/db";
-import { accounts, memberships, sessions, users, verifications } from "@field-tools/db/schema";
+import { and, db, eq, isNull } from "@turf-tools/db";
+import { accounts, memberships, sessions, users, verifications } from "@turf-tools/db/schema";
 import { normalizeEmail } from "./normalize-email";
 
 // Resolved lazily so dev can boot without RESEND_API_KEY; the login URL +
@@ -148,19 +148,19 @@ export const auth = betterAuth({
           console.log(`[auth] otp for ${to}: ${otp} (${verifyUrl})`);
           return;
         }
-        const from = process.env.RESEND_FROM ?? "Field Tools <onboarding@resend.dev>";
+        const from = process.env.RESEND_FROM ?? "Turf Tools <onboarding@resend.dev>";
         await resend.emails.send({
           from,
           to,
-          subject: "Log in to Field Tools",
+          subject: "Log in to Turf Tools",
           html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #333;">
   <br/>
-  <h2 style="font-weight: 600;">Welcome to <i>Field Tools</i></h2>
+  <h2 style="font-weight: 600;">Welcome to <i>Turf Tools</i></h2>
   <p style="font-size: 16px;">Click the button below to log in securely:</p>
 
   <p style="text-align: left; margin: 30px 0;">
     <a href="${verifyUrl}" style="background-color: #222222; color: white; padding: 12px 20px; text-decoration: none; border-radius: 6px; font-size: 16px; display: inline-block;">
-      Log in to Field Tools
+      Log in to Turf Tools
     </a>
   </p>
 

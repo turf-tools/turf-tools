@@ -28,6 +28,6 @@ export const queryClient = new QueryClient({
 
 export const persister = createAsyncStoragePersister({
   storage: AsyncStorage,
-  key: "field-tools-rq-cache",
+  key: "turf-tools-rq-cache",
   throttleTime: 1000,
 });

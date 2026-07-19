@@ -1,10 +1,10 @@
 {
-  "name": "@field-tools/scripts",
+  "name": "@turf-tools/scripts",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@field-tools/db": "workspace:*",
+    "@turf-tools/db": "workspace:*",
     "chalk": "^5.6.2",
     "drizzle-orm": "beta",
     "meow": "^14.1.0",
