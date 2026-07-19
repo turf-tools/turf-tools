@@ -866,20 +866,48 @@ function CanvassResponseEditor({
   // dropdown closes, not a tick later when the criteria write notifies.
   const [localQuestionId, setLocalQuestionId] = useState(filter.questionId);
   useEffect(() => setLocalQuestionId(filter.questionId), [filter.questionId]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [showArchivedQuestions, setShowArchivedQuestions] = useState(false);
 
   const selected = questions?.find((q) => q.questionId === localQuestionId);
   const triggerLabel = selected
-    ? selected.name
+    ? selected.archived
+      ? `${selected.name} (archived)`
+      : selected.name
     : localQuestionId && questions
       ? "(deleted)"
       : "Select question…";
+  const activeQuestions = questions?.filter((q) => !q.archived) ?? [];
+  const archivedQuestions = questions?.filter((q) => q.archived) ?? [];
+  // Keep the selected question in the menu even if it's archived (so a saved
+  // filter's question doesn't vanish on load); "Show archived" reveals the rest.
+  const visibleArchivedQuestions = showArchivedQuestions
+    ? archivedQuestions
+    : archivedQuestions.filter((q) => q.questionId === localQuestionId);
+  const archivedQuestionsHidden = archivedQuestions.some((q) => q.questionId !== localQuestionId);
   const options = selected?.options ?? [];
+  // Show active options; keep a referenced archived option visible (so it can
+  // be removed), and reveal the rest when "Show archived" is on.
+  const visibleOptions = options.filter(
+    (o) => showArchived || !o.archived || filter.optionIds.includes(o.responseOptionId),
+  );
+  // Only offer the toggle when there's a hidden archived option to reveal.
+  const archivedHidden = options.some(
+    (o) => o.archived && !filter.optionIds.includes(o.responseOptionId),
+  );
 
   const toggle = (optionId: string) => {
     const next = filter.optionIds.includes(optionId)
       ? filter.optionIds.filter((v) => v !== optionId)
       : [...filter.optionIds, optionId];
     onChange({ ...filter, optionIds: next });
+  };
+
+  // Switching questions clears the now-irrelevant option set.
+  const selectQuestion = (questionId: string) => {
+    setLocalQuestionId(questionId);
+    setShowArchived(false);
+    onChange({ ...filter, questionId, optionIds: [] });
   };
 
   return (
@@ -897,24 +925,34 @@ function CanvassResponseEditor({
           {!questions || questions.length === 0 ? (
             <DropdownMenuItem disabled>No questions available</DropdownMenuItem>
           ) : (
-            questions.map((q) => (
-              <DropdownMenuItem
-                key={q.questionId}
-                // Switching questions clears the now-irrelevant option set.
-                onClick={() => {
-                  setLocalQuestionId(q.questionId);
-                  onChange({ ...filter, questionId: q.questionId, optionIds: [] });
-                }}
-              >
-                {q.name}
-              </DropdownMenuItem>
-            ))
+            <>
+              {activeQuestions.map((q) => (
+                <DropdownMenuItem key={q.questionId} onClick={() => selectQuestion(q.questionId)}>
+                  {q.name}
+                </DropdownMenuItem>
+              ))}
+              {visibleArchivedQuestions.map((q) => (
+                <DropdownMenuItem key={q.questionId} onClick={() => selectQuestion(q.questionId)}>
+                  {q.name}
+                  {" (archived)"}
+                </DropdownMenuItem>
+              ))}
+              {archivedQuestionsHidden ? (
+                <DropdownMenuItem
+                  className="text-muted-foreground"
+                  closeOnClick={false}
+                  onClick={() => setShowArchivedQuestions((v) => !v)}
+                >
+                  {showArchivedQuestions ? "Hide archived" : "Show archived"}
+                </DropdownMenuItem>
+              ) : null}
+            </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      {localQuestionId && options.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {options.map((o) => (
+      {localQuestionId && (visibleOptions.length > 0 || archivedHidden) ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {visibleOptions.map((o) => (
             <Toggle
               key={o.responseOptionId}
               size="sm"
@@ -928,8 +966,19 @@ function CanvassResponseEditor({
               ) : (
                 <span className="italic text-muted-foreground">Empty option</span>
               )}
+              {o.archived ? " (archived)" : null}
             </Toggle>
           ))}
+          {archivedHidden ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-[0.8rem] text-muted-foreground"
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              {showArchived ? "Hide archived" : "Show archived"}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>
