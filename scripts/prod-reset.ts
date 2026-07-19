@@ -2,11 +2,11 @@ import { createLogger, run } from "./_logging";
 
 const log = createLogger("reset");
 
-const DATA_ENV = "/etc/field-tools-data.env";
-const DBS = ["field_tools", "field_tools_ducklake_catalog", "field_tools_geo_ducklake_catalog"];
+const DATA_ENV = "/etc/turf-tools-data.env";
+const DBS = ["turf_tools", "turf_tools_ducklake_catalog", "turf_tools_geo_ducklake_catalog"];
 
 log.task("stopping services");
-run(log, "sudo systemctl stop field-tools-web field-tools-data");
+run(log, "sudo systemctl stop turf-tools-web turf-tools-data");
 
 log.task("recreating Postgres databases");
 for (const db of DBS) {
@@ -29,6 +29,6 @@ log.task("seeding reference data");
 run(log, "pnpm prod:db:seed");
 
 log.task("starting services");
-run(log, "sudo systemctl start field-tools-data field-tools-web");
+run(log, "sudo systemctl start turf-tools-data turf-tools-web");
 
 log.success("reset complete");

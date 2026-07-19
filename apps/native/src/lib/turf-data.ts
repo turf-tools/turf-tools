@@ -3,7 +3,7 @@ import type {
   TurfDataBuilding,
   TurfDataDoor,
   TurfDataPerson,
-} from "@field-tools/db/schema";
+} from "@turf-tools/db/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { client } from "@/rpc/client";

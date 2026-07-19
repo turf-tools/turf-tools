@@ -1,4 +1,4 @@
-# Local-dev Postgres for Field Tools.
+# Local-dev Postgres for Turf Tools.
 #
 # Used by `pnpm dev` (the `dev:db` script invokes `docker compose -f
 # docker-compose.dev.yml up postgres`). Both the web app and the data
@@ -9,7 +9,7 @@
 services:
   postgres:
     image: postgres:17
-    container_name: field-tools-dev-postgres
+    container_name: turf-tools-dev-postgres
     ports:
       - "127.0.0.1:5432:5432"
     environment:

@@ -1,6 +1,6 @@
 import { ORPCError, os } from "@orpc/server";
-import { and, eq, isNull, SEEDED_ADMIN_USER_ID, type Db } from "@field-tools/db";
-import { memberships, organizations, users } from "@field-tools/db/schema";
+import { and, eq, isNull, SEEDED_ADMIN_USER_ID, type Db } from "@turf-tools/db";
+import { memberships, organizations, users } from "@turf-tools/db/schema";
 import { auth } from "~/lib/auth";
 import { hasPermission, type Permission } from "~/lib/permissions";
 

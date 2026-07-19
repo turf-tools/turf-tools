@@ -1,6 +1,6 @@
-import { and, eq } from "@field-tools/db";
-import { turfData, turfs } from "@field-tools/db/schema";
-import type { TurfData } from "@field-tools/db/schema";
+import { and, eq } from "@turf-tools/db";
+import { turfData, turfs } from "@turf-tools/db/schema";
+import type { TurfData } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { nativePub as pub } from "../context";
 

@@ -9,7 +9,7 @@ import {
 } from "@maplibre/maplibre-react-native";
 import { useCallback, useMemo, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import type { TurfDataBuilding, TurfData } from "@field-tools/db/schema";
+import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { LabelLayers } from "./labels";

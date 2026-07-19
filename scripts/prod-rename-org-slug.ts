@@ -1,6 +1,6 @@
 import meow from "meow";
-import { db, eq } from "@field-tools/db";
-import { organizations } from "@field-tools/db/schema";
+import { db, eq } from "@turf-tools/db";
+import { organizations } from "@turf-tools/db/schema";
 import { createLogger } from "./_logging";
 
 const log = createLogger("rename-org-slug");

@@ -6,13 +6,13 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // set per build profile in eas.json; local runs default to the dev identity.
 const isProduction = process.env.APP_VARIANT === "production";
 
-const name = isProduction ? "Field Tools" : "Field Tools (Dev)";
-const identifier = isProduction ? "tools.field.native" : "tools.field.native.dev";
+const name = isProduction ? "Turf Tools" : "Turf Tools (Dev)";
+const identifier = isProduction ? "tools.turf.native" : "tools.turf.native.dev";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name,
-  slug: config.slug ?? "field-tools-native",
+  slug: config.slug ?? "turf-tools-native",
   ios: { ...config.ios, bundleIdentifier: identifier },
   android: { ...config.android, package: identifier },
 });

@@ -41,7 +41,7 @@ const extras = cli.flags.slug ? cli.input : cli.input.slice(1);
 
 const dataDir = resolve(REPO_ROOT, "apps/data");
 const envSrc =
-  "[ -f /etc/field-tools-data.env ] && (set -a; . /etc/field-tools-data.env; set +a); unset NODE_ENV";
+  "[ -f /etc/turf-tools-data.env ] && (set -a; . /etc/turf-tools-data.env; set +a); unset NODE_ENV";
 const extrasStr = extras.length > 0 ? " " + extras.map((s) => JSON.stringify(s)).join(" ") : "";
 
 log.task("seed-persons");

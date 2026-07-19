@@ -58,7 +58,7 @@ async function mock() {
 
   const existingUser = await db.select().from(users).where(eq(users.id, USER_ID));
   if (existingUser.length === 0) {
-    const seedEmail = process.env.SEED_USER_EMAIL ?? "admin@field.tools";
+    const seedEmail = process.env.SEED_USER_EMAIL ?? "admin@turf.tools";
     await db.insert(users).values({
       id: USER_ID,
       email: seedEmail,

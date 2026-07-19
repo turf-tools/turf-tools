@@ -29,7 +29,7 @@ import { toTitleCase } from "@/lib/format";
 import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
 import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
-import type { CanvassEventPayload, TurfDataPerson } from "@field-tools/db/schema";
+import type { CanvassEventPayload, TurfDataPerson } from "@turf-tools/db/schema";
 
 type Mode = "script" | "unavailable" | "note" | "details";
 

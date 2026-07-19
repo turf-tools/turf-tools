@@ -1,9 +1,9 @@
 {
   "expo": {
-    "slug": "field-tools-native",
-    "owner": "field-tools",
+    "slug": "turf-tools-native",
+    "owner": "turf-tools",
     "version": "0.1.0",
-    "scheme": "field-tools",
+    "scheme": "turf-tools",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {

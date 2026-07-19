@@ -78,7 +78,7 @@ function LoginPage() {
         <LightDarkToggle />
       </div>
       <div className="w-full max-w-sm -mt-16 animate-in fade-in duration-100">
-        <h1 className="mb-5 text-center text-5xl italic font-bold tracking-tight">Field Tools</h1>
+        <h1 className="mb-5 text-center text-5xl italic font-bold tracking-tight">Turf Tools</h1>
         {step === "email" ? (
           <EmailStep
             email={email}

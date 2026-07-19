@@ -1,7 +1,7 @@
 import { createRouterClient } from "@orpc/server";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { SEEDED_ADMIN_USER_ID, SEEDED_ORG_ID, type Db } from "@field-tools/db";
+import { SEEDED_ADMIN_USER_ID, SEEDED_ORG_ID, type Db } from "@turf-tools/db";
 import { test } from "vite-plus/test";
 import { webRouter } from "../src/rpc";
 import type { WebContext, User } from "../src/rpc/context";
@@ -15,8 +15,8 @@ export async function getTestClient() {
 
   const user: User = {
     id: SEEDED_ADMIN_USER_ID,
-    email: "admin@field.tools",
-    displayEmail: "admin@field.tools",
+    email: "admin@turf.tools",
+    displayEmail: "admin@turf.tools",
     emailVerified: true,
     name: "Admin User",
     image: null,
