@@ -228,32 +228,35 @@ def finalize_version(
     settings: "Settings",
     dataset_version_id: str,
     manifest: Manifest,
-    row_count: int,
+    derived_metadata: dict,
 ) -> None:
-    """Land a version's `manifest` + `row_count` and mark it `ready`, once its
-    DuckLake tables are built. The single write point for both callers: the
+    """Land a version's `manifest` + `derived_metadata` and mark it `ready`, once
+    its DuckLake tables are built. The single write point for both callers: the
     `import_dataset_version` job (production) and `seed-persons` (dev). The
     importer *derives* the manifest and the DuckDB connection already has the
     Postgres attach, so writing it here — rather than handing it back for the web
     to persist — keeps the version's data and its manifest landed in one place.
-    `active_dataset_version_id` is left untouched: activation is the web's concern
-    ("Make active"), which then invalidates the web's manifest cache.
+    `derived_metadata` is the caller's `compute_derived_metadata` result
+    (`rowCount`, `elections`, …), cached so reads never recompute over the
+    immutable version. `active_dataset_version_id` is left untouched: activation
+    is the web's concern ("Make active"), which invalidates the web's caches.
 
     Postgres implicit-casts json→jsonb on INSERT but not on UPDATE, and DuckDB
     (no native jsonb type) sends the value as varchar — so a bound-param UPDATE
-    into the jsonb `manifest` column fails. The maintainer-blessed workaround is
-    to run the UPDATE natively on Postgres via `postgres_execute` with an explicit
-    `::jsonb` cast (duckdb/duckdb#16195). The manifest is our own serialized model,
-    not user input; single quotes are doubled for the Postgres string literal and
-    the statement is dollar-quoted for DuckDB.
+    into a jsonb column fails. The maintainer-blessed workaround is to run the
+    UPDATE natively on Postgres via `postgres_execute` with an explicit `::jsonb`
+    cast (duckdb/duckdb#16195). The values are our own serialized models, not user
+    input; single quotes are doubled for the Postgres string literal and the
+    statement is dollar-quoted for DuckDB.
     """
     attach_operational_postgres(conn, settings)
     manifest_literal = manifest.model_dump_json(by_alias=True).replace("'", "''")
+    derived_literal = json.dumps(derived_metadata).replace("'", "''")
     conn.execute(
         f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
         f"UPDATE public.dataset_versions "
         f"SET manifest = '{manifest_literal}'::jsonb, "
-        f"row_count = {int(row_count)}, status = 'ready' "
+        f"derived_metadata = '{derived_literal}'::jsonb, status = 'ready' "
         f"WHERE dataset_version_id = '{dataset_version_id}'"
         f"$ft$)"
     )

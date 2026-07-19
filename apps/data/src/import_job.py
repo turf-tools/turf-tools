@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from src import postgres
 from src.dags import aggregate, assembly, geocode, matching, osm, tiger
+from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, ProgressNodeHook
 from src.importers.registry import get_importer
@@ -92,15 +93,20 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
             .build()
         )
         dag_steps = sum(1 for n in dr.graph.get_upstream_nodes(_FINAL_VARS)[0] if n.name not in input_keys)
-        progress.start(importer.PROGRESS_STEPS + dag_steps)
+        # +1 for the post-DAG derived-metadata pass (a full unnest+count over
+        # persons_geocoded), so it doesn't sit "stuck" at 100% while it runs.
+        progress.start(importer.PROGRESS_STEPS + dag_steps + 1)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
         persons_validated = importer.load(payload.source, schema, conn, progress)
         result = dr.execute(final_vars=_FINAL_VARS, inputs={"persons_validated": persons_validated, **dag_inputs})
 
-        person_count = conn.sql(f"SELECT count(*) FROM {result['persons_geocoded'].fqn}").fetchone()[0]
-        finalize_version(conn, settings, payload.dataset_version_id, importer.manifest(), person_count)
-        return {"row_count": person_count, "schema": schema}
+        geocoded_fqn = result["persons_geocoded"].fqn
+        manifest = importer.manifest()
+        derived = compute_derived_metadata(conn, geocoded_fqn, manifest)
+        progress.advance()
+        finalize_version(conn, settings, payload.dataset_version_id, manifest, derived)
+        return {"row_count": derived["rowCount"], "schema": schema}
     finally:
         conn.close()
 
