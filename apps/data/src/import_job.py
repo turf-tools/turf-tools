@@ -16,7 +16,7 @@ from hamilton import driver
 from pydantic import BaseModel
 
 from src import postgres
-from src.dags import aggregate, assembly, geocode, matching, osm, tiger
+from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, tiger
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, ProgressNodeHook
@@ -55,8 +55,15 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
     return result
 
 
-# The shared geocode pipeline's outputs (the `final_vars` the DAG resolves).
-_FINAL_VARS = ["persons_geocoded", "geocoding_summary", "buildings_geocoded", "doors_geocoded"]
+# Geocode-pipeline outputs, plus `tiger_tabblock_raw` — the census blocks the
+# boundary step unions over (not otherwise built during import).
+_FINAL_VARS = [
+    "persons_geocoded",
+    "geocoding_summary",
+    "buildings_geocoded",
+    "doors_geocoded",
+    "tiger_tabblock_raw",
+]
 
 
 def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
@@ -68,6 +75,16 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
         ensure_schema(conn, schema)
 
         importer = get_importer(importer_name)()
+        manifest = importer.manifest()
+
+        # One boundary table per key group the manifest declares (precinct →
+        # nyc_eds, zip5 → nyc_zips); the field's `column` is the key expression.
+        key_group_sources = [
+            {"key_group": fd.key_group, "key_expression": fd.column}
+            for section in manifest.fields
+            for fd in section
+            if fd.key_group is not None and fd.column is not None
+        ]
 
         # Config inputs the DAG receives (provided, not computed nodes).
         dag_inputs = {
@@ -82,27 +99,45 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
         }
         input_keys = set(dag_inputs) | {"persons_validated"}
 
-        # Size progress from the importer's stages + the DAG's computed nodes;
-        # the hook reports one step per node as the pipeline runs.
+        # Size progress from the importer's stages + the DAG's computed nodes +
+        # one boundary union per key group; the hook reports one step per node.
         progress = ImportProgress(conn, payload.dataset_version_id)
         hook = ProgressNodeHook(progress, input_keys)
         dr = (
             driver.Builder()
-            .with_modules(tiger, osm, matching, geocode, assembly, aggregate)
+            .with_modules(tiger, osm, matching, geocode, assembly, aggregate, boundaries)
             .with_adapters(hook)
             .build()
         )
         dag_steps = sum(1 for n in dr.graph.get_upstream_nodes(_FINAL_VARS)[0] if n.name not in input_keys)
         # +1 for the post-DAG derived-metadata pass (a full unnest+count over
         # persons_geocoded), so it doesn't sit "stuck" at 100% while it runs.
-        progress.start(importer.PROGRESS_STEPS + dag_steps + 1)
+        progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 1)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
         persons_validated = importer.load(payload.source, schema, conn, progress)
         result = dr.execute(final_vars=_FINAL_VARS, inputs={"persons_validated": persons_validated, **dag_inputs})
 
+        # Build each key group's polygons before finalize, so a `ready` version
+        # is always zonable and the map's boundary fetch never 404s. Override the
+        # two heavy inputs with the tables just built so each group runs only the
+        # union.
+        for source in key_group_sources:
+            dr.execute(
+                final_vars=["boundary_from_blocks"],
+                inputs={
+                    "schema": schema,
+                    "conn": conn,
+                    "key_group": source["key_group"],
+                    "key_expression": source["key_expression"],
+                },
+                overrides={
+                    "persons_geocoded": result["persons_geocoded"],
+                    "tiger_tabblock_raw": result["tiger_tabblock_raw"],
+                },
+            )
+
         geocoded_fqn = result["persons_geocoded"].fqn
-        manifest = importer.manifest()
         derived = compute_derived_metadata(conn, geocoded_fqn, manifest)
         progress.advance()
         finalize_version(conn, settings, payload.dataset_version_id, manifest, derived)
