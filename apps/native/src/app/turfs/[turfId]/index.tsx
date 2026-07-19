@@ -3,7 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, useWindowDimensions, View } from "react-native";
-import type { TurfDataBuilding } from "@field-tools/db/schema";
+import type { TurfDataBuilding } from "@turf-tools/db/schema";
 import { Check, DoorClosed, UserRound } from "lucide-react-native";
 import { TurfMap } from "@/components/map/turf-map";
 import { toTitleCase } from "@/lib/format";

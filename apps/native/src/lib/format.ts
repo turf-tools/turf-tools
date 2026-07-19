@@ -1,7 +1,7 @@
 // Display formatting utilities. These transform data for presentation
 // without modifying the underlying values.
 
-import type { TurfDataPerson } from "@field-tools/db/schema";
+import type { TurfDataPerson } from "@turf-tools/db/schema";
 
 // Convert "JOHN SMITH" → "John Smith". Works on any all-caps or mixed-case
 // string. Doesn't modify the source data — just for display.

@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { and, db, eq, isNull, SEEDED_ADMIN_USER_ID } from "@field-tools/db";
-import { memberships, organizations } from "@field-tools/db/schema";
+import { and, db, eq, isNull, SEEDED_ADMIN_USER_ID } from "@turf-tools/db";
+import { memberships, organizations } from "@turf-tools/db/schema";
 import { auth } from "~/lib/auth";
 
 async function currentUserId(): Promise<string | null> {

@@ -1,5 +1,5 @@
-import { eq, type Db } from "@field-tools/db";
-import { datasetVersions, organizations } from "@field-tools/db/schema";
+import { eq, type Db } from "@turf-tools/db";
+import { datasetVersions, organizations } from "@turf-tools/db/schema";
 
 // The dataset the org is currently working against — the active version's
 // dataset (`organizations.active_dataset_version_id → dataset_versions.dataset_id`).

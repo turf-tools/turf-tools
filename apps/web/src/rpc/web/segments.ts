@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, ne } from "@field-tools/db";
-import { campaigns, segments } from "@field-tools/db/schema";
+import { and, asc, eq, ne } from "@turf-tools/db";
+import { campaigns, segments } from "@turf-tools/db/schema";
 import { z } from "zod";
 import type { Criteria } from "~/lib/filters";
 import { detectSegmentCycles, SegmentRefError, type SegmentLike } from "~/lib/segment-refs";

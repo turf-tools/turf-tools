@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import meow from "meow";
-import { db, eq, inArray } from "@field-tools/db";
+import { db, eq, inArray } from "@turf-tools/db";
 import { count } from "drizzle-orm";
 import {
   campaigns,
@@ -14,7 +14,7 @@ import {
   responseOptions,
   turfs,
   zoneGroups,
-} from "@field-tools/db/schema";
+} from "@turf-tools/db/schema";
 import { createLogger } from "./_logging";
 
 const log = createLogger("remove-org");
