@@ -36,6 +36,7 @@ export const webRouter = {
     archive: datasets.archive,
     unarchive: datasets.unarchive,
     manifest: datasets.manifest,
+    elections: datasets.elections,
   },
   segments: {
     list: segments.list,

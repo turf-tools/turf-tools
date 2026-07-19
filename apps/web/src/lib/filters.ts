@@ -42,13 +42,24 @@ export type DateRangeFilter = {
   max: string | null;
 };
 
-export type VotingHistoryFilter = {
+export type VotingHistoryCountFilter = {
   kind: "voting-history-count";
   key: string;
   type: "primary" | "general";
   windowYears: number;
   comparator: "at_least" | "exactly";
   count: number;
+};
+
+// Membership in specific named elections. `mode` picks the set semantics: "any"
+// matches a person who voted in at least one selected election, "all" requires
+// every one. Each value is an election's stable key (e.g. `2024-06-primary`);
+// the option set is precomputed per version (see `queries/elections`).
+export type VotingHistoryDetailFilter = {
+  kind: "voting-history-detail";
+  key: string;
+  mode: "any" | "all";
+  elections: string[];
 };
 
 // Single UI element, multiple underlying columns. Each sub-field is
@@ -111,7 +122,8 @@ export type Filter =
   | TextFilter
   | TextMultiFilter
   | DateRangeFilter
-  | VotingHistoryFilter
+  | VotingHistoryCountFilter
+  | VotingHistoryDetailFilter
   | AddressFilter
   | CanvassOutcomeFilter
   | CanvassResponseFilter
@@ -140,6 +152,7 @@ export type FilterDef =
   | { kind: "text-multi"; key: string; label: string }
   | { kind: "date-range"; key: string; label: string }
   | { kind: "voting-history-count"; key: string; label: string }
+  | { kind: "voting-history-detail"; key: string; label: string }
   | { kind: "address"; key: "address"; label: string }
   | {
       kind: "canvass-outcome";
@@ -202,7 +215,9 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "canvass-response")
     return { kind: "canvass-response", key: "canvass_response", questionId: null, optionIds: [] };
   if (def.kind === "segment") return { kind: "segment", key: "segment", segmentId: null };
-  // Voting history default: "voted in 1+ recent primaries" (single prime).
+  if (def.kind === "voting-history-detail")
+    return { kind: "voting-history-detail", key: def.key, mode: "any", elections: [] };
+  // Voting history count default: "voted in 1+ recent primaries" (single prime).
   return {
     kind: "voting-history-count",
     key: def.key,
@@ -232,6 +247,7 @@ export function isActiveFilter(f: Filter): boolean {
   if (f.kind === "canvass-response") return f.questionId != null && f.optionIds.length > 0;
   if (f.kind === "segment") return f.segmentId != null;
   if (f.kind === "nested") return f.criteria.steps.length > 0;
+  if (f.kind === "voting-history-detail") return f.elections.length > 0;
   // voting-history-count: active when window and count are non-degenerate.
   return f.windowYears > 0 && f.count >= 0;
 }
