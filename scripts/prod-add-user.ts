@@ -1,6 +1,6 @@
 import meow from "meow";
-import { and, db, eq, isNull } from "@field-tools/db";
-import { memberships, organizations, users } from "@field-tools/db/schema";
+import { and, db, eq, isNull } from "@turf-tools/db";
+import { memberships, organizations, users } from "@turf-tools/db/schema";
 import { createLogger } from "./_logging";
 
 const log = createLogger("add-user");

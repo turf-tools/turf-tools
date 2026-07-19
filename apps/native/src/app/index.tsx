@@ -88,7 +88,7 @@ export default function LandingScreen() {
           className="mb-2 text-5xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
           style={{ fontFamily: "Geist_700Bold" }}
         >
-          Field Tools
+          Turf Tools
         </Text>
         <Text
           className="mt-2 mb-4 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"

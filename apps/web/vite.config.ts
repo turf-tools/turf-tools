@@ -15,7 +15,7 @@ export default defineConfig({
     host: "0.0.0.0",
   },
   ssr: {
-    noExternal: ["@field-tools/db", "@electric-sql/pglite"],
+    noExternal: ["@turf-tools/db", "@electric-sql/pglite"],
   },
   plugins: isTest
     ? []

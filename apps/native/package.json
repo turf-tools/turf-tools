@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.1",
-    "@field-tools/db": "workspace:^",
     "@gorhom/bottom-sheet": "^5.2.9",
     "@maplibre/maplibre-react-native": "^10.4.2",
     "@orpc/client": "^1.13.13",
@@ -27,6 +26,7 @@
     "@tanstack/react-db": "^0.1.83",
     "@tanstack/react-query": "^5.96.1",
     "@tanstack/react-query-persist-client": "^5.96.2",
+    "@turf-tools/db": "workspace:^",
     "expo": "~55.0.12",
     "expo-camera": "~55.0.14",
     "expo-constants": "~55.0.12",

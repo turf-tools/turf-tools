@@ -7,7 +7,7 @@ import type { StorageAdapter } from "@tanstack/offline-transactions/react-native
 import { useQueryClient } from "@tanstack/react-query";
 import { getDefaultStore } from "jotai";
 import { useCallback, useEffect, useState } from "react";
-import type { CanvassEventPayload } from "@field-tools/db/schema";
+import type { CanvassEventPayload } from "@turf-tools/db/schema";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
 import { FixedReactNativeOnlineDetector } from "@/lib/online-detector";
 import { queryClient } from "@/lib/query-client";
