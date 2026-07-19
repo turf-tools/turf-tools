@@ -26,13 +26,10 @@ tiger_cache/
 # OSM PBF cache (~700 MB; ad-hoc spike work, regeneratable via Geofabrik).
 osm_cache/
 
-# Large fixture files: only commit the ED-level subsets and the 10k NYC
-# sample. Larger samples (50k, 1M, full statewide) are regeneratable via
-# `scripts/sample_voter_file.py`.
+# Voter-file fixtures are never committed — they hold real NYS voter data
+# (PII). Local-only; regenerate via `scripts/sample_voter_file.py`.
 fixtures/*.parquet
 fixtures/*.txt
-!fixtures/*-ed-*.parquet
-!fixtures/*-10k-sample.parquet
 
 # Quickwit local data
 qwdata/
