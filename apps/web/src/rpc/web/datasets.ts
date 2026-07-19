@@ -40,7 +40,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       versionId: datasetVersions.datasetVersionId,
       versionNumber: datasetVersions.versionNumber,
       status: datasetVersions.status,
-      rowCount: datasetVersions.rowCount,
+      derivedMetadata: datasetVersions.derivedMetadata,
       importedAt: datasetVersions.createdAt,
       archivedAt: datasetVersions.archivedAt,
       importStep: datasetVersions.importStep,
@@ -52,8 +52,10 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
     .where(eq(datasetOrganizations.organizationId, context.organizationId))
     .orderBy(asc(datasets.name), desc(datasetVersions.versionNumber));
 
-  return rows.map((r) => ({
+  // `rowCount` now lives in the derived-metadata blob (see DerivedMetadata).
+  return rows.map(({ derivedMetadata, ...r }) => ({
     ...r,
+    rowCount: derivedMetadata?.rowCount ?? null,
     isActive: r.versionId === activeDatasetVersionId,
     isArchived: r.archivedAt != null,
   }));
@@ -289,3 +291,24 @@ export const manifest = pub.input(z.object({}).optional()).handler(async ({ cont
   if (!row) return null;
   return { manifest: row.manifest as Manifest, versionId: row.versionId };
 });
+
+export type Election = { value: string; label: string };
+
+// Distinct elections in the org's active dataset — the voting-history-detail
+// filter's picker options. Read straight from the version's derived-metadata
+// blob (precomputed at import), like the manifest — no data-service round trip,
+// no per-request scan. Follows `organizations.activeDatasetVersionId`.
+export const elections = pub
+  .input(z.object({}).optional())
+  .handler(async ({ context }): Promise<{ elections: Election[] }> => {
+    const rows = await context.db
+      .select({ derivedMetadata: datasetVersions.derivedMetadata })
+      .from(organizations)
+      .innerJoin(
+        datasetVersions,
+        eq(datasetVersions.datasetVersionId, organizations.activeDatasetVersionId),
+      )
+      .where(eq(organizations.organizationId, context.organizationId))
+      .limit(1);
+    return { elections: rows[0]?.derivedMetadata?.elections ?? [] };
+  });

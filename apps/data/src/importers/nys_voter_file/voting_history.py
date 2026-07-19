@@ -50,6 +50,19 @@ def _classify_description(desc: str) -> str | None:
     return None
 
 
+# Plausible election-year window. Guards the date-first paths (`_RE_MODERN` /
+# `_RE_CODE_FIRST`), which take `year = date[:4]` verbatim — a corrupt 8-digit
+# date like `38120810 GE(P)` would otherwise yield year 3812, which also
+# pollutes the count filter's recency window. Static bounds keep the parser
+# deterministic; the trailing-status path is already bounded by `_RE_YEAR_4`.
+_YEAR_MIN = 1900
+_YEAR_MAX = 2100
+
+
+def _plausible_year(year: int) -> bool:
+    return _YEAR_MIN <= year <= _YEAR_MAX
+
+
 def _expand_two_digit_year(y: int) -> int:
     # SBOE-realistic pivot: 0-26 → 2000s, else 1900s.
     return 2000 + y if y <= 26 else 1900 + y
@@ -68,7 +81,7 @@ def parse_entry(entry: str) -> dict | None:
     if m := _RE_MODERN.match(entry):
         date, code, method = m.groups()
         etype = ELECTION_TYPE_LABELS.get(code)
-        if etype is None:
+        if etype is None or not _plausible_year(int(date[:4])):
             return None
         return {
             "year": int(date[:4]),
@@ -80,7 +93,7 @@ def parse_entry(entry: str) -> dict | None:
     if m := _RE_CODE_FIRST.match(entry):
         code, date, method = m.groups()
         etype = ELECTION_TYPE_LABELS.get(code)
-        if etype is None:
+        if etype is None or not _plausible_year(int(date[:4])):
             return None
         return {
             "year": int(date[:4]),

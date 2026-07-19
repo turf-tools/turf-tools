@@ -34,9 +34,12 @@ from .criteria import (
     TextFilter,
     TextMultiFieldDef,
     TextMultiFilter,
-    VotingHistoryFieldDef,
-    VotingHistoryFilter,
+    VotingHistoryCountFieldDef,
+    VotingHistoryCountFilter,
+    VotingHistoryDetailFieldDef,
+    VotingHistoryDetailFilter,
 )
+from .elections import election_key_sql
 
 
 class CriteriaError(ValueError):
@@ -161,8 +164,10 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
         return _text_multi_clause(f, _field(catalog, f.key), params)
     if isinstance(f, DateRangeFilter):
         return _date_range_clause(f, _field(catalog, f.key), params)
-    if isinstance(f, VotingHistoryFilter):
-        return _voting_history_clause(f, _field(catalog, f.key), params)
+    if isinstance(f, VotingHistoryCountFilter):
+        return _voting_history_count_clause(f, _field(catalog, f.key), params)
+    if isinstance(f, VotingHistoryDetailFilter):
+        return _voting_history_detail_clause(f, _field(catalog, f.key), params)
     if isinstance(f, AddressFilter):
         return _address_clause(f, _field(catalog, f.key), params)
     if isinstance(f, NestedFilter):
@@ -281,21 +286,40 @@ def _address_clause(f: AddressFilter, def_: FieldDef, params: list[Any]) -> str:
     return "(" + " AND ".join(parts) + ")"
 
 
-def _voting_history_clause(f: VotingHistoryFilter, def_: FieldDef, params: list[Any]) -> str:
-    if not isinstance(def_, VotingHistoryFieldDef):
+def _voting_history_count_clause(f: VotingHistoryCountFilter, def_: FieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, VotingHistoryCountFieldDef):
         raise CriteriaError(f"Field {f.key} is not a voting-history-count field")
     if f.window_years <= 0 or f.count < 0:
         return ""
     types = _VH_TYPE_GROUPS[f.type]
     type_placeholders = ", ".join("?" for _ in types)
     # list_filter + len keeps this a scalar expression (no correlated subquery).
-    # `year(current_date) - ?` keeps the recency window relative to query time.
-    inner = f"len(list_filter({def_.key}, e -> e.year >= year(current_date) - ? AND e.type IN ({type_placeholders})))"
+    # `year > year(current_date) - N` counts the N most recent years inclusive of
+    # the current one — "last 1 year" in 2026 is 2026 only, "last 2" is 2025-2026.
+    inner = (
+        f"len(list_filter({def_.column}, e -> e.year > year(current_date) - ? AND e.type IN ({type_placeholders})))"
+    )
     params.append(f.window_years)
     params.extend(types)
     op = ">=" if f.comparator == "at_least" else "="
     params.append(f.count)
     return f"{inner} {op} ?"
+
+
+def _voting_history_detail_clause(f: VotingHistoryDetailFilter, def_: FieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, VotingHistoryDetailFieldDef):
+        raise CriteriaError(f"Field {f.key} is not a voting-history-detail field")
+    if not f.elections:
+        return ""
+    placeholders = ", ".join("?" for _ in f.elections)
+    params.extend(f.elections)
+    # Project each person's entries to their (year, type) election keys, then
+    # test membership. `election_key_sql` is the same expression the picker
+    # precompute builds its option values from, so keys can't drift. `any` →
+    # overlaps the selected set; `all` → contains every selected election.
+    keys = f"list_transform({def_.column}, e -> {election_key_sql('e')})"
+    fn = "list_has_all" if f.mode == "all" else "list_has_any"
+    return f"{fn}({keys}, [{placeholders}])"
 
 
 def _key_filter_clause(catalog: FieldCatalog, kf: KeyFilter, params: list[Any]) -> str:

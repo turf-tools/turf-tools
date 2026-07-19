@@ -30,6 +30,15 @@ export const datasets = pgTable(
 
 export type DatasetVersionStatus = "importing" | "ready" | "failed";
 
+// Properties derived once from a version's data at import time and cached here,
+// so reads never recompute them over the (immutable) version's rows. Written by
+// the data server's `finalize_version` alongside `manifest`. `rowCount` is the
+// person count; `elections` backs the voting-history-detail filter's picker.
+export type DerivedMetadata = {
+  rowCount?: number;
+  elections?: { value: string; label: string }[];
+};
+
 // An immutable, retained version of a dataset. Never deleted, so any pinned
 // reference (a published turf, a canvass event) always resolves. Its data lives
 // in the DuckLake schema `${dataset.slug}_v${versionNumber}`. `manifest` is the
@@ -43,8 +52,10 @@ export const datasetVersions = pgTable(
       .references(() => datasets.datasetId),
     versionNumber: integer().notNull(),
     manifest: jsonb(),
+    // Derived-once-at-import cache (see `DerivedMetadata`); read like `manifest`.
+    // Holds `rowCount` + `elections`.
+    derivedMetadata: jsonb().$type<DerivedMetadata>(),
     sourceUri: text(),
-    rowCount: integer(),
     // Coarse import progress (step / total), shown as a % while `importing`.
     importStep: integer(),
     importTotalSteps: integer(),

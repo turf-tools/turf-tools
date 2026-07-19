@@ -54,7 +54,8 @@ import {
   type TextFilter,
   type TextMultiFilter,
   type Verb,
-  type VotingHistoryFilter,
+  type VotingHistoryCountFilter,
+  type VotingHistoryDetailFilter,
   VERB_META,
 } from "~/lib/filters";
 import {
@@ -65,6 +66,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import { electionsQuery } from "~/lib/queries/elections";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { useFilterCatalog } from "~/lib/manifest";
 import { findCyclicSegmentIds, type SegmentLike } from "~/lib/segment-refs";
@@ -673,7 +675,10 @@ function StepRow({
         <DateRangeFilterEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "voting-history-count" && def?.kind === "voting-history-count" ? (
-        <VotingHistoryFilterEditor filter={filter} onChange={onChange} />
+        <VotingHistoryCountEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {filter.kind === "voting-history-detail" && def?.kind === "voting-history-detail" ? (
+        <VotingHistoryDetailEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "address" && def?.kind === "address" ? (
         <AddressFilterEditor filter={filter} onChange={onChange} />
@@ -1199,11 +1204,11 @@ function DateRangeFilterEditor({
   );
 }
 
-function VotingHistoryFilterEditor({
+function VotingHistoryCountEditor({
   filter,
   onChange,
 }: {
-  filter: VotingHistoryFilter;
+  filter: VotingHistoryCountFilter;
   onChange: (next: Filter) => void;
 }) {
   const [localCount, setLocalCount] = useState(String(filter.count));
@@ -1283,6 +1288,70 @@ function VotingHistoryFilterEditor({
           className="h-7 w-12 px-2"
         />
         <span className="text-muted-foreground">years</span>
+      </div>
+    </div>
+  );
+}
+
+function VotingHistoryDetailEditor({
+  filter,
+  onChange,
+}: {
+  filter: VotingHistoryDetailFilter;
+  onChange: (next: Filter) => void;
+}) {
+  // Elections are precomputed per active dataset (immutable, cached hard). Gate
+  // on data so first load doesn't flash the empty state; the global spinner
+  // covers the wait.
+  const { data } = useQuery(electionsQuery());
+  const toggle = (value: string) => {
+    const next = filter.elections.includes(value)
+      ? filter.elections.filter((v) => v !== value)
+      : [...filter.elections, value];
+    onChange({ ...filter, elections: next });
+  };
+  const radioClass = "aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground";
+  if (!data) return null;
+  if (data.elections.length === 0) {
+    return <p className="text-sm text-muted-foreground">No elections in this dataset.</p>;
+  }
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">Voted in</span>
+        <Toggle
+          size="sm"
+          variant="outline"
+          pressed={filter.mode === "any"}
+          onPressedChange={(p) => p && onChange({ ...filter, mode: "any" })}
+          className={radioClass}
+        >
+          Any
+        </Toggle>
+        <Toggle
+          size="sm"
+          variant="outline"
+          pressed={filter.mode === "all"}
+          onPressedChange={(p) => p && onChange({ ...filter, mode: "all" })}
+          className={radioClass}
+        >
+          All
+        </Toggle>
+        <span className="text-muted-foreground">of:</span>
+      </div>
+      <div className="flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+        {data.elections.map((e) => (
+          <Toggle
+            key={e.value}
+            size="sm"
+            variant="outline"
+            pressed={filter.elections.includes(e.value)}
+            onPressedChange={() => toggle(e.value)}
+            className={cn("h-7 w-full shrink-0 justify-start", radioClass)}
+          >
+            {e.label}
+          </Toggle>
+        ))}
       </div>
     </div>
   );
