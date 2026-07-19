@@ -32,4 +32,7 @@ export const responseOptions = pgTable("response_options", {
     .notNull()
     .references(() => users.id),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  // Soft-delete: keep the row so responses/segment filters referencing this
+  // option id stay resolvable; hidden from active pickers + the live script.
+  archivedAt: timestamp({ withTimezone: true }),
 });
