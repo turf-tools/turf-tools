@@ -39,7 +39,29 @@ class UserDataStorageConfig(S3StorageConfig):
     model_config = {"env_prefix": "USER_DATA_STORAGE_"}
 
 
-class Settings(BaseSettings):
+class TurfScoreSettings(BaseSettings):
+    """Turf scoring settings loaded independently of service configuration."""
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+    turf_score_unreachable_transition_m: float = Field(
+        default=100_000.0,
+        gt=0,
+        description="Transition cost when two blockfaces are unreachable and lack midpoint geometry.",
+    )
+    turf_score_euclidean_detour_factor: float = Field(
+        default=1.5,
+        gt=0,
+        description="Multiplier applied to straight-line distance for disconnected blockfaces.",
+    )
+    turf_score_zone_power: float = Field(
+        default=3.0,
+        gt=0,
+        description="Power used to aggregate individual turf scores into a zone score.",
+    )
+
+
+class Settings(TurfScoreSettings):
     """Application settings loaded from environment variables."""
 
     model_config = {"env_file": ".env"}
@@ -142,3 +164,8 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Create and return application settings from environment variables."""
     return Settings()
+
+
+def get_turf_score_settings() -> TurfScoreSettings:
+    """Load turf scoring settings without requiring service configuration."""
+    return TurfScoreSettings()
