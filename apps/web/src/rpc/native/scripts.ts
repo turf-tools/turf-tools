@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "@turf-tools/db";
+import { and, asc, eq, inArray, isNull } from "@turf-tools/db";
 import { scripts, scriptSteps, questions, responseOptions } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { nativePub as pub } from "../context";
@@ -66,7 +66,12 @@ export const get = pub
               order: responseOptions.order,
             })
             .from(responseOptions)
-            .where(inArray(responseOptions.questionId, questionIds))
+            .where(
+              and(
+                inArray(responseOptions.questionId, questionIds),
+                isNull(responseOptions.archivedAt),
+              ),
+            )
             .orderBy(asc(responseOptions.order));
     const optionsByQuestion = new Map<string, typeof optionRows>();
     for (const opt of optionRows) {

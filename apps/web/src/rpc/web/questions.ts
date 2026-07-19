@@ -70,14 +70,19 @@ export const list = pub
     return rows.map((r) => ({ ...r, usedCount: countMap.get(r.questionId) ?? 0 }));
   });
 
-// Active questions with their response options inlined — one round-trip so
-// pickers (the canvass-response filter editor) get names + options without a
-// per-question follow-up.
+// Questions (active + archived, flagged) with their response options inlined —
+// one round-trip so the canvass-response filter editor gets names + options
+// without a per-question follow-up. It offers active by default and reveals
+// archived on demand (so filters on since-archived questions/options resolve).
 export const listWithOptions = pub.handler(async ({ context }) => {
   const qs = await context.db
-    .select({ questionId: questions.questionId, name: questions.name })
+    .select({
+      questionId: questions.questionId,
+      name: questions.name,
+      archivedAt: questions.archivedAt,
+    })
     .from(questions)
-    .where(and(eq(questions.organizationId, context.organizationId), isNull(questions.archivedAt)))
+    .where(eq(questions.organizationId, context.organizationId))
     .orderBy(asc(questions.createdAt));
   if (qs.length === 0) return [];
 
@@ -86,6 +91,7 @@ export const listWithOptions = pub.handler(async ({ context }) => {
       questionId: responseOptions.questionId,
       responseOptionId: responseOptions.responseOptionId,
       text: responseOptions.text,
+      archivedAt: responseOptions.archivedAt,
     })
     .from(responseOptions)
     .where(
@@ -96,13 +102,28 @@ export const listWithOptions = pub.handler(async ({ context }) => {
     )
     .orderBy(asc(responseOptions.order));
 
-  const byQuestion = new Map<string, { responseOptionId: string; text: string }[]>();
+  // Include archived options (flagged). The segment editor must still render an
+  // archived option an existing filter references, so it stays removable;
+  // offering only active options is done client-side.
+  const byQuestion = new Map<
+    string,
+    { responseOptionId: string; text: string; archived: boolean }[]
+  >();
   for (const o of opts) {
     const list = byQuestion.get(o.questionId) ?? [];
-    list.push({ responseOptionId: o.responseOptionId, text: o.text });
+    list.push({
+      responseOptionId: o.responseOptionId,
+      text: o.text,
+      archived: o.archivedAt !== null,
+    });
     byQuestion.set(o.questionId, list);
   }
-  return qs.map((q) => ({ ...q, options: byQuestion.get(q.questionId) ?? [] }));
+  return qs.map((q) => ({
+    questionId: q.questionId,
+    name: q.name,
+    archived: q.archivedAt !== null,
+    options: byQuestion.get(q.questionId) ?? [],
+  }));
 });
 
 export const getById = pub
@@ -123,7 +144,9 @@ export const getById = pub
     const options = await context.db
       .select(optionSelect)
       .from(responseOptions)
-      .where(eq(responseOptions.questionId, input.questionId))
+      .where(
+        and(eq(responseOptions.questionId, input.questionId), isNull(responseOptions.archivedAt)),
+      )
       .orderBy(asc(responseOptions.order));
 
     return { ...question, options };
@@ -298,8 +321,11 @@ export const removeResponseOption = pub
         ),
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    // Soft-delete: canvass responses + segment filters reference this option id
+    // and must stay resolvable.
     await context.db
-      .delete(responseOptions)
+      .update(responseOptions)
+      .set({ archivedAt: new Date() })
       .where(
         and(
           eq(responseOptions.responseOptionId, input.responseOptionId),
