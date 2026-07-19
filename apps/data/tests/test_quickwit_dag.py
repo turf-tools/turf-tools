@@ -208,6 +208,10 @@ def _run_quickwit_benchmark(
             "or drop the v0.8.2 tarball at <repo>/quickwit-v0.8.2/."
         )
 
+    # Voter fixtures are gitignored (PII) — skip if not present locally.
+    if not Path(VOTER_FILE_URL).exists():
+        pytest.skip(f"Voter fixture not present at {VOTER_FILE_URL} — regenerate via scripts/sample_voter_file.py.")
+
     index_id = f"{schema}-index"
     port = _pick_free_port()
     config_path, index_config_path = _write_quickwit_runtime(tmp_path, index_id, port)
