@@ -404,7 +404,7 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
       ) : !person ? (
         <Centered>{isFetching ? "" : "Person not found."}</Centered>
       ) : (
-        <div className="flex flex-col gap-5 p-5">
+        <div className="flex flex-col gap-5 px-5 py-4">
           <DetailHeader person={person} defByColumn={defByColumn} />
           {blocks.length > 0 ? (
             <div className="flex flex-col">
