@@ -198,9 +198,7 @@ def test_quickwit_index_and_search(dual_conn, tmp_path):
 
             # Alphabetical (last, first) order via the packed u64 sort keys. On
             # 0.8.2 the `-` prefix ascends, so this is A→Z.
-            ordered = qw_client.search(
-                qw_settings, index_id, "state:NY", sort_by="-sort_key_hi,-sort_key_lo"
-            )
+            ordered = qw_client.search(qw_settings, index_id, "state:NY", sort_by="-sort_key_hi,-sort_key_lo")
             assert [(h["last_name"], h["first_name"]) for h in ordered["hits"]] == [
                 ("DOE", "JANE"),
                 ("DOE", "JOHN"),
