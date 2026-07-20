@@ -10,7 +10,8 @@
   "scripts": {
     "db": "drizzle-kit",
     "seed": "tsx --env-file-if-exists=.env src/seed.ts",
-    "mock": "tsx --env-file-if-exists=.env src/mock.ts"
+    "mock": "tsx --env-file-if-exists=.env src/mock.ts",
+    "quickwit-db": "tsx --env-file-if-exists=.env src/ensure-quickwit-db.ts"
   },
   "dependencies": {
     "drizzle-orm": "beta",

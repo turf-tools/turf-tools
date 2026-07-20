@@ -16,12 +16,13 @@ from hamilton import driver
 from pydantic import BaseModel
 
 from src import postgres
-from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, tiger
+from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, quickwit, tiger
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, ProgressNodeHook
 from src.importers.registry import get_importer
 from src.job_runner import JobContext, job
+from src.quickwit import ensure_index, persons_index_id
 from src.settings import get_settings
 from src.tables import dataset_version_schema, ensure_schema, finalize_version
 
@@ -110,9 +111,10 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
             .build()
         )
         dag_steps = sum(1 for n in dr.graph.get_upstream_nodes(_FINAL_VARS)[0] if n.name not in input_keys)
-        # +1 for the post-DAG derived-metadata pass (a full unnest+count over
-        # persons_geocoded), so it doesn't sit "stuck" at 100% while it runs.
-        progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 1)
+        # +2 for the post-DAG passes not in the main graph: the Quickwit index
+        # build and the derived-metadata unnest+count — so the bar doesn't sit
+        # "stuck" near 100% while they run.
+        progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 2)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
         persons_validated = importer.load(payload.source, schema, conn, progress)
@@ -136,6 +138,34 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
                     "tiger_tabblock_raw": result["tiger_tabblock_raw"],
                 },
             )
+
+        # Index persons into Quickwit for the search / Lookup feature — a
+        # per-version index (`persons_<schema>`). Create it first (local-ingest
+        # appends), then the DAG node bulk-loads via CLI local-ingest, publishing
+        # to the shared Postgres metastore the searcher reads. Best-effort: search
+        # is an add-on, so a Quickwit hiccup must not sink an expensive geocode
+        # import — the version still becomes usable (segments/zones/canvass), and
+        # search can be backfilled by reindexing. Failure is logged loudly.
+        index_id = persons_index_id(schema)
+        try:
+            ensure_index(settings, index_id)
+            # Hook-less driver: this is one progress unit (the explicit advance
+            # below). Running it through the shared `dr` (with ProgressNodeHook)
+            # would advance once per Quickwit node and blow past 100%.
+            driver.Builder().with_modules(quickwit).build().execute(
+                final_vars=["quickwit_build_manifest_stub"],
+                inputs={
+                    "persons_table_ref": result["persons_geocoded"],
+                    "quickwit_binary_path": settings.quickwit_binary,
+                    "quickwit_config_path": settings.quickwit_config_path,
+                    "quickwit_index_id": index_id,
+                    "quickwit_batch_size": settings.quickwit_batch_size,
+                    "conn": conn,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — search indexing is non-fatal
+            print(f"WARNING: Quickwit indexing failed for {index_id}: {exc}", flush=True)
+        progress.advance()
 
         geocoded_fqn = result["persons_geocoded"].fqn
         derived = compute_derived_metadata(conn, geocoded_fqn, manifest)

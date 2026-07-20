@@ -296,9 +296,7 @@ def _voting_history_count_clause(f: VotingHistoryCountFilter, def_: FieldDef, pa
     # list_filter + len keeps this a scalar expression (no correlated subquery).
     # `year > year(current_date) - N` counts the N most recent years inclusive of
     # the current one — "last 1 year" in 2026 is 2026 only, "last 2" is 2025-2026.
-    inner = (
-        f"len(list_filter({def_.column}, e -> e.year > year(current_date) - ? AND e.type IN ({type_placeholders})))"
-    )
+    inner = f"len(list_filter({def_.column}, e -> e.year > year(current_date) - ? AND e.type IN ({type_placeholders})))"
     params.append(f.window_years)
     params.extend(types)
     op = ">=" if f.comparator == "at_least" else "="

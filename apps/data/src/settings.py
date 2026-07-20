@@ -157,6 +157,18 @@ class Settings(BaseSettings):
             "if the builder machine has enough memory."
         ),
     )
+    quickwit_url: str = Field(
+        default="http://127.0.0.1:7280",
+        description="Base URL of the Quickwit searcher's REST API (index create + search).",
+    )
+    quickwit_binary: str = Field(
+        default="quickwit",
+        description="Path to the Quickwit CLI binary used for `tool local-ingest`.",
+    )
+    quickwit_config_path: str = Field(
+        default="config/quickwit.yaml",
+        description="Quickwit node config passed to `local-ingest` (carries the metastore URI).",
+    )
 
 
 def get_settings() -> Settings:
