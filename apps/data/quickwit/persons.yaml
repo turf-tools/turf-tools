@@ -38,6 +38,18 @@ doc_mapping:
       type: text
       tokenizer: raw
       stored: true
+    # Alphabetical sort key for the Lookup list. Quickwit 0.8.2 can't sort on a
+    # text field, so the first 16 chars of "LAST FIRST" are packed into two
+    # big-endian u64 fast fields (see dags/quickwit.py); u64 order then matches
+    # lexicographic order, so sorting by (hi, lo) gives A→Z. Not returned.
+    - name: sort_key_hi
+      type: u64
+      fast: true
+      stored: false
+    - name: sort_key_lo
+      type: u64
+      fast: true
+      stored: false
 search_settings:
   default_search_fields:
     - first_name

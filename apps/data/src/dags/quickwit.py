@@ -30,6 +30,18 @@ _REQUIRED_COLUMNS = [
 ]
 
 
+# The Lookup list is sorted A→Z by name, but Quickwit 0.8.2 can't sort on a text
+# field. So we pack the first 16 chars of the padded sort key `sk` ("LAST FIRST",
+# uppercased/accent-stripped) into two big-endian u64 fast fields: each char
+# becomes a byte, high char = high byte, so u64 order == lexicographic order and
+# sorting by (hi, lo) is alphabetical. `least(..., 255)` guards the rare non-Latin
+# codepoint from overflowing a byte.
+def _packed_name_key(start: int) -> str:
+    """DuckDB expr packing 8 chars of `sk` from 1-indexed `start` into a u64."""
+    chars = f"[least(ascii(sk[i:i]), 255)::UBIGINT for i in range({start}, {start + 8})]"
+    return f"list_reduce({chars}, (a, b) -> a * 256 + b)"
+
+
 def quickwit_source_persons(
     persons_table_ref: TableRef,
     conn: duckdb.DuckDBPyConnection,
@@ -87,7 +99,11 @@ def quickwit_local_ingest_result(
     indexed_doc_count = 0
     batch_count = 0
 
+    sort_key = "rpad(substr(upper(strip_accents(concat_ws(' ', last_name, first_name))), 1, 16), 16, ' ')"
     query = f"""
+        WITH prepared AS (
+            SELECT *, {sort_key} AS sk FROM {source_fqn}
+        )
         SELECT
             to_json(
                 struct_pack(
@@ -100,10 +116,12 @@ def quickwit_local_ingest_result(
                     city := city,
                     state := state,
                     zip5 := zip5,
-                    zip4 := zip4
+                    zip4 := zip4,
+                    sort_key_hi := {_packed_name_key(1)},
+                    sort_key_lo := {_packed_name_key(9)}
                 )
             ) AS ndjson_line
-        FROM {source_fqn}
+        FROM prepared
         ORDER BY external_id
     """
 

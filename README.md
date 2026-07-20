@@ -108,3 +108,9 @@ pnpm db:clear    # wipe PGlite data
 pnpm data:clear  # wipe DuckLake + local turf blobs
 pnpm clear       # wipe everything (PGlite + DuckLake + turf blobs)
 ```
+
+`pnpm data:mock` does not build the Quickwit search index (the searcher isn't guaranteed to be running during setup). To make an existing dataset version searchable — powering the Lookup tab — start the searcher (`pnpm dev:search`) and backfill it:
+
+```bash
+cd apps/data && uv run seed-search --schema <schema>
+```
