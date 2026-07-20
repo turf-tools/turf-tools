@@ -22,6 +22,7 @@ from src.import_progress import NullProgress
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
+from src.quickwit import ensure_index, persons_index_id
 from src.settings import get_settings
 from src.tables import (
     PERSON_CATALOG,
@@ -148,6 +149,50 @@ def seed_boundaries() -> None:
 
     conn.close()
     print("Boundaries seeded.")
+
+
+def seed_search() -> None:
+    """Index a dataset version's persons into Quickwit for the Lookup search.
+
+    Creates the per-version index (`persons_<schema>`) if absent, then
+    local-ingests `persons_geocoded`. This is the standalone/backfill analogue of
+    the import's indexing step — use it to make an existing version searchable
+    without a re-import, or after `seed-persons` in dev. Requires the Quickwit
+    searcher to be running (`pnpm dev:search`).
+
+        uv run seed-search --schema nys_voter_file_v1
+    """
+    parser = argparse.ArgumentParser(prog="seed-search", description=seed_search.__doc__)
+    parser.add_argument(
+        "--schema",
+        default=_DEFAULT_SCHEMA,
+        help=f"Dataset-version schema to index persons from (default: {_DEFAULT_SCHEMA!r}).",
+    )
+    args = parser.parse_args()
+
+    settings = get_settings()
+    conn = get_connection(settings)
+    index_id = persons_index_id(args.schema)
+    ensure_index(settings, index_id)
+    persons_ref = TableRef(catalog=PERSON_CATALOG, schema=args.schema, table="persons_geocoded", version=0)
+    result = (
+        driver.Builder()
+        .with_modules(quickwit)
+        .build()
+        .execute(
+            final_vars=["quickwit_build_manifest_stub"],
+            inputs={
+                "persons_table_ref": persons_ref,
+                "quickwit_binary_path": settings.quickwit_binary,
+                "quickwit_config_path": settings.quickwit_config_path,
+                "quickwit_index_id": index_id,
+                "quickwit_batch_size": settings.quickwit_batch_size,
+                "conn": conn,
+            },
+        )["quickwit_build_manifest_stub"]
+    )
+    conn.close()
+    print(f"Indexed {result.indexed_doc_count:,} persons into Quickwit index {index_id}.")
 
 
 def reset_ducklake(include_geo: bool = False) -> None:

@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ClipboardPen,
+  Search,
   Settings,
   Users,
   Waypoints,
@@ -31,6 +32,7 @@ const PRIMARY: NavItem[] = [
   { to: "/$orgSlug/segments", label: "Segments", icon: Layers },
   { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints },
   { to: "/$orgSlug/turfs", label: "Turfs", icon: Map },
+  { to: "/$orgSlug/lookup", label: "Lookup", icon: Search },
   { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen },
   { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck },
 ];
