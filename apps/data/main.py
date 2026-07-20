@@ -1,5 +1,6 @@
 import array
 import asyncio
+import json
 import logging
 import os
 import tempfile
@@ -19,6 +20,8 @@ from src.dsl.resolve import resolve_criteria
 from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
+from src.quickwit import build_person_query, persons_index_id
+from src.quickwit import search as quickwit_search
 from src.settings import get_settings
 from src.tables import NoActiveDatasetError, resolve, resolve_version, table_fqn
 
@@ -341,6 +344,86 @@ async def persons_sample(req: _PersonsSampleRequest):
             for r in rows
         ]
     }
+
+
+class _PersonsSearchRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    first_name: str = Field("", validation_alias="firstName")
+    last_name: str = Field("", validation_alias="lastName")
+    address: str = ""
+    city: str = ""
+    zip: str = ""  # noqa: A003
+    external_id: str = Field("", validation_alias="externalId")
+    limit: int = 25
+    offset: int = 0
+
+
+@app.post("/persons/search")
+async def persons_search(req: _PersonsSearchRequest):
+    """Structured person search (name / address / id, AND-ed) over the org's
+    active-version Quickwit index — powers the Lookup tab. Name/address prefix-
+    match; results are paginated. Empty when no fields are filled or the version
+    has no index yet.
+    """
+    query = build_person_query(
+        first_name=req.first_name,
+        last_name=req.last_name,
+        address=req.address,
+        city=req.city,
+        zip5=req.zip,
+        external_id=req.external_id,
+    )
+    if not query:
+        return {"numHits": 0, "hits": [], "offset": req.offset, "limit": req.limit}
+    conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    index_id = persons_index_id(version.schema)
+    result = quickwit_search(
+        settings,
+        index_id,
+        query,
+        max_hits=max(1, min(req.limit, 100)),
+        start_offset=max(0, req.offset),
+        # A→Z by name. sort_key_hi/lo pack the name into sortable u64s (see the
+        # quickwit DAG); on 0.8.2 the `-` prefix is ascending (its default is
+        # descending, opposite the newer docs).
+        sort_by="-sort_key_hi,-sort_key_lo",
+    )
+    return {**result, "offset": req.offset, "limit": req.limit}
+
+
+class _PersonDetailRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    external_id: str = Field(validation_alias="externalId")
+
+
+@app.post("/persons/detail")
+async def person_detail(req: _PersonDetailRequest):
+    """The full lake record for one person (by external_id) — the Lookup detail
+    pane. The search index only holds name/address; everything else (party,
+    districts, voting history, …) lives in `persons_geocoded`. Returns
+    ``{person: {<column>: value, …, votingHistory: [...]}}`` or ``{person: null}``.
+    """
+    conn = get_connection(settings, read_only=True)
+    version = resolve_version(conn, settings, req.org_slug)
+    # Return every column (we don't have the manifest here to whitelist), minus a
+    # few internal geocoding/matching fields the detail pane never shows. These
+    # always exist on persons_geocoded, so EXCLUDE is safe.
+    sql = resolve(
+        "SELECT * EXCLUDE ("
+        "voting_history, building_id, door_id, blockface_id, "
+        "match_score, position_source, latitude, longitude"
+        "), to_json(voting_history) AS voting_history "
+        "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",
+        version.schema,
+    )
+    cursor = conn.execute(sql, [req.external_id])
+    row = cursor.fetchone()
+    if row is None:
+        return {"person": None}
+    person = dict(zip([d[0] for d in cursor.description], row, strict=True))
+    person["votingHistory"] = json.loads(person.pop("voting_history") or "[]")
+    return {"person": person}
 
 
 class _PersonsCountByKeyRequest(_WireBaseModel):

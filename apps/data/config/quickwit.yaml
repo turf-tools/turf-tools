@@ -3,3 +3,10 @@ listen_address: 127.0.0.1
 rest:
   listen_port: 7280
 data_dir: qwdata
+# Postgres metastore (its own database, NOT the app's public schema — Quickwit
+# creates ~15 tables). Lets the running searcher + a separate `local-ingest`
+# process safely share an index; a file metastore has no locking and would
+# corrupt under concurrent writers. Splits still land under data_dir (local for
+# single-box dev / 1-box; point default_index_root_uri at object storage for
+# multi-box).
+metastore_uri: postgres://postgres:postgres@127.0.0.1:5432/quickwit

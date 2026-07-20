@@ -2,6 +2,7 @@ import { z } from "zod";
 import { webPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
 import * as datasets from "./web/datasets";
+import * as persons from "./web/persons";
 import * as scripts from "./web/scripts";
 import * as segments from "./web/segments";
 import * as questions from "./web/questions";
@@ -52,6 +53,10 @@ export const webRouter = {
     sample: segments.sample,
     countByKey: segments.countByKey,
     listBuildings: segments.listBuildings,
+  },
+  persons: {
+    search: persons.search,
+    detail: persons.detail,
   },
   zoneGroups: {
     list: zoneGroups.list,
