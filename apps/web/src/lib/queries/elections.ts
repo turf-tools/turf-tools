@@ -11,4 +11,8 @@ export const electionsQuery = () =>
     queryKey: ["elections"] as const,
     queryFn: () => client.datasets.elections(),
     staleTime: Number.POSITIVE_INFINITY,
+    // Observers only exist while a detail-filter card is open; without this the
+    // loader-prefetched entry gets GC'd after 5 idle minutes and the next mount
+    // flashes an empty picker.
+    gcTime: Number.POSITIVE_INFINITY,
   });
