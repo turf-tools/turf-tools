@@ -72,7 +72,12 @@ def criteria_to_where(
     clauses = [c for c in [expr, _key_filter_clause(catalog, key_filter, params) if key_filter else ""] if c]
     if not clauses:
         return ""
-    return f"WHERE {' AND '.join(clauses)}"
+    if len(clauses) == 1:
+        return f"WHERE {clauses[0]}"
+    # Parenthesise both sides: a criteria expression ending in an `add` step is
+    # a top-level OR, which a bare AND-join would out-bind — leaking the
+    # narrow-prefix matches past the key filter.
+    return f"WHERE {' AND '.join(f'({c})' for c in clauses)}"
 
 
 def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, params: list[Any]) -> str:
