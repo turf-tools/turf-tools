@@ -357,7 +357,9 @@ export const reorderResponseOptions = pub
     const existing = await context.db
       .select({ responseOptionId: responseOptions.responseOptionId })
       .from(responseOptions)
-      .where(eq(responseOptions.questionId, input.questionId));
+      .where(
+        and(eq(responseOptions.questionId, input.questionId), isNull(responseOptions.archivedAt)),
+      );
     const existingIds = new Set(existing.map((r) => r.responseOptionId));
     for (const id of input.responseOptionIds) {
       if (!existingIds.has(id))
