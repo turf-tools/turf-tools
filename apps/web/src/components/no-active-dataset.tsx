@@ -33,7 +33,7 @@ export function NoActiveDataset({
         <DialogTitle>No dataset yet</DialogTitle>
         <DialogDescription>
           {canManage
-            ? `Import a dataset to start building ${entity}`
+            ? `Import a dataset to start using ${entity}`
             : "No dataset has been set up yet. Ask an admin to import one"}
         </DialogDescription>
         <div className="mt-2 flex justify-end gap-2">

@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { EditorHeader } from "~/components/editor-header";
 import { Input } from "~/components/input";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Pill } from "~/components/pill";
 import { formatDate } from "~/lib/format";
 import type { ManifestFieldDef } from "~/lib/manifest";
@@ -15,11 +16,15 @@ import {
   personsSearchQuery,
 } from "~/lib/queries/persons";
 import { manifestQuery } from "~/lib/queries/manifest";
+import { hasPermission } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn, toTitleCase } from "~/lib/utils";
 
-export const Route = createFileRoute("/$orgSlug/lookup")({ component: Lookup });
+export const Route = createFileRoute("/$orgSlug/lookup")({
+  loader: ({ context: { queryClient } }) => queryClient.fetchQuery(manifestQuery()),
+  component: Lookup,
+});
 
 const PAGE_SIZE = 25;
 const TZ = DEFAULT_DISPLAY_TIMEZONE;
@@ -63,6 +68,9 @@ const ELECTION_TYPE_LABELS: Record<string, string> = {
 };
 
 function Lookup() {
+  const { orgSlug } = Route.useParams();
+  const { role } = Route.useRouteContext();
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
   const shouldFade = useFadeOnce("/lookup");
   const [fields, setFields] = useState<PersonSearchFields>(EMPTY_FIELDS);
   const [debounced, setDebounced] = useState<PersonSearchFields>(EMPTY_FIELDS);
@@ -90,6 +98,18 @@ function Lookup() {
   // Distinguishes "results loaded" (show table / no-matches) from "a fresh
   // search is in flight with nothing yet" (show a clean blank, not stale rows).
   const hasData = data != null;
+
+  // No active dataset → nobody to look up; block the page behind a modal
+  // pointing to Data (dismiss returns to Overview).
+  if (!manifest) {
+    return (
+      <NoActiveDataset
+        entity="lookups"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  }
 
   return (
     <div className={cn("flex h-[calc(100vh-3.5rem)] flex-col px-5 pt-4 pb-5", shouldFade)}>
