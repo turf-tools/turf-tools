@@ -33,7 +33,12 @@ class S3StorageConfig(BaseSettings):
     access_key_id: str = ""
     secret_access_key: str = ""
     bucket: str = ""
+    # Key prefix inside the bucket. A deployment uses one bucket, with the two
+    # lakes and the search index separated by prefix.
+    prefix: str = ""
     region: str = "auto"
+    # DuckDB addressing style. Latitude accepts path; DO Spaces needs vhost.
+    url_style: str = "path"
 
 
 class DucklakeStorageConfig(S3StorageConfig):
@@ -42,10 +47,10 @@ class DucklakeStorageConfig(S3StorageConfig):
     model_config = {"env_prefix": "DUCKLAKE_STORAGE_"}
 
 
-class GeoDucklakeStorageConfig(S3StorageConfig):
+class DucklakeGeoStorageConfig(S3StorageConfig):
     """Object storage for geo DuckLake data files (TIGER-derived Parquet, etc.)."""
 
-    model_config = {"env_prefix": "GEO_DUCKLAKE_STORAGE_"}
+    model_config = {"env_prefix": "DUCKLAKE_GEO_STORAGE_"}
 
 
 class UserDataStorageConfig(S3StorageConfig):
@@ -59,29 +64,6 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env"}
 
-    voter_file_url: str = Field(
-        default="https://zohran-data-backups.nyc3.digitaloceanspaces.com/ny-voters-2026-03-08.parquet",
-        description=(
-            "Public URL where the source voter file (parquet) can be downloaded. "
-            "Used by the seed CLI to tell first-time users where to grab the "
-            "fixture from when one isn't present locally."
-        ),
-    )
-
-    voter_file_fixture: str = Field(
-        default="ny-voters-2026-03-08-nyc.parquet",
-        description=(
-            "Filename of the voter file fixture inside `fixtures_dir` that "
-            "`seed-persons` reads from. Override to point at a smaller sample "
-            "during development."
-        ),
-    )
-
-    fixtures_dir: str = Field(
-        default="fixtures",
-        description=("Directory (relative to apps/data) holding voter file fixtures."),
-    )
-
     ducklake_metadata_postgres_url: str | None = Field(
         default_factory=_default_ducklake_metadata_url,
         description="PostgreSQL connection URL for the DuckLake metadata catalog. If not set, uses local DuckDB file.",
@@ -91,13 +73,13 @@ class Settings(BaseSettings):
     # in prod, where each catalog has its own DB and uses the default schema.
     ducklake_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("ducklake"))
 
-    geo_ducklake_metadata_postgres_url: str | None = Field(
+    ducklake_geo_metadata_postgres_url: str | None = Field(
         default_factory=_default_ducklake_metadata_url,
         description=(
             "PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file."
         ),
     )
-    geo_ducklake_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("geo_ducklake"))
+    ducklake_geo_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("ducklake_geo"))
 
     database_url: str = Field(
         default_factory=_default_database_url,
@@ -105,7 +87,7 @@ class Settings(BaseSettings):
     )
 
     ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)
-    geo_ducklake_storage: GeoDucklakeStorageConfig = Field(default_factory=GeoDucklakeStorageConfig)
+    ducklake_geo_storage: DucklakeGeoStorageConfig = Field(default_factory=DucklakeGeoStorageConfig)
     user_data_storage: UserDataStorageConfig = Field(default_factory=UserDataStorageConfig)
 
     # TIGER download settings
@@ -166,7 +148,7 @@ class Settings(BaseSettings):
         description="Path to the Quickwit CLI binary used for `tool local-ingest`.",
     )
     quickwit_config_path: str = Field(
-        default="config/quickwit.yaml",
+        default="quickwit/node.yaml",
         description="Quickwit node config passed to `local-ingest` (carries the metastore URI).",
     )
 

@@ -1,0 +1,28 @@
+.git
+**/node_modules
+**/.output
+**/.venv
+**/__pycache__
+**/.turbo
+**/dist
+
+# Native app is never containerized.
+apps/native
+
+# Local data + caches — large and machine-specific.
+apps/data/fixtures
+apps/data/local_data
+apps/data/ducklake_geo_local_data
+apps/data/geo_local_data
+apps/data/local_turfs
+apps/data/qwdata
+apps/data/osm_cache
+apps/data/tiger_cache
+apps/data/scripts/output
+apps/data/docs
+apps/data/*.ducklake
+apps/data/*.ducklake.files
+
+**/.env
+**/.env.*
+!**/.env.example

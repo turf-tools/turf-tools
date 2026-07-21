@@ -27,12 +27,12 @@ from src.models import TableRef
 
 
 def _create_osm_addresses(conn) -> TableRef:
-    """Build the geo_ducklake.osm.addresses table fresh. Schema mirrors
+    """Build the ducklake_geo.osm.addresses table fresh. Schema mirrors
     `osm.osm_addresses`."""
-    conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.osm")
-    conn.execute("DROP TABLE IF EXISTS geo_ducklake.osm.addresses")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.osm")
+    conn.execute("DROP TABLE IF EXISTS ducklake_geo.osm.addresses")
     conn.execute("""
-        CREATE TABLE geo_ducklake.osm.addresses (
+        CREATE TABLE ducklake_geo.osm.addresses (
             osm_id        BIGINT,
             kind          VARCHAR,
             housenumber   VARCHAR,
@@ -46,21 +46,21 @@ def _create_osm_addresses(conn) -> TableRef:
             lon           DOUBLE
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="osm", table="addresses", version=0)
+    return TableRef(catalog="ducklake_geo", schema="osm", table="addresses", version=0)
 
 
 def _create_osm_landuse_residential(conn) -> TableRef:
-    """Build the geo_ducklake.osm.landuse_residential table fresh."""
-    conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.osm")
-    conn.execute("DROP TABLE IF EXISTS geo_ducklake.osm.landuse_residential")
+    """Build the ducklake_geo.osm.landuse_residential table fresh."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.osm")
+    conn.execute("DROP TABLE IF EXISTS ducklake_geo.osm.landuse_residential")
     conn.execute("""
-        CREATE TABLE geo_ducklake.osm.landuse_residential (
+        CREATE TABLE ducklake_geo.osm.landuse_residential (
             landuse_id  BIGINT,
             name        VARCHAR,
             geom        GEOMETRY
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="osm", table="landuse_residential", version=0)
+    return TableRef(catalog="ducklake_geo", schema="osm", table="landuse_residential", version=0)
 
 
 def _insert_addr(
@@ -79,7 +79,7 @@ def _insert_addr(
     building="yes",
 ):
     conn.execute(
-        "INSERT INTO geo_ducklake.osm.addresses VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ducklake_geo.osm.addresses VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         [osm_id, kind, housenumber, street, unit, zip_code, city, state, building, lat, lon],
     )
 
@@ -237,7 +237,7 @@ class TestResidentialComplex:
         _insert_addr(conn, 1, "100", "Broadway", lat=40.75, lon=-73.99)
         # Containing polygon — small square around the building.
         conn.execute("""
-            INSERT INTO geo_ducklake.osm.landuse_residential VALUES (
+            INSERT INTO ducklake_geo.osm.landuse_residential VALUES (
                 42, 'Test Complex',
                 ST_GeomFromText('POLYGON((-73.999 40.745, -73.989 40.745,
                                           -73.989 40.755, -73.999 40.755,
@@ -253,7 +253,7 @@ class TestResidentialComplex:
         # Building far from the polygon.
         _insert_addr(conn, 1, "100", "Broadway", lat=40.85, lon=-73.89)
         conn.execute("""
-            INSERT INTO geo_ducklake.osm.landuse_residential VALUES (
+            INSERT INTO ducklake_geo.osm.landuse_residential VALUES (
                 42, 'Test Complex',
                 ST_GeomFromText('POLYGON((-73.999 40.745, -73.989 40.745,
                                           -73.989 40.755, -73.999 40.755,
