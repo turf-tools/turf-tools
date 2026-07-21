@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import {
   Activity,
@@ -40,6 +40,7 @@ import { hasPermission } from "~/lib/permissions";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
+import { useFadeOnce } from "~/lib/use-fade-once";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -75,7 +76,8 @@ function DataPage() {
   const queryClient = useQueryClient();
   const { status: statusFilter } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  const { data: datasets = [] } = useQuery({
+  const shouldFade = useFadeOnce("/data");
+  const { data: datasets } = useSuspenseQuery({
     ...datasetsListQuery(),
     // Poll while any version is importing so the row advances to Ready on its own.
     refetchInterval: (q) => (q.state.data?.some((r) => r.status === "importing") ? 3000 : false),
@@ -164,7 +166,7 @@ function DataPage() {
       : (STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? null);
 
   return (
-    <Page>
+    <Page className={shouldFade}>
       <EditorHeader title="Data" subtitle="Voter files and other imported datasets">
         <Filter
           icon={<Activity className="size-3.5" />}

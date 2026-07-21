@@ -1,7 +1,7 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DoorClosed, Megaphone, UserRound } from "lucide-react";
-import { Suspense, useMemo } from "react";
+import { useMemo } from "react";
 import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
 import { Page } from "~/components/page";
@@ -61,9 +61,7 @@ function TurfsIndex() {
           onChange={onCampaignIdChange}
         />
       </EditorHeader>
-      <Suspense fallback={null}>
-        <TurfsTable campaignId={campaignId} />
-      </Suspense>
+      <TurfsTable campaignId={campaignId} />
     </Page>
   );
 }

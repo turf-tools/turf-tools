@@ -16,6 +16,7 @@ import {
 } from "~/lib/queries/persons";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
+import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn, toTitleCase } from "~/lib/utils";
 
 export const Route = createFileRoute("/$orgSlug/lookup")({ component: Lookup });
@@ -62,6 +63,7 @@ const ELECTION_TYPE_LABELS: Record<string, string> = {
 };
 
 function Lookup() {
+  const shouldFade = useFadeOnce("/lookup");
   const [fields, setFields] = useState<PersonSearchFields>(EMPTY_FIELDS);
   const [debounced, setDebounced] = useState<PersonSearchFields>(EMPTY_FIELDS);
   const [offset, setOffset] = useState(0);
@@ -90,7 +92,7 @@ function Lookup() {
   const hasData = data != null;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col px-5 pt-4 pb-5">
+    <div className={cn("flex h-[calc(100vh-3.5rem)] flex-col px-5 pt-4 pb-5", shouldFade)}>
       <EditorHeader title="Lookup" subtitle="Find a person" />
       <div className="flex min-h-0 flex-1 gap-4">
         <SearchForm fields={fields} onChange={setField} />
