@@ -417,9 +417,9 @@ function InviteDialog({
   const [rows, setRows] = useState<InviteRow[]>([emptyRow()]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  // Delayed copy of `pending` so fast operations don't flicker the
-  // disabled state on inputs. `pending` itself stays synchronous for the
-  // submit-double-click guard.
+  // Delayed copy of `pending` so fast invites don't flash `disabled:opacity-50`
+  // on the row Buttons/Toggles (Inputs have no disabled visual). `pending`
+  // itself stays synchronous for the submit-double-click guard.
   const pendingDelayed = useDelayedFlag(pending);
 
   useEffect(() => {

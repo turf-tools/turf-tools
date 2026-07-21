@@ -5,7 +5,6 @@ import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
-import { useDelayedFlag } from "~/lib/use-delayed-flag";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { client } from "~/rpc/client";
 
@@ -30,11 +29,6 @@ function AccountPage() {
     onSuccess: () => router.invalidate(),
     onError: (e) => console.error("users.updateOwnName failed", e),
   });
-
-  // Gate Input disabled through the delay so sub-100ms saves don't flash
-  // the disabled `opacity-50` on the value. Mirror of how Button gates
-  // its own loading state.
-  const inputDisabled = useDelayedFlag(updateName.isPending);
 
   if (!user) return null;
 
@@ -71,7 +65,7 @@ function AccountPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Your name"
-              disabled={inputDisabled}
+              disabled={updateName.isPending}
             />
             <Button
               type="submit"
