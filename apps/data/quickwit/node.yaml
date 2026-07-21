@@ -27,3 +27,6 @@ storage:
   s3:
     endpoint: ${QW_S3_ENDPOINT:-https://s3.amazonaws.com}
     force_path_style_access: ${QW_S3_FORCE_PATH_STYLE_ACCESS:-false}
+    region: ${QW_S3_REGION:-us-east-1}
+    access_key_id: ${QW_S3_ACCESS_KEY_ID:-unset}
+    secret_access_key: ${QW_S3_SECRET_ACCESS_KEY:-unset}

@@ -11,9 +11,9 @@ x-quickwit-env: &quickwit-env
   QW_DEFAULT_INDEX_ROOT_URI: s3://${STORAGE_BUCKET}/quickwit
   QW_S3_ENDPOINT: https://${STORAGE_ENDPOINT_URL}
   QW_S3_FORCE_PATH_STYLE_ACCESS: "true"
-  AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID}
-  AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY}
-  AWS_REGION: ${STORAGE_REGION}
+  QW_S3_REGION: ${STORAGE_REGION}
+  QW_S3_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID}
+  QW_S3_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY}
 
 services:
   caddy:
@@ -53,23 +53,11 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools
       DUCKLAKE_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_catalog
       DUCKLAKE_GEO_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_geo_catalog
-      # One bucket per deployment; the prefixes are the layout inside it, and
-      # live here rather than in the env file because they're not per-deployment
-      # choices. Quickwit's own prefix is in QW_DEFAULT_INDEX_ROOT_URI above.
-      DUCKLAKE_STORAGE_BUCKET: ${STORAGE_BUCKET}
-      DUCKLAKE_STORAGE_PREFIX: ducklake
-      DUCKLAKE_STORAGE_ENDPOINT_URL: ${STORAGE_ENDPOINT_URL}
-      DUCKLAKE_STORAGE_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID}
-      DUCKLAKE_STORAGE_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY}
-      DUCKLAKE_STORAGE_REGION: ${STORAGE_REGION}
-      DUCKLAKE_STORAGE_URL_STYLE: ${STORAGE_URL_STYLE}
-      DUCKLAKE_GEO_STORAGE_BUCKET: ${STORAGE_BUCKET}
-      DUCKLAKE_GEO_STORAGE_PREFIX: ducklake-geo
-      DUCKLAKE_GEO_STORAGE_ENDPOINT_URL: ${STORAGE_ENDPOINT_URL}
-      DUCKLAKE_GEO_STORAGE_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID}
-      DUCKLAKE_GEO_STORAGE_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY}
-      DUCKLAKE_GEO_STORAGE_REGION: ${STORAGE_REGION}
-      DUCKLAKE_GEO_STORAGE_URL_STYLE: ${STORAGE_URL_STYLE}
+      # Layout inside the deployment's single bucket — not a per-deployment
+      # choice, so it lives here rather than in the env file. Quickwit's prefix
+      # is in QW_DEFAULT_INDEX_ROOT_URI above.
+      DUCKLAKE_PREFIX: ducklake
+      DUCKLAKE_GEO_PREFIX: ducklake-geo
     volumes:
       - qwdata:/qwdata
       # Downloaded reference extracts. Bind-mounted like the database: they
