@@ -505,6 +505,25 @@ def test_key_filter_combines_with_criteria() -> None:
     assert params == ["democratic", "75-001"]
 
 
+def test_key_filter_clips_criteria_with_trailing_add() -> None:
+    # A trailing `add` makes the criteria a top-level OR; the key filter must
+    # still clip the whole expression, not just the add branch.
+    params: list = []
+    where = criteria_to_where(
+        CATALOG,
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
+            ]
+        ),
+        KeyFilter(key_group="nyc_zips", keys=["10001"]),
+        params,
+    )
+    assert where == "WHERE ((enrollment IN (?)) OR (enrollment IN (?))) AND (zip5 IN (?))"
+    assert params == ["democratic", "republican", "10001"]
+
+
 def test_empty_key_set_short_circuits_to_match_nothing() -> None:
     # Empty `keys` is "no zones selected" — should match no rows rather
     # than emit a `IN ()` SQL syntax error.
