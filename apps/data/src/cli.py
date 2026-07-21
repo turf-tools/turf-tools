@@ -1,6 +1,7 @@
 """CLI entrypoints for the data package."""
 
 import argparse
+import os
 from pathlib import Path
 
 from hamilton import driver
@@ -69,10 +70,6 @@ def update_visualizations() -> None:
 # treat as "set up at deploy time, no UI yet". When admin upload flows land,
 # these get a proper job runner; for now they're CLI invocations.
 # ---------------------------------------------------------------------------
-
-
-def _fixtures_dir(settings) -> Path:  # noqa: ANN001 — settings is a Settings instance
-    return Path(__file__).resolve().parent.parent / settings.fixtures_dir
 
 
 # Dataset-version schema the dev seed writes into (slug `nys_voter_file`, v1).
@@ -205,7 +202,7 @@ def reset_ducklake(include_geo: bool = False) -> None:
     settings = get_settings()
     targets = [(settings.ducklake_metadata_postgres_url, settings.ducklake_meta_schema)]
     if include_geo:
-        targets.append((settings.geo_ducklake_metadata_postgres_url, settings.geo_ducklake_meta_schema))
+        targets.append((settings.ducklake_geo_metadata_postgres_url, settings.ducklake_geo_meta_schema))
 
     conn = duckdb.connect()
     conn.install_extension("postgres")
@@ -276,14 +273,14 @@ def _activate_for_all_orgs(conn: duckdb.DuckDBPyConnection, version_id: str) -> 
 
 
 def seed_persons() -> None:
-    """Import a voter-file fixture → geocode → aggregate into buildings/doors.
+    """Import a voter file → geocode → aggregate into buildings/doors.
 
     Writes into the dataset-version schema (default `nys_voter_file_v1`, the
-    dataset the mock seeds and the seeded orgs resolve to). Override the target
-    with `--schema` and the input file with `--fixture`:
+    dataset the mock seeds and the seeded orgs resolve to). `--source` takes a
+    path or URL; override the target with `--schema`:
 
-        uv run seed-persons --fixture ny-voters-2026-03-08-10k-sample.parquet
-        uv run seed-persons --schema nys_voter_file_v1
+        uv run seed-persons --source fixtures/ny-voters-10k-sample.parquet
+        uv run seed-persons --source https://example.com/voters.parquet --schema nys_voter_file_v1
 
     Pass `--reset` to drop the schema first so the next run rebuilds every
     table from scratch (intermediate DAG nodes are incremental, so a pipeline
@@ -300,9 +297,9 @@ def seed_persons() -> None:
     """
     parser = argparse.ArgumentParser(prog="seed-persons", description=seed_persons.__doc__)
     parser.add_argument(
-        "--fixture",
-        default=None,
-        help="Fixture filename inside `fixtures_dir` (default: settings.voter_file_fixture).",
+        "--source",
+        required=True,
+        help="Path or URL of the voter file to seed from (parquet, CSV, or the raw fixed-width .txt).",
     )
     parser.add_argument(
         "--schema",
@@ -337,18 +334,12 @@ def seed_persons() -> None:
         _drop_schema_helper(conn, args.schema)
         ensure_schema(conn, args.schema)
 
-    fixture_name = args.fixture or settings.voter_file_fixture
-    fixture_path = _fixtures_dir(settings) / fixture_name
-    if not fixture_path.exists():
-        print(f"Voter file fixture not found at {fixture_path}.")
-        print(
-            f"Materialise it from {settings.voter_file_url} via "
-            "`uv run python scripts/sample_voter_file.py` "
-            "(see the script for sampling options)."
-        )
+    source = os.path.expanduser(args.source)
+    if "://" not in source and not Path(source).exists():
+        print(f"Voter file not found at {source}.")
         return
 
-    print(f"Seeding persons from {fixture_path} (schema={args.schema})…")
+    print(f"Seeding persons from {source} (schema={args.schema})…")
     print(f"  TIGER counties: {settings.tiger_county_fips} (cache: {settings.tiger_data_dir})")
     if settings.voter_zip5_filter:
         print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
@@ -357,7 +348,7 @@ def seed_persons() -> None:
     # run the shared pipeline from that seam. Fixture is already NYC-only so no
     # county filter; `voter_zip5_filter` scopes dev runs to a small slice.
     importer = NysVoterFileImporter(zip5_filter=settings.voter_zip5_filter)
-    persons_validated = importer.load(str(fixture_path), args.schema, conn, NullProgress())
+    persons_validated = importer.load(source, args.schema, conn, NullProgress())
 
     timing = TimingHook() if args.timing else None
     builder = driver.Builder().with_modules(

@@ -1,0 +1,32 @@
+version: 0.7
+# Defaults are the dev values; deployments override via QW_* env vars.
+listen_address: ${QW_LISTEN_ADDRESS:-127.0.0.1}
+rest:
+  listen_port: ${QW_REST_LISTEN_PORT:-7280}
+data_dir: ${QW_DATA_DIR:-qwdata}
+# Postgres metastore (its own database, NOT the app's public schema — Quickwit
+# creates ~15 tables). Lets the running searcher + a separate `local-ingest`
+# process safely share an index; a file metastore has no locking and would
+# corrupt under concurrent writers. Splits land under data_dir, which the
+# searcher and the ingesting process share.
+metastore_uri: ${QW_METASTORE_URI:-postgres://postgres:postgres@127.0.0.1:5432/quickwit}
+
+# Quickwit creates OpenTelemetry log/trace indexes on start and schedules
+# pipelines for them; nothing here sends it telemetry.
+indexer:
+  enable_otlp_endpoint: false
+jaeger:
+  enable_endpoint: false
+
+# Splits live wherever `default_index_root_uri` points — the local data_dir in
+# dev, object storage in a deployment. Credentials come from the AWS SDK's
+# environment variables; only the endpoint and addressing style are set here.
+# An empty `${VAR:-}` default is left un-substituted by Quickwit, so every
+# default below has to be a real value.
+storage:
+  s3:
+    endpoint: ${QW_S3_ENDPOINT:-https://s3.amazonaws.com}
+    force_path_style_access: ${QW_S3_FORCE_PATH_STYLE_ACCESS:-false}
+    region: ${QW_S3_REGION:-us-east-1}
+    access_key_id: ${QW_S3_ACCESS_KEY_ID:-unset}
+    secret_access_key: ${QW_S3_SECRET_ACCESS_KEY:-unset}

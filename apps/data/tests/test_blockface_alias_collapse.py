@@ -28,7 +28,7 @@ from src.dags import tiger
 # Schema mirrors `tiger.blockface_normalized`. We write rows by hand and let
 # `tiger.blockface_final` consume them.
 _BF_NORM_DDL = """
-CREATE TABLE geo_ducklake.tiger.blockface_normalized (
+CREATE TABLE ducklake_geo.tiger.blockface_normalized (
     blockface_id        VARCHAR,
     side                VARCHAR,
     from_house_num      INTEGER,
@@ -71,7 +71,7 @@ def _insert_row(
     ).fetchone()[0]
     conn.execute(
         """
-        INSERT INTO geo_ducklake.tiger.blockface_normalized VALUES
+        INSERT INTO ducklake_geo.tiger.blockface_normalized VALUES
         (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText('LINESTRING(0 0, 1 1)'))
         """,
         [bf_id, side, hn_from, hn_to, prefix, number_type, zip_code, full_name, tlid, tokens, "n1", "n2"],
@@ -87,7 +87,7 @@ def bf_conn(dual_conn):
     blockface_normalized so the test stays focused on alias collapse and
     isn't subject to TIGER's actual data shape.
     """
-    dual_conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.tiger")
+    dual_conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.tiger")
     dual_conn.execute(_BF_NORM_DDL)
     # Seed the equivalency-groups table so blockface_final can JOIN on it.
     tiger.address_tokens(conn=dual_conn)
@@ -98,12 +98,12 @@ def _run_blockface_final(conn):
     norm_ref = type(
         "Ref",
         (),
-        {"fqn": "geo_ducklake.tiger.blockface_normalized"},
+        {"fqn": "ducklake_geo.tiger.blockface_normalized"},
     )()
     tokens_ref = type(
         "Ref",
         (),
-        {"fqn": "geo_ducklake.tiger.address_tokens"},
+        {"fqn": "ducklake_geo.tiger.address_tokens"},
     )()
     return tiger.blockface_final(
         blockface_normalized=norm_ref,

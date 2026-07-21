@@ -3,7 +3,7 @@
 Picks the single best-scoring blockface per voter. Coordinate assignment
 runs downstream in `geocode.py`; canonical address derivation in
 `assembly.py`. Cross-catalog joins (org-side `ducklake` to shared
-`geo_ducklake`) work on the single shared DuckDB connection.
+`ducklake_geo`) work on the single shared DuckDB connection.
 
     persons_validated ─► persons_decomposed ─► persons_candidates ─► persons_scored ─► persons_best_match
                                                        ▲
@@ -180,7 +180,7 @@ def persons_candidates(
     these to the best one.
 
     Cross-catalog join: person data in ``ducklake``, blockfaces in
-    ``geo_ducklake``. Both catalogs are attached on the same connection.
+    ``ducklake_geo``. Both catalogs are attached on the same connection.
 
     Incremental: skips external_ids already present.
     """

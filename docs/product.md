@@ -110,7 +110,7 @@ Folding the two together is a follow-up.
 Boundary polygons (ED shapes, ZIP shapes, etc.) live in DuckLake:
 
 ```
-geo_ducklake.boundaries.{key_group}
+ducklake_geo.boundaries.{key_group}
     key   VARCHAR
     name  VARCHAR (nullable)
     geom  GEOMETRY (simplified for rendering)

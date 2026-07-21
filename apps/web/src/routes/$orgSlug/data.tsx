@@ -463,12 +463,10 @@ function ImportDialog({
             <Input
               value={source}
               onChange={(e) => edit(setSource)(e.target.value)}
-              placeholder="Path to file (e.g. s3://bucket/file)"
+              placeholder="e.g. https://example.com/voters.parquet"
               disabled={pending}
             />
-            <span className="text-sm text-muted-foreground italic">
-              Object-storage key or URL of the raw file
-            </span>
+            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
           </div>
           {error ? (
             <p
@@ -580,12 +578,10 @@ function UpdateDialog({
                 if (error) clearError();
                 setSource(e.target.value);
               }}
-              placeholder="s3://bucket/ALLNYVOTERS20260629.txt"
+              placeholder="e.g. https://example.com/voters.parquet"
               disabled={pending}
             />
-            <span className="text-sm text-muted-foreground italic">
-              Object-storage key or URL of the raw file
-            </span>
+            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
           </div>
           {error ? (
             <p

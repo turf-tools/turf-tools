@@ -179,8 +179,26 @@ class JobManager:
         return len(claimed_jobs)
 
     async def run_forever(self) -> None:
+        """Poll for jobs until cancelled.
+
+        A failed poll must never end the loop: the schema may not exist yet on a
+        fresh deployment, and Postgres restarts. Failures back off and retry,
+        logging the first of each consecutive run so a persistent outage doesn't
+        flood the log at the poll interval.
+        """
+        consecutive_failures = 0
         while True:
-            handled = await self.run_once()
+            try:
+                handled = await self.run_once()
+                consecutive_failures = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — any failure is retryable
+                if consecutive_failures == 0:
+                    print(f"WARNING: job poll failed, retrying: {exc}", flush=True)
+                consecutive_failures += 1
+                await asyncio.sleep(min(self.poll_interval_seconds * consecutive_failures, 30.0))
+                continue
             if handled == 0:
                 await asyncio.sleep(self.poll_interval_seconds)
 

@@ -77,10 +77,10 @@ def _create_persons_best_match(conn) -> TableRef:
 
 
 def _create_blockface_final(conn) -> TableRef:
-    conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.tiger")
-    conn.execute("DROP TABLE IF EXISTS geo_ducklake.tiger.blockface_final")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.tiger")
+    conn.execute("DROP TABLE IF EXISTS ducklake_geo.tiger.blockface_final")
     conn.execute("""
-        CREATE TABLE geo_ducklake.tiger.blockface_final (
+        CREATE TABLE ducklake_geo.tiger.blockface_final (
             blockface_id          VARCHAR,
             side                  VARCHAR,
             from_house_num        INTEGER,
@@ -97,14 +97,14 @@ def _create_blockface_final(conn) -> TableRef:
             geom                  GEOMETRY
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="tiger", table="blockface_final", version=0)
+    return TableRef(catalog="ducklake_geo", schema="tiger", table="blockface_final", version=0)
 
 
 def _create_osm_building_lookup(conn) -> TableRef:
-    conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.osm")
-    conn.execute("DROP TABLE IF EXISTS geo_ducklake.osm.building_lookup")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.osm")
+    conn.execute("DROP TABLE IF EXISTS ducklake_geo.osm.building_lookup")
     conn.execute("""
-        CREATE TABLE geo_ducklake.osm.building_lookup (
+        CREATE TABLE ducklake_geo.osm.building_lookup (
             zip_code               VARCHAR,
             canonical_key          VARCHAR,
             housenumber            VARCHAR,
@@ -115,7 +115,7 @@ def _create_osm_building_lookup(conn) -> TableRef:
             in_residential_complex BOOLEAN
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="osm", table="building_lookup", version=0)
+    return TableRef(catalog="ducklake_geo", schema="osm", table="building_lookup", version=0)
 
 
 def _tokens(conn, s):
@@ -134,7 +134,7 @@ def _expanded_tokens(conn, street):
         ),
         extras AS (
             SELECT flatten(list(g.equivalent_tokens)) AS extra
-            FROM raw, geo_ducklake.tiger.address_tokens g
+            FROM raw, ducklake_geo.tiger.address_tokens g
             WHERE len(list_intersect(raw.tokens, g.equivalent_tokens)) > 0
         )
         SELECT list_distinct(list_concat(
@@ -161,7 +161,7 @@ def _canonical_key(conn, street):
         ),
         extras AS (
             SELECT flatten(list(g.equivalent_tokens)) AS extra
-            FROM raw, geo_ducklake.tiger.address_tokens g
+            FROM raw, ducklake_geo.tiger.address_tokens g
             WHERE len(list_intersect(raw.tokens, g.equivalent_tokens)) > 0
         ),
         combined AS (
@@ -229,7 +229,7 @@ def _insert_blockface(
     # on the voter side hits the OSM lookup.
     expanded = _expanded_tokens(conn, full_name)
     conn.execute(
-        "INSERT INTO geo_ducklake.tiger.blockface_final VALUES "
+        "INSERT INTO ducklake_geo.tiger.blockface_final VALUES "
         "(?, ?, 1, 199, '', 'odd', ?, ?, ?, ?, ?, 'n1', 'n2', "
         f"ST_GeomFromText('{geom}'))",
         [blockface_id, side, zip_code, full_name, tiger_line_id, expanded, expanded],
@@ -248,7 +248,7 @@ def _insert_osm_building(
     in_complex=False,
 ):
     conn.execute(
-        "INSERT INTO geo_ducklake.osm.building_lookup VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO ducklake_geo.osm.building_lookup VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [zip_code, canonical_key, housenumber, housenumber_norm, street, lat, lon, in_complex],
     )
 
