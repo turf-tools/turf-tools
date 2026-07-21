@@ -23,7 +23,7 @@ def conn():
 
 @pytest.fixture()
 def dual_conn():
-    """Create an isolated connection with both ducklake and geo_ducklake attached.
+    """Create an isolated connection with both ducklake and ducklake_geo attached.
 
     Mirrors the production setup in db.get_connection() but uses temp directories
     so tests are fully isolated and leave no state on disk.
@@ -43,7 +43,7 @@ def dual_conn():
         # Geo catalog
         geo_catalog = f"{tmpdir}/geo_test.ducklake"
         geo_data_dir = f"{tmpdir}/geo_data/"
-        c.execute(f"ATTACH 'ducklake:{geo_catalog}' AS geo_ducklake (DATA_PATH '{geo_data_dir}')")
+        c.execute(f"ATTACH 'ducklake:{geo_catalog}' AS ducklake_geo (DATA_PATH '{geo_data_dir}')")
 
         c.execute("USE ducklake")
         yield c

@@ -26,61 +26,28 @@ def _dev_meta_schema(name: str) -> str | None:
     return None if os.environ.get("NODE_ENV") == "production" else name
 
 
-class S3StorageConfig(BaseSettings):
-    """Configuration for an S3-compatible object storage bucket."""
+class StorageConfig(BaseSettings):
+    """S3-compatible object storage for the deployment.
+
+    One bucket per deployment; the lakes and the search index are separated by
+    prefix inside it, so a single credential covers everything.
+    """
+
+    model_config = {"env_prefix": "STORAGE_"}
 
     endpoint_url: str = ""
     access_key_id: str = ""
     secret_access_key: str = ""
     bucket: str = ""
     region: str = "auto"
-
-
-class DucklakeStorageConfig(S3StorageConfig):
-    """Object storage for DuckLake data files (Parquet, etc.)."""
-
-    model_config = {"env_prefix": "DUCKLAKE_STORAGE_"}
-
-
-class GeoDucklakeStorageConfig(S3StorageConfig):
-    """Object storage for geo DuckLake data files (TIGER-derived Parquet, etc.)."""
-
-    model_config = {"env_prefix": "GEO_DUCKLAKE_STORAGE_"}
-
-
-class UserDataStorageConfig(S3StorageConfig):
-    """Object storage for user-uploaded data."""
-
-    model_config = {"env_prefix": "USER_DATA_STORAGE_"}
+    # DuckDB addressing style. Latitude accepts path; DO Spaces needs vhost.
+    url_style: str = "path"
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = {"env_file": ".env"}
-
-    voter_file_url: str = Field(
-        default="https://zohran-data-backups.nyc3.digitaloceanspaces.com/ny-voters-2026-03-08.parquet",
-        description=(
-            "Public URL where the source voter file (parquet) can be downloaded. "
-            "Used by the seed CLI to tell first-time users where to grab the "
-            "fixture from when one isn't present locally."
-        ),
-    )
-
-    voter_file_fixture: str = Field(
-        default="ny-voters-2026-03-08-nyc.parquet",
-        description=(
-            "Filename of the voter file fixture inside `fixtures_dir` that "
-            "`seed-persons` reads from. Override to point at a smaller sample "
-            "during development."
-        ),
-    )
-
-    fixtures_dir: str = Field(
-        default="fixtures",
-        description=("Directory (relative to apps/data) holding voter file fixtures."),
-    )
 
     ducklake_metadata_postgres_url: str | None = Field(
         default_factory=_default_ducklake_metadata_url,
@@ -91,22 +58,22 @@ class Settings(BaseSettings):
     # in prod, where each catalog has its own DB and uses the default schema.
     ducklake_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("ducklake"))
 
-    geo_ducklake_metadata_postgres_url: str | None = Field(
+    ducklake_geo_metadata_postgres_url: str | None = Field(
         default_factory=_default_ducklake_metadata_url,
         description=(
             "PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file."
         ),
     )
-    geo_ducklake_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("geo_ducklake"))
+    ducklake_geo_meta_schema: str | None = Field(default_factory=lambda: _dev_meta_schema("ducklake_geo"))
 
     database_url: str = Field(
         default_factory=_default_database_url,
         description="PostgreSQL connection URL for operational data shared with the web app.",
     )
 
-    ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)
-    geo_ducklake_storage: GeoDucklakeStorageConfig = Field(default_factory=GeoDucklakeStorageConfig)
-    user_data_storage: UserDataStorageConfig = Field(default_factory=UserDataStorageConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+    ducklake_prefix: str = Field(default="ducklake", description="Key prefix for the person lake.")
+    ducklake_geo_prefix: str = Field(default="ducklake-geo", description="Key prefix for the geo lake.")
 
     # TIGER download settings
     tiger_year: str = Field(
@@ -166,7 +133,7 @@ class Settings(BaseSettings):
         description="Path to the Quickwit CLI binary used for `tool local-ingest`.",
     )
     quickwit_config_path: str = Field(
-        default="config/quickwit.yaml",
+        default="quickwit/node.yaml",
         description="Quickwit node config passed to `local-ingest` (carries the metastore URI).",
     )
 

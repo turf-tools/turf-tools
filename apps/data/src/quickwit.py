@@ -102,7 +102,7 @@ def ensure_index(settings: Settings, index_id: str) -> None:
     control plane (index management must go through the node, not a competing
     standalone `index create` process). The node serves the same metastore
     `local-ingest` writes to, so create + ingest agree — provided the searcher
-    runs with the same config (`quickwit run --config config/quickwit.yaml`).
+    runs with the same config (`quickwit run --config quickwit/node.yaml`).
 
     Delete-then-create makes it idempotent: the batched local-ingest *appends*,
     so a re-build must start from an empty index."""

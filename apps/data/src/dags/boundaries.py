@@ -13,8 +13,8 @@ Boundaries live in the org catalog (alongside `persons_geocoded`,
 `buildings_geocoded`, etc.) rather than the geo catalog, because they're
 derived from each org's voter scope — two orgs running `seed-boundaries`
 with different fixtures produce different `nyc_eds` tables. The shared
-TIGER reference data stays under `geo_ducklake.tiger.*`, and OSM under
-`geo_ducklake.osm.*`.
+TIGER reference data stays under `ducklake_geo.tiger.*`, and OSM under
+`ducklake_geo.osm.*`.
 
 Three loaders share that contract:
 
@@ -250,7 +250,7 @@ def boundary_from_table(
     """Project an existing DuckLake polygon table into ``{schema}.{key_group}``.
 
     For TIGER-derived sources (ZCTAs, tracts) once the upstream raw table
-    exists in ``geo_ducklake.tiger.*``. Cheaper than re-importing from a file.
+    exists in ``ducklake_geo.tiger.*``. Cheaper than re-importing from a file.
     """
     ensure_schema(conn, schema)
     fqn = table_fqn(schema, key_group)

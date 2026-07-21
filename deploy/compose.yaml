@@ -1,0 +1,113 @@
+# Distinct from the dev stack, which defaults its project name to the repo
+# directory — a collision there lets a deploy-side `down` stop dev's Postgres.
+name: turf-tools-deploy
+
+# The searcher and the ingesting process must agree on both, or ingest writes
+# splits the searcher never finds.
+x-quickwit-env: &quickwit-env
+  QW_METASTORE_URI: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/quickwit
+  QW_DATA_DIR: /qwdata
+  # Splits go to object storage beside the lakes, so the box keeps only caches.
+  QW_DEFAULT_INDEX_ROOT_URI: s3://${STORAGE_BUCKET}/quickwit
+  QW_S3_ENDPOINT: https://${STORAGE_ENDPOINT_URL}
+  QW_S3_FORCE_PATH_STYLE_ACCESS: "true"
+  QW_S3_REGION: ${STORAGE_REGION}
+  QW_S3_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID}
+  QW_S3_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY}
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+  web:
+    image: ${WEB_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 3000
+      DATA_URL: http://data:8000
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  data:
+    image: ${DATA_IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *quickwit-env
+      QUICKWIT_URL: http://quickwit:7280
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools
+      DUCKLAKE_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_catalog
+      DUCKLAKE_GEO_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_geo_catalog
+      # Layout inside the deployment's single bucket — not a per-deployment
+      # choice, so it lives here rather than in the env file. Quickwit's prefix
+      # is in QW_DEFAULT_INDEX_ROOT_URI above.
+      DUCKLAKE_PREFIX: ducklake
+      DUCKLAKE_GEO_PREFIX: ducklake-geo
+    volumes:
+      - qwdata:/qwdata
+      # Downloaded reference extracts. Bind-mounted like the database: they
+      # outlive the container, survive image rebuilds, and can't be taken out
+      # by `compose down -v`. Re-fetching is ~500MB of OSM at Geofabrik speeds.
+      - /var/lib/turf-tools/osm_cache:/app/osm_cache
+      - /var/lib/turf-tools/tiger_cache:/app/tiger_cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Same image as `data` so there is exactly one Quickwit version. Reads the
+  # splits `data` writes through the shared qwdata volume; they coordinate via
+  # the Postgres metastore.
+  quickwit:
+    image: ${DATA_IMAGE}
+    restart: unless-stopped
+    command: quickwit run --config quickwit/node.yaml
+    environment:
+      <<: *quickwit-env
+      QW_LISTEN_ADDRESS: 0.0.0.0
+    volumes:
+      - qwdata:/qwdata
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    # Loopback only: reachable through an SSH tunnel for schema pushes and
+    # Drizzle Studio, never from the network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: turf_tools
+    volumes:
+      # Bind mount, not a named volume: the database outlives the container and
+      # stays at a known path for backups and for moving to another machine.
+      - /var/lib/turf-tools/postgres:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  qwdata:
+  caddy_data:
+  caddy_config:

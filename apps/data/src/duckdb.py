@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import duckdb
 from src.settings import Settings
@@ -7,8 +8,8 @@ from src.settings import Settings
 # Local dev paths
 LOCAL_CATALOG = "ducklake.ducklake"
 LOCAL_DATA_DIR = "local_data/"
-LOCAL_GEO_CATALOG = "geo_ducklake.ducklake"
-LOCAL_GEO_DATA_DIR = "geo_local_data/"
+LOCAL_DUCKLAKE_GEO_CATALOG = "ducklake_geo.ducklake"
+LOCAL_DUCKLAKE_GEO_DATA_DIR = "ducklake_geo_local_data/"
 
 # Module-level cached connection for the read-only HTTP path. Building
 # a fresh DuckDB connection costs ~600ms in production (extension loads,
@@ -44,7 +45,7 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
 
     Attaches:
     - ``ducklake`` -- person data (primary catalog, USE'd by default)
-    - ``geo_ducklake`` -- TIGER/blockface reference data (reusable across organizations)
+    - ``ducklake_geo`` -- TIGER/blockface reference data (reusable across organizations)
 
     All three Hamilton graphs share this single connection so that Graph 3
     can perform cross-catalog joins between the two catalogs without copying data.
@@ -63,11 +64,11 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     # S3 storage (identified by a configured bucket) needs the SECRET so DuckDB
     # walks the AWS credential chain. Catalog backend (Postgres vs local file) is
     # an *independent* axis — dev runs a Postgres catalog with *local* storage.
-    using_s3 = bool(settings.ducklake_storage.bucket) or bool(settings.geo_ducklake_storage.bucket)
+    using_s3 = bool(settings.storage.bucket)
     if using_s3:
         conn.install_extension("httpfs")
         conn.load_extension("httpfs")
-        _create_or_replace_s3_secret(conn)
+        _create_or_replace_s3_secret(conn, settings)
 
     # Buffer pool sizing — DuckDB's default `memory_limit` is conservative
     # on Linux. With the cached connection living for the lifetime of the
@@ -89,17 +90,19 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
         meta_schema=settings.ducklake_meta_schema,
         local_catalog=LOCAL_CATALOG,
         local_data_dir=LOCAL_DATA_DIR,
-        bucket=settings.ducklake_storage.bucket,
+        bucket=settings.storage.bucket,
+        prefix=settings.ducklake_prefix,
         read_only_opt=ro,
     )
     _attach_ducklake(
         conn,
-        "geo_ducklake",
-        pg_url=settings.geo_ducklake_metadata_postgres_url,
-        meta_schema=settings.geo_ducklake_meta_schema,
-        local_catalog=LOCAL_GEO_CATALOG,
-        local_data_dir=LOCAL_GEO_DATA_DIR,
-        bucket=settings.geo_ducklake_storage.bucket,
+        "ducklake_geo",
+        pg_url=settings.ducklake_geo_metadata_postgres_url,
+        meta_schema=settings.ducklake_geo_meta_schema,
+        local_catalog=LOCAL_DUCKLAKE_GEO_CATALOG,
+        local_data_dir=LOCAL_DUCKLAKE_GEO_DATA_DIR,
+        bucket=settings.storage.bucket,
+        prefix=settings.ducklake_geo_prefix,
         read_only_opt=ro,
     )
 
@@ -116,6 +119,7 @@ def _attach_ducklake(
     local_catalog: str,
     local_data_dir: str,
     bucket: str,
+    prefix: str,
     read_only_opt: str,
 ) -> None:
     """Attach one DuckLake catalog. Catalog backend (Postgres vs local DuckDB
@@ -127,7 +131,7 @@ def _attach_ducklake(
       `META_SCHEMA`s; DuckLake requires the schema to pre-exist, so we ensure it.
     - **file fallback:** local DuckDB-file catalog + local dir (no Postgres).
     """
-    data_path = f"s3://{bucket}/" if bucket else local_data_dir
+    data_path = _s3_path(bucket, prefix) if bucket else local_data_dir
     if not bucket:
         Path(local_data_dir).mkdir(exist_ok=True)
 
@@ -146,40 +150,65 @@ def _attach_ducklake(
     conn.execute(f"ATTACH 'ducklake:postgres:{pg_url}' AS {alias} (DATA_PATH '{data_path}'{schema_opt}{read_only_opt})")
 
 
-def _create_or_replace_s3_secret(conn: duckdb.DuckDBPyConnection) -> None:
-    """(Re)create the S3 SECRET that authorises DuckDB's httpfs reads.
+def _s3_path(bucket: str, prefix: str) -> str:
+    """`s3://bucket/prefix/`, or `s3://bucket/` when no prefix is set."""
+    return f"s3://{bucket}/{prefix.strip('/')}/" if prefix.strip("/") else f"s3://{bucket}/"
 
-    Called once at connection build and then periodically from the FastAPI
-    lifespan to refresh credentials. `CREATE OR REPLACE` is atomic at the
-    secrets-manager level; in-flight queries that already resolved the
-    secret keep their token snapshot (still valid for hours), and new
-    queries pick up the new triple. `VALIDATION 'none'` keeps a transient
-    IMDS blip from killing the service.
 
-    Note: `REFRESH 'auto'` is documented but is a no-op for plain
-    `credential_chain` on EC2 instance profile — DuckDB only wires the
-    refresh hook into the STS / web_identity branches (see duckdb-aws#26).
-    That's why we drive the refresh ourselves from lifespan.
+def _create_or_replace_s3_secret(conn: duckdb.DuckDBPyConnection, settings: Settings) -> None:
+    """(Re)create the S3 SECRET authorising DuckDB's httpfs reads.
+
+    Explicit endpoint (Latitude, DO Spaces) means a static key pair scoped to
+    the deployment's bucket. Without one, fall back to the AWS credential chain,
+    whose tokens expire — hence the refresh in `main.py`'s lifespan.
+    `VALIDATION 'none'` keeps a transient IMDS blip from killing the service.
     """
-    region = os.environ.get("AWS_REGION", "us-east-1")
+    cfg = settings.storage
+    if cfg.endpoint_url:
+        parsed = urlparse(cfg.endpoint_url if "//" in cfg.endpoint_url else f"//{cfg.endpoint_url}")
+        host = parsed.netloc or parsed.path
+        use_ssl = "true" if parsed.scheme != "http" else "false"
+        conn.execute(
+            "CREATE OR REPLACE SECRET s3_secret ("
+            f"  TYPE S3,"
+            f"  KEY_ID '{_sql_str(cfg.access_key_id)}',"
+            f"  SECRET '{_sql_str(cfg.secret_access_key)}',"
+            f"  ENDPOINT '{_sql_str(host)}',"
+            f"  URL_STYLE '{_sql_str(cfg.url_style)}',"
+            f"  REGION '{_sql_str(cfg.region)}',"
+            f"  USE_SSL {use_ssl},"
+            f"  SCOPE 's3://{_sql_str(cfg.bucket)}')"
+        )
+        return
+    region = _sql_str(os.environ.get("AWS_REGION", "us-east-1"))
     conn.execute(
         f"CREATE OR REPLACE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}', VALIDATION 'none')"
     )
 
 
+def _sql_str(value: str) -> str:
+    """Escape a value for interpolation inside a single-quoted SQL literal."""
+    return value.replace("'", "''")
+
+
+def s3_secret_expires(settings: Settings) -> bool:
+    """Whether the S3 credentials are the expiring kind.
+
+    Only the AWS credential chain hands out temporary tokens; explicit static
+    keys never expire, so there is nothing to refresh.
+    """
+    return bool(settings.storage.bucket) and not settings.storage.endpoint_url
+
+
 def refresh_s3_secret_on_shared_connection(settings: Settings) -> None:
     """Force-refresh the S3 credentials on the cached read-only connection.
 
-    Safe no-op when the connection hasn't been built yet (cold process)
-    or when S3 isn't in use (local dev). Caller is responsible for the
-    schedule — see the lifespan task in `main.py`.
+    No-op when the connection hasn't been built yet (cold process). Caller is
+    responsible for the schedule — see the lifespan task in `main.py`.
     """
     if _shared_ro_conn is None:
         return
-    using_s3 = bool(settings.ducklake_metadata_postgres_url) or bool(settings.geo_ducklake_metadata_postgres_url)
-    if not using_s3:
-        return
-    _create_or_replace_s3_secret(_shared_ro_conn)
+    _create_or_replace_s3_secret(_shared_ro_conn, settings)
 
 
 # Alias under which the operational Postgres database is mounted into

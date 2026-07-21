@@ -87,7 +87,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.load_extension("spatial")
         # Isolated tempdir DuckLakes — never touch the dev catalog.
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/voter.ducklake' AS ducklake (DATA_PATH '{tmpdir}/voter_data/')")
-        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
+        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS ducklake_geo (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute("USE ducklake")
 
         persons_validated = NysVoterFileImporter().load(str(VOTER_FILE), "default", conn, NullProgress())
