@@ -23,6 +23,7 @@ import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail } from "~/components/rail";
 import type { Criteria } from "~/lib/filters";
+import { electionsQuery } from "~/lib/queries/elections";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
 import { segmentCountsQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
@@ -51,6 +52,8 @@ export const Route = createFileRoute("/$orgSlug/segments")({
     Promise.all([
       queryClient.fetchQuery(segmentsListQuery()),
       queryClient.fetchQuery(manifestQuery()),
+      // Warm the voting-history-detail picker so opening one never flashes.
+      queryClient.fetchQuery(electionsQuery()),
     ]),
   component: SegmentsLayout,
 });
