@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from src.settings import Settings
 
 # Operational catalog hosting all per-org tenant data. Geo data lives in
-# its own catalog (`geo_ducklake`) and is shared across orgs, so it stays
+# its own catalog (`ducklake_geo`) and is shared across orgs, so it stays
 # outside this module's concern.
 PERSON_CATALOG = "ducklake"
 

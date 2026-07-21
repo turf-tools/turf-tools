@@ -18,7 +18,7 @@ wheels/
 *.ducklake
 *.ducklake.wal
 local_data/
-geo_local_data/
+ducklake_geo_local_data/
 
 # TIGER shapefile cache
 tiger_cache/

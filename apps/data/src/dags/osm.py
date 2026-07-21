@@ -1,6 +1,6 @@
 """Prepare OSM reference data for address matching.
 
-Parallels `tiger.py`: extracts OSM-derived data into `geo_ducklake`
+Parallels `tiger.py`: extracts OSM-derived data into `ducklake_geo`
 for the geocoding pipeline. The actual lat/lon assignment (using
 both TIGER blockfaces and OSM buildings) lives in `geocode.py`.
 
@@ -31,7 +31,7 @@ from src.addressing import (
 )
 from src.models import TableRef
 
-GEO_CATALOG = "geo_ducklake"
+GEO_CATALOG = "ducklake_geo"
 OSM_SCHEMA = "osm"
 
 

@@ -17,7 +17,7 @@ import src.import_job  # noqa: F401 — registers the `import_dataset_version` j
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
 from src.dsl.resolve import resolve_criteria
-from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection
+from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection, s3_secret_expires
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
@@ -103,16 +103,23 @@ async def lifespan(app: FastAPI):
     job_manager_task = asyncio.create_task(JobManager().run_forever(), name="job-manager")
     job_manager_task.add_done_callback(_log_background_task_failure)
 
-    s3_refresh_task = asyncio.create_task(_refresh_s3_secret_forever(), name="s3-secret-refresh")
-    s3_refresh_task.add_done_callback(_log_background_task_failure)
+    # Only the AWS credential chain expires; static keys need no timer.
+    s3_refresh_task = (
+        asyncio.create_task(_refresh_s3_secret_forever(), name="s3-secret-refresh")
+        if s3_secret_expires(settings)
+        else None
+    )
+    if s3_refresh_task:
+        s3_refresh_task.add_done_callback(_log_background_task_failure)
 
     try:
         yield
     finally:
-        s3_refresh_task.cancel()
         job_manager_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await s3_refresh_task
+        if s3_refresh_task:
+            s3_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await s3_refresh_task
         with suppress(asyncio.CancelledError):
             await job_manager_task
         await close_pool()

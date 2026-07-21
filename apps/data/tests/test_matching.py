@@ -48,12 +48,12 @@ def _create_persons_validated(conn) -> TableRef:
 
 
 def _create_blockface_final(conn) -> TableRef:
-    """A minimal blockface_final under the geo_ducklake catalog. Schema
+    """A minimal blockface_final under the ducklake_geo catalog. Schema
     mirrors the production table from src/dags/tiger.py."""
-    conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.tiger")
-    conn.execute("DROP TABLE IF EXISTS geo_ducklake.tiger.blockface_final")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.tiger")
+    conn.execute("DROP TABLE IF EXISTS ducklake_geo.tiger.blockface_final")
     conn.execute("""
-        CREATE TABLE geo_ducklake.tiger.blockface_final (
+        CREATE TABLE ducklake_geo.tiger.blockface_final (
             blockface_id          VARCHAR,
             side                  VARCHAR,
             from_house_num        INTEGER,
@@ -70,7 +70,7 @@ def _create_blockface_final(conn) -> TableRef:
             geom                  GEOMETRY
         )
     """)
-    return TableRef(catalog="geo_ducklake", schema="tiger", table="blockface_final", version=0)
+    return TableRef(catalog="ducklake_geo", schema="tiger", table="blockface_final", version=0)
 
 
 def _insert_validated(
@@ -124,7 +124,7 @@ def _insert_blockface(
     if tiger_line_id is None:
         tiger_line_id = blockface_id.split(":")[0]
     conn.execute(
-        """INSERT INTO geo_ducklake.tiger.blockface_final VALUES
+        """INSERT INTO ducklake_geo.tiger.blockface_final VALUES
            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'n1', 'n2',
             ST_GeomFromText('LINESTRING(0 0, 1 1)'))""",
         [blockface_id, side, from_hn, to_hn, prefix, number_type, zip_code, full_name, tiger_line_id, tokens, tokens],

@@ -3,7 +3,7 @@ import { createLogger, run } from "./_logging";
 const log = createLogger("reset");
 
 const DATA_ENV = "/etc/turf-tools-data.env";
-const DBS = ["turf_tools", "turf_tools_ducklake_catalog", "turf_tools_geo_ducklake_catalog"];
+const DBS = ["turf_tools", "turf_tools_ducklake_catalog", "turf_tools_ducklake_geo_catalog"];
 
 log.task("stopping services");
 run(log, "sudo systemctl stop turf-tools-web turf-tools-data");
@@ -19,7 +19,7 @@ run(
   log,
   `set -a; . ${DATA_ENV}; set +a; ` +
     `aws s3 rm "s3://$DUCKLAKE_STORAGE_BUCKET/" --recursive && ` +
-    `aws s3 rm "s3://$GEO_DUCKLAKE_STORAGE_BUCKET/" --recursive`,
+    `aws s3 rm "s3://$DUCKLAKE_GEO_STORAGE_BUCKET/" --recursive`,
 );
 
 log.task("pushing schema");

@@ -2,7 +2,7 @@
 
 Downloads TIGER/Line shapefiles for the configured state/county
 selection and produces a normalized, query-ready blockface table.
-All output lives in the ``geo_ducklake`` catalog, shared across orgs.
+All output lives in the ``ducklake_geo`` catalog, shared across orgs.
 
     tiger_addrfeat_raw ─┐
                         ├─► blockface_unpivoted ─► blockface_normalized ─► blockface_final
@@ -20,7 +20,7 @@ import duckdb
 from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
 from src.models import TableRef
 
-GEO_CATALOG = "geo_ducklake"
+GEO_CATALOG = "ducklake_geo"
 TIGER_SCHEMA = "tiger"
 CENSUS_BASE_URL = "https://www2.census.gov/geo/tiger"
 
@@ -28,13 +28,13 @@ CENSUS_BASE_URL = "https://www2.census.gov/geo/tiger"
 def _fqn(table: str) -> str:
     """Return the fully qualified name (fqn) for a TIGER table.
 
-    Example: ``geo_ducklake.tiger.blockface_final`` instead of just ``blockface_final``.
+    Example: ``ducklake_geo.tiger.blockface_final`` instead of just ``blockface_final``.
     """
     return f"{GEO_CATALOG}.{TIGER_SCHEMA}.{table}"
 
 
 def _ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
-    """Create the tiger schema in geo_ducklake if it doesn't already exist."""
+    """Create the tiger schema in ducklake_geo if it doesn't already exist."""
     conn.execute(f"CREATE SCHEMA IF NOT EXISTS {GEO_CATALOG}.{TIGER_SCHEMA}")
 
 
@@ -78,7 +78,7 @@ def tiger_addrfeat_raw(
     tiger_data_dir: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Download TIGER addrfeat shapefiles and load into geo_ducklake.tiger.addrfeat.
+    """Download TIGER addrfeat shapefiles and load into ducklake_geo.tiger.addrfeat.
 
     The addrfeat (Address Range Features) table contains house-number ranges on
     both sides of each street segment plus ZIP codes — the essential inputs for
@@ -161,7 +161,7 @@ def tiger_edges_raw(
     tiger_data_dir: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Download TIGER edges shapefiles and load into geo_ducklake.tiger.edges.
+    """Download TIGER edges shapefiles and load into ducklake_geo.tiger.edges.
 
     The edges table provides the topological node identifiers (TNIDF / TNIDT)
     needed to stitch blockface segments together into a network, as well as the
@@ -235,7 +235,7 @@ def tiger_tabblock_raw(
     tiger_data_dir: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Download TIGER TABBLOCK20 shapefiles and load into geo_ducklake.tiger.tabblock.
+    """Download TIGER TABBLOCK20 shapefiles and load into ducklake_geo.tiger.tabblock.
 
     Tabblock20 is the polygon geometry for every census block — the
     smallest standard areal unit in TIGER. Used by the boundaries graph

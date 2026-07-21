@@ -18,7 +18,7 @@ The pipeline is a [Hamilton](https://github.com/dagworks-inc/hamilton) DAG
 backed by DuckDB with two DuckLake catalogs attached:
 
 - `ducklake` — voter / Person data (per-organization schemas)
-- `geo_ducklake` — TIGER blockfaces, OSM buildings, landuse polygons, boundary shapes
+- `ducklake_geo` — TIGER blockfaces, OSM buildings, landuse polygons, boundary shapes
 
 Both catalogs share **one DuckDB connection** (`src/duckdb.get_connection`),
 so cross-catalog joins are free — no data copying.
@@ -63,8 +63,8 @@ don't need to know whether a fresh table was written.
 
 The input is a **voter file** — a parquet dump from a state BOE. The
 downstream canonical schema is **Person** (`src/models.py`). We keep
-"voter_file" in input-side names (`voter_file_url`, `voter_file_loader.py`,
-`{slug}_voters_raw`) because that's literally what's being loaded.
+"voter_file" in input-side names (`voter_file_loader.py`, `{slug}_voters_raw`,
+`NysVoterFileImporter`) because that's literally what's being loaded.
 Everything after validation uses "person" because rows conform to the
 Person schema regardless of source.
 
@@ -74,7 +74,7 @@ Person schema regardless of source.
 The slug is the URL/SQL-safe identifier stored alongside `organizationId`
 in `organizations` (`packages/db/src/schema/organizations.ts`).
 
-`geo_ducklake` is organization-agnostic — TIGER and OSM data is shared
+`ducklake_geo` is organization-agnostic — TIGER and OSM data is shared
 across all orgs in the same state.
 
 ## The Hamilton modules
@@ -82,17 +82,17 @@ across all orgs in the same state.
 | Module              | Role                                                                                     | Output catalog            |
 | ------------------- | ---------------------------------------------------------------------------------------- | ------------------------- |
 | `voter_file_loader` | Parse voter parquet → Person schema                                                      | `ducklake.{org}`          |
-| `tiger`             | TIGER shapefiles → `blockface_final`                                                     | `geo_ducklake.tiger`      |
-| `osm`               | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `geo_ducklake.osm`        |
+| `tiger`             | TIGER shapefiles → `blockface_final`                                                     | `ducklake_geo.tiger`      |
+| `osm`               | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `ducklake_geo.osm`        |
 | `matching`          | Voter ↔ TIGER blockface (`persons_best_match`)                                           | `ducklake.{org}`          |
 | `geocode`           | Lat/lon assignment (`refined_positions`, `osm_only_matches`)                             | `ducklake.{org}`          |
 | `assembly`          | Canonical Person record (`canonical_addresses`, `persons_geocoded`, `geocoding_summary`) | `ducklake.{org}`          |
 | `aggregate`         | `persons_geocoded` → `buildings_geocoded` + `doors_geocoded`                             | `ducklake.{org}`          |
-| `boundaries`        | Derive polygons (EDs, zips) from voter data + TIGER blocks                               | `geo_ducklake.boundaries` |
+| `boundaries`        | Derive polygons (EDs, zips) from voter data + TIGER blocks                               | `ducklake_geo.boundaries` |
 | `quickwit`          | Stream Person records into a Quickwit search index                                       | external                  |
 
 `tiger` and `osm` are symmetric — both extract geographic reference
-data into `geo_ducklake`. `matching`, `geocode`, `assembly`, and
+data into `ducklake_geo`. `matching`, `geocode`, `assembly`, and
 `aggregate` form the per-voter pipeline that consumes those references.
 
 ### voter_file_loader
@@ -156,7 +156,7 @@ osm_addresses + osm_landuse_residential + address_tokens
 ```
 
 Symmetric to `tiger`: extracts OSM reference data into
-`geo_ducklake.osm`. The downstream `geocode` module consumes
+`ducklake_geo.osm`. The downstream `geocode` module consumes
 `osm_building_lookup` along with `blockface_final` for coordinate
 assignment.
 
@@ -291,7 +291,7 @@ coordinates match within float noise.
 ### boundaries
 
 Loads administrative polygons (NYC Election Districts, ZIP areas, Census
-tracts, etc.) into `geo_ducklake.boundaries.{key_group}`. Three loaders
+tracts, etc.) into `ducklake_geo.boundaries.{key_group}`. Three loaders
 write to the same shape:
 
 - `boundary_from_blocks` (preferred) — union the TIGER census blocks where
