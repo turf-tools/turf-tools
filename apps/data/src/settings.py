@@ -26,37 +26,22 @@ def _dev_meta_schema(name: str) -> str | None:
     return None if os.environ.get("NODE_ENV") == "production" else name
 
 
-class S3StorageConfig(BaseSettings):
-    """Configuration for an S3-compatible object storage bucket."""
+class StorageConfig(BaseSettings):
+    """S3-compatible object storage for the deployment.
+
+    One bucket per deployment; the lakes and the search index are separated by
+    prefix inside it, so a single credential covers everything.
+    """
+
+    model_config = {"env_prefix": "STORAGE_"}
 
     endpoint_url: str = ""
     access_key_id: str = ""
     secret_access_key: str = ""
     bucket: str = ""
-    # Key prefix inside the bucket. A deployment uses one bucket, with the two
-    # lakes and the search index separated by prefix.
-    prefix: str = ""
     region: str = "auto"
     # DuckDB addressing style. Latitude accepts path; DO Spaces needs vhost.
     url_style: str = "path"
-
-
-class DucklakeStorageConfig(S3StorageConfig):
-    """Object storage for DuckLake data files (Parquet, etc.)."""
-
-    model_config = {"env_prefix": "DUCKLAKE_STORAGE_"}
-
-
-class DucklakeGeoStorageConfig(S3StorageConfig):
-    """Object storage for geo DuckLake data files (TIGER-derived Parquet, etc.)."""
-
-    model_config = {"env_prefix": "DUCKLAKE_GEO_STORAGE_"}
-
-
-class UserDataStorageConfig(S3StorageConfig):
-    """Object storage for user-uploaded data."""
-
-    model_config = {"env_prefix": "USER_DATA_STORAGE_"}
 
 
 class Settings(BaseSettings):
@@ -86,9 +71,9 @@ class Settings(BaseSettings):
         description="PostgreSQL connection URL for operational data shared with the web app.",
     )
 
-    ducklake_storage: DucklakeStorageConfig = Field(default_factory=DucklakeStorageConfig)
-    ducklake_geo_storage: DucklakeGeoStorageConfig = Field(default_factory=DucklakeGeoStorageConfig)
-    user_data_storage: UserDataStorageConfig = Field(default_factory=UserDataStorageConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+    ducklake_prefix: str = Field(default="ducklake", description="Key prefix for the person lake.")
+    ducklake_geo_prefix: str = Field(default="ducklake-geo", description="Key prefix for the geo lake.")
 
     # TIGER download settings
     tiger_year: str = Field(

@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import duckdb
-from src.settings import S3StorageConfig, Settings
+from src.settings import Settings
 
 # Local dev paths
 LOCAL_CATALOG = "ducklake.ducklake"
@@ -64,7 +64,7 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     # S3 storage (identified by a configured bucket) needs the SECRET so DuckDB
     # walks the AWS credential chain. Catalog backend (Postgres vs local file) is
     # an *independent* axis — dev runs a Postgres catalog with *local* storage.
-    using_s3 = bool(settings.ducklake_storage.bucket) or bool(settings.ducklake_geo_storage.bucket)
+    using_s3 = bool(settings.storage.bucket)
     if using_s3:
         conn.install_extension("httpfs")
         conn.load_extension("httpfs")
@@ -90,8 +90,8 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
         meta_schema=settings.ducklake_meta_schema,
         local_catalog=LOCAL_CATALOG,
         local_data_dir=LOCAL_DATA_DIR,
-        bucket=settings.ducklake_storage.bucket,
-        prefix=settings.ducklake_storage.prefix,
+        bucket=settings.storage.bucket,
+        prefix=settings.ducklake_prefix,
         read_only_opt=ro,
     )
     _attach_ducklake(
@@ -101,8 +101,8 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
         meta_schema=settings.ducklake_geo_meta_schema,
         local_catalog=LOCAL_DUCKLAKE_GEO_CATALOG,
         local_data_dir=LOCAL_DUCKLAKE_GEO_DATA_DIR,
-        bucket=settings.ducklake_geo_storage.bucket,
-        prefix=settings.ducklake_geo_storage.prefix,
+        bucket=settings.storage.bucket,
+        prefix=settings.ducklake_geo_prefix,
         read_only_opt=ro,
     )
 
@@ -155,41 +155,21 @@ def _s3_path(bucket: str, prefix: str) -> str:
     return f"s3://{bucket}/{prefix.strip('/')}/" if prefix.strip("/") else f"s3://{bucket}/"
 
 
-def _lake_storage_configs(settings: Settings) -> dict[str, S3StorageConfig]:
-    """The storage configs backing the two DuckLake catalogs, keyed by alias."""
-    return {
-        "ducklake": settings.ducklake_storage,
-        "ducklake_geo": settings.ducklake_geo_storage,
-    }
-
-
 def _create_or_replace_s3_secret(conn: duckdb.DuckDBPyConnection, settings: Settings) -> None:
-    """(Re)create the S3 SECRET(s) that authorise DuckDB's httpfs reads.
+    """(Re)create the S3 SECRET authorising DuckDB's httpfs reads.
 
-    Decided per catalog, so the two can sit on different providers:
-
-    - **Explicit endpoint** (Latitude, DO Spaces) — a static key pair scoped to
-      that bucket. Static creds never expire, so nothing refreshes.
-    - **AWS credential chain** — one unscoped secret covering the rest.
-      `VALIDATION 'none'` keeps a transient IMDS blip from killing the service.
-
-    `CREATE OR REPLACE` is atomic at the secrets-manager level; in-flight
-    queries that already resolved the secret keep their token snapshot (still
-    valid for hours), and new queries pick up the new triple.
-
-    Note: `REFRESH 'auto'` is documented but is a no-op for plain
-    `credential_chain` on EC2 instance profile — DuckDB only wires the
-    refresh hook into the STS / web_identity branches (see duckdb-aws#26).
-    That's why we drive the refresh ourselves from lifespan.
+    Explicit endpoint (Latitude, DO Spaces) means a static key pair scoped to
+    the deployment's bucket. Without one, fall back to the AWS credential chain,
+    whose tokens expire — hence the refresh in `main.py`'s lifespan.
+    `VALIDATION 'none'` keeps a transient IMDS blip from killing the service.
     """
-    for alias, cfg in _lake_storage_configs(settings).items():
-        if not (cfg.bucket and cfg.endpoint_url):
-            continue
+    cfg = settings.storage
+    if cfg.endpoint_url:
         parsed = urlparse(cfg.endpoint_url if "//" in cfg.endpoint_url else f"//{cfg.endpoint_url}")
         host = parsed.netloc or parsed.path
         use_ssl = "true" if parsed.scheme != "http" else "false"
         conn.execute(
-            f"CREATE OR REPLACE SECRET s3_secret_{alias} ("
+            "CREATE OR REPLACE SECRET s3_secret ("
             f"  TYPE S3,"
             f"  KEY_ID '{_sql_str(cfg.access_key_id)}',"
             f"  SECRET '{_sql_str(cfg.secret_access_key)}',"
@@ -197,22 +177,13 @@ def _create_or_replace_s3_secret(conn: duckdb.DuckDBPyConnection, settings: Sett
             f"  URL_STYLE '{_sql_str(cfg.url_style)}',"
             f"  REGION '{_sql_str(cfg.region)}',"
             f"  USE_SSL {use_ssl},"
-            f"  SCOPE '{_sql_str(_s3_path(cfg.bucket, cfg.prefix).rstrip('/'))}')"
+            f"  SCOPE 's3://{_sql_str(cfg.bucket)}')"
         )
-
-    # An unscoped chain secret covers any bucket without its own endpoint, so a
-    # deployment can mix an AWS-hosted catalog with a Latitude/DO one.
-    if _needs_credential_chain(settings):
-        region = _sql_str(os.environ.get("AWS_REGION", "us-east-1"))
-        conn.execute(
-            "CREATE OR REPLACE SECRET s3_secret ("
-            f"TYPE S3, PROVIDER credential_chain, REGION '{region}', VALIDATION 'none')"
-        )
-
-
-def _needs_credential_chain(settings: Settings) -> bool:
-    """True when some attached lake relies on AWS-resolved credentials."""
-    return any(cfg.bucket and not cfg.endpoint_url for cfg in _lake_storage_configs(settings).values())
+        return
+    region = _sql_str(os.environ.get("AWS_REGION", "us-east-1"))
+    conn.execute(
+        f"CREATE OR REPLACE SECRET s3_secret (TYPE S3, PROVIDER credential_chain, REGION '{region}', VALIDATION 'none')"
+    )
 
 
 def _sql_str(value: str) -> str:
@@ -221,12 +192,12 @@ def _sql_str(value: str) -> str:
 
 
 def s3_secret_expires(settings: Settings) -> bool:
-    """Whether any S3 credentials are the expiring kind.
+    """Whether the S3 credentials are the expiring kind.
 
     Only the AWS credential chain hands out temporary tokens; explicit static
     keys never expire, so there is nothing to refresh.
     """
-    return _needs_credential_chain(settings)
+    return bool(settings.storage.bucket) and not settings.storage.endpoint_url
 
 
 def refresh_s3_secret_on_shared_connection(settings: Settings) -> None:
