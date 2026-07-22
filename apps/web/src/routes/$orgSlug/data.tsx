@@ -263,7 +263,7 @@ function DataPage() {
                 <TableCell>
                   <span
                     className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm tabular-nums"
-                    style={{ backgroundColor: `${status.color}22`, color: status.color }}
+                    style={{ backgroundColor: `${status.color}20`, color: status.color }}
                   >
                     <span className="truncate">{pillLabel}</span>
                   </span>
