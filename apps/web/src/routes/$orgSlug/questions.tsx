@@ -205,7 +205,7 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
             className={cn(
               "flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm",
             )}
-            style={{ backgroundColor: `${meta.color}22`, color: meta.color }}
+            style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
           >
             <span className="truncate">{meta.label}</span>
           </span>
@@ -494,7 +494,7 @@ function EditBody({ questionId }: { questionId: string }) {
           <label className="text-sm text-muted-foreground">Type</label>
           <span
             className="inline-flex h-8 w-fit items-center rounded-md px-2 text-sm"
-            style={{ backgroundColor: `${meta.color}22`, color: meta.color }}
+            style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
           >
             {meta.label}
           </span>
