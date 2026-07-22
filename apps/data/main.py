@@ -489,25 +489,28 @@ class _SegmentExportRequest(_WireBaseModel):
     format: str = "csv"
 
 
-# The canonical Person fields — identity + geocodable address — present in every
-# dataset regardless of importer. Dataset-specific columns are not exported.
-_EXPORT_SELECT = """
-    SELECT
-        external_id,
-        external_id_type,
-        first_name,
-        middle_name,
-        last_name,
-        name_suffix,
-        address_line_1 AS address,
-        address_line_2 AS unit,
-        half_code,
-        city,
-        state,
-        zip5 AS zip,
-        zip4
-    FROM {persons_geocoded}
-"""
+# The exported columns, in order, under their own names — the Person contract
+# (models.py) as it survives assembly. No half_code: assembly consumes it into
+# canonical address_line_1 ("123 1/2 MAIN ST"). Required-contract columns are
+# always selected, so genuine pipeline drift fails loudly; the contract-optional
+# four are included only when the version's table has them. Dataset-specific
+# columns are not exported.
+_EXPORT_COLUMNS = [
+    "external_id",
+    "external_id_type",
+    "first_name",
+    "middle_name",
+    "last_name",
+    "name_suffix",
+    "address_line_1",
+    "address_line_2",
+    "city",
+    "state",
+    "zip5",
+    "zip4",
+]
+# `| None = None` on Person — an importer may omit these columns entirely.
+_EXPORT_OPTIONAL = {"middle_name", "name_suffix", "address_line_2", "zip4"}
 
 
 @app.post("/segments/export")
@@ -529,7 +532,11 @@ async def segments_export(req: _SegmentExportRequest):
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, None, params)
-    select_sql = resolve(_EXPORT_SELECT + where, schema)
+    persons_columns = {row[0] for row in conn.execute(f"DESCRIBE {resolve('{persons_geocoded}', schema)}").fetchall()}
+    # Skip only optional-and-absent; a missing required column stays in the
+    # SELECT and fails loudly at bind time.
+    select_cols = ", ".join(c for c in _EXPORT_COLUMNS if c in persons_columns or c not in _EXPORT_OPTIONAL)
+    select_sql = resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
 
     suffix = ".parquet" if req.format == "parquet" else ".csv"
     fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
