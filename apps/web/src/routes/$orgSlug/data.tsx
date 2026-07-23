@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { Columns2, Check, Upload } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
 import {
@@ -129,6 +129,16 @@ function DataPage() {
 
   const selected = datasetGroups.find((d) => d.datasetId === datasetParam) ?? datasetGroups[0];
   const selectDataset = (datasetId: string) => void navigate({ search: { dataset: datasetId } });
+
+  // Canonicalize the URL to the dataset actually shown — bare /data and stale
+  // ?dataset= values otherwise render the fallback while the address bar
+  // disagrees. Component-level replace, not a loader redirect: index-redirects
+  // plus hover preload have caused auto-navigation here before.
+  useEffect(() => {
+    if (selected && selected.datasetId !== datasetParam) {
+      void navigate({ search: { dataset: selected.datasetId }, replace: true });
+    }
+  }, [selected, datasetParam, navigate]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
