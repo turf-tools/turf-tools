@@ -506,7 +506,7 @@ function FieldsCard({
           ))}
         </div>
         <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Base fields</div>
-        <div className="flex flex-col gap-1 p-2 pt-1">
+        <div className="flex flex-col gap-1 p-2 pt-1 pb-3">
           {baseFields.map((f) => (
             <div
               key={f.label}

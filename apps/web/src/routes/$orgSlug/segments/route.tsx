@@ -23,6 +23,7 @@ import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail } from "~/components/rail";
 import type { Criteria } from "~/lib/filters";
+import { customFieldsQuery } from "~/lib/queries/custom-fields";
 import { electionsQuery } from "~/lib/queries/elections";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
@@ -52,6 +53,9 @@ export const Route = createFileRoute("/$orgSlug/segments")({
     Promise.all([
       queryClient.fetchQuery(segmentsListQuery()),
       queryClient.fetchQuery(manifestQuery()),
+      // Custom-field defs join the manifest in the filter catalog — prefetch
+      // both so saved filter cards paint complete instead of sliding in.
+      queryClient.fetchQuery(customFieldsQuery()),
       // Warm the voting-history-detail picker so opening one never flashes.
       queryClient.fetchQuery(electionsQuery()),
     ]),
