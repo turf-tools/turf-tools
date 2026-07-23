@@ -292,6 +292,44 @@ export const manifest = pub.input(z.object({}).optional()).handler(async ({ cont
   return { manifest: row.manifest as Manifest, versionId: row.versionId };
 });
 
+// Flattened field list from a dataset's latest ready version's manifest —
+// the Data page's "base fields" display (name + kind; coverage is meaningless
+// since every person has them). Dataset-targeted (the rail can select a
+// non-active dataset), unlike `manifest` above which follows the org's
+// active version.
+export const baseFields = pub
+  .input(z.object({ datasetId: z.string().uuid() }))
+  .handler(async ({ context, input }): Promise<Array<{ label: string; kind: string }>> => {
+    // Prefer the org's active version when it belongs to this dataset (the
+    // fields users actually filter on); otherwise the latest ready version.
+    const [org] = await context.db
+      .select({ activeDatasetVersionId: organizations.activeDatasetVersionId })
+      .from(organizations)
+      .where(eq(organizations.organizationId, context.organizationId));
+    const rows = await context.db
+      .select({
+        manifest: datasetVersions.manifest,
+        versionId: datasetVersions.datasetVersionId,
+      })
+      .from(datasetVersions)
+      .innerJoin(
+        datasetOrganizations,
+        eq(datasetOrganizations.datasetId, datasetVersions.datasetId),
+      )
+      .where(
+        and(
+          eq(datasetVersions.datasetId, input.datasetId),
+          eq(datasetOrganizations.organizationId, context.organizationId),
+          eq(datasetVersions.status, "ready"),
+        ),
+      )
+      .orderBy(desc(datasetVersions.versionNumber));
+    const row = rows.find((r) => r.versionId === org?.activeDatasetVersionId) ?? rows[0];
+    const manifest = (row?.manifest ?? null) as Manifest | null;
+    if (!manifest) return [];
+    return manifest.fields.flat().map((fd) => ({ label: fd.label, kind: fd.filterKind }));
+  });
+
 export type Election = { value: string; label: string };
 
 // Distinct elections in the org's active dataset — the voting-history-detail

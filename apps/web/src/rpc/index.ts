@@ -6,6 +6,7 @@ import * as persons from "./web/persons";
 import * as scripts from "./web/scripts";
 import * as segments from "./web/segments";
 import * as questions from "./web/questions";
+import * as customFields from "./web/custom-fields";
 import * as turfDrafts from "./web/turf-drafts";
 import * as webTurfs from "./web/turfs";
 import * as webUsers from "./web/users";
@@ -37,6 +38,7 @@ export const webRouter = {
     archive: datasets.archive,
     unarchive: datasets.unarchive,
     manifest: datasets.manifest,
+    baseFields: datasets.baseFields,
     elections: datasets.elections,
   },
   segments: {
@@ -114,6 +116,14 @@ export const webRouter = {
     removeResponseOption: questions.removeResponseOption,
     reorderResponseOptions: questions.reorderResponseOptions,
     updateResponseOptionText: questions.updateResponseOptionText,
+  },
+  customFields: {
+    list: customFields.list,
+    rename: customFields.rename,
+    archive: customFields.archive,
+    unarchive: customFields.unarchive,
+    clear: customFields.clear,
+    history: customFields.history,
   },
   users: {
     list: webUsers.list,

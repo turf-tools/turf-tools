@@ -1,19 +1,9 @@
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import {
-  Activity,
-  Archive,
-  ArchiveRestore,
-  Check,
-  ChevronDown,
-  MoreHorizontal,
-  Plus,
-  Upload,
-} from "lucide-react";
-import { useState } from "react";
+import { Columns2, Check, Upload } from "lucide-react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
-import { Filter } from "~/components/filter";
 import {
   Dialog,
   DialogClose,
@@ -25,23 +15,27 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
+import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
-import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
+import { Rail } from "~/components/rail";
+import { Switch } from "~/components/switch";
 import { formatDate } from "~/lib/format";
 import { AVAILABLE_IMPORTERS, importerLabel } from "~/lib/importers";
 import { hasPermission } from "~/lib/permissions";
+import type { CustomFieldType } from "@turf-tools/db/schema";
+import { Archive, ArchiveRestore, MoreHorizontal } from "lucide-react";
+import {
+  baseFieldsQuery,
+  customFieldHistoryQuery,
+  customFieldsQuery,
+} from "~/lib/queries/custom-fields";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
-import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useFadeOnce } from "~/lib/use-fade-once";
-import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -51,56 +45,233 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   failed: { label: "Failed", color: "#ff725c" },
 };
 
-// Default (null) hides archived versions.
-const STATUS_OPTIONS = [
-  { value: "archived", label: "Archived" },
-  { value: "all", label: "All statuses" },
-];
+// Display names for base (manifest) field kinds in the fields card.
+const BASE_KIND_LABELS: Record<string, string> = {
+  enum: "Category",
+  text: "Text",
+  "text-multi": "Text",
+  "date-range": "Date",
+  "age-range": "Age",
+  "voting-history-count": "Voting history",
+  "voting-history-detail": "Voting history",
+  address: "Address",
+};
+
+const FIELD_TYPE_META: Record<CustomFieldType, string> = {
+  enum: "Category",
+  number: "Number",
+  date: "Date",
+  text: "Text",
+};
 
 export const Route = createFileRoute("/$orgSlug/data")({
-  validateSearch: (search): { status: string | null } => ({
-    status: typeof search.status === "string" ? search.status : null,
+  validateSearch: (search): { dataset: string | null } => ({
+    dataset: typeof search.dataset === "string" ? search.dataset : null,
   }),
   beforeLoad: ({ context, params }) => {
     if (!hasPermission(context.role, "datasets.manage")) {
       throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
     }
   },
-  loader: ({ context: { queryClient } }) => queryClient.fetchQuery(datasetsListQuery()),
+  loaderDeps: ({ search }) => ({ dataset: search.dataset }),
+  loader: async ({ context: { queryClient }, deps }) => {
+    // Prefetch the selected dataset's field queries so the cards render
+    // complete on first paint — rail switches re-run this via loaderDeps,
+    // and the previous canvas stays up until the new data is ready.
+    const rows = await queryClient.fetchQuery(datasetsListQuery());
+    const selected =
+      rows.find((r) => r.datasetId === deps.dataset)?.datasetId ?? rows[0]?.datasetId;
+    if (selected) {
+      await Promise.all([
+        queryClient.fetchQuery(customFieldsQuery(selected)),
+        queryClient.fetchQuery(baseFieldsQuery(selected)),
+      ]);
+    }
+  },
   component: DataPage,
 });
 
+type VersionRow = Awaited<ReturnType<typeof client.datasets.list>>[number];
+
 function DataPage() {
   const { session } = Route.useRouteContext();
+  const { orgSlug } = Route.useParams();
   const timezone = session?.user?.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
   const queryClient = useQueryClient();
-  const { status: statusFilter } = Route.useSearch();
+  const { dataset: datasetParam } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/data");
-  const { data: datasets } = useSuspenseQuery({
+
+  const { data: versionRows } = useSuspenseQuery({
     ...datasetsListQuery(),
-    // Poll while any version is importing so the row advances to Ready on its own.
+    // Poll while any version is importing so rows advance to Ready on their own.
     refetchInterval: (q) => (q.state.data?.some((r) => r.status === "importing") ? 3000 : false),
   });
 
-  const importDialog = useDialogMutation({
-    mutationFn: async (
-      input:
-        | { mode: "new"; name: string; importer: string; sourceUri: string }
-        | { mode: "update"; datasetId: string; sourceUri: string },
-    ): Promise<void> => {
-      if (input.mode === "new") {
-        await client.datasets.create({
-          name: input.name,
-          importer: input.importer,
-          sourceUri: input.sourceUri,
-        });
-      } else {
-        await client.datasets.update({ datasetId: input.datasetId, sourceUri: input.sourceUri });
-      }
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
-  });
+  // One entry per dataset; the list endpoint returns flat version rows.
+  const datasetGroups = useMemo(() => {
+    const byId = new Map<
+      string,
+      { datasetId: string; name: string; importer: string; versions: VersionRow[] }
+    >();
+    for (const r of versionRows) {
+      const g = byId.get(r.datasetId) ?? {
+        datasetId: r.datasetId,
+        name: r.name,
+        importer: r.importer,
+        versions: [],
+      };
+      g.versions.push(r);
+      byId.set(r.datasetId, g);
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [versionRows]);
+
+  const selected = datasetGroups.find((d) => d.datasetId === datasetParam) ?? datasetGroups[0];
+  const selectDataset = (datasetId: string) => void navigate({ search: { dataset: datasetId } });
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [appendOpen, setAppendOpen] = useState(false);
+
+  return (
+    <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
+      <Rail>
+        {datasetGroups.map((d) => (
+          <Rail.Item
+            key={d.datasetId}
+            label={d.name}
+            active={selected?.datasetId === d.datasetId}
+            onSelect={() => selectDataset(d.datasetId)}
+          />
+        ))}
+        <Rail.New label="Import dataset" onClick={() => setCreateOpen(true)} />
+      </Rail>
+
+      <CreateDatasetDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(datasetId) => {
+          void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+          selectDataset(datasetId);
+        }}
+      />
+
+      {selected ? (
+        <DatasetEditor
+          key={selected.datasetId}
+          dataset={selected}
+          orgSlug={orgSlug}
+          timezone={timezone}
+          updateOpen={updateOpen}
+          setUpdateOpen={setUpdateOpen}
+          appendOpen={appendOpen}
+          setAppendOpen={setAppendOpen}
+        />
+      ) : (
+        <EditorPage>
+          <EditorHeader title="Data" subtitle="Voter files and other imported datasets" />
+          <p className="text-sm text-muted-foreground">
+            No datasets yet — create one to start importing.
+          </p>
+        </EditorPage>
+      )}
+    </div>
+  );
+}
+
+function DatasetEditor({
+  dataset,
+  orgSlug,
+  timezone,
+  updateOpen,
+  setUpdateOpen,
+  appendOpen,
+  setAppendOpen,
+}: {
+  dataset: { datasetId: string; name: string; importer: string; versions: VersionRow[] };
+  orgSlug: string;
+  timezone: string;
+  updateOpen: boolean;
+  setUpdateOpen: (open: boolean) => void;
+  appendOpen: boolean;
+  setAppendOpen: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  // Loader-prefetched; suspense keeps the card from painting incomplete.
+  const { data: fields } = useSuspenseQuery(customFieldsQuery(dataset.datasetId));
+  const { data: baseFields } = useSuspenseQuery(baseFieldsQuery(dataset.datasetId));
+
+  const importing = dataset.versions.some((v) => v.status === "importing");
+
+  const invalidateFields = () => {
+    // Both keys: this dataset's list (the card) and the active-dataset list
+    // (the segment editor's filter catalog).
+    void queryClient.invalidateQueries({ queryKey: ["custom-fields"] });
+  };
+
+  // Which field the edit dialog targets — held separately from the open flag
+  // so the dialog body doesn't flash a fallback during the close animation.
+  const [fieldTarget, setFieldTarget] = useState<FieldRow | null>(null);
+  const [fieldDialogOpen, setFieldDialogOpen] = useState(false);
+
+  return (
+    <EditorPage>
+      <EditorHeader title={dataset.name} subtitle={importerLabel(dataset.importer)}>
+        <Button variant="outline" onClick={() => setAppendOpen(true)}>
+          <Columns2 className="size-4" />
+          Append
+        </Button>
+        <Button onClick={() => setUpdateOpen(true)} disabled={importing}>
+          <Upload className="size-4" />
+          Update
+        </Button>
+      </EditorHeader>
+
+      <UpdateDialog
+        open={updateOpen}
+        onOpenChange={setUpdateOpen}
+        datasetId={dataset.datasetId}
+        datasetName={dataset.name}
+        onUpdated={() => void queryClient.invalidateQueries({ queryKey: ["datasets"] })}
+      />
+      <AppendDialog
+        open={appendOpen}
+        onOpenChange={setAppendOpen}
+        orgSlug={orgSlug}
+        datasetId={dataset.datasetId}
+        onAppended={invalidateFields}
+      />
+      <FieldDialog
+        open={fieldDialogOpen}
+        onOpenChange={setFieldDialogOpen}
+        field={fieldTarget}
+        timezone={timezone}
+        onDone={invalidateFields}
+      />
+
+      <div className="flex min-h-0 flex-1 gap-4">
+        <VersionsCard versions={dataset.versions} timezone={timezone} />
+        <FieldsCard
+          fields={fields}
+          baseFields={baseFields}
+          onSelect={(f) => {
+            setFieldTarget(f);
+            setFieldDialogOpen(true);
+          }}
+        />
+      </div>
+    </EditorPage>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Versions
+// ---------------------------------------------------------------------------
+
+function VersionsCard({ versions, timezone }: { versions: VersionRow[]; timezone: string }) {
+  const queryClient = useQueryClient();
+  const [showArchived, setShowArchived] = useState(false);
 
   const makeActive = useMutation({
     mutationFn: (versionId: string) => client.datasets.makeActive({ versionId }),
@@ -116,18 +287,6 @@ function DataPage() {
     },
     onError: (e) => toast.error(e.message),
   });
-
-  // Which dataset the Update dialog targets (its name is fixed; only the source
-  // is entered). Held separately from the dialog's open flag so the name stays
-  // put through the close animation.
-  const [updateTarget, setUpdateTarget] = useState<{ datasetId: string; name: string } | null>(
-    null,
-  );
-  const updateDialog = useDialogMutation({
-    mutationFn: (input: { datasetId: string; sourceUri: string }) => client.datasets.update(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
-  });
-
   const archive = useMutation({
     mutationFn: (versionId: string) => client.datasets.archive({ versionId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
@@ -139,514 +298,110 @@ function DataPage() {
     onError: (e) => toast.error(e.message),
   });
 
-  // A dataset with an in-flight import can't take another until it finishes.
-  // Computed over all datasets (not the filtered view) so the guard is correct.
-  const importingDatasetIds = new Set(
-    datasets.filter((r) => r.status === "importing").map((r) => r.datasetId),
-  );
-
-  // Distinct datasets with a ready, non-archived version and no import in flight
-  // — what the import dialog's "Update existing" mode can target.
-  const updatableById = new Map<string, { datasetId: string; name: string }>();
-  for (const r of datasets) {
-    if (r.status === "ready" && !r.isArchived && !importingDatasetIds.has(r.datasetId)) {
-      updatableById.set(r.datasetId, { datasetId: r.datasetId, name: r.name });
-    }
-  }
-  const updatableDatasets = [...updatableById.values()];
-
-  const rows = datasets.filter((r) => {
-    if (statusFilter === null && r.isArchived) return false;
-    if (statusFilter === "archived" && !r.isArchived) return false;
-    return true;
-  });
-  const statusLabel =
-    statusFilter === null
-      ? "All current"
-      : (STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? null);
+  const visible = versions.filter((v) => showArchived || !v.isArchived);
+  const hasArchived = versions.some((v) => v.isArchived);
 
   return (
-    <Page className={shouldFade}>
-      <EditorHeader title="Data" subtitle="Voter files and other imported datasets">
-        <Filter
-          icon={<Activity className="size-3.5" />}
-          label={statusLabel}
-          value={statusFilter}
-          options={STATUS_OPTIONS}
-          allLabel="All current"
-          onChange={(next) => void navigate({ search: (prev) => ({ ...prev, status: next }) })}
-        />
-        <Button onClick={importDialog.open}>
-          <Plus className="size-4" />
-          Import
-        </Button>
-      </EditorHeader>
-
-      <ImportDialog
-        open={importDialog.isOpen}
-        onOpenChange={importDialog.onOpenChange}
-        pending={importDialog.isPending}
-        error={importDialog.error}
-        clearError={importDialog.reset}
-        datasets={updatableDatasets}
-        onSubmit={(input) => importDialog.mutate(input)}
-      />
-
-      <UpdateDialog
-        open={updateDialog.isOpen}
-        onOpenChange={updateDialog.onOpenChange}
-        datasetName={updateTarget?.name ?? null}
-        pending={updateDialog.isPending}
-        error={updateDialog.error}
-        clearError={updateDialog.reset}
-        onSubmit={(sourceUri) =>
-          updateTarget && updateDialog.mutate({ datasetId: updateTarget.datasetId, sourceUri })
-        }
-      />
-
-      <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
-        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead className="w-56">Type</TableHead>
-            <TableHead className="w-20">Version</TableHead>
-            <TableHead className="w-36">Status</TableHead>
-            <TableHead className="w-32">People</TableHead>
-            <TableHead className="w-28">Imported</TableHead>
-            <TableHead className="w-16">Active</TableHead>
-            <TableHead className="w-11" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.length === 0 ? (
-            <TableRow className="h-10">
-              <TableCell colSpan={8}>
-                <Pill>
-                  <span>
-                    {datasets.length === 0
-                      ? "No datasets — import a voter file to start building segments."
-                      : "No results"}
-                  </span>
-                </Pill>
-              </TableCell>
-            </TableRow>
-          ) : null}
-          {rows.map((r) => {
-            const status = STATUS_META[r.status ?? ""] ?? {
-              label: r.status ?? "—",
-              color: "#9ca3af",
-            };
-            // While importing, always show a percentage (0% before the job has
-            // written any progress) so it never reads as a bare "Importing".
-            const pct =
-              r.status === "importing"
-                ? r.importTotalSteps
-                  ? Math.min(100, Math.round(((r.importStep ?? 0) / r.importTotalSteps) * 100))
-                  : 0
-                : null;
-            const pillLabel = pct != null ? `Importing (${pct}%)` : status.label;
-            return (
-              <TableRow key={r.versionId} className={cn(r.isArchived && "text-muted-foreground")}>
-                <TableCell>
-                  <Pill className="min-w-0">
-                    <span className="truncate">{r.name}</span>
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill className="min-w-0">
-                    <span className="truncate">{importerLabel(r.importer)}</span>
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill className="tabular-nums">v{r.versionNumber}</Pill>
-                </TableCell>
-                <TableCell>
-                  <span
-                    className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm tabular-nums"
-                    style={{ backgroundColor: `${status.color}20`, color: status.color }}
-                  >
-                    <span className="truncate">{pillLabel}</span>
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <Pill variant="number">
-                    {r.rowCount != null ? r.rowCount.toLocaleString() : "—"}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill variant="number">
-                    {r.importedAt ? formatDate(r.importedAt, timezone) : "—"}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill className="justify-center">
-                    {r.isActive ? <Check className="size-4" /> : null}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <DatasetRowMenu
-                    canActivate={!r.isActive && r.status === "ready" && !r.isArchived}
-                    canUpdate={!importingDatasetIds.has(r.datasetId)}
-                    isArchived={r.isArchived}
-                    canArchive={
-                      !r.isActive &&
-                      !r.isArchived &&
-                      (r.status === "ready" || r.status === "failed")
-                    }
-                    onMakeActive={() => makeActive.mutate(r.versionId)}
-                    onUpdate={() => {
-                      setUpdateTarget({ datasetId: r.datasetId, name: r.name });
-                      updateDialog.open();
-                    }}
-                    onArchive={() => archive.mutate(r.versionId)}
-                    onUnarchive={() => unarchive.mutate(r.versionId)}
-                  />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </Page>
-  );
-}
-
-type ImportSubmit =
-  | { mode: "new"; name: string; importer: string; sourceUri: string }
-  | { mode: "update"; datasetId: string; sourceUri: string };
-
-function ImportDialog({
-  open,
-  onOpenChange,
-  pending,
-  error,
-  clearError,
-  datasets,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  pending: boolean;
-  error: string | null;
-  clearError: () => void;
-  datasets: Array<{ datasetId: string; name: string }>;
-  onSubmit: (input: ImportSubmit) => void;
-}) {
-  const [mode, setMode] = useState<"new" | "update">("new");
-  const [name, setName] = useState("");
-  const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
-  const [datasetId, setDatasetId] = useState<string>("");
-  const [source, setSource] = useState("");
-
-  // Editing after a failed submit clears the stale error.
-  const edit = (set: (v: string) => void) => (v: string) => {
-    if (error) clearError();
-    set(v);
-  };
-
-  // Reset synchronously on open (not in a post-paint effect) so reopening never
-  // flashes the previous submission's values.
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) {
-      setMode("new");
-      setName("");
-      setImporter(AVAILABLE_IMPORTERS[0].name);
-      setDatasetId(datasets[0]?.datasetId ?? "");
-      setSource("");
-    }
-  }
-
-  // "Update existing" is only offered when there's a ready dataset to target.
-  const canUpdate = datasets.length > 0;
-  const valid =
-    source.trim().length > 0 && (mode === "new" ? name.trim().length > 0 : datasetId.length > 0);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle>Import</DialogTitle>
-        <DialogDescription>
-          Create a new dataset or update an existing one. Type will be fixed after creating a new
-          dataset. Segments and campaigns will carry over on updates.
-        </DialogDescription>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid || pending) return;
-            onSubmit(
-              mode === "new"
-                ? { mode: "new", name: name.trim(), importer, sourceUri: source.trim() }
-                : { mode: "update", datasetId, sourceUri: source.trim() },
-            );
-          }}
-          className="flex flex-col gap-4"
-        >
-          {canUpdate ? (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Create or update</label>
-              <div className="flex flex-wrap gap-1.5">
-                {(["new", "update"] as const).map((m) => {
-                  const selected = mode === m;
-                  return (
-                    <button
-                      type="button"
-                      key={m}
-                      onClick={() => {
-                        if (error) clearError();
-                        setMode(m);
-                      }}
-                      disabled={pending}
-                      className={cn(
-                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                        selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                      )}
-                    >
-                      {m === "new" ? "New dataset" : "Update existing"}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {mode === "new" ? (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium">Name</label>
-                <Input
-                  value={name}
-                  onChange={(e) => edit(setName)(e.target.value)}
-                  placeholder="Name of dataset..."
-                  disabled={pending}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium">Type</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {AVAILABLE_IMPORTERS.map((imp) => {
-                    const selected = importer === imp.name;
-                    return (
-                      <button
-                        type="button"
-                        key={imp.name}
-                        onClick={() => setImporter(imp.name)}
-                        disabled={pending}
-                        className={cn(
-                          "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                          selected ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                        )}
-                      >
-                        {imp.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Dataset</label>
-              <DatasetSelect
-                value={datasetId}
-                datasets={datasets}
-                onChange={(id) => {
-                  if (error) clearError();
-                  setDatasetId(id);
-                }}
-                disabled={pending}
+    <div className="flex min-h-0 flex-1 flex-col rounded-md border border-border bg-card">
+      <div
+        className={cn(
+          "grid grid-cols-[3.75rem_repeat(3,minmax(0,1fr))_3.25rem_2.25rem] items-center gap-2",
+          "px-3.5 pt-3 pb-1 text-sm text-muted-foreground",
+        )}
+      >
+        <span>Version</span>
+        <span>Status</span>
+        <span>People</span>
+        <span>Imported</span>
+        <span>Active</span>
+        <span />
+      </div>
+      <div className="flex flex-1 flex-col gap-0 overflow-y-auto p-2 pt-1">
+        {visible.map((v) => {
+          const status = STATUS_META[v.status ?? ""] ?? {
+            label: v.status ?? "—",
+            color: "#9ca3af",
+          };
+          // While importing, always show a percentage (0% before the job has
+          // written any progress) so it never reads as a bare "Importing".
+          const pct =
+            v.status === "importing"
+              ? v.importTotalSteps
+                ? Math.min(100, Math.round(((v.importStep ?? 0) / v.importTotalSteps) * 100))
+                : 0
+              : null;
+          return (
+            <div
+              key={v.versionId}
+              className={cn(
+                "grid grid-cols-[3.75rem_repeat(3,minmax(0,1fr))_3.25rem_2.25rem] items-center gap-2 rounded-md p-1.5 text-sm",
+                v.isArchived && "text-muted-foreground",
+              )}
+            >
+              <Pill className="tabular-nums">v{v.versionNumber}</Pill>
+              <span
+                className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm tabular-nums"
+                style={{ backgroundColor: `${status.color}20`, color: status.color }}
+              >
+                <span className="truncate">
+                  {pct != null ? `Importing (${pct}%)` : status.label}
+                </span>
+              </span>
+              <Pill variant="number">{v.rowCount != null ? v.rowCount.toLocaleString() : "—"}</Pill>
+              <Pill variant="number">
+                {v.importedAt ? formatDate(v.importedAt, timezone) : "—"}
+              </Pill>
+              <Pill className="justify-center">
+                {v.isActive ? <Check className="size-4" /> : null}
+              </Pill>
+              <VersionRowMenu
+                canActivate={!v.isActive && v.status === "ready" && !v.isArchived}
+                isArchived={v.isArchived}
+                canArchive={
+                  !v.isActive && !v.isArchived && (v.status === "ready" || v.status === "failed")
+                }
+                onMakeActive={() => makeActive.mutate(v.versionId)}
+                onArchive={() => archive.mutate(v.versionId)}
+                onUnarchive={() => unarchive.mutate(v.versionId)}
               />
             </div>
-          )}
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Source</label>
-            <Input
-              value={source}
-              onChange={(e) => edit(setSource)(e.target.value)}
-              placeholder="e.g. https://example.com/voters.parquet"
-              disabled={pending}
-            />
-            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
-          </div>
-          {error ? (
-            <p
-              className={cn(
-                "rounded-md border border-destructive/40 bg-destructive/10",
-                "px-3 py-2 text-sm text-destructive",
-              )}
-            >
-              {error}
-            </p>
-          ) : null}
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!valid} loading={pending}>
-              Import
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+          );
+        })}
+      </div>
+      {hasArchived ? (
+        <div className="flex items-center justify-between border-t border-border px-3 py-2.5">
+          <span className="text-sm text-muted-foreground">Show archived versions</span>
+          <Switch checked={showArchived} onCheckedChange={setShowArchived} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-function DatasetSelect({
-  value,
-  datasets,
-  onChange,
-  disabled,
-}: {
-  value: string;
-  datasets: Array<{ datasetId: string; name: string }>;
-  onChange: (id: string) => void;
-  disabled?: boolean;
-}) {
-  const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v) });
-  const selected = datasets.find((d) => d.datasetId === value);
-  return (
-    <DropdownMenu {...dd.menu}>
-      <DropdownMenuTrigger
-        disabled={disabled}
-        render={<Button variant="outline" type="button" className="w-full justify-between" />}
-      >
-        <span className="truncate">{selected?.name ?? "Select a dataset"}</span>
-        <ChevronDown className="size-3.5 text-muted-foreground" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-72">
-        <DropdownMenuRadioGroup {...dd.radio} value={value}>
-          {datasets.map((d) => (
-            <DropdownMenuRadioItem key={d.datasetId} value={d.datasetId}>
-              <span className="truncate">{d.name}</span>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function UpdateDialog({
-  open,
-  onOpenChange,
-  datasetName,
-  pending,
-  error,
-  clearError,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  datasetName: string | null;
-  pending: boolean;
-  error: string | null;
-  clearError: () => void;
-  onSubmit: (sourceUri: string) => void;
-}) {
-  const [source, setSource] = useState("");
-
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) setSource("");
-  }
-
-  const valid = source.trim().length > 0;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle>Update dataset</DialogTitle>
-        <DialogDescription>
-          Imports a new version of{" "}
-          <span className="font-medium text-foreground">{datasetName ?? "this dataset"}</span>. Your
-          segments and campaigns carry over; the new version stays inactive until you make it
-          active.
-        </DialogDescription>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid || pending) return;
-            onSubmit(source.trim());
-          }}
-          className="flex flex-col gap-4"
-        >
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Source</label>
-            <Input
-              value={source}
-              onChange={(e) => {
-                if (error) clearError();
-                setSource(e.target.value);
-              }}
-              placeholder="e.g. https://example.com/voters.parquet"
-              disabled={pending}
-            />
-            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
-          </div>
-          {error ? (
-            <p
-              className={cn(
-                "rounded-md border border-destructive/40 bg-destructive/10",
-                "px-3 py-2 text-sm text-destructive",
-              )}
-            >
-              {error}
-            </p>
-          ) : null}
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!valid} loading={pending}>
-              Import version
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function DatasetRowMenu({
+function VersionRowMenu({
   canActivate,
-  canUpdate,
   isArchived,
   canArchive,
   onMakeActive,
-  onUpdate,
   onArchive,
   onUnarchive,
 }: {
   canActivate: boolean;
-  canUpdate: boolean;
   isArchived: boolean;
   canArchive: boolean;
   onMakeActive: () => void;
-  onUpdate: () => void;
   onArchive: () => void;
   onUnarchive: () => void;
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("w-full bg-muted hover:bg-foreground/8", "aria-expanded:bg-foreground/8")}
-          />
-        }
-      >
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
         <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuItem disabled={!canActivate} onClick={onMakeActive}>
           <Check />
           Make active
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={!canUpdate} onClick={onUpdate}>
-          <Upload />
-          Update
         </DropdownMenuItem>
         {isArchived ? (
           <DropdownMenuItem onClick={onUnarchive}>
@@ -661,5 +416,801 @@ function DatasetRowMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Custom fields
+// ---------------------------------------------------------------------------
+
+type FieldRow = {
+  customFieldId: string;
+  label: string;
+  fieldType: CustomFieldType;
+  values: string[] | null;
+  personCount: number;
+  isArchived: boolean;
+};
+
+// Every custom field with its coverage, bars scaled to the largest. Click a
+// row to rename/archive/clear; archived fields hide behind the footer toggle.
+function FieldsCard({
+  fields,
+  baseFields,
+  onSelect,
+}: {
+  fields: FieldRow[];
+  baseFields: Array<{ label: string; kind: string }>;
+  onSelect: (f: FieldRow) => void;
+}) {
+  const [showArchived, setShowArchived] = useState(false);
+  const visible = fields.filter((f) => showArchived || !f.isArchived);
+  const sorted = [...visible].sort(
+    (a, b) =>
+      Number(a.isArchived) - Number(b.isArchived) ||
+      b.personCount - a.personCount ||
+      a.label.localeCompare(b.label),
+  );
+  const max = visible.reduce((m, f) => Math.max(m, f.personCount), 0);
+  const hasArchived = fields.some((f) => f.isArchived);
+
+  return (
+    <div className="flex min-h-0 w-80 shrink-0 flex-col rounded-md border border-border bg-card">
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        {sorted.length > 0 ? (
+          <div className="px-3.5 pt-3 pb-1 text-sm text-muted-foreground">Custom fields</div>
+        ) : null}
+        <div className={cn("flex flex-col gap-0 p-2 pt-1", sorted.length === 0 && "hidden")}>
+          {sorted.map((f) => (
+            <button
+              type="button"
+              key={f.customFieldId}
+              onClick={() => onSelect(f)}
+              onMouseDown={(e) => e.preventDefault()}
+              className={cn(
+                // min-h matches the versions rows (p-1.5 + h-8 pills = 44px).
+                "flex min-h-11 flex-col justify-center gap-1 rounded-md p-1.5 text-left hover:bg-muted",
+                f.isArchived && "text-muted-foreground",
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-sm">{f.label}</span>
+                <span className="shrink-0 text-sm text-muted-foreground tabular-nums">
+                  {FIELD_TYPE_META[f.fieldType]} ·{" "}
+                  {f.isArchived
+                    ? `${f.personCount.toLocaleString()} (Archived)`
+                    : f.personCount.toLocaleString()}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-foreground/10">
+                <div
+                  className="h-full rounded-full bg-foreground/40"
+                  // Zero coverage → truly empty track; the 2% floor only applies
+                  // to nonzero counts so small fields stay visible.
+                  style={{
+                    width: `${
+                      !f.isArchived && f.personCount > 0 && max > 0
+                        ? Math.max(2, (f.personCount / max) * 100)
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+            </button>
+          ))}
+        </div>
+        <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Base fields</div>
+        <div className="flex flex-col gap-1 p-2 pt-1">
+          {baseFields.map((f) => (
+            <div
+              key={f.label}
+              className="flex items-center justify-between gap-2 rounded-md px-1.5"
+            >
+              <span className="min-w-0 truncate text-sm">{f.label}</span>
+              <span className="shrink-0 text-sm text-muted-foreground">
+                {BASE_KIND_LABELS[f.kind] ?? ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {hasArchived ? (
+        <div className="flex items-center justify-between border-t border-border px-3 py-2.5">
+          <span className="text-sm text-muted-foreground">Show archived custom fields</span>
+          <Switch checked={showArchived} onCheckedChange={setShowArchived} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Rename / archive / clear a custom field, with its append history. Rename is
+// safe by construction (criteria and lake values are id-keyed); archive is
+// display-only and re-appending the label revives it; clear deletes values
+// for everyone (the field stays, at zero coverage).
+function FieldDialog({
+  open,
+  onOpenChange,
+  field,
+  timezone,
+  onDone,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  field: FieldRow | null;
+  timezone: string;
+  onDone: () => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setLabel(field?.label ?? "");
+      setError(null);
+    }
+  }
+
+  const { data: history } = useQuery({
+    ...customFieldHistoryQuery(field?.customFieldId ?? ""),
+    enabled: open && field != null,
+  });
+
+  const done = () => {
+    onDone();
+    onOpenChange(false);
+  };
+  const rename = useMutation({
+    mutationFn: (next: string) =>
+      client.customFields.rename({ customFieldId: field!.customFieldId, label: next }),
+    onSuccess: done,
+    onError: (e) => setError(e.message),
+  });
+  const setArchived = useMutation({
+    mutationFn: (archived: boolean) =>
+      archived
+        ? client.customFields.archive({ customFieldId: field!.customFieldId })
+        : client.customFields.unarchive({ customFieldId: field!.customFieldId }),
+    onSuccess: done,
+    onError: (e) => setError(e.message),
+  });
+  const clear = useMutation({
+    mutationFn: () => client.customFields.clear({ customFieldId: field!.customFieldId }),
+    onSuccess: done,
+    onError: (e) => setError(e.message),
+  });
+
+  const pending = rename.isPending || setArchived.isPending || clear.isPending;
+  const changed = field != null && label.trim() !== field.label;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Edit field</DialogTitle>
+        <DialogDescription>
+          Rename the field, clear its values from everyone, or archive to hide it until you need it
+          again.
+        </DialogDescription>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!changed || pending || !label.trim()) return;
+            rename.mutate(label.trim());
+          }}
+          className="flex flex-col gap-4"
+        >
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Name</label>
+            <Input
+              value={label}
+              onChange={(e) => {
+                setError(null);
+                setLabel(e.target.value);
+              }}
+              disabled={pending}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Type</label>
+            {/* Static — retyping a field would invalidate already-typed
+                values; the honest path is clear + re-append. */}
+            <span className="w-fit rounded-md border border-border bg-foreground/10 px-2.5 py-1 text-sm">
+              {field ? FIELD_TYPE_META[field.fieldType] : ""}
+            </span>
+          </div>
+
+          {history && history.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Uploads</label>
+              <div className="grid grid-cols-[minmax(0,1fr)_6rem_4.5rem] gap-x-2 text-sm text-muted-foreground">
+                <span>Filename</span>
+                <span>Date</span>
+                <span className="text-right">Count</span>
+              </div>
+              <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
+                {history.map((h) => (
+                  <div
+                    key={h.customFieldUploadId}
+                    className="grid grid-cols-[minmax(0,1fr)_6rem_4.5rem] gap-x-2 text-sm"
+                  >
+                    <span className="min-w-0 truncate">{h.filename ?? "upload"}</span>
+                    <span className="tabular-nums">{formatDate(h.createdAt, timezone)}</span>
+                    <span className="text-right tabular-nums">
+                      {h.rowCount?.toLocaleString() ?? "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {error ? <DialogError error={error} /> : null}
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="flex gap-2">
+              {field?.isArchived ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="disabled:opacity-100"
+                  disabled={pending}
+                  onClick={() => setArchived.mutate(false)}
+                >
+                  <ArchiveRestore className="size-4" />
+                  Unarchive
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="disabled:opacity-100"
+                  disabled={pending}
+                  onClick={() => setArchived.mutate(true)}
+                >
+                  <Archive className="size-4" />
+                  Archive
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="destructive"
+                className="disabled:opacity-100"
+                disabled={pending || field == null || field.personCount === 0}
+                onClick={() => clear.mutate()}
+              >
+                Clear
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
+              <Button type="submit" disabled={!changed || !label.trim()} loading={pending}>
+                Save
+              </Button>
+            </div>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dialogs: create / update / append
+// ---------------------------------------------------------------------------
+
+function CreateDatasetDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (datasetId: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
+  const [source, setSource] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setName("");
+      setImporter(AVAILABLE_IMPORTERS[0].name);
+      setSource("");
+      setError(null);
+    }
+  }
+
+  const create = useMutation({
+    mutationFn: () =>
+      client.datasets.create({ name: name.trim(), importer, sourceUri: source.trim() }),
+    onSuccess: (res) => {
+      onCreated(res.datasetId);
+      onOpenChange(false);
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const pending = create.isPending;
+  const valid = name.trim().length > 0 && source.trim().length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Import dataset</DialogTitle>
+        <DialogDescription>
+          Import a source file as a new dataset. Type is fixed after creation; use updates
+          afterwards to get newer versions.
+        </DialogDescription>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!valid || pending) return;
+            create.mutate();
+          }}
+          className="flex flex-col gap-4"
+        >
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Name</label>
+            <Input
+              autoFocus
+              value={name}
+              onChange={(e) => {
+                setError(null);
+                setName(e.target.value);
+              }}
+              placeholder="Name of dataset..."
+              disabled={pending}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Type</label>
+            <div className="flex flex-wrap gap-1.5">
+              {AVAILABLE_IMPORTERS.map((imp) => {
+                const sel = importer === imp.name;
+                return (
+                  <button
+                    type="button"
+                    key={imp.name}
+                    onClick={() => setImporter(imp.name)}
+                    disabled={pending}
+                    className={cn(
+                      "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+                      sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                    )}
+                  >
+                    {imp.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Source</label>
+            <Input
+              value={source}
+              onChange={(e) => {
+                setError(null);
+                setSource(e.target.value);
+              }}
+              placeholder="e.g. https://example.com/voters.parquet"
+              disabled={pending}
+            />
+            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
+          </div>
+          {error ? <DialogError error={error} /> : null}
+          <div className="mt-2 flex justify-end gap-2">
+            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
+            <Button type="submit" disabled={!valid} loading={pending}>
+              Import
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UpdateDialog({
+  open,
+  onOpenChange,
+  datasetId,
+  datasetName,
+  onUpdated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  datasetId: string;
+  datasetName: string;
+  onUpdated: () => void;
+}) {
+  const [source, setSource] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setSource("");
+      setError(null);
+    }
+  }
+
+  const update = useMutation({
+    mutationFn: () => client.datasets.update({ datasetId, sourceUri: source.trim() }),
+    onSuccess: () => {
+      onUpdated();
+      onOpenChange(false);
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const pending = update.isPending;
+  const valid = source.trim().length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Update dataset</DialogTitle>
+        <DialogDescription>
+          Imports a new version of{" "}
+          <span className="font-medium text-foreground">{datasetName}</span>. Segments and campaigns
+          carry over; the new version stays inactive until you make it active.
+        </DialogDescription>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!valid || pending) return;
+            update.mutate();
+          }}
+          className="flex flex-col gap-4"
+        >
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Source</label>
+            <Input
+              autoFocus
+              value={source}
+              onChange={(e) => {
+                setError(null);
+                setSource(e.target.value);
+              }}
+              placeholder="e.g. https://example.com/voters.parquet"
+              disabled={pending}
+            />
+            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
+          </div>
+          {error ? <DialogError error={error} /> : null}
+          <div className="mt-2 flex justify-end gap-2">
+            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
+            <Button type="submit" disabled={!valid} loading={pending}>
+              Import version
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Pick-time inspection reads only what it must: parquet schemas come from the
+// file's footer, parsed client-side (exact — no sniffing); CSVs send a head
+// slice to the server so DuckDB stays the one dialect sniffer and the form
+// shape can never diverge from what append will see. The full file crosses
+// the wire once, on append.
+const CSV_INSPECT_BYTES = 64 * 1024;
+
+async function inspectFile(orgSlug: string, file: File): Promise<string[]> {
+  const magic = await file.slice(0, 4).arrayBuffer();
+  if (new TextDecoder().decode(magic) === "PAR1") {
+    const { parquetMetadataAsync, parquetSchema } = await import("hyparquet");
+    const metadata = await parquetMetadataAsync({
+      byteLength: file.size,
+      slice: (start: number, end?: number) => file.slice(start, end).arrayBuffer(),
+    });
+    const columns = parquetSchema(metadata).children.map((c) => c.element.name);
+    if (columns.length === 0) throw new Error("Uploaded file has no columns.");
+    if (columns.length > 2)
+      throw new Error(
+        `File has ${columns.length} columns, must have one (IDs only) or two (IDs and values).`,
+      );
+    return columns;
+  }
+  let body: Blob = file;
+  if (file.size > CSV_INSPECT_BYTES) {
+    // Trim the slice to the last complete line so DuckDB never sees a
+    // mid-row truncation.
+    const head = await file.slice(0, CSV_INSPECT_BYTES).text();
+    const cut = head.lastIndexOf("\n");
+    body = new Blob([cut > 0 ? head.slice(0, cut) : head]);
+  }
+  const res = await fetch(`/api/web/${orgSlug}/custom-field-inspect`, { method: "POST", body });
+  if (!res.ok) throw new Error(await res.text());
+  const { columns } = (await res.json()) as { columns: string[] };
+  return columns;
+}
+
+type AppendStats = {
+  fields: string[];
+  rowCount: number;
+  skippedCount: number;
+  matchedCount: number | null;
+};
+
+// Append a file of (id, value) rows as a custom field. Ingest is synchronous —
+// the submit request parses, writes, and returns match stats (or the parse
+// error) directly; there is no job or polling.
+function AppendDialog({
+  open,
+  onOpenChange,
+  orgSlug,
+  datasetId,
+  onAppended,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  orgSlug: string;
+  datasetId: string;
+  onAppended: () => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  // From pick-time inspection (parquet footer client-side, CSV head via the
+  // server) — the file drives which inputs render.
+  const [fileInfo, setFileInfo] = useState<{
+    columns: number;
+    valueHeader: string | null;
+  } | null>(null);
+  // Gates submit while pick-time inspection is in flight; deliberately no
+  // loading UI — inspection is near-instant (parquet footer / 64KB CSV
+  // head), and every indicator tried here (label swap, button spinner)
+  // read as flicker in the common fast case.
+  const [inspecting, setInspecting] = useState(false);
+  const [fieldType, setFieldType] = useState<CustomFieldType>("enum");
+  const [label, setLabel] = useState("");
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<AppendStats | null>(null);
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setFile(null);
+      setFileInfo(null);
+      setFieldType("enum");
+      setLabel("");
+      setValue("");
+      setError(null);
+      setStats(null);
+    }
+  }
+
+  const resetFeedback = () => setError(null);
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      if (!file || !fileInfo) return;
+      const params = new URLSearchParams({ datasetId, fieldType, filename: file.name });
+      if (fileInfo.columns === 1) {
+        params.set("label", label.trim());
+        params.set("value", value.trim());
+      }
+      const res = await fetch(`/api/web/${orgSlug}/custom-field-append?${params.toString()}`, {
+        method: "POST",
+        body: file,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return (await res.json()) as AppendStats;
+    },
+    onSuccess: (res) => {
+      if (!res) return;
+      setStats(res);
+      onAppended();
+    },
+    onError: (e) => setError(e.message),
+  });
+
+  const pending = submit.isPending;
+  const valid =
+    !inspecting &&
+    file != null &&
+    fileInfo != null &&
+    (fileInfo.columns === 2 || (label.trim().length > 0 && value.trim().length > 0));
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => (pending && !next ? null : onOpenChange(next))}>
+      <DialogContent>
+        <DialogTitle>Append</DialogTitle>
+        <DialogDescription>
+          Add a column to this dataset from a file. Format should be one column (IDs) or two columns
+          (IDs and values) and a header is required. Appended columns will apply to all dataset
+          versions with matching IDs.
+        </DialogDescription>
+        {stats ? (
+          <div className="flex flex-col gap-4">
+            <DialogSuccess>
+              Appended column "<span className="font-medium">{stats.fields.join(", ")}</span>" with{" "}
+              <span className="font-medium">{stats.rowCount.toLocaleString()}</span> rows
+              {stats.matchedCount != null ? (
+                <>
+                  {" "}
+                  and <span className="font-medium">
+                    {stats.matchedCount.toLocaleString()}
+                  </span>{" "}
+                  matched people
+                </>
+              ) : null}
+              .
+              {stats.skippedCount ? (
+                <>
+                  {" "}
+                  <span className="font-medium">{stats.skippedCount.toLocaleString()}</span> rows
+                  without values were ignored.
+                </>
+              ) : null}
+            </DialogSuccess>
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => onOpenChange(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!valid || pending) return;
+              setError(null);
+              submit.mutate();
+            }}
+            className="flex flex-col gap-4"
+          >
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">File</label>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".csv,.tsv,.txt,.parquet"
+                className="hidden"
+                onChange={(e) => {
+                  resetFeedback();
+                  const next = e.target.files?.[0] ?? null;
+                  setFile(next);
+                  setFileInfo(null);
+                  if (!next) return;
+                  setInspecting(true);
+                  inspectFile(orgSlug, next)
+                    .then((columns) =>
+                      setFileInfo({
+                        columns: columns.length,
+                        valueHeader: columns[1]?.trim() ?? null,
+                      }),
+                    )
+                    .catch((err: Error) => {
+                      setError(err.message);
+                      setFile(null);
+                    })
+                    .finally(() => setInspecting(false));
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="justify-start disabled:opacity-100"
+                disabled={pending}
+                onClick={() => fileRef.current?.click()}
+              >
+                <span className="truncate">{file ? file.name : "Choose a file..."}</span>
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Type</label>
+              <div className="flex flex-wrap gap-1.5">
+                {(Object.keys(FIELD_TYPE_META) as CustomFieldType[]).map((t) => {
+                  const sel = fieldType === t;
+                  return (
+                    <button
+                      type="button"
+                      key={t}
+                      onClick={() => {
+                        resetFeedback();
+                        setFieldType(t);
+                      }}
+                      disabled={pending}
+                      className={cn(
+                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+                        sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                      )}
+                    >
+                      {FIELD_TYPE_META[t]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {fileInfo?.columns === 2 ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">Field name</label>
+                <Input value={fileInfo.valueHeader ?? ""} disabled readOnly />
+                <span className="text-sm text-muted-foreground italic">
+                  Fixed from the file's value column, you can rename later
+                </span>
+              </div>
+            ) : null}
+            {fileInfo?.columns === 1 ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium">Field name</label>
+                  <Input
+                    value={label}
+                    onChange={(e) => {
+                      resetFeedback();
+                      setLabel(e.target.value);
+                    }}
+                    placeholder="Required"
+                    disabled={pending}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium">Value</label>
+                  <Input
+                    value={value}
+                    onChange={(e) => {
+                      resetFeedback();
+                      setValue(e.target.value);
+                    }}
+                    placeholder="Required"
+                    disabled={pending}
+                  />
+                  <span className="text-sm text-muted-foreground italic">
+                    Everyone in the list gets this value
+                  </span>
+                </div>
+              </>
+            ) : null}
+            {error ? <DialogError error={error} /> : null}
+            <div className="mt-2 flex justify-end gap-2">
+              <DialogClose render={<Button variant="outline" type="button" disabled={pending} />}>
+                Cancel
+              </DialogClose>
+              <Button type="submit" disabled={!valid} loading={pending}>
+                Append
+              </Button>
+            </div>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DialogError({ error }: { error: string }) {
+  return (
+    <p
+      className={cn(
+        "rounded-md border border-destructive/40 bg-destructive/10",
+        "px-3 py-2 text-sm text-destructive",
+      )}
+    >
+      {error}
+    </p>
+  );
+}
+
+// Green mirror of DialogError, using the app's status green (STATUS_META).
+function DialogSuccess({ children }: { children: ReactNode }) {
+  return (
+    <p
+      className="rounded-md border px-3 py-2 text-sm"
+      style={{ backgroundColor: "#3ca95120", borderColor: "#3ca95140", color: "#3ca951" }}
+    >
+      {children}
+    </p>
   );
 }

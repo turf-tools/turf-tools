@@ -7,15 +7,22 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
 import src.import_job  # noqa: F401 — registers the `import_dataset_version` job with the worker
+from src.custom_fields import (
+    append_custom_fields,
+    catalog_for,
+    custom_fields_fqn,
+    load_upload_table,
+    sync_registry,
+)
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
+from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection, s3_secret_expires
 from src.job_runner import JobManager
@@ -221,11 +228,106 @@ async def key_group_geojson(key_group: str, org_slug: str):
     )
 
 
+@app.post("/custom-fields/inspect")
+async def custom_fields_inspect(request: Request):
+    """Parse an append file's shape: raw body in, column names out (or 400
+    with the parse error). Stateless — nothing persists; the full file
+    uploads once, on append. The dialog sends CSVs as a head slice (the
+    header is all that's needed) and reads parquet footers client-side, but
+    this endpoint is format-agnostic: DuckDB is the only CSV dialect sniffer,
+    so the form shape can never diverge from what append will see."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+    with tempfile.NamedTemporaryFile(suffix=".upload") as tmp:
+        tmp.write(data)
+        tmp.flush()
+        conn = get_connection(settings)
+        try:
+            try:
+                columns = await asyncio.to_thread(load_upload_table, conn, tmp.name)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            conn.close()
+    return {"columns": columns}
+
+
+@app.post("/custom-fields/append")
+async def custom_fields_append(
+    request: Request,
+    dataset_id: str = Query(alias="datasetId"),
+    dataset_slug: str = Query(alias="datasetSlug"),
+    field_type: str = Query(alias="fieldType"),
+    upload_id: str = Query(alias="uploadId"),
+    label: str | None = Query(default=None),
+    value: str | None = Query(default=None),
+):
+    """Synchronous append: raw file body + config in query params → parse →
+    registry upsert → lake write → coverage/enum sync → stats out, or 400
+    with the parse error (nothing written). The web edge authenticates,
+    generates `uploadId`, and records provenance after success; lake rows
+    carry the id so every value traces back to its upload."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+
+    def run(source: str) -> dict:
+        conn = get_connection(settings)
+        try:
+            return append_custom_fields(
+                conn,
+                dataset_id=dataset_id,
+                dataset_slug=dataset_slug,
+                upload_id=upload_id,
+                source=source,
+                field_type=field_type,
+                label=label,
+                value=value,
+            )
+        finally:
+            conn.close()
+
+    with tempfile.NamedTemporaryFile(suffix=".upload") as tmp:
+        tmp.write(data)
+        tmp.flush()
+        try:
+            return await asyncio.to_thread(run, tmp.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 # Request models accept the camelCase wire shape sent by the TS web tier
 # while exposing snake_case Python attributes. `populate_by_name=True` lets
 # internal callers (tests, ad-hoc construction) use the Python field name.
 class _WireBaseModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+
+class _CustomFieldClearRequest(_WireBaseModel):
+    dataset_slug: str = Field(validation_alias="datasetSlug")
+    field_id: str = Field(validation_alias="fieldId")
+
+
+@app.post("/custom-fields/clear")
+async def custom_fields_clear(req: _CustomFieldClearRequest):
+    """Clear a custom field: delete its values for everyone. The registry row
+    stays (at zero coverage), ready for re-append. Synchronous — one DELETE +
+    a registry sync, no file parsing. Field↔dataset ownership is checked at
+    the web edge (the auth boundary), like every other endpoint's org_slug.
+    History, if ever needed, is DuckLake snapshots — not application state.
+    """
+    conn = get_connection(settings)
+    try:
+        table = custom_fields_fqn(req.dataset_slug)
+        try:
+            conn.execute(f"DELETE FROM {table} WHERE field_id = ?", [req.field_id])
+        except Exception:  # noqa: BLE001 — no values table yet: nothing to clear
+            return {"ok": True}
+        sync_registry(conn, req.dataset_slug, include_values=False)
+    finally:
+        conn.close()
+    return {"ok": True}
 
 
 class _PersonsCountRequest(_WireBaseModel):
@@ -243,7 +345,7 @@ async def persons_count(req: _PersonsCountRequest):
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -284,7 +386,7 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     """
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     persons_table = resolve("{persons_geocoded}", version.schema)
     params: list = []
@@ -319,7 +421,7 @@ async def persons_sample(req: _PersonsSampleRequest):
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -452,7 +554,7 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     group_expr = boundary_key_expr_for(catalog, req.key_group)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
@@ -525,7 +627,7 @@ async def segments_export(req: _SegmentExportRequest):
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, None, params)
@@ -574,7 +676,7 @@ async def buildings_list(req: _BuildingsListRequest):
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -624,7 +726,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
     conn = get_connection(settings, read_only=True)
     version = resolve_version(conn, settings, req.org_slug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
