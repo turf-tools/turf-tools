@@ -1104,7 +1104,9 @@ function AppendDialog({
                 disabled={pending}
                 onClick={() => fileRef.current?.click()}
               >
-                <span className="truncate">{file ? file.name : "Choose a file..."}</span>
+                <span className="truncate">
+                  {file ? file.name : "Choose a file (CSV or Parquet)..."}
+                </span>
               </Button>
             </div>
 
