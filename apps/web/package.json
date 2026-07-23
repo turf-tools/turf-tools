@@ -33,6 +33,7 @@
     "d3-scale-chromatic": "^3.1.0",
     "date-fns": "^4.2.1",
     "drizzle-orm": "beta",
+    "hyparquet": "^1.26.2",
     "jotai": "^2.19.1",
     "lucide-react": "^1.7.0",
     "maplibre-gl": "^5.24.0",

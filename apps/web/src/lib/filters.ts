@@ -73,6 +73,14 @@ export type AddressFilter = {
   zip: string;
 };
 
+// Numeric range over a number-type custom field. Either bound optional.
+export type NumberRangeFilter = {
+  kind: "number-range";
+  key: string;
+  min: number | null;
+  max: number | null;
+};
+
 // Canvass-outcome filter — reads prior canvass dispositions back out of
 // canvass_events; it is NOT a person-row column. Matches a person if any
 // of their per-turf current results has an outcome in `outcomes`.
@@ -125,6 +133,7 @@ export type Filter =
   | VotingHistoryCountFilter
   | VotingHistoryDetailFilter
   | AddressFilter
+  | NumberRangeFilter
   | CanvassOutcomeFilter
   | CanvassResponseFilter
   | SegmentFilter
@@ -154,6 +163,7 @@ export type FilterDef =
   | { kind: "voting-history-count"; key: string; label: string }
   | { kind: "voting-history-detail"; key: string; label: string }
   | { kind: "address"; key: "address"; label: string }
+  | { kind: "number-range"; key: string; label: string }
   | {
       kind: "canvass-outcome";
       key: "canvass_outcome";
@@ -210,6 +220,8 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "date-range") return { kind: "date-range", key: def.key, min: null, max: null };
   if (def.kind === "address")
     return { kind: "address", key: "address", line1: "", city: "", state: "", zip: "" };
+  if (def.kind === "number-range")
+    return { kind: "number-range", key: def.key, min: null, max: null };
   if (def.kind === "canvass-outcome")
     return { kind: "canvass-outcome", key: "canvass_outcome", outcomes: [] };
   if (def.kind === "canvass-response")
@@ -243,6 +255,7 @@ export function isActiveFilter(f: Filter): boolean {
       f.state.trim().length > 0 ||
       f.zip.trim().length > 0
     );
+  if (f.kind === "number-range") return f.min != null || f.max != null;
   if (f.kind === "canvass-outcome") return f.outcomes.length > 0;
   if (f.kind === "canvass-response") return f.questionId != null && f.optionIds.length > 0;
   if (f.kind === "segment") return f.segmentId != null;

@@ -109,6 +109,16 @@ class AddressFilter(BaseModel):
     zip: str  # noqa: A003
 
 
+class NumberRangeFilter(BaseModel):
+    """Numeric range over a number-type custom field (values cast at query
+    time). Either bound is optional; both unset → inactive."""
+
+    kind: Literal["number-range"]
+    key: str
+    min: float | None = None  # noqa: A003
+    max: float | None = None  # noqa: A003
+
+
 class CanvassOutcomeFilter(BaseModel):
     """Prior canvass dispositions read back from canvass_events. Matches a
     person if any of their per-turf current results has an outcome in
@@ -173,6 +183,7 @@ Filter = Annotated[
     | VotingHistoryCountFilter
     | VotingHistoryDetailFilter
     | AddressFilter
+    | NumberRangeFilter
     | CanvassOutcomeFilter
     | CanvassResponseFilter
     | PersonIdSetFilter
@@ -288,13 +299,32 @@ class FieldCatalog:
     `fields` maps a filter `key` → the compiler's typed `FieldDef`. `key_groups`
     maps a boundary keyGroup → the field key carrying that key on
     persons_geocoded (drives `keyFilter` clauses + per-key aggregation GROUP BYs).
+    `custom_table` is the FQN of the dataset's custom-fields values table
+    (`main.<slug>_custom_fields`), or None before any append — custom-field
+    filters then compile to match-nothing. Custom fields enter `fields`
+    alongside manifest fields as `CustomFieldDef`s keyed by field id, so the
+    same filter kinds work against both; the compiler branches only on where
+    the field lives (persons column vs. values-table semi-join).
     """
 
-    fields: dict[str, FieldDef]
+    fields: dict[str, "FieldDef | CustomFieldDef"]
     key_groups: dict[str, str]
+    custom_table: str | None = None
 
 
-def build_field_catalog(manifest: Manifest) -> FieldCatalog:
+class CustomFieldDef(BaseModel):
+    """A custom (appended) field in the compiler catalog. `kind` is the
+    field's type; `key` is the registry id (`custom_fields.custom_field_id`)."""
+
+    kind: Literal["number", "date", "text", "enum"]
+    key: str
+
+
+def build_field_catalog(
+    manifest: Manifest,
+    custom_table: str | None = None,
+    custom_fields: dict[str, str] | None = None,
+) -> FieldCatalog:
     """Derive the compiler catalog from a dataset version's `Manifest`.
 
     Manifest `filter_kind` values mirror the compiler's `FieldDef` kinds 1:1, so
@@ -326,4 +356,7 @@ def build_field_catalog(manifest: Manifest) -> FieldCatalog:
             fields[key] = AddressFieldDef(kind="address", key="address")
         if fd.key_group:
             key_groups[fd.key_group] = key
-    return FieldCatalog(fields=fields, key_groups=key_groups)
+    merged: dict[str, FieldDef | CustomFieldDef] = dict(fields)
+    for field_id, field_type in (custom_fields or {}).items():
+        merged[field_id] = CustomFieldDef(kind=field_type, key=field_id)  # type: ignore[arg-type]
+    return FieldCatalog(fields=merged, key_groups=key_groups, custom_table=custom_table)

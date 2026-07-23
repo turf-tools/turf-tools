@@ -20,6 +20,7 @@ from src.dsl.criteria import (
     EnumFilter,
     KeyFilter,
     NestedFilter,
+    NumberRangeFilter,
     PersonIdSetFilter,
     Step,
     TextFilter,
@@ -472,6 +473,71 @@ def test_mixed_verb_sequence_preserves_order() -> None:
     assert " OR " in where
     assert " AND NOT " in where
     assert params == ["democratic", "republican", "%smith%"]
+
+
+# ---------------------------------------------------------------------------
+# Custom-field filters (values-table semi-join — see docs/plans/custom-fields.md)
+# ---------------------------------------------------------------------------
+
+
+CUSTOM_CATALOG = build_field_catalog(
+    NYS_MANIFEST,
+    custom_table="ducklake.main.nys_custom_fields",
+    custom_fields={"f-num": "number", "f-date": "date", "f-text": "text", "f-enum": "enum"},
+)
+
+
+def test_custom_number_range_semi_join() -> None:
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        _narrow(NumberRangeFilter(kind="number-range", key="f-num", min=0.5, max=0.9)),
+        None,
+        params,
+    )
+    assert where == (
+        "WHERE external_id IN (SELECT external_id FROM ducklake.main.nys_custom_fields "
+        "WHERE field_id = ? AND try_cast(value AS DOUBLE) >= ? AND try_cast(value AS DOUBLE) <= ?)"
+    )
+    assert params == ["f-num", 0.5, 0.9]
+
+
+def test_custom_date_range_casts_value() -> None:
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        _narrow(DateRangeFilter(kind="date-range", key="f-date", min="2026-01-01", max=None)),
+        None,
+        params,
+    )
+    assert "try_cast(value AS DATE) >= ?" in where
+    assert params == ["f-date", "2026-01-01"]
+
+
+def test_custom_enum_and_text_clauses() -> None:
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        _narrow(
+            EnumFilter(kind="enum", key="f-enum", values=["a", "b"]),
+            TextFilter(kind="text", key="f-text", value="smith"),
+        ),
+        None,
+        params,
+    )
+    assert "WHERE field_id = ? AND value IN (?, ?)" in where
+    assert "WHERE field_id = ? AND value ILIKE ?" in where
+    assert params == ["f-enum", "a", "b", "f-text", "%smith%"]
+
+
+def test_custom_field_kind_mismatch_raises() -> None:
+    with pytest.raises(CriteriaError):
+        criteria_to_where(
+            CUSTOM_CATALOG,
+            _narrow(NumberRangeFilter(kind="number-range", key="f-date", min=1.0, max=None)),
+            None,
+            [],
+        )
 
 
 # ---------------------------------------------------------------------------

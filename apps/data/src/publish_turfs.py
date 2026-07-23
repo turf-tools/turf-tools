@@ -20,8 +20,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from src.custom_fields import catalog_for
 from src.dsl.compile import criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter, build_field_catalog
+from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.settings import get_settings
@@ -92,7 +93,7 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
 
     version = resolve_version(conn, settings, req.orgSlug)
     schema = version.schema
-    catalog = build_field_catalog(version.manifest)
+    catalog = catalog_for(conn, version)
     scope = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
