@@ -123,7 +123,7 @@ export const webRouter = {
     archive: customFields.archive,
     unarchive: customFields.unarchive,
     clear: customFields.clear,
-    history: customFields.history,
+    examples: customFields.examples,
   },
   users: {
     list: webUsers.list,

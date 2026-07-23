@@ -1,11 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, arrayContains, asc, desc, eq } from "@turf-tools/db";
-import {
-  customFields,
-  customFieldUploads,
-  datasetOrganizations,
-  datasets,
-} from "@turf-tools/db/schema";
+import { and, asc, eq } from "@turf-tools/db";
+import { customFields, datasetOrganizations, datasets } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
@@ -101,28 +96,23 @@ export const clear = pub
     return { ok: true as const };
   });
 
-// Appends that touched a field (by label) — the field dialog's history list.
-// Rows only exist for successful appends; failures never persist.
-export const history = pub
+// A few example values from a field's lake data — the field dialog's Examples
+// row. Category fields never call this (their option set lives on the
+// registry row); scalar fields sample the values table.
+export const examples = pub
   .input(z.object({ customFieldId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const field = await guardField(context.db, context.organizationId, input.customFieldId);
-    return context.db
-      .select({
-        customFieldUploadId: customFieldUploads.customFieldUploadId,
-        filename: customFieldUploads.filename,
-        rowCount: customFieldUploads.rowCount,
-        matchedCount: customFieldUploads.matchedCount,
-        createdAt: customFieldUploads.createdAt,
-      })
-      .from(customFieldUploads)
-      .where(
-        and(
-          eq(customFieldUploads.datasetId, field.datasetId),
-          arrayContains(customFieldUploads.fields, [field.label]),
-        ),
-      )
-      .orderBy(desc(customFieldUploads.createdAt));
+    const [ds] = await context.db
+      .select({ slug: datasets.slug })
+      .from(datasets)
+      .where(eq(datasets.datasetId, field.datasetId));
+    if (!ds) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
+    const res = await dataPostJson<{ values: string[] }>("/custom-fields/examples", {
+      datasetSlug: ds.slug,
+      fieldId: input.customFieldId,
+    });
+    return res.values;
   });
 
 type Db = Parameters<typeof activeDatasetId>[0];
