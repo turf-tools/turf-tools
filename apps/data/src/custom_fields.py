@@ -305,8 +305,12 @@ def append_custom_fields(
 
     sync_registry(conn, dataset_slug)
     labels = [r[0] for r in conn.execute("SELECT DISTINCT label FROM _rows ORDER BY label").fetchall()]
+    # The label is for the dialog's success message; the id keys the
+    # provenance row (labels are display-only and renameable).
+    field_id = conn.execute("SELECT DISTINCT field_id FROM _rows_ids").fetchone()
     return {
         "fields": labels,
+        "customFieldId": field_id[0] if field_id else None,
         "rowCount": row_count,
         "skippedCount": skipped_count,
         "matchedCount": matched_count,

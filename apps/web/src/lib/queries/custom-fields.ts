@@ -10,11 +10,15 @@ export const customFieldsQuery = (datasetId?: string) =>
     queryFn: () => client.customFields.list(datasetId ? { datasetId } : undefined),
   });
 
-// Appends that touched a field — the field dialog's history list.
-export const customFieldHistoryQuery = (customFieldId: string) =>
+// A few example values from a scalar field's lake data — the field dialog's
+// Examples row. Keyed under the "custom-fields" prefix so the append/clear
+// invalidation refreshes it; between those, values can't change — so cache
+// forever and let the fields-card hover prefetch make dialog opens instant.
+export const customFieldExamplesQuery = (customFieldId: string) =>
   queryOptions({
-    queryKey: ["custom-field-history", customFieldId] as const,
-    queryFn: () => client.customFields.history({ customFieldId }),
+    queryKey: ["custom-fields", "examples", customFieldId] as const,
+    queryFn: () => client.customFields.examples({ customFieldId }),
+    staleTime: Number.POSITIVE_INFINITY,
   });
 
 // The dataset's base (manifest) fields, from its latest ready version — the

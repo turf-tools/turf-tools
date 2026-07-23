@@ -26,6 +26,7 @@ const MAX_BODY_BYTES = 250 * 1024 * 1024;
 
 type AppendStats = {
   fields: string[];
+  customFieldId: string;
   rowCount: number;
   skippedCount: number;
   matchedCount: number | null;
@@ -106,7 +107,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-append")({
           customFieldUploadId,
           datasetId,
           filename,
-          fields: stats.fields,
+          customFieldId: stats.customFieldId,
           rowCount: stats.rowCount,
           skippedCount: stats.skippedCount,
           matchedCount: stats.matchedCount,

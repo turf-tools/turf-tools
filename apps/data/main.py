@@ -18,6 +18,7 @@ from src.custom_fields import (
     append_custom_fields,
     catalog_for,
     custom_fields_fqn,
+    custom_fields_table_for,
     load_upload_table,
     sync_registry,
 )
@@ -307,6 +308,29 @@ class _WireBaseModel(BaseModel):
 class _CustomFieldClearRequest(_WireBaseModel):
     dataset_slug: str = Field(validation_alias="datasetSlug")
     field_id: str = Field(validation_alias="fieldId")
+
+
+class _CustomFieldExamplesRequest(_WireBaseModel):
+    dataset_slug: str = Field(validation_alias="datasetSlug")
+    field_id: str = Field(validation_alias="fieldId")
+
+
+@app.post("/custom-fields/examples")
+async def custom_fields_examples(req: _CustomFieldExamplesRequest):
+    """A handful of distinct values from a custom field — the field dialog's
+    Examples row. Sampled from the lake values table (not the registry) so
+    scalar fields work; Category fields never call this (their option set
+    lives on the registry row)."""
+    # Shared read-only connection — never close it (see get_connection).
+    conn = get_connection(settings, read_only=True)
+    table = custom_fields_table_for(conn, req.dataset_slug)
+    if table is None:
+        return {"values": []}
+    rows = conn.execute(
+        f"SELECT DISTINCT value FROM {table} WHERE field_id = ? ORDER BY random() LIMIT 5",
+        [req.field_id],
+    ).fetchall()
+    return {"values": [r[0] for r in rows]}
 
 
 @app.post("/custom-fields/clear")

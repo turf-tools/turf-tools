@@ -30,7 +30,7 @@ import type { CustomFieldType } from "@turf-tools/db/schema";
 import { Archive, ArchiveRestore, MoreHorizontal } from "lucide-react";
 import {
   baseFieldsQuery,
-  customFieldHistoryQuery,
+  customFieldExamplesQuery,
   customFieldsQuery,
 } from "~/lib/queries/custom-fields";
 import { datasetsListQuery } from "~/lib/queries/datasets";
@@ -246,7 +246,6 @@ function DatasetEditor({
         open={fieldDialogOpen}
         onOpenChange={setFieldDialogOpen}
         field={fieldTarget}
-        timezone={timezone}
         onDone={invalidateFields}
       />
 
@@ -443,6 +442,7 @@ function FieldsCard({
   baseFields: Array<{ label: string; kind: string }>;
   onSelect: (f: FieldRow) => void;
 }) {
+  const queryClient = useQueryClient();
   const [showArchived, setShowArchived] = useState(false);
   const visible = fields.filter((f) => showArchived || !f.isArchived);
   const sorted = [...visible].sort(
@@ -466,6 +466,12 @@ function FieldsCard({
               type="button"
               key={f.customFieldId}
               onClick={() => onSelect(f)}
+              // Warm the dialog's examples during hover→click latency so it
+              // opens complete instead of popping the section in.
+              onMouseEnter={() => {
+                if (f.fieldType !== "enum")
+                  void queryClient.prefetchQuery(customFieldExamplesQuery(f.customFieldId));
+              }}
               onMouseDown={(e) => e.preventDefault()}
               className={cn(
                 // min-h matches the versions rows (p-1.5 + h-8 pills = 44px).
@@ -524,7 +530,7 @@ function FieldsCard({
   );
 }
 
-// Rename / archive / clear a custom field, with its append history. Rename is
+// Rename / archive / clear a custom field. Rename is
 // safe by construction (criteria and lake values are id-keyed); archive is
 // display-only and re-appending the label revives it; clear deletes values
 // for everyone (the field stays, at zero coverage).
@@ -532,13 +538,11 @@ function FieldDialog({
   open,
   onOpenChange,
   field,
-  timezone,
   onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   field: FieldRow | null;
-  timezone: string;
   onDone: () => void;
 }) {
   const [label, setLabel] = useState("");
@@ -553,10 +557,16 @@ function FieldDialog({
     }
   }
 
-  const { data: history } = useQuery({
-    ...customFieldHistoryQuery(field?.customFieldId ?? ""),
-    enabled: open && field != null,
+  // Category fields carry their full option set on the registry row — no
+  // fetch; scalar fields sample the lake. null = still loading (the section
+  // shell reserves its space and the chips fade in).
+  const isEnum = field?.fieldType === "enum";
+  const { data: sampled } = useQuery({
+    ...customFieldExamplesQuery(field?.customFieldId ?? ""),
+    enabled: open && field != null && !isEnum,
   });
+  const examples = isEnum ? (field?.values ?? []).slice(0, 5) : (sampled ?? null);
+  const moreCount = isEnum ? Math.max(0, (field?.values?.length ?? 0) - 5) : 0;
 
   const done = () => {
     onDone();
@@ -617,35 +627,38 @@ function FieldDialog({
             <label className="text-sm font-medium">Type</label>
             {/* Static — retyping a field would invalidate already-typed
                 values; the honest path is clear + re-append. */}
-            <span className="w-fit rounded-md border border-border bg-foreground/10 px-2.5 py-1 text-sm">
+            <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm">
               {field ? FIELD_TYPE_META[field.fieldType] : ""}
             </span>
           </div>
 
-          {history && history.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Uploads</label>
-              <div className="grid grid-cols-[minmax(0,1fr)_6rem_4.5rem] gap-x-2 text-sm text-muted-foreground">
-                <span>Filename</span>
-                <span>Date</span>
-                <span className="text-right">Count</span>
-              </div>
-              <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
-                {history.map((h) => (
-                  <div
-                    key={h.customFieldUploadId}
-                    className="grid grid-cols-[minmax(0,1fr)_6rem_4.5rem] gap-x-2 text-sm"
-                  >
-                    <span className="min-w-0 truncate">{h.filename ?? "upload"}</span>
-                    <span className="tabular-nums">{formatDate(h.createdAt, timezone)}</span>
-                    <span className="text-right tabular-nums">
-                      {h.rowCount?.toLocaleString() ?? "—"}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Examples</label>
+            {/* min-h reserves one chip row so late-arriving samples fade in
+                without shifting the layout below. */}
+            <div className="flex min-h-7 flex-wrap items-center gap-1.5">
+              {examples == null ? null : examples.length === 0 ? (
+                <span className="text-sm text-muted-foreground italic">No values yet</span>
+              ) : (
+                <>
+                  {examples.map((v) => (
+                    <span
+                      key={v}
+                      className={cn(
+                        "max-w-40 truncate rounded-md bg-muted px-2.5 py-1 text-sm",
+                        "animate-in fade-in duration-200",
+                      )}
+                    >
+                      {v}
                     </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                  {moreCount > 0 ? (
+                    <span className="text-sm text-muted-foreground">+{moreCount} more</span>
+                  ) : null}
+                </>
+              )}
             </div>
-          ) : null}
+          </div>
 
           {error ? <DialogError error={error} /> : null}
           <div className="mt-2 flex items-center justify-between gap-2">

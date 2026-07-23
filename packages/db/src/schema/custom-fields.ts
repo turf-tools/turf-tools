@@ -36,16 +36,19 @@ export const customFields = pgTable(
 );
 
 // Provenance for one append — inserted after the synchronous ingest succeeds
-// (failed appends write nothing). No standing UI table; the field dialog's
-// history reads it, and lake values carry `upload_id` so every value traces
-// back here.
+// (failed appends write nothing). Audit-only: nothing renders it today, but
+// lake values carry `upload_id` so every value traces back here.
 export const customFieldUploads = pgTable("custom_field_uploads", {
   customFieldUploadId: uuid().defaultRandom().primaryKey(),
   datasetId: uuid()
     .notNull()
     .references(() => datasets.datasetId),
   filename: text(),
-  fields: text().array(),
+  // Id (never the label — labels are display-only and renameable) of the
+  // field this append wrote. One upload touches exactly one field.
+  customFieldId: uuid()
+    .notNull()
+    .references(() => customFields.customFieldId),
   rowCount: integer(),
   // Rows with an id but no value — ignored entirely (prior values survive);
   // surfaced in the Append dialog so sparse files don't silently shrink.
