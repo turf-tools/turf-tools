@@ -51,6 +51,7 @@ import {
   type Criteria,
   type SegmentFilter,
   type Step,
+  type NumberRangeFilter,
   type TextFilter,
   type TextMultiFilter,
   type Verb,
@@ -683,6 +684,9 @@ function StepRow({
       {filter.kind === "address" && def?.kind === "address" ? (
         <AddressFilterEditor filter={filter} onChange={onChange} />
       ) : null}
+      {filter.kind === "number-range" && def?.kind === "number-range" ? (
+        <NumberRangeFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
       {filter.kind === "canvass-outcome" && def?.kind === "canvass-outcome" ? (
         <CanvassOutcomeEditor filter={filter} def={def} onChange={onChange} />
       ) : null}
@@ -805,9 +809,19 @@ function EnumFilterEditor({
       : [...filter.values, value];
     onChange({ ...filter, values: next });
   };
+  // Render selected values even when the option set no longer carries them
+  // (custom-field re-derives and manifest drift across versions both retire
+  // values) — a stale selection stays visible and untogglable-away instead of
+  // silently constraining the query. Once untoggled, it disappears for good.
+  const options: Array<{ value: string; label?: string }> = [
+    ...def.values,
+    ...filter.values
+      .filter((v) => !def.values.some((o) => o.value === v))
+      .map((v) => ({ value: v })),
+  ];
   return (
     <div className="flex flex-wrap gap-1.5">
-      {def.values.map((v) => (
+      {options.map((v) => (
         <Toggle
           key={v.value}
           size="sm"
@@ -1289,6 +1303,59 @@ function VotingHistoryCountEditor({
         />
         <span className="text-muted-foreground">years</span>
       </div>
+    </div>
+  );
+}
+
+function NumberRangeFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: NumberRangeFilter;
+  onChange: (next: Filter) => void;
+}) {
+  // Same commit-on-blur/Enter pattern as text. Plain Inputs (not NumberInput,
+  // which is digit-only) — scores are often decimals.
+  const [localMin, setLocalMin] = useState(filter.min == null ? "" : String(filter.min));
+  const [localMax, setLocalMax] = useState(filter.max == null ? "" : String(filter.max));
+  useEffect(() => setLocalMin(filter.min == null ? "" : String(filter.min)), [filter.min]);
+  useEffect(() => setLocalMax(filter.max == null ? "" : String(filter.max)), [filter.max]);
+  const parse = (v: string) => {
+    if (v.trim() === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const commit = () => {
+    const min = parse(localMin);
+    const max = parse(localMax);
+    if (min !== filter.min || max !== filter.max) onChange({ ...filter, min, max });
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+    }
+  };
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <span className="text-muted-foreground">Between</span>
+      <Input
+        value={localMin}
+        onChange={(e) => setLocalMin(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+        className="h-7 w-20 px-2"
+        placeholder="min"
+      />
+      <span className="text-muted-foreground">and</span>
+      <Input
+        value={localMax}
+        onChange={(e) => setLocalMax(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+        className="h-7 w-20 px-2"
+        placeholder="max"
+      />
     </div>
   );
 }

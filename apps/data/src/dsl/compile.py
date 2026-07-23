@@ -20,6 +20,7 @@ from .criteria import (
     CanvassOutcomeFilter,
     CanvassResponseFilter,
     Criteria,
+    CustomFieldDef,
     DateRangeFieldDef,
     DateRangeFilter,
     EnumFieldDef,
@@ -29,6 +30,7 @@ from .criteria import (
     Filter,
     KeyFilter,
     NestedFilter,
+    NumberRangeFilter,
     PersonIdSetFilter,
     TextFieldDef,
     TextFilter,
@@ -160,21 +162,35 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
     if isinstance(f, AllFilter):
         return "1=1"
     if isinstance(f, EnumFilter):
-        return _enum_clause(f, _field(catalog, f.key), params)
+        def_ = _field(catalog, f.key)
+        if isinstance(def_, CustomFieldDef):
+            return _custom_clause(f, def_, catalog, params)
+        return _enum_clause(f, def_, params)
     if isinstance(f, AgeRangeFilter):
         return _age_range_clause(f, _field(catalog, f.key), params)
     if isinstance(f, TextFilter):
-        return _text_clause(f, _field(catalog, f.key), params)
+        def_ = _field(catalog, f.key)
+        if isinstance(def_, CustomFieldDef):
+            return _custom_clause(f, def_, catalog, params)
+        return _text_clause(f, def_, params)
     if isinstance(f, TextMultiFilter):
         return _text_multi_clause(f, _field(catalog, f.key), params)
     if isinstance(f, DateRangeFilter):
-        return _date_range_clause(f, _field(catalog, f.key), params)
+        def_ = _field(catalog, f.key)
+        if isinstance(def_, CustomFieldDef):
+            return _custom_clause(f, def_, catalog, params)
+        return _date_range_clause(f, def_, params)
     if isinstance(f, VotingHistoryCountFilter):
         return _voting_history_count_clause(f, _field(catalog, f.key), params)
     if isinstance(f, VotingHistoryDetailFilter):
         return _voting_history_detail_clause(f, _field(catalog, f.key), params)
     if isinstance(f, AddressFilter):
         return _address_clause(f, _field(catalog, f.key), params)
+    if isinstance(f, NumberRangeFilter):
+        def_ = _field(catalog, f.key)
+        if not isinstance(def_, CustomFieldDef):
+            raise CriteriaError(f"Field {f.key} is not a number field")
+        return _custom_clause(f, def_, catalog, params)
     if isinstance(f, NestedFilter):
         # Empty inner → 1=1 to match the standalone "empty segment matches everyone" semantic.
         inner = _criteria_bool_expr(catalog, f.criteria, params)
@@ -191,6 +207,66 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
         # Should have been reduced to a PersonIdSetFilter in resolve.py.
         raise CriteriaError(f"{type(f).__name__} reached the compiler unresolved")
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
+
+
+def _custom_clause(
+    f: EnumFilter | TextFilter | DateRangeFilter | NumberRangeFilter,
+    def_: CustomFieldDef,
+    catalog: FieldCatalog,
+    params: list[Any],
+) -> str:
+    """Predicate on a custom field — a semi-join against the dataset's
+    long-format values table, with the value cast per the field's type.
+    Inactive filters return "" exactly like their persons-column cousins."""
+    if isinstance(f, EnumFilter):
+        if def_.kind != "enum":
+            raise CriteriaError(f"Field {f.key} is not an enum field")
+        if not f.values:
+            return ""
+        placeholders = ", ".join("?" for _ in f.values)
+        pred = f"value IN ({placeholders})"
+        pred_params: list[Any] = list(f.values)
+    elif isinstance(f, TextFilter):
+        if def_.kind != "text":
+            raise CriteriaError(f"Field {f.key} is not a text field")
+        if not f.value.strip():
+            return ""
+        pred = "value ILIKE ?"
+        pred_params = [f"%{f.value}%"]
+    elif isinstance(f, DateRangeFilter):
+        if def_.kind != "date":
+            raise CriteriaError(f"Field {f.key} is not a date field")
+        if not f.min and not f.max:
+            return ""
+        parts: list[str] = []
+        pred_params = []
+        if f.min:
+            parts.append("try_cast(value AS DATE) >= ?")
+            pred_params.append(f.min)
+        if f.max:
+            parts.append("try_cast(value AS DATE) <= ?")
+            pred_params.append(f.max)
+        pred = " AND ".join(parts)
+    else:  # NumberRangeFilter
+        if def_.kind != "number":
+            raise CriteriaError(f"Field {f.key} is not a number field")
+        if f.min is None and f.max is None:
+            return ""
+        parts = []
+        pred_params = []
+        if f.min is not None:
+            parts.append("try_cast(value AS DOUBLE) >= ?")
+            pred_params.append(f.min)
+        if f.max is not None:
+            parts.append("try_cast(value AS DOUBLE) <= ?")
+            pred_params.append(f.max)
+        pred = " AND ".join(parts)
+
+    if catalog.custom_table is None:
+        return "1=0"
+    params.append(def_.key)
+    params.extend(pred_params)
+    return f"external_id IN (SELECT external_id FROM {catalog.custom_table} WHERE field_id = ? AND {pred})"
 
 
 def _enum_clause(f: EnumFilter, def_: FieldDef, params: list[Any]) -> str:
