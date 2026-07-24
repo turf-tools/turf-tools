@@ -1,9 +1,13 @@
 import { router } from "expo-router";
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
+import { Scan } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
+import { scannedEntryAtom } from "@/lib/atoms/scan";
+import { themeAtom } from "@/lib/atoms/theme";
 import { openTurf } from "@/lib/canvass-events";
 import { client, setHost } from "@/rpc/client";
 
@@ -13,7 +17,19 @@ export default function LandingScreen() {
   const [loading, setLoading] = useState(false);
 
   const codeRef = useRef<TextInput>(null);
+  const insets = useSafeAreaInsets();
   const [activeTurf, setActiveTurf] = useAtom(activeTurfAtom);
+  const isDark = useAtomValue(themeAtom) === "dark";
+
+  // A successful scan fills the fields and stops — the user reviews the
+  // server + code and hits Open themselves.
+  const [scanned, setScanned] = useAtom(scannedEntryAtom);
+  useEffect(() => {
+    if (!scanned) return;
+    setHostInput(scanned.host);
+    setCode(scanned.code);
+    setScanned(null);
+  }, [scanned, setScanned]);
 
   // Clear inputs only when the binding transitions from bound → null (i.e.
   // user hit "Download new turf"). Settings round-trips don't change
@@ -83,7 +99,7 @@ export default function LandingScreen() {
   return (
     <Pressable className="flex-1 bg-background dark:bg-background-dark" onPress={Keyboard.dismiss}>
       <View className="flex-1 items-center p-6">
-        <View style={{ flex: 1.5 }} />
+        <View style={{ flex: 1.4 }} />
         <Text
           className="mb-2 text-5xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
           style={{ fontFamily: "Geist_700Bold" }}
@@ -124,6 +140,19 @@ export default function LandingScreen() {
           <Button title={loading ? "Loading..." : "Open"} onPress={handleSubmit} />
         </View>
         <View style={{ flex: 2 }} />
+      </View>
+      {/* Bottom-anchored and out of the flex flow: `bottom` moves only the
+          button, never the layout above. Thumb-reachable; the keypad fully
+          covers it while typing a code. */}
+      <View className="absolute inset-x-6 items-center" style={{ bottom: insets.bottom + 128 }}>
+        <View className="w-full max-w-xs">
+          <Button
+            title="Scan a QR code"
+            variant="outline"
+            icon={<Scan size={20} color={isDark ? "#ededed" : "#1b1b1b"} />}
+            onPress={() => router.push("/scan")}
+          />
+        </View>
       </View>
     </Pressable>
   );
