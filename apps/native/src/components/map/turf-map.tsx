@@ -13,6 +13,7 @@ import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { LabelLayers } from "./labels";
+import { UserLocationDot } from "./user-location-dot";
 
 type Props = {
   turf: TurfData;
@@ -289,6 +290,8 @@ export function TurfMap({
           }}
         />
       </ShapeSource>
+
+      <UserLocationDot isDark={isDark} />
     </MapView>
   );
 }
