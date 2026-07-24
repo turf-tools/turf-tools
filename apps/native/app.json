@@ -8,7 +8,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": false,
-      "icon": "./design/arrow-icon.icon",
+      "icon": "./design/pencil-icon.icon",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
