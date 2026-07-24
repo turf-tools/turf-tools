@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "icon": "./design/arrow-icon.icon",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -33,19 +33,25 @@
         {
           "locationWhenInUsePermission": "Show current location on map."
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan turf QR codes to fill in the server and code."
+        }
       ]
     ],
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "308402bf-8227-4349-a8ef-2b078ff6318a"
+        "projectId": "a844c864-5742-4a81-9787-8e6f7b4c6ceb"
       }
     },
     "runtimeVersion": {
       "policy": "fingerprint"
     },
     "updates": {
-      "url": "https://u.expo.dev/308402bf-8227-4349-a8ef-2b078ff6318a"
+      "url": "https://u.expo.dev/a844c864-5742-4a81-9787-8e6f7b4c6ceb"
     }
   }
 }
