@@ -99,6 +99,14 @@ function ThemedStack() {
           }}
         />
         <Stack.Screen
+          name="scan"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            contentStyle: { backgroundColor: isDark ? "#0a0a0a" : "#fcfcfc" },
+          }}
+        />
+        <Stack.Screen
           name="turfs/[turfId]"
           options={{ headerShown: false, gestureEnabled: false }}
         />
