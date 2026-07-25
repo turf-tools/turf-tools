@@ -9,8 +9,8 @@ import { datasets } from "./datasets";
 export type CustomFieldType = "number" | "date" | "text" | "enum";
 
 // A custom field — a user-appended, dataset-scoped, typed column that floats
-// across dataset versions (see docs/plans/custom-fields.md). One row per
-// field; values live in the lake's long-format `<slug>_custom_fields` table.
+// across dataset versions. One row per field; values live in the lake's
+// long-format `<slug>_custom_fields` table.
 // Criteria reference `customFieldId` (never the label), so rename is a
 // one-row UPDATE with no lake or saved-segment fallout.
 export const customFields = pgTable(

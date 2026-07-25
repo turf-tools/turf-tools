@@ -1,4 +1,4 @@
-"""Custom-field lake storage (see docs/plans/custom-fields.md).
+"""Custom-field lake storage.
 
 One long-format table per dataset, beside (not inside) the version schemas —
 `ducklake.main.<slug>_custom_fields (external_id, field_id, value, upload_id)`

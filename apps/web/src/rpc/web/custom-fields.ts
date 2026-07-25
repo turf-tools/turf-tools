@@ -6,8 +6,8 @@ import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
 import { activeDatasetId } from "./active-dataset";
 
-// Custom fields (see docs/plans/custom-fields.md) — user-appended, typed,
-// dataset-scoped columns that float across versions. Values live in the lake;
+// Custom fields — user-appended, typed, dataset-scoped columns that float
+// across versions. Values live in the lake;
 // this module serves the Postgres registry. `datasetId` targets any granted
 // dataset (the Data page rail); omitted → the org's active dataset (the
 // segment editor's filter catalog).
