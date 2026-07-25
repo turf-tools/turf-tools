@@ -1,14 +1,17 @@
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useAtom, useAtomValue } from "jotai";
 import { Scan } from "lucide-react-native";
-import { useEffect, useRef, useState } from "react";
-import { Alert, Keyboard, Pressable, Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Keyboard, Pressable, Text, type TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
+import { Input } from "@/components/input";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
+import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { scannedEntryAtom } from "@/lib/atoms/scan";
 import { themeAtom } from "@/lib/atoms/theme";
 import { openTurf } from "@/lib/canvass-events";
+import { REQUIRE_ATTRIBUTION } from "@/lib/canvasser";
 import { client, setHost } from "@/rpc/client";
 
 export default function LandingScreen() {
@@ -53,6 +56,30 @@ export default function LandingScreen() {
     router.push(`/turfs/${turfId}`);
   };
 
+  // Attribution is a precondition of binding: with no canvasser on the
+  // device, Open parks the resolved turf here and raises the identity sheet
+  // instead of binding. When the landing regains focus with a saved
+  // canvasser, the parked open completes. Declining is a no-op by
+  // construction — nothing was bound, so there is nothing to unwind and the
+  // typed fields are untouched.
+  const canvasser = useAtomValue(canvasserAtom);
+  const pendingOpenRef = useRef<{ host: string; turfId: string } | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      if (canvasser && pendingOpenRef.current) {
+        const pending = pendingOpenRef.current;
+        pendingOpenRef.current = null;
+        setActiveTurf(pending);
+        goToTurf(pending.turfId);
+        return;
+      }
+      // Success paths keep `loading` true through the transition (Open →
+      // Loading... → sheet/map, no flash back to "Open"); it resets here,
+      // whenever the landing regains focus without an open to complete.
+      setLoading(false);
+    }, [canvasser, setActiveTurf]),
+  );
+
   const handleSubmit = async () => {
     // Swallow taps while a previous submit is in flight. The button stays
     // visually active (no disabled dim) but extra presses are no-ops.
@@ -76,8 +103,12 @@ export default function LandingScreen() {
         setLoading(false);
         return;
       }
+      if (REQUIRE_ATTRIBUTION && !canvasser) {
+        pendingOpenRef.current = { host: trimmedHost, turfId: turf.turfId };
+        router.push("/canvasser");
+        return;
+      }
       setActiveTurf({ host: trimmedHost, turfId: turf.turfId });
-      setLoading(false);
       goToTurf(turf.turfId);
     } catch (err) {
       // RN's fetch surfaces offline / unreachable-host failures as
@@ -114,28 +145,23 @@ export default function LandingScreen() {
         </Text>
 
         <View className="gap-3 w-full max-w-xs">
-          <TextInput
+          <Input
             value={host}
             onChangeText={setHostInput}
             placeholder="Server domain"
-            placeholderTextColor="#999"
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
             returnKeyType="next"
             onSubmitEditing={() => codeRef.current?.focus()}
-            style={{ paddingTop: 11, paddingBottom: 13 }}
-            className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
           />
-          <TextInput
+          <Input
             ref={codeRef}
             value={code}
             onChangeText={setCode}
             placeholder="Turf code"
-            placeholderTextColor="#999"
             keyboardType="number-pad"
-            style={{ paddingTop: 11, paddingBottom: 13, fontVariant: ["tabular-nums"] }}
-            className="font-sans text-xl text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg px-4 text-center h-14"
+            style={{ fontVariant: ["tabular-nums"] }}
           />
           <Button title={loading ? "Loading..." : "Open"} onPress={handleSubmit} />
         </View>

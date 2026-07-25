@@ -38,6 +38,13 @@ export const canvassEvents = pgTable(
       .notNull()
       .references(() => turfs.turfId),
     canvasserId: text(),
+    // Attribution stamped by the client at record time — a pure claim. Plain
+    // columns (not jsonb): the
+    // future verification join and reporting group-bys key on the phone.
+    // Verification, when it ships, is a read-time join on the contact;
+    // never a flag stored here.
+    canvasserName: text(),
+    canvasserPhone: text(),
     personId: text(),
     doorId: uuid(),
     buildingId: uuid(),

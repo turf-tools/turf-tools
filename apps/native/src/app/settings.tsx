@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
+import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { SYNC_OPTIONS, syncIntervalAtom, userSyncingAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
 import { clearPullCache, pullCanvassEvents, useSyncStatus } from "@/lib/canvass-events";
@@ -25,6 +26,7 @@ export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
   const activeTurf = useAtomValue(activeTurfAtom);
   const setActiveTurf = useSetAtom(activeTurfAtom);
+  const [canvasser, setCanvasser] = useAtom(canvasserAtom);
   const [syncInterval, setSyncInterval] = useAtom(syncIntervalAtom);
   // User-initiated only — module-level atom so closing and reopening
   // Settings mid-sync still shows the in-flight state. Background
@@ -97,6 +99,10 @@ export default function SettingsScreen() {
             queryClient.clear();
             clearPullCache();
             setActiveTurf(null);
+            // In-memory atoms must be nulled explicitly — AsyncStorage.clear()
+            // only wipes the persisted copies, and a still-set atom would
+            // re-satisfy the canvasser gate (and re-persist on next write).
+            setCanvasser(null);
             clearHost();
             router.dismissAll();
             router.replace("/");
@@ -145,10 +151,9 @@ export default function SettingsScreen() {
             icon={<Download size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
-            title="User (coming soon)"
+            title={canvasser?.name ?? "Add your name"}
             variant="outline"
-            disabled
-            onPress={() => {}}
+            onPress={() => router.push("/canvasser")}
             icon={<UserRound size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button

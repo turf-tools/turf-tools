@@ -48,6 +48,10 @@ export const appendResult = mut
       payload: resultPayload,
       createdAt: z.string(),
       canvasserId: z.string().optional(),
+      // Client-claimed attribution — stored verbatim; verification is a
+      // read-time join on the phone.
+      canvasserName: z.string().optional(),
+      canvasserPhone: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
     }),
@@ -59,6 +63,8 @@ export const appendResult = mut
         clientEventId: input.clientEventId,
         turfId: input.turfId,
         canvasserId: input.canvasserId,
+        canvasserName: input.canvasserName,
+        canvasserPhone: input.canvasserPhone,
         personId: input.personId,
         doorId: input.doorId,
         buildingId: input.buildingId,
@@ -82,6 +88,10 @@ export const appendNote = mut
       text: z.string().min(1),
       createdAt: z.string(),
       canvasserId: z.string().optional(),
+      // Client-claimed attribution — stored verbatim; verification is a
+      // read-time join on the phone.
+      canvasserName: z.string().optional(),
+      canvasserPhone: z.string().optional(),
       inputType: z.string().optional(),
       clientEventId: z.string().optional(),
     }),
@@ -93,6 +103,8 @@ export const appendNote = mut
         clientEventId: input.clientEventId,
         turfId: input.turfId,
         canvasserId: input.canvasserId,
+        canvasserName: input.canvasserName,
+        canvasserPhone: input.canvasserPhone,
         personId: input.personId,
         doorId: input.doorId,
         buildingId: input.buildingId,
