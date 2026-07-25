@@ -14,7 +14,9 @@ import { AppState, LogBox, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { activeTurfAtom, loadActiveTurf } from "@/lib/atoms/active-turf";
+import { canvasserAtom, loadCanvasser } from "@/lib/atoms/canvasser";
 import { themeAtom } from "@/lib/atoms/theme";
+import { REQUIRE_ATTRIBUTION } from "@/lib/canvasser";
 import { pullCanvassEvents } from "@/lib/canvass-events";
 import { persister, queryClient } from "@/lib/query-client";
 import { setHost } from "@/rpc/client";
@@ -107,6 +109,14 @@ function ThemedStack() {
           }}
         />
         <Stack.Screen
+          name="canvasser"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            contentStyle: { backgroundColor: isDark ? "#0a0a0a" : "#fcfcfc" },
+          }}
+        />
+        <Stack.Screen
           name="turfs/[turfId]"
           options={{ headerShown: false, gestureEnabled: false }}
         />
@@ -118,18 +128,29 @@ function ThemedStack() {
 function BootGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const setActiveTurf = useSetAtom(activeTurfAtom);
+  const setCanvasser = useSetAtom(canvasserAtom);
 
   useEffect(() => {
     void (async () => {
+      const canvasser = await loadCanvasser();
+      if (canvasser) setCanvasser(canvasser);
       const activeTurf = await loadActiveTurf();
       if (activeTurf) {
-        setHost(activeTurf.host);
-        setActiveTurf(activeTurf);
-        router.replace(`/turfs/${activeTurf.turfId}`);
+        // Bound ⇒ attributed is an invariant of the open flow (the landing
+        // gates binding on the canvasser sheet). A stored binding without a
+        // canvasser is stale state from before that gate existed — drop it
+        // instead of auto-opening into a turf the gate would bounce.
+        if (REQUIRE_ATTRIBUTION && !canvasser) {
+          setActiveTurf(null);
+        } else {
+          setHost(activeTurf.host);
+          setActiveTurf(activeTurf);
+          router.replace(`/turfs/${activeTurf.turfId}`);
+        }
       }
       setReady(true);
     })();
-  }, [setActiveTurf]);
+  }, [setActiveTurf, setCanvasser]);
 
   if (!ready) return null;
   return <>{children}</>;

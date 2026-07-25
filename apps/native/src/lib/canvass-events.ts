@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getDefaultStore } from "jotai";
 import { useCallback, useEffect, useState } from "react";
 import type { CanvassEventPayload } from "@turf-tools/db/schema";
+import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
 import { FixedReactNativeOnlineDetector } from "@/lib/online-detector";
 import { queryClient } from "@/lib/query-client";
@@ -22,6 +23,8 @@ type CanvassEvent = {
   clientEventId: string | null;
   turfId: string;
   canvasserId: string | null;
+  canvasserName: string | null;
+  canvasserPhone: string | null;
   personId: string | null;
   doorId: string | null;
   buildingId: string | null;
@@ -128,6 +131,8 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
     doorId: event.doorId ?? undefined,
     buildingId: event.buildingId ?? undefined,
     createdAt: event.createdAt,
+    canvasserName: event.canvasserName ?? undefined,
+    canvasserPhone: event.canvasserPhone ?? undefined,
     inputType: "mobile",
     clientEventId: event.clientEventId ?? undefined,
   };
@@ -164,10 +169,14 @@ function createTurfContext(turfId: string): TurfContext {
   });
 
   const buildEvent = (params: RecordEventParams) => ({
-    // Placeholder values — server assigns sequence. canvasserId is null until
-    // the canvasser identity system ships.
+    // Placeholder values — server assigns sequence. canvasserId stays null
+    // (reserved); attribution is the client-claimed `canvasser` stamp, read
+    // from the device identity at record time so mid-shift edits in Settings
+    // apply to subsequent events.
     sequence: 0,
     canvasserId: null,
+    canvasserName: getDefaultStore().get(canvasserAtom)?.name ?? null,
+    canvasserPhone: getDefaultStore().get(canvasserAtom)?.phone ?? null,
     clientEventId: crypto.randomUUID(),
     turfId,
     personId: params.personId ?? null,
