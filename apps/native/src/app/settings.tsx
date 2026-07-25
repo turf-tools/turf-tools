@@ -20,7 +20,7 @@ import { SYNC_OPTIONS, syncIntervalAtom, userSyncingAtom } from "@/lib/atoms/syn
 import { themeAtom } from "@/lib/atoms/theme";
 import { clearPullCache, pullCanvassEvents, useSyncStatus } from "@/lib/canvass-events";
 import { queryClient } from "@/lib/query-client";
-import { clearHost } from "@/rpc/client";
+import { clearHost, client } from "@/rpc/client";
 
 export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
@@ -76,6 +76,19 @@ export default function SettingsScreen() {
   const syncLabel = SYNC_OPTIONS.find((o) => o.value === syncInterval)?.label ?? "Unknown";
 
   const handleDownloadNewTurf = () => {
+    // Best-effort close of this device's walk, so the lead's board flips
+    // to available without waiting for the next open. Fire-and-forget
+    // (before clearHost so the request still knows the server): offline
+    // unbinds fall back to implicit close on next open, or lead clear.
+    if (activeTurf && canvasser?.phone) {
+      try {
+        void client.walks
+          .close({ turfId: activeTurf.turfId, canvasserPhone: canvasser.phone })
+          .catch(() => {});
+      } catch {
+        // Uninitialized client throws synchronously — nothing to close.
+      }
+    }
     setActiveTurf(null);
     clearHost();
     router.dismissAll();

@@ -18,3 +18,15 @@ export function formatDate(value: Date | string | null | undefined, timezone: st
     timeZone: timezone,
   });
 }
+
+// Compact intra-day time (h:mm AM/PM) — launch-day walk activity is
+// same-day, so the clock matters more than the calendar.
+export function formatTime(value: Date | string | null | undefined, timezone: string) {
+  if (!value) return "—";
+  const d = value instanceof Date ? value : new Date(value);
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timezone,
+  });
+}

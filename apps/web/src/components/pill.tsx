@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 // Pill cells for tabular data. All variants fill their parent width
@@ -9,10 +9,12 @@ type Variant = "text" | "number";
 type PillProps = {
   variant?: Variant;
   className?: string;
+  // Inline tint overrides (status colors computed at runtime).
+  style?: CSSProperties;
   children?: ReactNode;
 };
 
-export function Pill({ variant = "text", className, children }: PillProps) {
+export function Pill({ variant = "text", className, style, children }: PillProps) {
   return (
     <span
       className={cn(
@@ -25,6 +27,7 @@ export function Pill({ variant = "text", className, children }: PillProps) {
         variant === "number" ? "bg-muted font-mono tabular-nums" : "bg-muted",
         className,
       )}
+      style={style}
     >
       {children}
     </span>

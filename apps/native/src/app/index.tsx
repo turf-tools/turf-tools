@@ -46,6 +46,36 @@ export default function LandingScreen() {
     prevActiveTurf.current = activeTurf;
   }, [activeTurf]);
 
+  const canvasser = useAtomValue(canvasserAtom);
+
+  // Recording the walk (the lead's sign-out signal) is a hard precondition
+  // of binding: an unrecorded sign-out still looks available to the lead,
+  // who may hand the same turf to someone else. Throws on failure so
+  // callers refuse the bind.
+  const openWalk = async (turfId: string) => {
+    if (!canvasser) return;
+    await client.walks.open({
+      turfId,
+      canvasserName: canvasser.name,
+      canvasserPhone: canvasser.phone ?? undefined,
+    });
+  };
+
+  // RN's fetch surfaces offline / unreachable-host failures as
+  // `TypeError: Network request failed`. Translate to a human-readable
+  // alert; pass other errors through as best-effort text.
+  const showBindError = (err: unknown) => {
+    const message = String(err);
+    if (message.includes("Network request failed")) {
+      Alert.alert(
+        "Connection error",
+        "Could not reach the server to open the turf, try again when you have a network connection.",
+      );
+    } else {
+      Alert.alert("Error", message);
+    }
+  };
+
   const goToTurf = (turfId: string) => {
     void openTurf(turfId).catch(() => {
       Alert.alert(
@@ -62,15 +92,24 @@ export default function LandingScreen() {
   // canvasser, the parked open completes. Declining is a no-op by
   // construction — nothing was bound, so there is nothing to unwind and the
   // typed fields are untouched.
-  const canvasser = useAtomValue(canvasserAtom);
   const pendingOpenRef = useRef<{ host: string; turfId: string } | null>(null);
   useFocusEffect(
     useCallback(() => {
       if (canvasser && pendingOpenRef.current) {
         const pending = pendingOpenRef.current;
         pendingOpenRef.current = null;
-        setActiveTurf(pending);
-        goToTurf(pending.turfId);
+        void (async () => {
+          try {
+            await openWalk(pending.turfId);
+            setActiveTurf(pending);
+            goToTurf(pending.turfId);
+          } catch (err) {
+            // Nothing bound — the landing is back in its pre-Open state,
+            // so the user just taps Open to retry.
+            showBindError(err);
+            setLoading(false);
+          }
+        })();
         return;
       }
       // Success paths keep `loading` true through the transition (Open →
@@ -108,21 +147,11 @@ export default function LandingScreen() {
         router.push("/canvasser");
         return;
       }
+      await openWalk(turf.turfId);
       setActiveTurf({ host: trimmedHost, turfId: turf.turfId });
       goToTurf(turf.turfId);
     } catch (err) {
-      // RN's fetch surfaces offline / unreachable-host failures as
-      // `TypeError: Network request failed`. Translate to a human-readable
-      // alert; pass other errors through as best-effort text.
-      const message = String(err);
-      if (message.includes("Network request failed")) {
-        Alert.alert(
-          "Connection error",
-          "Could not reach the server to load the turf, try again when you have a network connection.",
-        );
-      } else {
-        Alert.alert("Error", message);
-      }
+      showBindError(err);
       setLoading(false);
     }
   };
