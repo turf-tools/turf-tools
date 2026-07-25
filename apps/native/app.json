@@ -1,6 +1,6 @@
 {
   "expo": {
-    "slug": "turf-tools-native",
+    "slug": "turf-tools",
     "owner": "turf-tools",
     "version": "0.1.0",
     "scheme": "turf-tools",
@@ -31,27 +31,31 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Show current location on map."
+          "locationWhenInUsePermission": "Show current location on map.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan turf QR codes to fill in the server and code."
+          "cameraPermission": "Scan turf QR codes to fill in the server and code.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ]
     ],
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "a844c864-5742-4a81-9787-8e6f7b4c6ceb"
+        "projectId": "f5c5d36f-33e4-4f87-b44b-1c5c41be1337"
       }
     },
     "runtimeVersion": {
       "policy": "fingerprint"
     },
     "updates": {
-      "url": "https://u.expo.dev/a844c864-5742-4a81-9787-8e6f7b4c6ceb"
+      "url": "https://u.expo.dev/f5c5d36f-33e4-4f87-b44b-1c5c41be1337"
     }
   }
 }
