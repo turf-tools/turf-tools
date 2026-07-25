@@ -22,6 +22,7 @@ export const listForOrg = pub
         turfId: turfs.turfId,
         name: turfs.name,
         turfCode: turfs.turfCode,
+        status: turfs.status,
         doorCount: turfs.doorCount,
         personCount: turfs.personCount,
         campaignId: turfs.campaignId,
