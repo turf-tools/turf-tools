@@ -9,10 +9,15 @@ const isProduction = process.env.APP_VARIANT === "production";
 const name = isProduction ? "Turf Tools" : "Turf Tools (Dev)";
 const identifier = isProduction ? "tools.turf.native" : "tools.turf.native.dev";
 
+// Android gets its own identifier: applicationId segments must be valid Java
+// identifiers, and "native" is a Java keyword (EAS manifest validation
+// rejects it). Android package and iOS bundle id never need to match.
+const androidIdentifier = isProduction ? "tools.turf.app" : "tools.turf.app.dev";
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name,
   slug: config.slug ?? "turf-tools-native",
   ios: { ...config.ios, bundleIdentifier: identifier },
-  android: { ...config.android, package: identifier },
+  android: { ...config.android, package: androidIdentifier },
 });
