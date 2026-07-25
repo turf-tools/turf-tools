@@ -1,7 +1,7 @@
 import { MarkerView } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
-import { View } from "react-native";
+import { AppState, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -31,20 +31,48 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
     let cancelled = false;
-    void (async () => {
+    // Generation counter drops stale async starts: a restart that begins
+    // while a previous one is still awaiting would otherwise leak the
+    // earlier watcher.
+    let generation = 0;
+
+    // Accuracy.High (GPS, ~10m), not Balanced: Balanced maps to
+    // kCLLocationAccuracyHundredMeters on iOS, whose wifi-derived fixes
+    // can sit still while the user walks a whole turf — the 5m distance
+    // filter compares reported fixes, so the dot froze at the open-time
+    // position on device (simulator location jumps masked it).
+    const start = async () => {
+      const gen = ++generation;
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted" || cancelled) return;
-        sub = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.Balanced, distanceInterval: 5 },
+        if (status !== "granted" || cancelled || gen !== generation) return;
+        const next = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 5 },
           (pos) => setCoord([pos.coords.longitude, pos.coords.latitude]),
         );
+        if (cancelled || gen !== generation) {
+          next.remove();
+          return;
+        }
+        sub?.remove();
+        sub = next;
       } catch {
         // No location, no dot — silent by design.
       }
-    })();
+    };
+    void start();
+
+    // Restart on foreground: iOS pauses watches it deems stationary
+    // (pausesLocationUpdatesAutomatically defaults true and isn't exposed
+    // by expo's foreground watch API), and a pause straddling a
+    // background/lock cycle is not reliably resumed — a fresh watch
+    // un-sticks it after the phone spent time locked in a pocket.
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state === "active") void start();
+    });
     return () => {
       cancelled = true;
+      appState.remove();
       sub?.remove();
     };
   }, []);
