@@ -25,6 +25,19 @@ const DOT_SIZE = 19; // dot diameter, border included
 const OUTLINE_WIDTH = 3;
 const HALO_SCALE = 2.25; // halo max diameter as a multiple of the dot
 
+// Below this, a new fix keeps the previous drawn position: with no
+// distance filter, stationary GPS jitter (~1m) would make the dot wander
+// while the user stands at a door.
+const JITTER_METERS = 2;
+
+// Equirectangular approximation — meters between two [lng, lat] points.
+// Fine at walking scale; avoids pulling in a geo library for one check.
+function metersBetween(a: [number, number], b: [number, number]) {
+  const dLng = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * (Math.PI / 180));
+  const dLat = b[1] - a[1];
+  return Math.hypot(dLng, dLat) * 111_320;
+}
+
 export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
   const [coord, setCoord] = useState<[number, number] | null>(null);
 
@@ -46,9 +59,16 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== "granted" || cancelled || gen !== generation) return;
+        // distanceInterval 0 streams ~1Hz fixes: a 5m filter delivered
+        // movement in visible hops at walking speed. The radio runs
+        // either way — the filter only gated delivery, not power.
         const next = await Location.watchPositionAsync(
-          { accuracy: Location.Accuracy.High, distanceInterval: 5 },
-          (pos) => setCoord([pos.coords.longitude, pos.coords.latitude]),
+          { accuracy: Location.Accuracy.High, distanceInterval: 0 },
+          (pos) => {
+            const fix: [number, number] = [pos.coords.longitude, pos.coords.latitude];
+            // Returning prev keeps referential equality — no re-render.
+            setCoord((prev) => (prev && metersBetween(prev, fix) < JITTER_METERS ? prev : fix));
+          },
         );
         if (cancelled || gen !== generation) {
           next.remove();
