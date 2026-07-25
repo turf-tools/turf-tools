@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Linking, Pressable, Text, View } from "react-native";
+import { InteractionManager, Linking, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { scannedEntryAtom } from "@/lib/atoms/scan";
@@ -32,6 +32,18 @@ export default function ScanScreen() {
       void requestPermission().finally(() => setAskDone(true));
     }
   }, [permission, requestPermission]);
+
+  // Mask camera warmup: mount after the modal's slide-up (init would jank
+  // the animation) and reveal a beat past onCameraReady — SDK 55's camera
+  // starts the session before it's fully configured, so the preview
+  // zooms/rotates into place with dark frames (fixed upstream in SDK 56).
+  const REVEAL_DELAY_MS = 400;
+  const [cameraMounted, setCameraMounted] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => setCameraMounted(true));
+    return () => task.cancel();
+  }, []);
 
   // The scanner fires repeatedly while a code is in frame — latch on the
   // first valid parse so we hand off exactly once.
@@ -75,13 +87,16 @@ export default function ScanScreen() {
 
         {permission?.granted ? (
           <>
-            <View className="flex-1 overflow-hidden rounded-2xl">
-              <CameraView
-                style={{ flex: 1 }}
-                facing="back"
-                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                onBarcodeScanned={({ data }) => handleData(data)}
-              />
+            <View className="flex-1 overflow-hidden rounded-2xl bg-black">
+              {cameraMounted ? (
+                <CameraView
+                  style={{ flex: 1, opacity: cameraReady ? 1 : 0 }}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                  onBarcodeScanned={({ data }) => handleData(data)}
+                  onCameraReady={() => setTimeout(() => setCameraReady(true), REVEAL_DELAY_MS)}
+                />
+              ) : null}
             </View>
             <Text
               className="mt-9 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
