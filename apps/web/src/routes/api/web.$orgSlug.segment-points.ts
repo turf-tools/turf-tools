@@ -8,7 +8,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
 import { dataFetch, passthrough } from "~/lib/server/data-proxy";
-import { buildWebContext } from "~/rpc/context";
+import { buildVoterDataContext } from "~/rpc/context";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,7 +29,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-points")({
         }
         let context;
         try {
-          context = await buildWebContext(db, request.headers, orgSlug);
+          context = await buildVoterDataContext(db, request.headers, orgSlug);
         } catch {
           return new Response("Unauthorized", { status: 401, headers: corsHeaders });
         }

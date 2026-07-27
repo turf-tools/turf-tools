@@ -19,6 +19,18 @@ export function formatDate(value: Date | string | null | undefined, timezone: st
   });
 }
 
+// MM/DD — for badge-sized contexts (the walked-date chip) where the
+// year is noise.
+export function formatMonthDay(value: Date | string | null | undefined, timezone: string) {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  return d.toLocaleDateString("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: timezone,
+  });
+}
+
 // Compact intra-day time (h:mm AM/PM) — launch-day walk activity is
 // same-day, so the clock matters more than the calendar.
 export function formatTime(value: Date | string | null | undefined, timezone: string) {

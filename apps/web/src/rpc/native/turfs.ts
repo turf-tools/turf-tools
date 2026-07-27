@@ -1,7 +1,8 @@
 import { and, eq } from "@turf-tools/db";
-import { turfData, turfs } from "@turf-tools/db/schema";
+import { campaigns, turfData, turfScans, turfs } from "@turf-tools/db/schema";
 import type { TurfData } from "@turf-tools/db/schema";
 import { z } from "zod";
+import { publish } from "~/lib/server/live";
 import { nativePub as pub } from "../context";
 
 // Shared select shape for turf list/detail responses. The
@@ -34,14 +35,28 @@ export const getById = pub
 // Filtered to `status = 'active'` because turf codes can repeat
 // across archived rows (the unique constraint is partial). Archived
 // turfs no longer honor their codes — canvassers can't access them.
+//
+// A successful resolution is also the handoff signal: it fires before
+// attestation can park the bind, so the lead's board flips to "pending"
+// seconds after the canvasser commits — typed codes included. (getById,
+// the relaunch-rebind path, deliberately doesn't signal.)
 export const getByCode = pub
   .input(z.object({ code: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
-      .select(turfSelect)
+      .select({ ...turfSelect, organizationId: campaigns.organizationId })
       .from(turfs)
+      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
       .where(and(eq(turfs.turfCode, input.code), eq(turfs.status, "active")));
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    await context.db
+      .insert(turfScans)
+      .values({ turfId: row.turfId })
+      .onConflictDoUpdate({ target: turfScans.turfId, set: { scannedAt: new Date() } });
+    publish(row.organizationId);
+    const { organizationId: _, ...turf } = row;
+    return turf;
   });
 
 // Fetch the buildings → doors → persons payload for a single turf.

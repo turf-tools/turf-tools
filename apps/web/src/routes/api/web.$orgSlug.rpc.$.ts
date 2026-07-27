@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { RPCHandler } from "@orpc/server/fetch";
 import { db } from "@turf-tools/db";
+import { canCallRpc } from "~/lib/permissions";
 import { webRouter } from "../../rpc";
 import { buildWebContext } from "../../rpc/context";
 
@@ -28,6 +29,13 @@ export const Route = createFileRoute("/api/web/$orgSlug/rpc/$")({
         }
 
         const context = await buildWebContext(db, request.headers, orgSlug);
+        // Central role gate: restricted roles (field leads) get an
+        // allowlist of procedures rather than per-handler checks, so new
+        // procedures are inaccessible to them by default.
+        const procedure = (match?.[2] ?? "").replace(/^\//, "").replaceAll("/", ".");
+        if (!canCallRpc(context.role, procedure)) {
+          return new Response("Forbidden", { status: 403, headers: corsHeaders });
+        }
         const { response } = await handler.handle(request, {
           prefix: `/api/web/${orgSlug}/rpc`,
           context,

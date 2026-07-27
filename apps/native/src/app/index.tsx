@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from "expo-router";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Scan } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, Text, type TextInput, View } from "react-native";
@@ -8,8 +8,9 @@ import { Button } from "@/components/button";
 import { Input } from "@/components/input";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
 import { canvasserAtom } from "@/lib/atoms/canvasser";
-import { scannedEntryAtom } from "@/lib/atoms/scan";
+import { pendingOpenAtom, scannedEntryAtom } from "@/lib/atoms/scan";
 import { themeAtom } from "@/lib/atoms/theme";
+import { showBindError } from "@/lib/bind-error";
 import { openTurf } from "@/lib/canvass-events";
 import { REQUIRE_ATTRIBUTION } from "@/lib/canvasser";
 import { client, setHost } from "@/rpc/client";
@@ -61,21 +62,6 @@ export default function LandingScreen() {
     });
   };
 
-  // RN's fetch surfaces offline / unreachable-host failures as
-  // `TypeError: Network request failed`. Translate to a human-readable
-  // alert; pass other errors through as best-effort text.
-  const showBindError = (err: unknown) => {
-    const message = String(err);
-    if (message.includes("Network request failed")) {
-      Alert.alert(
-        "Connection error",
-        "Could not reach the server to open the turf, try again when you have a network connection.",
-      );
-    } else {
-      Alert.alert("Error", message);
-    }
-  };
-
   const goToTurf = (turfId: string) => {
     void openTurf(turfId).catch(() => {
       Alert.alert(
@@ -87,36 +73,21 @@ export default function LandingScreen() {
   };
 
   // Attribution is a precondition of binding: with no canvasser on the
-  // device, Open parks the resolved turf here and raises the identity sheet
-  // instead of binding. When the landing regains focus with a saved
-  // canvasser, the parked open completes. Declining is a no-op by
-  // construction — nothing was bound, so there is nothing to unwind and the
-  // typed fields are untouched.
-  const pendingOpenRef = useRef<{ host: string; turfId: string } | null>(null);
+  // device, Open parks the resolved turf in `pendingOpenAtom` and raises
+  // the identity sheet instead of binding. The sheet's Save completes the
+  // bind and navigates straight to the turf — the landing never flashes
+  // back into view mid-flow.
+  const setPendingOpen = useSetAtom(pendingOpenAtom);
   useFocusEffect(
     useCallback(() => {
-      if (canvasser && pendingOpenRef.current) {
-        const pending = pendingOpenRef.current;
-        pendingOpenRef.current = null;
-        void (async () => {
-          try {
-            await openWalk(pending.turfId);
-            setActiveTurf(pending);
-            goToTurf(pending.turfId);
-          } catch (err) {
-            // Nothing bound — the landing is back in its pre-Open state,
-            // so the user just taps Open to retry.
-            showBindError(err);
-            setLoading(false);
-          }
-        })();
-        return;
-      }
-      // Success paths keep `loading` true through the transition (Open →
-      // Loading... → sheet/map, no flash back to "Open"); it resets here,
-      // whenever the landing regains focus without an open to complete.
+      // Regaining focus means no bind is in flight (a successful save
+      // lands on the turf screen, not here): drop any declined parked
+      // open so a later Open starts clean, and reset the button label —
+      // success paths keep `loading` true through their transition so
+      // "Loading..." never flashes back to "Open".
+      setPendingOpen(null);
       setLoading(false);
-    }, [canvasser, setActiveTurf]),
+    }, [setPendingOpen]),
   );
 
   const handleSubmit = async () => {
@@ -143,7 +114,7 @@ export default function LandingScreen() {
         return;
       }
       if (REQUIRE_ATTRIBUTION && !canvasser) {
-        pendingOpenRef.current = { host: trimmedHost, turfId: turf.turfId };
+        setPendingOpen({ host: trimmedHost, turfId: turf.turfId });
         router.push("/canvasser");
         return;
       }

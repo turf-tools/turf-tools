@@ -1,4 +1,5 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
@@ -128,4 +129,30 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close {...props} data-dialog-close="" />;
 }
 
-export { Dialog, DialogTrigger, DialogContent, DialogTitle, DialogDescription, DialogClose };
+// Dismiss affordance for informational dialogs that have no action
+// buttons: a bare ✕ in the upper right instead of a "Close" button row.
+function DialogCloseX() {
+  return (
+    <DialogPrimitive.Close
+      aria-label="Close"
+      data-dialog-close=""
+      className={cn(
+        "absolute top-3 right-3 flex size-7 items-center justify-center rounded-md",
+        "text-foreground hover:bg-muted",
+        "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+      )}
+    >
+      <X className="size-4" />
+    </DialogPrimitive.Close>
+  );
+}
+
+export {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+  DialogCloseX,
+};

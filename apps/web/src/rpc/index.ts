@@ -11,6 +11,7 @@ import * as turfDrafts from "./web/turf-drafts";
 import * as webTurfs from "./web/turfs";
 import * as webUsers from "./web/users";
 import * as webWalks from "./web/walks";
+import * as progress from "./web/progress";
 import * as zoneGroups from "./web/zone-groups";
 import * as zones from "./web/zones";
 import * as canvass from "./native/canvass";
@@ -89,7 +90,9 @@ export const webRouter = {
   },
   walks: {
     listForOrg: webWalks.listForOrg,
-    clear: webWalks.clear,
+  },
+  progress: {
+    forOrg: progress.forOrg,
   },
   turfDrafts: {
     list: turfDrafts.list,
