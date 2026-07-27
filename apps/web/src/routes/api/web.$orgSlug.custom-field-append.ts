@@ -16,7 +16,7 @@ import {
 } from "@turf-tools/db/schema";
 import { hasPermission } from "~/lib/permissions";
 import { dataFetch } from "~/lib/server/data-proxy";
-import { buildWebContext } from "~/rpc/context";
+import { buildVoterDataContext } from "~/rpc/context";
 
 const FIELD_TYPES: CustomFieldType[] = ["number", "date", "text", "enum"];
 
@@ -40,9 +40,9 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-append")({
         const orgSlug = url.pathname.match(/^\/api\/web\/([^/]+)\/custom-field-append$/)?.[1];
         if (!orgSlug) return new Response("Not Found", { status: 404 });
 
-        let context: Awaited<ReturnType<typeof buildWebContext>>;
+        let context: Awaited<ReturnType<typeof buildVoterDataContext>>;
         try {
-          context = await buildWebContext(db, request.headers, orgSlug);
+          context = await buildVoterDataContext(db, request.headers, orgSlug);
         } catch {
           return new Response("Unauthorized", { status: 401 });
         }

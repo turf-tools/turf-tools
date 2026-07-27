@@ -47,11 +47,11 @@
           "name": "4 – Layer (2)",
           "opacity-specializations": [
             {
-              "value": 0.95
+              "value": 1
             },
             {
               "appearance": "dark",
-              "value": 0.95
+              "value": 1
             }
           ]
         }

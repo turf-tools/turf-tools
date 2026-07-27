@@ -24,7 +24,9 @@ interface FilterProps {
   label: string | null;
   value: string | null;
   options: FilterOption[];
-  allLabel?: string;
+  // `null` removes the "All" row entirely — for contexts where a
+  // selection is required (the mobile turf list).
+  allLabel?: string | null;
   onChange: (next: string | null) => void;
 }
 
@@ -42,7 +44,9 @@ export function Filter({ icon, label, value, options, allLabel = "All", onChange
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuRadioGroup {...dd.radio} value={value ?? ALL_VALUE}>
-          <DropdownMenuRadioItem value={ALL_VALUE}>{allLabel}</DropdownMenuRadioItem>
+          {allLabel !== null ? (
+            <DropdownMenuRadioItem value={ALL_VALUE}>{allLabel}</DropdownMenuRadioItem>
+          ) : null}
           {options.map((o) => (
             <DropdownMenuRadioItem key={o.value} value={o.value}>
               {o.label}

@@ -23,10 +23,12 @@ export function Shell({ children, role, orgSlug, orgName, orgs }: ShellProps) {
 
   return (
     <div className="mx-auto min-h-screen max-w-[1600px]">
-      <TopBar orgSlug={orgSlug} orgName={orgName} orgs={orgs} />
+      <TopBar orgSlug={orgSlug} orgName={orgName} orgs={orgs} role={role} />
       <div className="flex">
+        {/* Mobile has no sidebar — the top bar's menu button carries nav. */}
         <aside
           className={cn(
+            "hidden md:block",
             "sticky top-14 z-30 h-[calc(100vh-3.5rem)]",
             "shrink-0 overflow-hidden",
             "border-r border-border",

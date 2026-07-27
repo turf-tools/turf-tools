@@ -1,13 +1,18 @@
 import { router } from "expo-router";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { X } from "lucide-react-native";
 import { useState } from "react";
-import { Keyboard, Pressable, Text, View } from "react-native";
+import { Alert, Keyboard, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { Input } from "@/components/input";
+import { activeTurfAtom } from "@/lib/atoms/active-turf";
 import { canvasserAtom } from "@/lib/atoms/canvasser";
+import { pendingOpenAtom } from "@/lib/atoms/scan";
 import { themeAtom } from "@/lib/atoms/theme";
+import { showBindError } from "@/lib/bind-error";
+import { openTurf } from "@/lib/canvass-events";
+import { client } from "@/rpc/client";
 
 // The canvasser identity sheet — a sign-in sheet, not an account. Raised
 // by the landing screen before
@@ -19,6 +24,9 @@ export default function CanvasserScreen() {
   const insets = useSafeAreaInsets();
   const isDark = useAtomValue(themeAtom) === "dark";
   const [canvasser, setCanvasser] = useAtom(canvasserAtom);
+  const [pendingOpen, setPendingOpen] = useAtom(pendingOpenAtom);
+  const setActiveTurf = useSetAtom(activeTurfAtom);
+  const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState(canvasser?.name ?? "");
   const [phone, setPhone] = useState(canvasser?.phone ?? "");
@@ -43,15 +51,44 @@ export default function CanvasserScreen() {
       ? digits.length >= 8 && digits.length <= 15
       : digits.length === 10 || (digits.length === 11 && digits.startsWith("1")));
   const valid = name.trim().length > 0 && phoneShaped;
-  const save = () => {
-    if (!valid) return;
+  const save = async () => {
+    if (!valid || saving) return;
     const normalized = trimmedPhone.startsWith("+")
       ? `+${digits}`
       : digits.length === 11
         ? `+${digits}`
         : `+1${digits}`;
-    setCanvasser({ name: name.trim(), phone: normalized });
-    router.back();
+    const next = { name: name.trim(), phone: normalized };
+    setCanvasser(next);
+    // Settings edit — no bind in flight, just dismiss.
+    if (!pendingOpen) {
+      router.back();
+      return;
+    }
+    // First-open path: complete the parked bind here and go straight to
+    // the turf, so the landing never flashes back into view. The walk is
+    // a hard precondition of binding — on failure nothing binds and the
+    // sheet stays up for a retry.
+    setSaving(true);
+    try {
+      await client.walks.open({
+        turfId: pendingOpen.turfId,
+        canvasserName: next.name,
+        canvasserPhone: next.phone,
+      });
+      setActiveTurf(pendingOpen);
+      setPendingOpen(null);
+      void openTurf(pendingOpen.turfId).catch(() => {
+        Alert.alert(
+          "Couldn't refresh from server",
+          "Showing the most recently synced version but data may be out of date, sync when you have a connection.",
+        );
+      });
+      router.replace(`/turfs/${pendingOpen.turfId}`);
+    } catch (err) {
+      showBindError(err);
+      setSaving(false);
+    }
   };
 
   return (
@@ -112,7 +149,7 @@ export default function CanvasserScreen() {
             textContentType="none"
             style={{ fontVariant: ["tabular-nums"] }}
           />
-          <Button title="Save" onPress={save} disabled={!valid} />
+          <Button title={saving ? "Loading..." : "Save"} onPress={save} disabled={!valid} />
         </View>
       </View>
     </Pressable>

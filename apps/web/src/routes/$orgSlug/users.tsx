@@ -63,6 +63,7 @@ const STATUS_OPTIONS = [
 const ROLE_OPTIONS = [
   { value: "owner", label: "Owner" },
   { value: "admin", label: "Admin" },
+  { value: "lead", label: "Field lead" },
 ];
 
 export const Route = createFileRoute("/$orgSlug/users")({

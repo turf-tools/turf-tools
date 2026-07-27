@@ -15,8 +15,10 @@ import { users } from "./auth/users";
 // instead of opening a new one.
 //
 // Attribution is the client-claimed identity, same as `canvass_events` —
-// stored verbatim, no FK. `closedBy` is set only when a lead clears the
-// walk from the web app; implicit closes leave it null.
+// stored verbatim, no FK. `closedBy` is reserved for a future
+// admin-side close; every current close path (explicit unbind, implicit
+// close on next open) leaves it null. Walks that are never closed decay
+// out of the "live" display client-side rather than being mutated.
 
 export const walks = pgTable(
   "walks",

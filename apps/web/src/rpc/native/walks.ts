@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, ne } from "@turf-tools/db";
 import { campaigns, turfs, walks } from "@turf-tools/db/schema";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
+import { publish } from "~/lib/server/live";
 import { nativeMut as mut } from "../context";
 
 // Record that a canvasser took a turf out. Called by the native app at
@@ -77,6 +78,7 @@ export const open = mut
         canvasserPhone: phone,
       })
       .returning({ walkId: walks.walkId });
+    publish(turfRow.organizationId);
     return { walkId: inserted[0]!.walkId };
   });
 
@@ -92,7 +94,7 @@ export const close = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    await context.db
+    const closed = await context.db
       .update(walks)
       .set({ closedAt: new Date() })
       .where(
@@ -101,6 +103,17 @@ export const close = mut
           eq(walks.canvasserPhone, input.canvasserPhone),
           isNull(walks.closedAt),
         ),
-      );
+      )
+      .returning({ walkId: walks.walkId });
+    if (closed.length > 0) {
+      const org = (
+        await context.db
+          .select({ organizationId: campaigns.organizationId })
+          .from(turfs)
+          .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
+          .where(eq(turfs.turfId, input.turfId))
+      )[0];
+      if (org) publish(org.organizationId);
+    }
     return { ok: true };
   });
