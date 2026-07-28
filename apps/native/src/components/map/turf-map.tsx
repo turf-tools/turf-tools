@@ -128,6 +128,7 @@ export function TurfMap({
       attributionEnabled
       logoEnabled={false}
       rotateEnabled={false}
+      pitchEnabled={false}
       onRegionIsChanging={handleRegionEvent}
       onRegionDidChange={handleRegionEvent}
     >
