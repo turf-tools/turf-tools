@@ -429,7 +429,10 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
   const card = "flex items-center gap-2 rounded-lg border p-2.5 text-sm shadow-inner";
   if (summary.live) {
     return (
-      <div className={cn(card, "badge-tint badge-border")} style={tintStyle(BLUE)}>
+      <div
+        className={cn(card, "badge-tint border-black/15 dark:border-white/18")}
+        style={tintStyle(BLUE)}
+      >
         <Radio className="size-4 shrink-0 [stroke-width:2.5]" />
         <NamesLine prefix="Out with" names={summary.activeNames} />
       </div>
@@ -437,7 +440,10 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
   }
   if (pending) {
     return (
-      <div className={cn(card, "badge-tint badge-border")} style={tintStyle(BLUE)}>
+      <div
+        className={cn(card, "badge-tint border-black/15 dark:border-white/18")}
+        style={tintStyle(BLUE)}
+      >
         <LoaderCircle className="size-4 shrink-0 animate-spin [stroke-width:2.5]" />
         <span>Signing out…</span>
       </div>
@@ -445,7 +451,7 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
   }
   if (summary.walks.length > 0) {
     return (
-      <div className={cn(card, "border-border bg-white text-black")}>
+      <div className={cn(card, "border-border bg-white text-foreground dark:bg-transparent")}>
         {summary.walks.length >= 2 ? (
           <CheckCheck className="size-4 shrink-0 [stroke-width:2.5]" />
         ) : (
@@ -456,7 +462,7 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
     );
   }
   return (
-    <div className={cn(card, "border-border bg-white text-muted-foreground")}>
+    <div className={cn(card, "border-border bg-white text-muted-foreground dark:bg-transparent")}>
       Needs to be signed out
     </div>
   );
@@ -500,7 +506,8 @@ function QrDialog({
             </DialogTitle>
             <div className="flex flex-col gap-3">
               <QrStatus summary={summaries(turf.turfId)} />
-              {/* Always-white plates so the code scans in dark mode. */}
+              {/* QR plate stays white in dark mode — inverted codes are
+                  off-spec and many scanners can't read them. */}
               <div className="rounded-lg border border-border bg-white p-4 shadow-inner">
                 <QRCodeSVG
                   value={qrValue(turf.turfCode)}
@@ -520,16 +527,16 @@ function QrDialog({
                 }}
                 className={cn(
                   "flex w-full items-center justify-center gap-2.5",
-                  "rounded-lg border border-border bg-white py-2 shadow-inner",
+                  "rounded-lg border border-border bg-white py-2 shadow-inner dark:bg-transparent",
                 )}
               >
-                <span className="font-mono text-2xl tracking-widest text-black tabular-nums">
+                <span className="font-mono text-2xl tracking-widest text-foreground tabular-nums">
                   {turf.turfCode}
                 </span>
                 {copied ? (
-                  <Check className="size-4 shrink-0 text-black [stroke-width:2.5] animate-in fade-in duration-300" />
+                  <Check className="size-4 shrink-0 text-foreground [stroke-width:2.5] animate-in fade-in duration-300" />
                 ) : (
-                  <Copy className="size-4 shrink-0 text-black [stroke-width:2.5] animate-in fade-in duration-300" />
+                  <Copy className="size-4 shrink-0 text-foreground [stroke-width:2.5] animate-in fade-in duration-300" />
                 )}
               </button>
               <div className="mt-1 flex items-center justify-between">
