@@ -34,7 +34,9 @@ import { Pill } from "~/components/pill";
 import {
   QuestionTextEditor,
   RESPONSE_TYPE_META,
+  RESPONSE_TYPES,
   ResponseOptionsEditor,
+  type ResponseType,
 } from "~/components/question-editor-parts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import {
@@ -371,10 +373,10 @@ function CreateBody({
   onCreated: (question: Awaited<ReturnType<typeof client.questions.create>>) => void;
 }) {
   const [name, setName] = useState("");
-  const [responseType, setResponseType] = useState<"single_select">("single_select");
+  const [responseType, setResponseType] = useState<ResponseType>("single_select");
 
   const create = useMutation({
-    mutationFn: (input: { name: string; responseType: "single_select" }) =>
+    mutationFn: (input: { name: string; responseType: ResponseType }) =>
       client.questions.create(input),
     onSuccess: onCreated,
     onError: (e) => toast.error(e.message),
@@ -423,9 +425,11 @@ function CreateBody({
               <ChevronDown className="size-4 text-muted-foreground" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onClick={() => setResponseType("single_select")}>
-                Single Select
-              </DropdownMenuItem>
+              {RESPONSE_TYPES.map((t) => (
+                <DropdownMenuItem key={t} onClick={() => setResponseType(t)}>
+                  {RESPONSE_TYPE_META[t]!.label}
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
