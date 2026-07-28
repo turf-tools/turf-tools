@@ -1,6 +1,7 @@
 import { and, asc, eq } from "@turf-tools/db";
-import { campaigns, turfScans, turfs, walks } from "@turf-tools/db/schema";
+import { campaigns, turfs, walks } from "@turf-tools/db/schema";
 import { z } from "zod";
+import { scansForOrg } from "~/lib/server/scans";
 import { webPub as pub } from "../context";
 
 // Walks plus the transient scan signals for the org's turfs, optionally
@@ -28,11 +29,6 @@ export const listForOrg = pub
       .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
       .where(where)
       .orderBy(asc(walks.openedAt));
-    const scanRows = await context.db
-      .select({ turfId: turfScans.turfId, scannedAt: turfScans.scannedAt })
-      .from(turfScans)
-      .innerJoin(turfs, eq(turfScans.turfId, turfs.turfId))
-      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
-      .where(where);
-    return { walks: walkRows, scans: scanRows };
+    const scans = scansForOrg(context.organizationId, input?.campaignId);
+    return { walks: walkRows, scans };
   });

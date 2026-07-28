@@ -17,6 +17,5 @@ export * from "./zone-groups";
 export * from "./zones";
 export * from "./canvass-events";
 export * from "./walks";
-export * from "./turf-scans";
 export * from "./custom-fields";
 export * from "./jobs";

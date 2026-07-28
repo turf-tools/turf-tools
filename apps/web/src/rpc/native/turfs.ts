@@ -1,8 +1,9 @@
 import { and, eq } from "@turf-tools/db";
-import { campaigns, turfData, turfScans, turfs } from "@turf-tools/db/schema";
+import { campaigns, turfData, turfs } from "@turf-tools/db/schema";
 import type { TurfData } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { publish } from "~/lib/server/live";
+import { recordScan } from "~/lib/server/scans";
 import { nativePub as pub } from "../context";
 
 // Shared select shape for turf list/detail responses. The
@@ -49,20 +50,21 @@ export const getByCode = pub
   .input(z.object({ code: z.string().min(1), attributed: z.boolean().optional() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
-      .select({ ...turfSelect, organizationId: campaigns.organizationId })
+      .select({
+        ...turfSelect,
+        campaignId: turfs.campaignId,
+        organizationId: campaigns.organizationId,
+      })
       .from(turfs)
       .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
       .where(and(eq(turfs.turfCode, input.code), eq(turfs.status, "active")));
     const row = rows[0];
     if (!row) return null;
     if (input.attributed === false) {
-      await context.db
-        .insert(turfScans)
-        .values({ turfId: row.turfId })
-        .onConflictDoUpdate({ target: turfScans.turfId, set: { scannedAt: new Date() } });
+      recordScan(row.turfId, row.organizationId, row.campaignId);
       publish(row.organizationId);
     }
-    const { organizationId: _, ...turf } = row;
+    const { organizationId: _, campaignId: __, ...turf } = row;
     return turf;
   });
 
