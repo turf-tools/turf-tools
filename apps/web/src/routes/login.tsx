@@ -2,11 +2,11 @@ import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Button } from "~/components/button";
+import { Callout } from "~/components/callout";
 import { Input } from "~/components/input";
 import { LightDarkToggle } from "~/components/light-dark-toggle";
 import { LoadingIndicator } from "~/components/loading-indicator";
 import { authClient } from "~/lib/auth-client";
-import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/login")({
   // Reads the session from root context — never its own getSession call.
@@ -135,13 +135,9 @@ function EmailStep({
         </Button>
       </form>
       {error ? (
-        <p
-          className={cn(
-            "mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive",
-          )}
-        >
+        <Callout tone="error" className="mt-4">
           {error}
-        </p>
+        </Callout>
       ) : null}
     </>
   );

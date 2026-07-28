@@ -15,6 +15,7 @@ import {
 } from "~/components/dialog";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
+import { Swatch } from "~/components/swatch";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignDetailQuery,
@@ -677,11 +678,7 @@ function ZoneRow({
         selected ? "border-foreground" : "border-border hover:border-muted-foreground",
       )}
     >
-      <span
-        aria-hidden
-        className="mr-1 size-3 shrink-0 rounded-sm border border-border"
-        style={{ backgroundColor: color }}
-      />
+      <Swatch color={color} className="mr-1" />
       <span className="flex-1 truncate text-sm">{zone.name}</span>
       {/* Keyed by campaignId so all badges remount (and re-fire animate-in)
           on every campaign switch, even when two campaigns share segment

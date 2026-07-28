@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Badge, tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
 import {
   DropdownMenu,
@@ -480,12 +481,7 @@ function WaterfallPanel({
                 <TableCell className="!pl-2 px-2 truncate">{label}</TableCell>
                 <TableCell className="px-2">
                   {verbMeta ? (
-                    <span
-                      className="rounded px-1.5 py-0.5 text-xs font-medium"
-                      style={{ backgroundColor: `${verbMeta.color}22`, color: verbMeta.color }}
-                    >
-                      {verbMeta.label}
-                    </span>
+                    <Badge color={verbMeta.color}>{verbMeta.label}</Badge>
                   ) : (
                     <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
                       Start
@@ -499,8 +495,9 @@ function WaterfallPanel({
                   className={cn(
                     "px-2 text-right tabular-nums",
                     delta === null && "text-muted-foreground",
+                    delta !== null && verbMeta && "badge-fg",
                   )}
-                  style={{ color: delta !== null ? (verbMeta?.color ?? "inherit") : undefined }}
+                  style={delta !== null && verbMeta ? tintStyle(verbMeta.color) : undefined}
                 >
                   {delta !== null
                     ? delta.toLocaleString(undefined, { signDisplay: "exceptZero" })
@@ -643,12 +640,7 @@ function StepRow({
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span
-            className="rounded px-1.5 py-0.5 text-xs font-medium"
-            style={{ backgroundColor: `${color}22`, color }}
-          >
-            {verbLabel}
-          </span>
+          <Badge color={color}>{verbLabel}</Badge>
           <Button
             variant="outline"
             size="icon-xs"

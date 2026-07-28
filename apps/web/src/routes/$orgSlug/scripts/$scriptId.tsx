@@ -4,6 +4,8 @@ import { ChevronDown, GripVertical, Plus, X } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Badge } from "~/components/badge";
+import { DialogError } from "~/components/callout";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -33,6 +35,7 @@ import {
   questionDetailQuery,
   questionsListQuery,
 } from "~/lib/queries/questions";
+import { GRAY } from "~/lib/palette";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -387,18 +390,10 @@ function GripHandle({ dragControls }: { dragControls?: ReturnType<typeof useDrag
   );
 }
 
-// Mid-gray for text-step badges. schemeObservable10's gray is too light against bg-card.
-const TEXT_STEP_BADGE: BadgeMeta = { label: "Text", color: "#6b7280" };
+const TEXT_STEP_BADGE: BadgeMeta = { label: "Text", color: GRAY };
 
 function KindBadge({ meta }: { meta: BadgeMeta }) {
-  return (
-    <span
-      className="rounded px-1.5 py-0.5 text-xs font-medium"
-      style={{ backgroundColor: `${meta.color}22`, color: meta.color }}
-    >
-      {meta.label}
-    </span>
-  );
+  return <Badge color={meta.color}>{meta.label}</Badge>;
 }
 
 function RemoveButton({ onRemove }: { onRemove: () => void }) {
@@ -542,7 +537,7 @@ function QuestionStepBody({
             meta={
               RESPONSE_TYPE_META[question.responseType] ?? {
                 label: question.responseType,
-                color: "#9ca3af",
+                color: GRAY,
               }
             }
           />
@@ -687,16 +682,7 @@ function NewQuestionDialog({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {error ? (
-            <div
-              className={cn(
-                "rounded-md border border-destructive/40 bg-destructive/10",
-                "px-3 py-2 text-sm text-destructive",
-              )}
-            >
-              {error}
-            </div>
-          ) : null}
+          <DialogError error={error} />
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>

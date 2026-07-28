@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -41,6 +42,7 @@ import {
   questionDetailQuery,
   questionsListQuery,
 } from "~/lib/queries/questions";
+import { GRAY } from "~/lib/palette";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -188,7 +190,7 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
   const meta = RESPONSE_TYPE_META[question.responseType] ?? {
     label: question.responseType,
-    color: "#9ca3af",
+    color: GRAY,
   };
 
   return (
@@ -207,12 +209,9 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
           )}
         </TableCell>
         <TableCell>
-          <span
-            className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm"
-            style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
-          >
+          <Pill color={meta.color}>
             <span className="truncate">{meta.label}</span>
-          </span>
+          </Pill>
         </TableCell>
 
         <TableCell>
@@ -465,7 +464,7 @@ function EditBody({ questionId }: { questionId: string }) {
   if (!question) return null;
   const meta = RESPONSE_TYPE_META[question.responseType] ?? {
     label: question.responseType,
-    color: "#9ca3af",
+    color: GRAY,
   };
 
   return (
@@ -479,8 +478,8 @@ function EditBody({ questionId }: { questionId: string }) {
         <div className="flex flex-col gap-1.5">
           <label className="text-sm text-muted-foreground">Type</label>
           <span
-            className="inline-flex h-8 w-fit items-center rounded-md px-2 text-sm"
-            style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
+            className="badge-tint inline-flex h-8 w-fit items-center rounded-md px-2 text-sm"
+            style={tintStyle(meta.color)}
           >
             {meta.label}
           </span>

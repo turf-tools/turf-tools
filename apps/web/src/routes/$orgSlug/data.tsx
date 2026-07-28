@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { Activity, Columns2, Check, Upload } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
+import { Callout, DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -27,6 +28,7 @@ import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDateTime } from "~/lib/format";
 import { AVAILABLE_IMPORTERS, importerLabel } from "~/lib/importers";
+import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
 import { hasPermission } from "~/lib/permissions";
 import type { CustomFieldType } from "@turf-tools/db/schema";
 import { Archive, ArchiveRestore, MoreHorizontal } from "lucide-react";
@@ -42,9 +44,9 @@ import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
-  importing: { label: "Importing", color: "#d97706" },
-  ready: { label: "Ready", color: "#3ca951" },
-  failed: { label: "Failed", color: "#ff725c" },
+  importing: { label: "Importing", color: YELLOW },
+  ready: { label: "Ready", color: GREEN },
+  failed: { label: "Failed", color: RED },
 };
 
 // Display names for base (manifest) field kinds in the fields card.
@@ -383,7 +385,7 @@ function VersionsCard({
           {visible.map((v) => {
             const status = STATUS_META[v.status ?? ""] ?? {
               label: v.status ?? "—",
-              color: "#9ca3af",
+              color: GRAY,
             };
             // While importing, always show a percentage (0% before the job has
             // written any progress) so it never reads as a bare "Importing".
@@ -399,14 +401,11 @@ function VersionsCard({
                   <Pill className="tabular-nums">v{v.versionNumber}</Pill>
                 </TableCell>
                 <TableCell>
-                  <span
-                    className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm tabular-nums"
-                    style={{ backgroundColor: `${status.color}20`, color: status.color }}
-                  >
+                  <Pill color={status.color} className="tabular-nums">
                     <span className="truncate">
                       {pct != null ? `Importing (${pct}%)` : status.label}
                     </span>
-                  </span>
+                  </Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number" className="min-w-0">
@@ -1119,7 +1118,7 @@ function AppendDialog({
         </DialogDescription>
         {stats ? (
           <div className="flex flex-col gap-4">
-            <DialogSuccess>
+            <Callout tone="success">
               Appended column "<span className="font-medium">{stats.fields.join(", ")}</span>" with{" "}
               <span className="font-medium">{stats.rowCount.toLocaleString()}</span> rows
               {stats.matchedCount != null ? (
@@ -1139,7 +1138,7 @@ function AppendDialog({
                   without values were ignored.
                 </>
               ) : null}
-            </DialogSuccess>
+            </Callout>
             <div className="flex justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>
                 Done
@@ -1276,30 +1275,5 @@ function AppendDialog({
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-function DialogError({ error }: { error: string }) {
-  return (
-    <p
-      className={cn(
-        "rounded-md border border-destructive/40 bg-destructive/10",
-        "px-3 py-2 text-sm text-destructive",
-      )}
-    >
-      {error}
-    </p>
-  );
-}
-
-// Green mirror of DialogError, using the app's status green (STATUS_META).
-function DialogSuccess({ children }: { children: ReactNode }) {
-  return (
-    <p
-      className="rounded-md border px-3 py-2 text-sm"
-      style={{ backgroundColor: "#3ca95120", borderColor: "#3ca95140", color: "#3ca951" }}
-    >
-      {children}
-    </p>
   );
 }

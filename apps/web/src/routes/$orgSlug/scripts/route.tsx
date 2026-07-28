@@ -4,6 +4,7 @@ import { Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
+import { DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -220,20 +221,6 @@ function ScriptsLayout() {
         onConfirm={onConfirmDelete}
       />
     </>
-  );
-}
-
-function DialogError({ error }: { error: string | null }) {
-  if (!error) return null;
-  return (
-    <div
-      className={cn(
-        "rounded-md border border-destructive/40 bg-destructive/10",
-        "px-3 py-2 text-sm text-destructive",
-      )}
-    >
-      {error}
-    </div>
   );
 }
 

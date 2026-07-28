@@ -32,3 +32,6 @@ count.txt
 *.njsproj
 *.sln
 *.sw?
+
+# Testing files
+/src/routes/badges.tsx

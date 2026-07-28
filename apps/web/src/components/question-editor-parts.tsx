@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { schemeObservable10 } from "d3-scale-chromatic";
+import { BLUE, BROWN, PURPLE } from "~/lib/palette";
 import { GripVertical, Plus, X } from "lucide-react";
 import { motion, Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -16,11 +16,11 @@ import { client } from "~/rpc/client";
 
 export type BadgeMeta = { label: string; color: string };
 
-// Keyed by questions.responseType. Hues from schemeObservable10.
+// Keyed by questions.responseType.
 export const RESPONSE_TYPE_META: Record<string, BadgeMeta> = {
-  single_select: { label: "Single Select", color: schemeObservable10[0]! },
-  multi_select: { label: "Multi Select", color: schemeObservable10[1]! },
-  open_ended: { label: "Open Ended", color: schemeObservable10[2]! },
+  single_select: { label: "Single Select", color: BLUE },
+  multi_select: { label: "Multi Select", color: PURPLE },
+  open_ended: { label: "Open Ended", color: BROWN },
 };
 
 type ResponseOption = {
