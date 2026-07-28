@@ -134,8 +134,8 @@ function QuestionsTable({
     <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
-          <TableHead className="w-36">Type</TableHead>
           <TableHead className="w-56">Name</TableHead>
+          <TableHead className="w-36">Type</TableHead>
           <TableHead>Text</TableHead>
           <TableHead className="w-24">Used in</TableHead>
           <TableHead className="w-11" />
@@ -193,42 +193,39 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
 
   return (
     <>
-      <TableRow
-        onClick={archived ? undefined : onEdit}
-        className={cn(archived ? "text-muted-foreground" : "group cursor-pointer")}
-      >
+      <TableRow className={cn(archived && "text-muted-foreground")}>
+        <TableCell>
+          {archived ? (
+            <Pill className="min-w-0">
+              <span className="truncate">{question.name}</span>
+            </Pill>
+          ) : (
+            <Button variant="outline" className="w-full justify-start" onClick={onEdit}>
+              <Pencil className="size-3.5" />
+              <span className="truncate">{question.name}</span>
+            </Button>
+          )}
+        </TableCell>
         <TableCell>
           <span
-            // Drive bg via Tailwind class + CSS var so the hover state
-            // can override (inline-style bg would always win). Text color
-            // stays untouched.
-            className={cn(
-              "flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm",
-            )}
+            className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm"
             style={{ backgroundColor: `${meta.color}20`, color: meta.color }}
           >
             <span className="truncate">{meta.label}</span>
           </span>
         </TableCell>
-        <TableCell>
-          <Pill className="min-w-0 group-hover:bg-muted-foreground/15">
-            <span className="truncate">{question.name}</span>
-          </Pill>
-        </TableCell>
 
         <TableCell>
-          <Pill className="min-w-0 group-hover:bg-muted-foreground/15">
+          <Pill className="min-w-0">
             <span className="truncate italic text-muted-foreground pr-0.5">
               {question.text || "—"}
             </span>
           </Pill>
         </TableCell>
         <TableCell>
-          <Pill variant="number" className="group-hover:bg-muted-foreground/15">
-            {question.usedCount}
-          </Pill>
+          <Pill variant="number">{question.usedCount}</Pill>
         </TableCell>
-        <TableCell onClick={(e) => e.stopPropagation()}>
+        <TableCell>
           <RowMenu
             archived={archived}
             onEdit={onEdit}
@@ -270,18 +267,7 @@ function RowMenu({
 }) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "w-full bg-muted group-hover:bg-muted-foreground/15 hover:bg-foreground/8",
-              "aria-expanded:bg-foreground/8",
-            )}
-          />
-        }
-      >
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
         <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">

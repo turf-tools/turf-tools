@@ -267,20 +267,18 @@ function RowMenu({
   onArchive: () => void;
   onUnarchive: () => void;
 }) {
-  // Empty placeholder keeps row alignment consistent when no actions apply.
+  // Disabled button keeps row alignment consistent when no actions apply.
   const hasItems = user.status !== "active" || !isSelf;
-  if (!hasItems) return <div className="h-8 w-full rounded-lg bg-muted" />;
+  if (!hasItems) {
+    return (
+      <Button variant="outline" size="icon" className="h-8 w-full" disabled>
+        <MoreHorizontal />
+      </Button>
+    );
+  }
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("w-full bg-muted hover:bg-foreground/8", "aria-expanded:bg-foreground/8")}
-          />
-        }
-      >
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
         <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
@@ -325,17 +323,7 @@ function RoleCell({
   }
   return (
     <DropdownMenu {...dd.menu}>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            className={cn(
-              "w-full justify-between bg-muted hover:bg-foreground/8",
-              "aria-expanded:bg-foreground/8",
-            )}
-          />
-        }
-      >
+      <DropdownMenuTrigger render={<Button variant="outline" className="w-full justify-between" />}>
         <span>{roleLabel(role)}</span>
         <ChevronDown className="size-3.5" />
       </DropdownMenuTrigger>
