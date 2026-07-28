@@ -10,9 +10,12 @@ import * as customFields from "./web/custom-fields";
 import * as turfDrafts from "./web/turf-drafts";
 import * as webTurfs from "./web/turfs";
 import * as webUsers from "./web/users";
+import * as webWalks from "./web/walks";
+import * as progress from "./web/progress";
 import * as zoneGroups from "./web/zone-groups";
 import * as zones from "./web/zones";
 import * as canvass from "./native/canvass";
+import * as nativeWalks from "./native/walks";
 import * as nativeScripts from "./native/scripts";
 import * as nativeTurfs from "./native/turfs";
 
@@ -85,6 +88,12 @@ export const webRouter = {
     statsForCampaign: webTurfs.statsForCampaign,
     publish: webTurfs.publish,
   },
+  walks: {
+    listForOrg: webWalks.listForOrg,
+  },
+  progress: {
+    forOrg: progress.forOrg,
+  },
   turfDrafts: {
     list: turfDrafts.list,
     replaceAll: turfDrafts.replaceAll,
@@ -154,6 +163,10 @@ export const nativeRouter = {
     appendResult: canvass.appendResult,
     appendNote: canvass.appendNote,
     pull: canvass.pull,
+  },
+  walks: {
+    open: nativeWalks.open,
+    close: nativeWalks.close,
   },
 };
 

@@ -6,13 +6,14 @@ import { Input } from "~/components/input";
 import { LightDarkToggle } from "~/components/light-dark-toggle";
 import { LoadingIndicator } from "~/components/loading-indicator";
 import { authClient } from "~/lib/auth-client";
-import { getSession } from "~/lib/server/session";
 import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/login")({
-  beforeLoad: async () => {
-    const session = await getSession();
-    if (session) throw redirect({ to: "/" });
+  // Reads the session from root context — never its own getSession call.
+  // Both sides of the "/" ↔ "/login" redirect pair must consult the same
+  // value, or a login race can bounce a tab between them forever.
+  beforeLoad: ({ context }) => {
+    if (context.session) throw redirect({ to: "/" });
   },
   component: LoginPage,
 });

@@ -20,6 +20,9 @@ import { detectDisplayTimezone } from "~/lib/timezones";
 import { client } from "~/rpc/client";
 import appCss from "~/styles.css?url";
 
+// Cross-tab "logged-in" dedup — see the poster effect in RootComponent.
+let lastPostedUserId: string | null = null;
+
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
@@ -43,13 +46,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
   }),
   beforeLoad: async ({ location }) => {
-    // Auth-flow routes can be hit without a session (that's the whole
-    // point — the verify route is mid-login). Skip the gate for them.
+    // Auth-flow routes can render without a session (that's the whole
+    // point — the verify route is mid-login), so only the redirect is
+    // skipped for them. The session itself is always resolved here:
+    // every route must read ONE source of truth for "am I signed in" —
+    // /login once ran its own getSession while "/" read this context,
+    // and the two disagreeing during a login race produced a redirect
+    // loop between them.
     const isAuthFlow =
       location.pathname === "/login" || location.pathname.startsWith("/auth/email/");
-    if (isAuthFlow) return { session: null };
     const session = await getSession();
-    if (!session) throw redirect({ to: "/login" });
+    if (!session && !isAuthFlow) throw redirect({ to: "/login" });
     return { session };
   },
   component: RootComponent,
@@ -88,15 +95,20 @@ function RootComponent() {
     return () => channel.close();
   }, [currentUserId]);
 
-  // Cross-tab login signal — fires on mount whenever this tab is authed.
-  // Listener (in routes/login.tsx) bounces any /login tab to /; the
-  // above handler reloads sibling tabs on user-switch.
+  // Cross-tab login signal. Listener (in routes/login.tsx) bounces any
+  // /login tab to /; the above handler reloads sibling tabs on
+  // user-switch. Posted ONCE per user per tab (module-level guard):
+  // every logged-in post forces /login tabs to document-navigate, and
+  // this effect re-runs on each navigation (the session object is
+  // rebuilt per root beforeLoad) — re-posting on identity churn once
+  // amplified a login race into a browser-throttled navigation storm.
   useEffect(() => {
-    if (!session) return;
+    if (!currentUserId || currentUserId === lastPostedUserId) return;
+    lastPostedUserId = currentUserId;
     const channel = new BroadcastChannel("auth");
-    channel.postMessage({ type: "logged-in", userId: session.user.id });
+    channel.postMessage({ type: "logged-in", userId: currentUserId });
     channel.close();
-  }, [session]);
+  }, [currentUserId]);
 
   // First-login TZ detection. session.user.displayTimezone is null until
   // this runs once and persists the browser-detected zone. Subsequent

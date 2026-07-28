@@ -8,7 +8,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { and, db, eq } from "@turf-tools/db";
 import { segments } from "@turf-tools/db/schema";
 import { dataFetch, passthrough } from "~/lib/server/data-proxy";
-import { buildWebContext } from "~/rpc/context";
+import { buildVoterDataContext } from "~/rpc/context";
 
 export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
   server: {
@@ -18,9 +18,9 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
         const orgSlug = url.pathname.match(/^\/api\/web\/([^/]+)\/segment-export$/)?.[1];
         if (!orgSlug) return new Response("Not Found", { status: 404 });
 
-        let context: Awaited<ReturnType<typeof buildWebContext>>;
+        let context: Awaited<ReturnType<typeof buildVoterDataContext>>;
         try {
-          context = await buildWebContext(db, request.headers, orgSlug);
+          context = await buildVoterDataContext(db, request.headers, orgSlug);
         } catch {
           return new Response("Unauthorized", { status: 401 });
         }
