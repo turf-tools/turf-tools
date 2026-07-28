@@ -2,6 +2,7 @@ import { DoorClosed, Trash2, UserRound } from "lucide-react";
 import { memo, type Ref } from "react";
 import { Button } from "~/components/button";
 import { Pill } from "~/components/pill";
+import { Swatch } from "~/components/swatch";
 import { cn } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 
@@ -81,11 +82,7 @@ const Row = memo(function Row({
         selected ? "border-foreground" : "border-border hover:border-muted-foreground",
       )}
     >
-      <span
-        aria-hidden
-        className="mr-1 size-3 shrink-0 rounded-sm border border-border"
-        style={{ backgroundColor: colorFor(index) }}
-      />
+      <Swatch color={colorFor(index)} className="mr-1" />
       <span className="flex-1 truncate text-sm">Turf {index + 1}</span>
       {doors !== undefined && people !== undefined ? (
         <div className="flex shrink-0 items-center gap-2">

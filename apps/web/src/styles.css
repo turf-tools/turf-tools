@@ -56,19 +56,6 @@
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
 }
 
 :root {
@@ -86,25 +73,17 @@
   --muted-foreground: oklch(0.566 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.58 0.1803 30.91);
-  --success: oklch(0.55 0.1608 146.85);
+  /* Palette red/green (mirrors lib/palette.ts — keep in sync) with the
+     badge fg shift, so destructive buttons and inline error text share
+     the badge color system. */
+  --palette-red: #ff725c;
+  --palette-green: #3ca951;
+  --destructive: color-mix(in oklab, var(--palette-red), black var(--badge-fg-shift));
+  --success: color-mix(in oklab, var(--palette-green), black var(--badge-fg-shift));
   --border: oklch(0.88 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
   --radius: 0.375rem;
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
   --tracking-tight: -0.01em;
   --tracking-wide: 0.01em;
 }
@@ -124,24 +103,40 @@
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.72 0.1803 30.91);
-  --success: oklch(0.66 0.1608 146.85);
+  --destructive: color-mix(in oklab, var(--palette-red), white var(--badge-fg-shift-dark));
+  --success: color-mix(in oklab, var(--palette-green), white var(--badge-fg-shift-dark));
   --border: oklch(1 0 0 / 18%);
   --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* Colored badge/tag tint system. Chips set `--badge-color` (their accent
+   hue, via tintStyle()) and take .badge-tint; background and foreground
+   derive from these knobs. Foreground is mixed toward black for contrast
+   (toward white in dark mode). Tune live at /badges, then bake values here. */
+:root {
+  --badge-bg-alpha: 25%;
+  --badge-fg-shift: 17%;
+  --badge-fg-shift-dark: 17%;
+  --badge-border-alpha: 40%;
+}
+
+@layer components {
+  .badge-tint {
+    background-color: color-mix(in srgb, var(--badge-color) var(--badge-bg-alpha), transparent);
+  }
+  /* Callout-style cards only — badges themselves are borderless. */
+  .badge-border {
+    border-color: color-mix(in srgb, var(--badge-color) var(--badge-border-alpha), transparent);
+  }
+  .badge-tint,
+  .badge-fg {
+    color: color-mix(in oklab, var(--badge-color), black var(--badge-fg-shift));
+  }
+  .dark .badge-tint,
+  .dark .badge-fg {
+    color: color-mix(in oklab, var(--badge-color), white var(--badge-fg-shift-dark));
+  }
 }
 
 @layer base {

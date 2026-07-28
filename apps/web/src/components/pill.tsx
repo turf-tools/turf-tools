@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { tintStyle } from "~/components/badge";
 import { cn } from "~/lib/utils";
 
 // Pill cells for tabular data. All variants fill their parent width
@@ -8,13 +9,15 @@ type Variant = "text" | "number";
 
 type PillProps = {
   variant?: Variant;
+  // Accent color — swaps the muted bg/fg for the shared badge tint
+  // (see components/badge.tsx).
+  color?: string;
   className?: string;
-  // Inline tint overrides (status colors computed at runtime).
   style?: CSSProperties;
   children?: ReactNode;
 };
 
-export function Pill({ variant = "text", className, style, children }: PillProps) {
+export function Pill({ variant = "text", color, className, style, children }: PillProps) {
   return (
     <span
       className={cn(
@@ -24,10 +27,11 @@ export function Pill({ variant = "text", className, style, children }: PillProps
         // icons in the app (header buttons, modal triggers, etc.)
         // stay on the lucide default.
         "flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm [&_svg]:[stroke-width:2.5]",
-        variant === "number" ? "bg-muted font-mono tabular-nums" : "bg-muted",
+        variant === "number" && "font-mono tabular-nums",
+        color ? "badge-tint" : "bg-muted",
         className,
       )}
-      style={style}
+      style={color ? { ...tintStyle(color), ...style } : style}
     >
       {children}
     </span>

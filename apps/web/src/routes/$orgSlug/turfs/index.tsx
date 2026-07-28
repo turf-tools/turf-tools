@@ -23,6 +23,8 @@ import { Dialog, DialogClose, DialogCloseX, DialogContent, DialogTitle } from "~
 import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
 import { Page } from "~/components/page";
+import { tintStyle } from "~/components/badge";
+import { BLUE, GREEN, RED, YELLOW } from "~/lib/palette";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
@@ -51,12 +53,6 @@ type WalkRow = WalksPayload["walks"][number];
 // neutral — the check iconography carries it. (Both alternatives were
 // tried and rejected: teal reads as the progress green, and walked-in-
 // blue drowned the live signal in color.)
-const BLUE = "#4269d0";
-const PROGRESS_RED = "#ff725c";
-const PROGRESS_YELLOW = "#efb118";
-const PROGRESS_GREEN = "#3ca951";
-
-const blueBadge = { backgroundColor: `${BLUE}20`, color: BLUE };
 
 // How long a scan signal reads as "pending" before it ages out (a scan
 // that never converts to a walk was a failed handoff, not an
@@ -65,9 +61,8 @@ const blueBadge = { backgroundColor: `${BLUE}20`, color: BLUE };
 // clears while the lead is still at the table.
 const PENDING_MS = 2 * 60_000;
 
-function progressStyle(pct: number) {
-  const color = pct <= 25 ? PROGRESS_RED : pct <= 75 ? PROGRESS_YELLOW : PROGRESS_GREEN;
-  return { backgroundColor: `${color}20`, color };
+function progressColor(pct: number) {
+  return pct <= 25 ? RED : pct <= 75 ? YELLOW : GREEN;
 }
 
 export const Route = createFileRoute("/$orgSlug/turfs/")({
@@ -434,7 +429,7 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
   const card = "flex items-center gap-2 rounded-lg border p-2.5 text-sm shadow-inner";
   if (summary.live) {
     return (
-      <div className={card} style={{ ...blueBadge, borderColor: `${BLUE}40` }}>
+      <div className={cn(card, "badge-tint badge-border")} style={tintStyle(BLUE)}>
         <Radio className="size-4 shrink-0 [stroke-width:2.5]" />
         <NamesLine prefix="Out with" names={summary.activeNames} />
       </div>
@@ -442,7 +437,7 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
   }
   if (pending) {
     return (
-      <div className={card} style={{ ...blueBadge, borderColor: `${BLUE}40` }}>
+      <div className={cn(card, "badge-tint badge-border")} style={tintStyle(BLUE)}>
         <LoaderCircle className="size-4 shrink-0 animate-spin [stroke-width:2.5]" />
         <span>Signing out…</span>
       </div>
@@ -615,14 +610,14 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
   const { pending } = summary;
   if (summary.live) {
     return (
-      <Pill className="justify-center" style={blueBadge}>
+      <Pill className="justify-center" color={BLUE}>
         <Radio className="size-4" />
       </Pill>
     );
   }
   if (pending) {
     return (
-      <Pill className="justify-center" style={blueBadge}>
+      <Pill className="justify-center" color={BLUE}>
         <LoaderCircle className="size-4 animate-spin" />
       </Pill>
     );
@@ -633,7 +628,7 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
 function ProgressPill({ pct }: { pct: number | null }) {
   if (pct === null) return <Pill variant="number" />;
   return (
-    <Pill variant="number" style={pct > 0 ? progressStyle(pct) : undefined}>
+    <Pill variant="number" color={pct > 0 ? progressColor(pct) : undefined}>
       {pct}%
     </Pill>
   );
@@ -760,11 +755,11 @@ function TurfCard({
           </span>
         ) : null}
         {summary.live ? (
-          <span className={badge} style={blueBadge}>
+          <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
             <Radio className="size-4 [stroke-width:2.5]" />
           </span>
         ) : pending ? (
-          <span className={badge} style={blueBadge}>
+          <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
             <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
           </span>
         ) : null}
@@ -779,8 +774,8 @@ function TurfCard({
           </span>
           {pct !== null ? (
             <span
-              className={cn(badge, "bg-muted font-mono tabular-nums")}
-              style={pct > 0 ? progressStyle(pct) : undefined}
+              className={cn(badge, "font-mono tabular-nums", pct > 0 ? "badge-tint" : "bg-muted")}
+              style={pct > 0 ? tintStyle(progressColor(pct)) : undefined}
             >
               {pct}%
             </span>
@@ -895,8 +890,12 @@ function CompactList({
                   {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
                 </span>
                 <span
-                  className={cn(cell, "w-12 justify-start bg-muted px-2 font-mono tabular-nums")}
-                  style={pct !== null && pct > 0 ? progressStyle(pct) : undefined}
+                  className={cn(
+                    cell,
+                    "w-12 justify-start px-2 font-mono tabular-nums",
+                    pct !== null && pct > 0 ? "badge-tint" : "bg-muted",
+                  )}
+                  style={pct !== null && pct > 0 ? tintStyle(progressColor(pct)) : undefined}
                 >
                   {pct === null ? "" : `${pct}%`}
                 </span>
@@ -922,7 +921,10 @@ function CompactStatus({ summary, cell }: { summary: WalkSummary; cell: string }
   const { pending } = summary;
   const active = summary.live || pending;
   return (
-    <span className={cn(cell, "w-9", !active && "bg-muted")} style={active ? blueBadge : undefined}>
+    <span
+      className={cn(cell, "w-9", active ? "badge-tint" : "bg-muted")}
+      style={active ? tintStyle(BLUE) : undefined}
+    >
       {summary.live ? (
         <Radio className="size-4 [stroke-width:2.5]" />
       ) : pending ? (

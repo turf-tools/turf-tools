@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
 import { darkAtom } from "~/lib/atoms/theme";
 import { Button } from "~/components/button";
+import { Callout } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -650,14 +651,9 @@ export function Cutter({
             time you publish it creates a new set of turf numbers that can be used for canvassing.
           </DialogDescription>
           {publishMutation.error ? (
-            <div
-              className={
-                "mb-5 rounded-md border border-destructive/40 bg-destructive/10 " +
-                "px-3 py-2 text-sm text-destructive"
-              }
-            >
+            <Callout tone="error" className="mb-5">
               {publishMutation.error.message}
-            </div>
+            </Callout>
           ) : null}
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>

@@ -2,6 +2,7 @@
 // metadata, and helpers. The dataset field catalog is built from the manifest
 // (see `lib/manifest.ts`); only the dataset-independent system filters are
 // hardcoded here. The data server compiles criteria → SQL.
+import { BLUE, GREEN, RED } from "~/lib/palette";
 
 // In-query filter instances
 export type AllFilter = { kind: "all" };
@@ -287,7 +288,7 @@ export function criteriaTouchesLiveData(criteria: Criteria): boolean {
 
 // Verb display metadata — label and accent color.
 export const VERB_META: Record<Verb, { label: string; color: string }> = {
-  narrow: { label: "Narrow", color: "#4269d0" },
-  add: { label: "Add", color: "#3ca951" },
-  remove: { label: "Remove", color: "#ff725c" },
+  narrow: { label: "Narrow", color: BLUE },
+  add: { label: "Add", color: GREEN },
+  remove: { label: "Remove", color: RED },
 };

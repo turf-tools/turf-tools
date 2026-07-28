@@ -9,6 +9,7 @@ import {
 import { ChevronDown, Copy, Pencil, Settings2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/button";
+import { DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -512,20 +513,6 @@ type SelectOption = { value: string; label: string };
 
 // Sentinel for the "construct fresh zone group from key group" path —
 // sits alongside real zone-group ids in the create-dialog dropdown.
-
-function DialogError({ error }: { error: string | null }) {
-  if (!error) return null;
-  return (
-    <div
-      className={cn(
-        "rounded-md border border-destructive/40 bg-destructive/10",
-        "px-3 py-2 text-sm text-destructive",
-      )}
-    >
-      {error}
-    </div>
-  );
-}
 
 function CreateCampaignDialog({
   open,

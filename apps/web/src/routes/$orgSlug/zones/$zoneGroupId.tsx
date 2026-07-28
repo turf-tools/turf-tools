@@ -14,6 +14,7 @@ import {
 import { Input } from "~/components/input";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
+import { Swatch } from "~/components/swatch";
 import { Switch } from "~/components/switch";
 import { darkAtom } from "~/lib/atoms/theme";
 import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
@@ -341,12 +342,9 @@ function ZoneGroupEditor() {
                 isActive ? "border-foreground" : "border-border hover:border-muted-foreground",
               )}
             >
-              <span
-                aria-hidden
-                className="mr-1 size-3 shrink-0 rounded-sm border border-border"
-                style={{
-                  backgroundColor: zoneOverlay ? zoneOverlay.colors[zone.zoneId] : colorFor(idx),
-                }}
+              <Swatch
+                color={zoneOverlay ? zoneOverlay.colors[zone.zoneId] : colorFor(idx)}
+                className="mr-1"
               />
               {isRenaming ? (
                 <Input

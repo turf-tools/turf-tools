@@ -15,6 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
+import { DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -363,16 +364,7 @@ function ArchiveDialog({
           Revokes access for <span className="font-medium text-foreground">{userLabel}</span>. You
           can restore them later from the Archived filter.
         </DialogDescription>
-        {error ? (
-          <div
-            className={cn(
-              "rounded-md border border-destructive/40 bg-destructive/10",
-              "px-3 py-2 text-sm text-destructive",
-            )}
-          >
-            {error}
-          </div>
-        ) : null}
+        <DialogError error={error} />
         <div className="mt-2 flex justify-end gap-2">
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button variant="destructive" onClick={onConfirm} loading={pending}>
@@ -551,16 +543,7 @@ function InviteDialog({
             <Plus />
             Add another
           </Button>
-          {error ? (
-            <div
-              className={cn(
-                "rounded-md border border-destructive/40 bg-destructive/10",
-                "px-3 py-2 text-sm text-destructive",
-              )}
-            >
-              {error}
-            </div>
-          ) : null}
+          <DialogError error={error} />
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
