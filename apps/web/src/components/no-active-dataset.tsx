@@ -40,7 +40,13 @@ export function NoActiveDataset({
           <DialogClose render={<Button variant="outline" />}>Back to overview</DialogClose>
           {canManage ? (
             <Button
-              render={<Link to="/$orgSlug/data" params={{ orgSlug }} search={{ dataset: null }} />}
+              render={
+                <Link
+                  to="/$orgSlug/data"
+                  params={{ orgSlug }}
+                  search={{ dataset: null, status: "current" }}
+                />
+              }
             >
               Go to Data
             </Button>
