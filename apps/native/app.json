@@ -39,7 +39,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Scan turf QR codes to fill in the server and code.",
+          "cameraPermission": "Camera use makes it possible to fill in turf information by scanning a QR code.",
           "microphonePermission": false,
           "recordAudioAndroid": false
         }
