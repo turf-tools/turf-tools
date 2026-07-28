@@ -12,6 +12,9 @@ export const Route = createFileRoute("/$orgSlug")({
     if (org.role === "lead") {
       const section = location.pathname.split("/")[2];
       if (!section || !["turfs", "settings", "account"].includes(section)) {
+        // `href` (not `to` + params) sidesteps a typed-params inference
+        // failure in this layout beforeLoad; same-origin hrefs are still
+        // internal SPA navigations, not document reloads.
         throw redirect({ href: `/${params.orgSlug}/turfs` });
       }
     }

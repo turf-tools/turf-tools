@@ -72,6 +72,9 @@ export const getSession = createServerFn({ method: "GET" }).handler(
         orgsBySlug,
       };
     }
+    // no-store on every branch — a cached null (or stale session) served
+    // to a route guard would misroute navigation.
+    setResponseHeader("Cache-Control", "no-store");
     const headers = new Headers(getRequestHeaders());
     const session = await auth.api.getSession({ headers });
     if (!session) return null;
