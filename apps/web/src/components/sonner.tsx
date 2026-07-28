@@ -18,6 +18,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
         loading: <Loader2 className="size-4 animate-spin" />,
       }}
       position="bottom-right"
+      swipeDirections={[]}
       style={
         {
           "--normal-bg": "var(--popover)",
