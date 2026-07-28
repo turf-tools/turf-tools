@@ -32,17 +32,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", type: "image/png", href: "/favicon/toolbox.png" },
+      { rel: "icon", type: "image/png", href: "/favicon/arrow.png" },
       {
         rel: "icon",
         type: "image/svg+xml",
-        href: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 120%22><text x=%220%22 y=%22100%22 font-size=%22100%22>🧰</text></svg>",
+        href: "/favicon/arrow.svg",
       },
       {
         rel: "mask-icon",
-        href: "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 120%22><text x=%220%22 y=%22100%22 font-size=%22100%22>🧰</text></svg>",
+        href: "/favicon/arrow.svg",
       },
-      { rel: "apple-touch-icon", sizes: "180x180", href: "/favicon/toolbox-180x180.png" },
+      { rel: "apple-touch-icon", sizes: "180x180", href: "/favicon/arrow-180x180.png" },
     ],
   }),
   beforeLoad: async ({ location }) => {
