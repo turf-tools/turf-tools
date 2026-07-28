@@ -1,15 +1,11 @@
 {
   "fill-specializations": [
     {
-      "value": {
-        "solid": "display-p3:0.52549,0.09804,0.56078,1.00000"
-      }
+      "value": "system-light"
     },
     {
       "appearance": "dark",
-      "value": {
-        "solid": "display-p3:0.52549,0.09804,0.56078,1.00000"
-      }
+      "value": "system-dark"
     }
   ],
   "groups": [
@@ -18,6 +14,9 @@
         {
           "blend-mode-specializations": [
             {
+              "value": "normal"
+            },
+            {
               "appearance": "dark",
               "value": "normal"
             }
@@ -25,13 +24,13 @@
           "fill-specializations": [
             {
               "value": {
-                "solid": "extended-gray:1.00000,1.00000"
+                "solid": "extended-gray:0.00000,1.00000"
               }
             },
             {
               "appearance": "dark",
               "value": {
-                "solid": "extended-gray:0.00000,1.00000"
+                "solid": "extended-gray:1.00000,1.00000"
               }
             },
             {
