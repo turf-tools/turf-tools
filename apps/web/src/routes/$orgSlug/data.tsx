@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { Columns2, Check, Upload } from "lucide-react";
+import { Activity, Columns2, Check, Upload } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -19,6 +19,7 @@ import {
 } from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
+import { Filter } from "~/components/filter";
 import { Input } from "~/components/input";
 import { Pill } from "~/components/pill";
 import { Rail } from "~/components/rail";
@@ -65,9 +66,20 @@ const FIELD_TYPE_META: Record<CustomFieldType, string> = {
   text: "Text",
 };
 
+type DataSearch = {
+  dataset: string | null;
+  status: "current" | "archived" | "all";
+};
+
+const STATUS_OPTIONS = [
+  { value: "archived", label: "Archived" },
+  { value: "all", label: "All versions" },
+];
+
 export const Route = createFileRoute("/$orgSlug/data")({
-  validateSearch: (search): { dataset: string | null } => ({
+  validateSearch: (search): DataSearch => ({
     dataset: typeof search.dataset === "string" ? search.dataset : null,
+    status: search.status === "archived" || search.status === "all" ? search.status : "current",
   }),
   beforeLoad: ({ context, params }) => {
     if (!hasPermission(context.role, "datasets.manage")) {
@@ -129,7 +141,8 @@ function DataPage() {
   }, [versionRows]);
 
   const selected = datasetGroups.find((d) => d.datasetId === datasetParam) ?? datasetGroups[0];
-  const selectDataset = (datasetId: string) => void navigate({ search: { dataset: datasetId } });
+  const selectDataset = (datasetId: string) =>
+    void navigate({ search: (prev) => ({ ...prev, dataset: datasetId }) });
 
   // Canonicalize the URL to the dataset actually shown — bare /data and stale
   // ?dataset= values otherwise render the fallback while the address bar
@@ -137,7 +150,10 @@ function DataPage() {
   // plus hover preload have caused auto-navigation here before.
   useEffect(() => {
     if (selected && selected.datasetId !== datasetParam) {
-      void navigate({ search: { dataset: selected.datasetId }, replace: true });
+      void navigate({
+        search: (prev) => ({ ...prev, dataset: selected.datasetId }),
+        replace: true,
+      });
     }
   }, [selected, datasetParam, navigate]);
 
@@ -215,6 +231,20 @@ function DatasetEditor({
 
   const importing = dataset.versions.some((v) => v.status === "importing");
 
+  // null in URL = "current" (the default). The Filter helper maps null →
+  // its allLabel option; we translate between that and the search param.
+  const { status } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const filterValue = status === "current" ? null : status;
+  const onStatusChange = (next: string | null) =>
+    void navigate({
+      search: (prev) => ({ ...prev, status: (next ?? "current") as DataSearch["status"] }),
+    });
+  const statusLabel =
+    filterValue === null
+      ? "Current"
+      : (STATUS_OPTIONS.find((o) => o.value === filterValue)?.label ?? "Current");
+
   const invalidateFields = () => {
     // Both keys: this dataset's list (the card) and the active-dataset list
     // (the segment editor's filter catalog).
@@ -229,6 +259,14 @@ function DatasetEditor({
   return (
     <EditorPage>
       <EditorHeader title={dataset.name} subtitle={importerLabel(dataset.importer)}>
+        <Filter
+          icon={<Activity className="size-3.5" />}
+          label={statusLabel}
+          value={filterValue}
+          options={STATUS_OPTIONS}
+          allLabel="Current"
+          onChange={onStatusChange}
+        />
         <Button variant="outline" onClick={() => setAppendOpen(true)}>
           <Columns2 className="size-4" />
           Append
@@ -261,7 +299,7 @@ function DatasetEditor({
       />
 
       <div className="flex min-h-0 flex-1 gap-6">
-        <VersionsCard versions={dataset.versions} timezone={timezone} />
+        <VersionsCard versions={dataset.versions} timezone={timezone} status={status} />
         <FieldsCard
           fields={fields}
           baseFields={baseFields}
@@ -279,9 +317,16 @@ function DatasetEditor({
 // Versions
 // ---------------------------------------------------------------------------
 
-function VersionsCard({ versions, timezone }: { versions: VersionRow[]; timezone: string }) {
+function VersionsCard({
+  versions,
+  timezone,
+  status,
+}: {
+  versions: VersionRow[];
+  timezone: string;
+  status: DataSearch["status"];
+}) {
   const queryClient = useQueryClient();
-  const [showArchived, setShowArchived] = useState(false);
 
   const makeActive = useMutation({
     mutationFn: (versionId: string) => client.datasets.makeActive({ versionId }),
@@ -308,23 +353,33 @@ function VersionsCard({ versions, timezone }: { versions: VersionRow[]; timezone
     onError: (e) => toast.error(e.message),
   });
 
-  const visible = versions.filter((v) => showArchived || !v.isArchived);
-  const hasArchived = versions.some((v) => v.isArchived);
+  const visible = versions.filter((v) =>
+    status === "all" ? true : status === "archived" ? v.isArchived : !v.isArchived,
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
         <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
           <TableRow>
-            <TableHead className="w-20">Version</TableHead>
+            <TableHead className="w-15">Version</TableHead>
             <TableHead className="w-36">Status</TableHead>
             <TableHead>People</TableHead>
             <TableHead>Imported</TableHead>
-            <TableHead className="w-20">Active</TableHead>
+            <TableHead className="w-15">Active</TableHead>
             <TableHead className="w-11" />
           </TableRow>
         </TableHeader>
         <TableBody>
+          {visible.length === 0 ? (
+            <TableRow className="h-10">
+              <TableCell colSpan={6}>
+                <Pill>
+                  <span>No results</span>
+                </Pill>
+              </TableCell>
+            </TableRow>
+          ) : null}
           {visible.map((v) => {
             const status = STATUS_META[v.status ?? ""] ?? {
               label: v.status ?? "—",
@@ -389,12 +444,6 @@ function VersionsCard({ versions, timezone }: { versions: VersionRow[]; timezone
           })}
         </TableBody>
       </Table>
-      {hasArchived ? (
-        <div className="flex items-center justify-between border-t border-border py-2.5">
-          <span className="text-sm text-muted-foreground">Show archived versions</span>
-          <Switch checked={showArchived} onCheckedChange={setShowArchived} />
-        </div>
-      ) : null}
     </div>
   );
 }
