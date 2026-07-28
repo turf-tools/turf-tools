@@ -23,7 +23,8 @@ import { Input } from "~/components/input";
 import { Pill } from "~/components/pill";
 import { Rail } from "~/components/rail";
 import { Switch } from "~/components/switch";
-import { formatDate } from "~/lib/format";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
+import { formatDateTime } from "~/lib/format";
 import { AVAILABLE_IMPORTERS, importerLabel } from "~/lib/importers";
 import { hasPermission } from "~/lib/permissions";
 import type { CustomFieldType } from "@turf-tools/db/schema";
@@ -259,7 +260,7 @@ function DatasetEditor({
         onDone={invalidateFields}
       />
 
-      <div className="flex min-h-0 flex-1 gap-4">
+      <div className="flex min-h-0 flex-1 gap-6">
         <VersionsCard versions={dataset.versions} timezone={timezone} />
         <FieldsCard
           fields={fields}
@@ -311,74 +312,85 @@ function VersionsCard({ versions, timezone }: { versions: VersionRow[]; timezone
   const hasArchived = versions.some((v) => v.isArchived);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col rounded-md border border-border bg-card">
-      <div
-        className={cn(
-          "grid grid-cols-[3.75rem_repeat(3,minmax(0,1fr))_3.25rem_2.25rem] items-center gap-2",
-          "px-3.5 pt-3 pb-1 text-sm text-muted-foreground",
-        )}
-      >
-        <span>Version</span>
-        <span>Status</span>
-        <span>People</span>
-        <span>Imported</span>
-        <span>Active</span>
-        <span />
-      </div>
-      <div className="flex flex-1 flex-col gap-0 overflow-y-auto p-2 pt-1">
-        {visible.map((v) => {
-          const status = STATUS_META[v.status ?? ""] ?? {
-            label: v.status ?? "—",
-            color: "#9ca3af",
-          };
-          // While importing, always show a percentage (0% before the job has
-          // written any progress) so it never reads as a bare "Importing".
-          const pct =
-            v.status === "importing"
-              ? v.importTotalSteps
-                ? Math.min(100, Math.round(((v.importStep ?? 0) / v.importTotalSteps) * 100))
-                : 0
-              : null;
-          return (
-            <div
-              key={v.versionId}
-              className={cn(
-                "grid grid-cols-[3.75rem_repeat(3,minmax(0,1fr))_3.25rem_2.25rem] items-center gap-2 rounded-md p-1.5 text-sm",
-                v.isArchived && "text-muted-foreground",
-              )}
-            >
-              <Pill className="tabular-nums">v{v.versionNumber}</Pill>
-              <span
-                className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm tabular-nums"
-                style={{ backgroundColor: `${status.color}20`, color: status.color }}
-              >
-                <span className="truncate">
-                  {pct != null ? `Importing (${pct}%)` : status.label}
-                </span>
-              </span>
-              <Pill variant="number">{v.rowCount != null ? v.rowCount.toLocaleString() : "—"}</Pill>
-              <Pill variant="number">
-                {v.importedAt ? formatDate(v.importedAt, timezone) : "—"}
-              </Pill>
-              <Pill className="justify-center">
-                {v.isActive ? <Check className="size-4" /> : null}
-              </Pill>
-              <VersionRowMenu
-                canActivate={!v.isActive && v.status === "ready" && !v.isArchived}
-                isArchived={v.isArchived}
-                canArchive={
-                  !v.isActive && !v.isArchived && (v.status === "ready" || v.status === "failed")
-                }
-                onMakeActive={() => makeActive.mutate(v.versionId)}
-                onArchive={() => archive.mutate(v.versionId)}
-                onUnarchive={() => unarchive.mutate(v.versionId)}
-              />
-            </div>
-          );
-        })}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
+          <TableRow>
+            <TableHead className="w-20">Version</TableHead>
+            <TableHead className="w-36">Status</TableHead>
+            <TableHead>People</TableHead>
+            <TableHead>Imported</TableHead>
+            <TableHead className="w-20">Active</TableHead>
+            <TableHead className="w-11" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {visible.map((v) => {
+            const status = STATUS_META[v.status ?? ""] ?? {
+              label: v.status ?? "—",
+              color: "#9ca3af",
+            };
+            // While importing, always show a percentage (0% before the job has
+            // written any progress) so it never reads as a bare "Importing".
+            const pct =
+              v.status === "importing"
+                ? v.importTotalSteps
+                  ? Math.min(100, Math.round(((v.importStep ?? 0) / v.importTotalSteps) * 100))
+                  : 0
+                : null;
+            return (
+              <TableRow key={v.versionId} className={cn(v.isArchived && "text-muted-foreground")}>
+                <TableCell>
+                  <Pill className="tabular-nums">v{v.versionNumber}</Pill>
+                </TableCell>
+                <TableCell>
+                  <span
+                    className="flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm tabular-nums"
+                    style={{ backgroundColor: `${status.color}20`, color: status.color }}
+                  >
+                    <span className="truncate">
+                      {pct != null ? `Importing (${pct}%)` : status.label}
+                    </span>
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <Pill variant="number" className="min-w-0">
+                    <span className="truncate">
+                      {v.rowCount != null ? v.rowCount.toLocaleString() : "—"}
+                    </span>
+                  </Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill variant="number" className="min-w-0">
+                    <span className="truncate">{formatDateTime(v.importedAt, timezone)}</span>
+                  </Pill>
+                </TableCell>
+                <TableCell>
+                  <Pill className="justify-center">
+                    {v.isActive ? <Check className="size-4" /> : null}
+                  </Pill>
+                </TableCell>
+                <TableCell>
+                  <VersionRowMenu
+                    canActivate={!v.isActive && v.status === "ready" && !v.isArchived}
+                    isArchived={v.isArchived}
+                    canArchive={
+                      !v.isActive &&
+                      !v.isArchived &&
+                      (v.status === "ready" || v.status === "failed")
+                    }
+                    onMakeActive={() => makeActive.mutate(v.versionId)}
+                    onArchive={() => archive.mutate(v.versionId)}
+                    onUnarchive={() => unarchive.mutate(v.versionId)}
+                  />
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
       {hasArchived ? (
-        <div className="flex items-center justify-between border-t border-border px-3 py-2.5">
+        <div className="flex items-center justify-between border-t border-border py-2.5">
           <span className="text-sm text-muted-foreground">Show archived versions</span>
           <Switch checked={showArchived} onCheckedChange={setShowArchived} />
         </div>
@@ -465,7 +477,9 @@ function FieldsCard({
   const hasArchived = fields.some((f) => f.isArchived);
 
   return (
-    <div className="flex min-h-0 w-80 shrink-0 flex-col rounded-md border border-border bg-card">
+    // -mt aligns the "Custom fields" heading with the versions table's
+    // header text (border + pt-3 lands 3px below the th's centered text).
+    <div className="-mt-[3px] flex min-h-0 w-80 shrink-0 flex-col rounded-md border border-border bg-card">
       <div className="flex flex-1 flex-col overflow-y-auto">
         {sorted.length > 0 ? (
           <div className="px-3.5 pt-3 pb-1 text-sm text-muted-foreground">Custom fields</div>
@@ -484,8 +498,9 @@ function FieldsCard({
               }}
               onMouseDown={(e) => e.preventDefault()}
               className={cn(
-                // min-h matches the versions rows (p-1.5 + h-8 pills = 44px).
-                "flex min-h-11 flex-col justify-center gap-1 rounded-md p-1.5 text-left hover:bg-muted",
+                // min-h keeps rows a consistent height whether or not the
+                // coverage bar wraps below a long label.
+                "flex min-h-10 flex-col justify-center gap-1 rounded-md px-1.5 py-1 text-left hover:bg-muted",
                 f.isArchived && "text-muted-foreground",
               )}
             >
