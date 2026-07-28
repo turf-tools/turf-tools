@@ -30,6 +30,17 @@ const HALO_SCALE = 2.25; // halo max diameter as a multiple of the dot
 // while the user stands at a door.
 const JITTER_METERS = 2;
 
+// Accepted fixes glide the dot from its current drawn position (the
+// Google Maps idiom) instead of teleporting ~1m/s hops. Ease-out over
+// slightly less than the ~1Hz fix cadence so the dot settles before the
+// next fix usually arrives.
+const GLIDE_MS = 800;
+
+// Above this, jump instead of gliding: a fix after time backgrounded (or
+// a GPS re-lock) can land blocks away, and a cross-map streak reads as
+// a glitch, not motion.
+const SNAP_METERS = 50;
+
 // Equirectangular approximation — meters between two [lng, lat] points.
 // Fine at walking scale; avoids pulling in a geo library for one check.
 function metersBetween(a: [number, number], b: [number, number]) {
@@ -49,6 +60,36 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
     // earlier watcher.
     let generation = 0;
 
+    // Glide state. `drawn` is where the dot visually is right now (it
+    // trails `target` mid-animation); `target` is the last accepted fix,
+    // which the jitter gate compares against. Plain rAF interpolation,
+    // not RN Animated — see the reanimated note below for why Animated
+    // loops are avoided in this file, and a MarkerView coordinate needs
+    // a re-render per frame either way.
+    let drawn: [number, number] | null = null;
+    let target: [number, number] | null = null;
+    let raf = 0;
+
+    const glideTo = (fix: [number, number]) => {
+      cancelAnimationFrame(raf);
+      const from = drawn;
+      if (!from || metersBetween(from, fix) > SNAP_METERS) {
+        drawn = fix;
+        setCoord(fix);
+        return;
+      }
+      let start: number | null = null;
+      const step = (now: number) => {
+        start ??= now;
+        const t = Math.min(1, (now - start) / GLIDE_MS);
+        const e = 1 - (1 - t) ** 3; // ease-out cubic
+        drawn = [from[0] + (fix[0] - from[0]) * e, from[1] + (fix[1] - from[1]) * e];
+        setCoord(drawn);
+        if (t < 1) raf = requestAnimationFrame(step);
+      };
+      raf = requestAnimationFrame(step);
+    };
+
     // Accuracy.High (GPS, ~10m), not Balanced: Balanced maps to
     // kCLLocationAccuracyHundredMeters on iOS, whose wifi-derived fixes
     // can sit still while the user walks a whole turf — the 5m distance
@@ -66,8 +107,9 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
           { accuracy: Location.Accuracy.High, distanceInterval: 0 },
           (pos) => {
             const fix: [number, number] = [pos.coords.longitude, pos.coords.latitude];
-            // Returning prev keeps referential equality — no re-render.
-            setCoord((prev) => (prev && metersBetween(prev, fix) < JITTER_METERS ? prev : fix));
+            if (target && metersBetween(target, fix) < JITTER_METERS) return;
+            target = fix;
+            glideTo(fix);
           },
         );
         if (cancelled || gen !== generation) {
@@ -92,6 +134,7 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
     });
     return () => {
       cancelled = true;
+      cancelAnimationFrame(raf);
       appState.remove();
       sub?.remove();
     };
