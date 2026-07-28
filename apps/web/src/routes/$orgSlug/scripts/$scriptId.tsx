@@ -27,7 +27,9 @@ import {
   BlurSaveTextarea,
   QuestionTextEditor,
   RESPONSE_TYPE_META,
+  RESPONSE_TYPES,
   ResponseOptionsEditor,
+  type ResponseType,
 } from "~/components/question-editor-parts";
 import { scriptDetailQuery, scriptsListQuery } from "~/lib/queries/scripts";
 import {
@@ -124,7 +126,7 @@ function ScriptEditor() {
   const [newQuestionDialogOpen, setNewQuestionDialogOpen] = useState(false);
 
   const createAndAddQuestion = useMutation({
-    mutationFn: async (input: { name: string; responseType: "single_select" }) => {
+    mutationFn: async (input: { name: string; responseType: ResponseType }) => {
       const question = await client.questions.create(input);
       const step = await client.scripts.addStep({
         scriptId,
@@ -592,20 +594,31 @@ function QuestionPreview({ questionId }: { questionId: string }) {
         )}
       </p>
       <div className="flex flex-col gap-1.5">
-        {data.options.map((opt) => (
-          <div
-            key={opt.responseOptionId}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm"
-          >
-            {opt.text?.trim() ? (
-              opt.text
-            ) : (
-              <span className="italic text-muted-foreground">Empty option</span>
-            )}
+        {data.responseType === "open_ended" ? (
+          // Input facsimile, same visual weight as the option rows.
+          <div className="rounded-md border border-border bg-card px-3 py-1.5 text-sm">
+            <span className="italic text-muted-foreground">
+              Answers are typed in by the canvasser
+            </span>
           </div>
-        ))}
-        {data.options.length === 0 && (
-          <p className="text-sm italic text-muted-foreground">No options</p>
+        ) : (
+          <>
+            {data.options.map((opt) => (
+              <div
+                key={opt.responseOptionId}
+                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm"
+              >
+                {opt.text?.trim() ? (
+                  opt.text
+                ) : (
+                  <span className="italic text-muted-foreground">Empty option</span>
+                )}
+              </div>
+            ))}
+            {data.options.length === 0 && (
+              <p className="text-sm italic text-muted-foreground">No options</p>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -623,10 +636,10 @@ function NewQuestionDialog({
   onOpenChange: (open: boolean) => void;
   pending: boolean;
   error: string | null;
-  onSubmit: (name: string, responseType: "single_select") => void;
+  onSubmit: (name: string, responseType: ResponseType) => void;
 }) {
   const [name, setName] = useState("");
-  const [responseType, setResponseType] = useState<"single_select">("single_select");
+  const [responseType, setResponseType] = useState<ResponseType>("single_select");
   useEffect(() => {
     if (open) {
       setName("");
@@ -676,9 +689,11 @@ function NewQuestionDialog({
                 <ChevronDown className="size-4 text-muted-foreground" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
-                <DropdownMenuItem onClick={() => setResponseType("single_select")}>
-                  Single Select
-                </DropdownMenuItem>
+                {RESPONSE_TYPES.map((t) => (
+                  <DropdownMenuItem key={t} onClick={() => setResponseType(t)}>
+                    {RESPONSE_TYPE_META[t]!.label}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

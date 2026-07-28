@@ -7,7 +7,7 @@ import type { StorageAdapter } from "@tanstack/offline-transactions/react-native
 import { useQueryClient } from "@tanstack/react-query";
 import { getDefaultStore } from "jotai";
 import { useCallback, useEffect, useState } from "react";
-import type { CanvassEventPayload } from "@turf-tools/db/schema";
+import type { CanvassEventPayload, ResponseValue } from "@turf-tools/db/schema";
 import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
 import { FixedReactNativeOnlineDetector } from "@/lib/online-detector";
@@ -322,12 +322,13 @@ export type PersonSummary = {
   // Only the "unavailable" outcomes (not_home / deceased / hostile / moved)
   // surface here — that's what the screen's mode logic switches on. A result
   // whose outcome is "canvassed" maps to null, because the screen shows a
-  // contacted person through their responses (selectedByQuestion), not an
+  // contacted person through their responses (responsesByQuestion), not an
   // outcome. The authoritative outcome (incl. "canvassed") lives on the result.
   currentOutcome: string | null;
   notes: CanvassEvent[];
-  // questionId -> selected optionId (single-select).
-  selectedByQuestion: Map<string, string>;
+  // questionId -> answer: selected option ids or free text. Only
+  // meaningful entries (≥1 option / non-blank text) are stored.
+  responsesByQuestion: Map<string, ResponseValue>;
 };
 
 // Current state per person = the latest "result" snapshot + all notes.
@@ -340,7 +341,7 @@ export function derivePersonSummaries(events: CanvassEvent[]) {
     if (!event.personId) continue;
     let summary = map.get(event.personId);
     if (!summary) {
-      summary = { currentOutcome: null, notes: [], selectedByQuestion: new Map() };
+      summary = { currentOutcome: null, notes: [], responsesByQuestion: new Map() };
       map.set(event.personId, summary);
     }
     if (event.kind === "note") {
@@ -351,12 +352,12 @@ export function derivePersonSummaries(events: CanvassEvent[]) {
         responses: Record<string, { optionIds?: string[]; text?: string }>;
       };
       // Latest result wins (events are sorted ascending) — overwrite both fields.
-      const selected = new Map<string, string>();
+      const responses = new Map<string, ResponseValue>();
       for (const [questionId, value] of Object.entries(payload.responses ?? {})) {
-        const optionId = value?.optionIds?.[0];
-        if (optionId) selected.set(questionId, optionId);
+        if (value?.optionIds?.length) responses.set(questionId, { optionIds: value.optionIds });
+        else if (value?.text?.trim()) responses.set(questionId, { text: value.text });
       }
-      summary.selectedByQuestion = selected;
+      summary.responsesByQuestion = responses;
       summary.currentOutcome = payload.outcome === "canvassed" ? null : payload.outcome;
     }
   }
@@ -367,11 +368,11 @@ export function derivePersonSummaries(events: CanvassEvent[]) {
 export function isRecorded(summaries: Map<string, PersonSummary>, personId: string): boolean {
   const s = summaries.get(personId);
   if (!s) return false;
-  return s.currentOutcome != null || s.selectedByQuestion.size > 0;
+  return s.currentOutcome != null || s.responsesByQuestion.size > 0;
 }
 
 export function hasResponses(summaries: Map<string, PersonSummary>, personId: string): boolean {
-  return (summaries.get(personId)?.selectedByQuestion.size ?? 0) > 0;
+  return (summaries.get(personId)?.responsesByQuestion.size ?? 0) > 0;
 }
 
 export function hasNotes(summaries: Map<string, PersonSummary>, personId: string): boolean {

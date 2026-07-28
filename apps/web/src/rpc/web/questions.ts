@@ -79,6 +79,7 @@ export const listWithOptions = pub.handler(async ({ context }) => {
     .select({
       questionId: questions.questionId,
       name: questions.name,
+      responseType: questions.responseType,
       archivedAt: questions.archivedAt,
     })
     .from(questions)
@@ -121,6 +122,7 @@ export const listWithOptions = pub.handler(async ({ context }) => {
   return qs.map((q) => ({
     questionId: q.questionId,
     name: q.name,
+    responseType: q.responseType,
     archived: q.archivedAt !== null,
     options: byQuestion.get(q.questionId) ?? [],
   }));
@@ -156,7 +158,7 @@ export const create = pub
   .input(
     z.object({
       name: z.string().min(1),
-      responseType: z.enum(["single_select"]).optional(),
+      responseType: z.enum(["single_select", "multi_select", "open_ended"]).optional(),
     }),
   )
   .handler(async ({ context, input }) => {

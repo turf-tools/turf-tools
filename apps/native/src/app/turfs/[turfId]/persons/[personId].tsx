@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Ban, Check, Pencil, Scroll } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -29,13 +29,13 @@ import { toTitleCase } from "@/lib/format";
 import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
 import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
-import type { CanvassEventPayload, TurfDataPerson } from "@turf-tools/db/schema";
+import type { CanvassEventPayload, ResponseValue, TurfDataPerson } from "@turf-tools/db/schema";
 
 type Mode = "script" | "unavailable" | "note" | "details";
 
-// Stable reference so the derivedSelections useEffect doesn't fire
+// Stable reference so the derivedResponses useEffect doesn't fire
 // every render when the person has no events yet.
-const EMPTY_SELECTIONS = new Map<string, string>();
+const EMPTY_RESPONSES = new Map<string, ResponseValue>();
 
 const UNAVAILABLE_OPTIONS: Array<{
   value: string;
@@ -83,13 +83,18 @@ export default function PersonScreen() {
 
   // Optimistic mirrors: taps update local state immediately so the
   // check renders/clears this frame; useEffect re-syncs from derived
-  // once the event lands in the live query.
-  const derivedSelections = summary?.selectedByQuestion ?? EMPTY_SELECTIONS;
-  const [selectedOptionByQuestion, setSelectedOptionByQuestion] =
-    useState<Map<string, string>>(derivedSelections);
+  // once the event lands in the live query. Skipped while an open-ended
+  // input is focused — the landed event carries the text as of the last
+  // emit, and re-syncing mid-typing would eat keystrokes.
+  const textFocusedRef = useRef(false);
+  const textDirtyRef = useRef(false);
+  const derivedResponses = summary?.responsesByQuestion ?? EMPTY_RESPONSES;
+  const [responsesByQuestion, setResponsesByQuestion] =
+    useState<Map<string, ResponseValue>>(derivedResponses);
   useEffect(() => {
-    setSelectedOptionByQuestion(derivedSelections);
-  }, [derivedSelections]);
+    if (textFocusedRef.current) return;
+    setResponsesByQuestion(derivedResponses);
+  }, [derivedResponses]);
 
   const derivedOutcome = summary?.currentOutcome ?? null;
   const [unavailableOutcome, setUnavailableOutcome] = useState<string | null>(derivedOutcome);
@@ -105,25 +110,69 @@ export default function PersonScreen() {
 
   // Emit a full result snapshot for the current disposition. An "unavailable"
   // outcome and responses are mutually exclusive: an outcome clears
-  // responses, and present responses imply "canvassed".
-  const emitResult = (selections: Map<string, string>, outcome: string | null) => {
-    const responses: Record<string, { optionIds: string[] }> = {};
+  // responses, and present responses imply "canvassed". Blank text and
+  // empty option sets are dropped — only meaningful answers ship.
+  const emitResult = (next: Map<string, ResponseValue>, outcome: string | null) => {
+    const responses: Record<string, ResponseValue> = {};
     let resolvedOutcome = outcome;
-    if (!outcome && selections.size > 0) {
-      resolvedOutcome = "canvassed";
-      for (const [questionId, optionId] of selections) {
-        responses[questionId] = { optionIds: [optionId] };
+    if (!outcome) {
+      for (const [questionId, value] of next) {
+        if ("optionIds" in value) {
+          if (value.optionIds.length > 0) responses[questionId] = value;
+        } else if (value.text.trim().length > 0) {
+          responses[questionId] = { text: value.text.trim() };
+        }
       }
+      if (Object.keys(responses).length > 0) resolvedOutcome = "canvassed";
     }
     const payload = { kind: "result", outcome: resolvedOutcome, responses } as CanvassEventPayload;
     setTimeout(() => recordEvent({ personId, kind: "result", payload }), 0);
   };
 
   const clearResult = () => {
-    if (unavailableOutcome === null && selectedOptionByQuestion.size === 0) return;
+    if (unavailableOutcome === null && responsesByQuestion.size === 0) return;
     setUnavailableOutcome(null);
-    setSelectedOptionByQuestion(new Map());
+    setResponsesByQuestion(new Map());
+    textDirtyRef.current = false;
     emitResult(new Map(), null);
+  };
+
+  // Option taps emit a snapshot immediately; text answers accumulate in
+  // local state and emit on blur / Submit (per-keystroke events would
+  // flood the append-only log).
+  const toggleOption = (questionId: string, optionId: string, multi: boolean) => {
+    const next = new Map(responsesByQuestion);
+    const current = next.get(questionId);
+    const ids = current && "optionIds" in current ? current.optionIds : [];
+    const on = ids.includes(optionId);
+    const nextIds = multi
+      ? on
+        ? ids.filter((i) => i !== optionId)
+        : [...ids, optionId]
+      : on
+        ? []
+        : [optionId];
+    if (nextIds.length === 0) next.delete(questionId);
+    else next.set(questionId, { optionIds: nextIds });
+    setResponsesByQuestion(next);
+    // Picking a response also un-marks unavailable.
+    if (nextIds.length > 0) setUnavailableOutcome(null);
+    emitResult(next, null);
+  };
+
+  const changeText = (questionId: string, text: string) => {
+    const next = new Map(responsesByQuestion);
+    if (text.length === 0) next.delete(questionId);
+    else next.set(questionId, { text });
+    setResponsesByQuestion(next);
+    textDirtyRef.current = true;
+    if (text.trim().length > 0) setUnavailableOutcome(null);
+  };
+
+  const commitText = () => {
+    if (!textDirtyRef.current) return;
+    textDirtyRef.current = false;
+    emitResult(responsesByQuestion, null);
   };
 
   const handleListPress = () => {
@@ -205,7 +254,7 @@ export default function PersonScreen() {
   }
 
   const noteExists = formattedNotes.length > 0;
-  const responsesExist = selectedOptionByQuestion.size > 0;
+  const responsesExist = responsesByQuestion.size > 0;
   const recorded = responsesExist || unavailableOutcome != null;
   const fullName =
     [person.firstName, person.middleName, person.lastName, person.nameSuffix]
@@ -299,16 +348,14 @@ export default function PersonScreen() {
             {mode === "script" && (
               <ScriptContent
                 scriptQuery={scriptQuery}
-                selectedOptionByQuestion={selectedOptionByQuestion}
-                onSelectOption={(questionId, responseOptionId) => {
-                  const next = new Map(selectedOptionByQuestion);
-                  if (responseOptionId === null) next.delete(questionId);
-                  else next.set(questionId, responseOptionId);
-                  setSelectedOptionByQuestion(next);
-                  // Picking a response also un-marks unavailable.
-                  if (responseOptionId !== null) setUnavailableOutcome(null);
-                  emitResult(next, null);
+                responses={responsesByQuestion}
+                onToggleOption={toggleOption}
+                onChangeText={changeText}
+                onTextFocus={(focused) => {
+                  textFocusedRef.current = focused;
+                  if (!focused) commitText();
                 }}
+                onSubmit={commitText}
                 onClear={clearResult}
               />
             )}
@@ -317,7 +364,8 @@ export default function PersonScreen() {
                 selectedOutcome={unavailableOutcome ?? undefined}
                 onSelectOption={(value) => {
                   setUnavailableOutcome(value);
-                  setSelectedOptionByQuestion(new Map());
+                  setResponsesByQuestion(new Map());
+                  textDirtyRef.current = false;
                   emitResult(new Map(), value);
                 }}
                 onClear={clearResult}
@@ -397,13 +445,19 @@ function UnavailableContent({
 
 function ScriptContent({
   scriptQuery,
-  selectedOptionByQuestion,
-  onSelectOption,
+  responses,
+  onToggleOption,
+  onChangeText,
+  onTextFocus,
+  onSubmit,
   onClear,
 }: {
   scriptQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof client.scripts.get>>>>;
-  selectedOptionByQuestion: Map<string, string>;
-  onSelectOption: (questionId: string, responseOptionId: string | null) => void;
+  responses: Map<string, ResponseValue>;
+  onToggleOption: (questionId: string, optionId: string, multi: boolean) => void;
+  onChangeText: (questionId: string, text: string) => void;
+  onTextFocus: (focused: boolean) => void;
+  onSubmit: () => void;
   onClear: () => void;
 }) {
   const colors = useColors();
@@ -434,7 +488,23 @@ function ScriptContent({
             </Text>
           );
         }
-        const selected = selectedOptionByQuestion.get(step.questionId);
+        const value = responses.get(step.questionId);
+        if (step.responseType === "open_ended") {
+          return (
+            <View key={step.scriptStepId} className="gap-2">
+              <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
+                {step.text}
+              </Text>
+              <OpenEndedInput
+                text={value && "text" in value ? value.text : ""}
+                onChangeText={(t) => onChangeText(step.questionId, t)}
+                onFocusChange={onTextFocus}
+              />
+            </View>
+          );
+        }
+        const selectedIds = value && "optionIds" in value ? value.optionIds : [];
+        const multi = step.responseType === "multi_select";
         return (
           <View key={step.scriptStepId} className="gap-2">
             <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
@@ -444,14 +514,10 @@ function ScriptContent({
               <WideButton
                 key={opt.responseOptionId}
                 label={opt.text}
-                selected={selected === opt.responseOptionId}
+                selected={selectedIds.includes(opt.responseOptionId)}
                 selectedForegroundColor={colors.contacted.foreground}
                 selectedBackgroundColor={colors.contacted.background}
-                onPress={() =>
-                  selected === opt.responseOptionId
-                    ? onSelectOption(step.questionId, null)
-                    : onSelectOption(step.questionId, opt.responseOptionId)
-                }
+                onPress={() => onToggleOption(step.questionId, opt.responseOptionId, multi)}
               />
             ))}
           </View>
@@ -462,10 +528,62 @@ function ScriptContent({
           <WideButton label="Clear" variant="action" onPress={onClear} />
         </View>
         <View className="flex-1">
-          <WideButton label="Submit" variant="submit" onPress={() => router.back()} />
+          <WideButton
+            label="Submit"
+            variant="submit"
+            onPress={() => {
+              // Commit any un-blurred text answer before leaving.
+              onSubmit();
+              router.back();
+            }}
+          />
         </View>
       </View>
     </View>
+  );
+}
+
+// Free-text answer input for open-ended questions. Styled after the note
+// input; the parent owns the value and the blur-time emit.
+function OpenEndedInput({
+  text,
+  onChangeText,
+  onFocusChange,
+}: {
+  text: string;
+  onChangeText: (text: string) => void;
+  onFocusChange: (focused: boolean) => void;
+}) {
+  const isDark = useAtomValue(themeAtom) === "dark";
+  const [focused, setFocused] = useState(false);
+  return (
+    <TextInput
+      value={text}
+      onChangeText={onChangeText}
+      onFocus={() => {
+        setFocused(true);
+        onFocusChange(true);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        onFocusChange(false);
+      }}
+      placeholder="Type an answer..."
+      placeholderTextColor={isDark ? "#666" : "#999"}
+      multiline
+      className={`font-sans text-lg text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border rounded-lg p-4 min-h-[80px] ${
+        focused
+          ? "border-foreground dark:border-foreground-dark"
+          : "border-border dark:border-border-dark"
+      }`}
+      style={{
+        textAlignVertical: "top",
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.08,
+        shadowRadius: 3,
+      }}
+    />
   );
 }
 

@@ -888,8 +888,13 @@ function CanvassResponseEditor({
     : localQuestionId && questions
       ? "(deleted)"
       : "Select question…";
-  const activeQuestions = questions?.filter((q) => !q.archived) ?? [];
-  const archivedQuestions = questions?.filter((q) => q.archived) ?? [];
+  // Open-ended questions have no options to filter on — offer only select
+  // types (keep a referenced one visible so a saved filter stays editable).
+  const filterable =
+    questions?.filter((q) => q.responseType !== "open_ended" || q.questionId === localQuestionId) ??
+    [];
+  const activeQuestions = filterable.filter((q) => !q.archived);
+  const archivedQuestions = filterable.filter((q) => q.archived);
   // Keep the selected question in the menu even if it's archived (so a saved
   // filter's question doesn't vanish on load); "Show archived" reveals the rest.
   const visibleArchivedQuestions = showArchivedQuestions
