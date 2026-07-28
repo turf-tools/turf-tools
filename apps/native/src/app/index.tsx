@@ -107,7 +107,14 @@ export default function LandingScreen() {
     setLoading(true);
     try {
       setHost(trimmedHost);
-      const turf = await client.turfs.getByCode({ code: trimmedCode });
+      // `attributed` tells the server whether this bind will complete
+      // immediately (walk follows in ~a second) or park behind the
+      // identity sheet — only the latter records the board's "signing
+      // out…" pending signal.
+      const turf = await client.turfs.getByCode({
+        code: trimmedCode,
+        attributed: canvasser != null || !REQUIRE_ATTRIBUTION,
+      });
       if (!turf) {
         Alert.alert("Not found", `No turf found for code "${trimmedCode}".`);
         setLoading(false);

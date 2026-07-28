@@ -36,12 +36,17 @@ export const getById = pub
 // across archived rows (the unique constraint is partial). Archived
 // turfs no longer honor their codes — canvassers can't access them.
 //
-// A successful resolution is also the handoff signal: it fires before
-// attestation can park the bind, so the lead's board flips to "pending"
-// seconds after the canvasser commits — typed codes included. (getById,
-// the relaunch-rebind path, deliberately doesn't signal.)
+// An unattributed resolution (device has no canvasser yet, so the bind
+// is about to park behind the identity sheet) is also the handoff
+// signal: it records the scan so the lead's board flips to "pending"
+// the moment the canvasser commits. Attributed devices skip the signal
+// entirely — their walk lands a second later, and a pending state in
+// between would only flash. The signal ends by walk arrival or decay,
+// never a cancel: a lingering spinner is safer than a vanished one when
+// the goal is preventing duplicate handouts. (getById, the
+// relaunch-rebind path, deliberately doesn't signal.)
 export const getByCode = pub
-  .input(z.object({ code: z.string().min(1) }))
+  .input(z.object({ code: z.string().min(1), attributed: z.boolean().optional() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
       .select({ ...turfSelect, organizationId: campaigns.organizationId })
@@ -50,11 +55,13 @@ export const getByCode = pub
       .where(and(eq(turfs.turfCode, input.code), eq(turfs.status, "active")));
     const row = rows[0];
     if (!row) return null;
-    await context.db
-      .insert(turfScans)
-      .values({ turfId: row.turfId })
-      .onConflictDoUpdate({ target: turfScans.turfId, set: { scannedAt: new Date() } });
-    publish(row.organizationId);
+    if (input.attributed === false) {
+      await context.db
+        .insert(turfScans)
+        .values({ turfId: row.turfId })
+        .onConflictDoUpdate({ target: turfScans.turfId, set: { scannedAt: new Date() } });
+      publish(row.organizationId);
+    }
     const { organizationId: _, ...turf } = row;
     return turf;
   });

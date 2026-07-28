@@ -39,7 +39,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { Toggle } from "~/components/toggle";
 import { formatDate } from "~/lib/format";
 import { normalizeEmail } from "~/lib/normalize-email";
-import { hasPermission, ROLES, type Role } from "~/lib/permissions";
+import { hasPermission, ROLE_LABELS, roleLabel, ROLES, type Role } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { usersListQuery } from "~/lib/queries/users";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -60,11 +60,7 @@ const STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
 ];
 
-const ROLE_OPTIONS = [
-  { value: "owner", label: "Owner" },
-  { value: "admin", label: "Admin" },
-  { value: "lead", label: "Field lead" },
-];
+const ROLE_OPTIONS = ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
 
 export const Route = createFileRoute("/$orgSlug/users")({
   validateSearch: (search): UsersSearch => ({
@@ -91,7 +87,7 @@ function UsersIndex() {
   const onStatusChange = (next: string | null) =>
     void navigate({ search: (prev) => ({ ...prev, status: next }) });
 
-  const roleLabel =
+  const roleFilterLabel =
     roleFilter === null
       ? "All roles"
       : (ROLE_OPTIONS.find((o) => o.value === roleFilter)?.label ?? null);
@@ -105,7 +101,7 @@ function UsersIndex() {
       <EditorHeader title="Users">
         <Filter
           icon={<Tag className="size-3.5" />}
-          label={roleLabel}
+          label={roleFilterLabel}
           value={roleFilter}
           options={ROLE_OPTIONS}
           allLabel="All roles"
@@ -151,7 +147,7 @@ function UsersTable({
         <TableRow>
           <TableHead>Name</TableHead>
           <TableHead>Email</TableHead>
-          <TableHead className="w-28">Role</TableHead>
+          <TableHead className="w-36">Role</TableHead>
           <TableHead className="w-28">Status</TableHead>
           <TableHead className="w-28">Joined</TableHead>
           <TableHead className="w-28">Last login</TableHead>
@@ -325,7 +321,7 @@ function RoleCell({
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v as Role) });
   if (archived) {
-    return <Pill className="capitalize">{role}</Pill>;
+    return <Pill>{roleLabel(role)}</Pill>;
   }
   return (
     <DropdownMenu {...dd.menu}>
@@ -340,14 +336,14 @@ function RoleCell({
           />
         }
       >
-        <span className="capitalize">{role}</span>
+        <span>{roleLabel(role)}</span>
         <ChevronDown className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuRadioGroup {...dd.radio} value={role}>
           {ROLES.map((r) => (
-            <DropdownMenuRadioItem key={r} value={r} className="capitalize">
-              {r}
+            <DropdownMenuRadioItem key={r} value={r}>
+              {ROLE_LABELS[r]}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -604,17 +600,17 @@ function RoleSelect({
       <DropdownMenuTrigger
         disabled={disabled}
         render={
-          <Button variant="outline" size="lg" type="button" className="w-28 justify-between" />
+          <Button variant="outline" size="lg" type="button" className="w-36 justify-between" />
         }
       >
-        <span className="capitalize">{value}</span>
+        <span>{roleLabel(value)}</span>
         <ChevronDown className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup {...dd.radio} value={value}>
           {ROLES.map((r) => (
-            <DropdownMenuRadioItem key={r} value={r} className="capitalize">
-              {r}
+            <DropdownMenuRadioItem key={r} value={r}>
+              {ROLE_LABELS[r]}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

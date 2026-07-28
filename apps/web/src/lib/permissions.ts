@@ -5,6 +5,18 @@
 export const ROLES = ["owner", "admin", "lead"] as const;
 export type Role = (typeof ROLES)[number];
 
+// Display names — the single source for every surface that shows a role
+// (pickers, filters, the account page). Never render the raw value.
+export const ROLE_LABELS: Record<Role, string> = {
+  owner: "Owner",
+  admin: "Admin",
+  lead: "Field lead",
+};
+
+export function roleLabel(role: string): string {
+  return (ROLE_LABELS as Record<string, string>)[role] ?? role;
+}
+
 export type Permission =
   | "users.manage"
   | "datasets.manage"

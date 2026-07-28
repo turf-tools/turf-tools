@@ -22,7 +22,6 @@ export const listForOrg = pub
         canvasserName: walks.canvasserName,
         openedAt: walks.openedAt,
         closedAt: walks.closedAt,
-        closedBy: walks.closedBy,
       })
       .from(walks)
       .innerJoin(turfs, eq(walks.turfId, turfs.turfId))

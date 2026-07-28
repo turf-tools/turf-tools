@@ -46,11 +46,11 @@ type WalksPayload = Awaited<ReturnType<typeof client.walks.listForOrg>>;
 type WalkRow = WalksPayload["walks"][number];
 
 // Observable-10 hues — the same categorical palette zones use, so the
-// page reads as part of the site rather than the legacy app. The color
-// rule: dynamic facts get color (walked, status, progress), static
-// context stays neutral. Walked and status share blue — the icons
-// disambiguate (palette teal for walked was tried and rejected: too
-// close to the progress green).
+// page reads as part of the site rather than the legacy app. Color has
+// ONE meaning: blue = happening now (pending/live). Walked history is
+// neutral — the check iconography carries it. (Both alternatives were
+// tried and rejected: teal reads as the progress green, and walked-in-
+// blue drowned the live signal in color.)
 const BLUE = "#4269d0";
 const PROGRESS_RED = "#ff725c";
 const PROGRESS_YELLOW = "#efb118";
@@ -130,19 +130,24 @@ function TurfsIndex() {
     setWalksOpen(true);
   };
 
-  // "Next" advances the QR dialog through the current filter's rows in
-  // display order — show, scan, next, without leaving the dialog. Stops
-  // at the end (no wrap: silently returning to turf 01 mid-run would be
-  // worse than a disabled button). Skips codeless/archived turfs.
-  const nextQrTurf = useMemo(() => {
-    if (!qrTurf) return null;
+  // Back/Next page the QR dialog through the current filter's rows in
+  // display order — show, scan, next, without leaving the dialog (Back
+  // covers "did the previous one actually finish?"). Both stop at the
+  // ends (no wrap: silently returning to turf 01 mid-run would be worse
+  // than a disabled button) and skip codeless/archived turfs.
+  const [prevQrTurf, nextQrTurf] = useMemo(() => {
+    if (!qrTurf) return [null, null];
     const i = rows.findIndex((t) => t.turfId === qrTurf.turfId);
-    if (i < 0) return null;
-    return rows.slice(i + 1).find((t) => t.turfCode && t.status === "active") ?? null;
+    if (i < 0) return [null, null];
+    const showable = (t: TurfRow) => Boolean(t.turfCode) && t.status === "active";
+    return [
+      rows.slice(0, i).reverse().find(showable) ?? null,
+      rows.slice(i + 1).find(showable) ?? null,
+    ];
   }, [rows, qrTurf]);
 
-  const onSearchChange = (patch: Partial<TurfsSearch>) => {
-    void navigate({ search: (prev) => ({ ...prev, ...patch }) });
+  const onSearchChange = (patch: Partial<TurfsSearch>, replace = false) => {
+    void navigate({ search: (prev) => ({ ...prev, ...patch }), replace });
   };
 
   const campaignOptions = campaigns?.map((c) => ({ value: c.campaignId, label: c.name })) ?? [];
@@ -166,48 +171,52 @@ function TurfsIndex() {
     return [...seen].map(([value, label]) => ({ value, label }));
   }, [turfs]);
   const regionLabel =
-    zoneId === null ? null : (regionOptions.find((z) => z.value === zoneId)?.label ?? null);
+    zoneId === null ? "All zones" : (regionOptions.find((z) => z.value === zoneId)?.label ?? null);
 
-  const campaignFilter = (allLabel: string | null) => (
+  // Same filters on every viewport, "All" available and default — no
+  // per-viewport conditioning. Selecting a specific campaign resets the
+  // zone (zones are campaign-scoped; a held-over zone would be a broken
+  // label on an empty list), but All-campaigns keeps it: the zone is
+  // still valid across the wider scope.
+  const campaignFilter = (
     <Filter
       icon={<Megaphone className="size-3.5" />}
-      label={campaignName ?? allLabel ?? "Campaign"}
+      label={campaignId === null ? "All campaigns" : campaignName}
       value={campaignId}
       options={campaignOptions}
-      allLabel={allLabel}
-      onChange={(next) => onSearchChange({ campaignId: next, zoneId: null })}
+      allLabel="All campaigns"
+      onChange={(next) =>
+        onSearchChange(next === null ? { campaignId: next } : { campaignId: next, zoneId: null })
+      }
     />
   );
-  const zoneFilter = (allLabel: string | null) => (
+  const zoneFilter = (
     <Filter
       icon={<Waypoints className="size-3.5" />}
-      label={regionLabel ?? allLabel ?? "Zone"}
+      label={regionLabel}
       value={zoneId}
       options={regionOptions}
-      allLabel={allLabel}
+      allLabel="All zones"
       onChange={(next) => onSearchChange({ zoneId: next })}
     />
   );
-
-  // Mobile requires a scope — a launch table works one campaign or zone,
-  // and dropping "all" keeps the list small and the lead oriented.
-  const mobileScoped = campaignId !== null || zoneId !== null;
 
   return (
     <Page className={shouldFade}>
       {/* Desktop header */}
       <div className="hidden md:block">
         <EditorHeader title="Turfs">
-          {campaignFilter("All campaigns")}
-          {zoneFilter("All zones")}
+          {campaignFilter}
+          {zoneFilter}
         </EditorHeader>
       </div>
-      {/* Mobile header: title row, then controls left-aligned */}
+      {/* Mobile header: title, then campaign + view toggle, then zone —
+          two filter rows so long campaign/zone names can't push the row
+          off-screen. */}
       <div className="mb-5 flex flex-col gap-3 md:hidden">
         <h1 className="text-xl font-extrabold tracking-wide italic">Turfs</h1>
         <div className="flex items-center gap-2">
-          {campaignFilter(null)}
-          {zoneFilter(null)}
+          {campaignFilter}
           <span className="flex-1" />
           <ToggleGroup
             variant="outline"
@@ -225,13 +234,10 @@ function TurfsIndex() {
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
+        <div className="flex items-center">{zoneFilter}</div>
       </div>
       <div className="md:hidden">
-        {!mobileScoped ? (
-          <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
-            Select a campaign or zone to see turfs
-          </div>
-        ) : view === "cards" ? (
+        {view === "cards" ? (
           <TurfCards campaignId={campaignId} zoneId={zoneId} onShowQr={showQr} />
         ) : (
           <CompactList
@@ -255,6 +261,7 @@ function TurfsIndex() {
         campaignId={campaignId}
         open={qrOpen}
         onOpenChange={setQrOpen}
+        onBack={prevQrTurf ? () => setQrTurf(prevQrTurf) : null}
         onNext={nextQrTurf ? () => setQrTurf(nextQrTurf) : null}
       />
       <WalksDialog
@@ -291,7 +298,10 @@ function regionName(t: TurfRow) {
 type WalkSummary = {
   walks: WalkRow[];
   names: string[]; // distinct canvassers who ever signed it out
+  activeNames: string[]; // distinct canvassers out right now
   live: boolean;
+  // A scan is only recorded for unattributed devices (identity sheet in
+  // progress), so pending is a hard state — no display debouncing needed.
   pending: boolean;
 };
 
@@ -299,19 +309,20 @@ const LIVE_MS = 12 * 60 * 60_000;
 
 function summarize(walks: WalkRow[], scannedAt: Date | string | undefined): WalkSummary {
   const names: string[] = [];
+  const activeNames: string[] = [];
   for (const w of walks) {
     if (!names.includes(w.canvasserName)) names.push(w.canvasserName);
+    const isActive = !w.closedAt && Date.now() - new Date(w.openedAt).getTime() < LIVE_MS;
+    if (isActive && !activeNames.includes(w.canvasserName)) activeNames.push(w.canvasserName);
   }
-  const live = walks.some(
-    (w) => !w.closedAt && Date.now() - new Date(w.openedAt).getTime() < LIVE_MS,
-  );
+  const live = activeNames.length > 0;
   let pending = false;
   if (scannedAt && !live) {
     const t = new Date(scannedAt).getTime();
     pending =
       Date.now() - t < PENDING_MS && !walks.some((w) => new Date(w.openedAt).getTime() >= t);
   }
-  return { walks, names, live, pending };
+  return { walks, names, activeNames, live, pending };
 }
 
 function useTurfRows(campaignId: string | null, zoneId: string | null) {
@@ -351,6 +362,31 @@ function useProgressByTurf(campaignId: string | null) {
   return useMemo(() => new Map((data ?? []).map((r) => [r.turfId, r.attempted])), [data]);
 }
 
+// Region-grouped rendering for mobile "All zones": one group per
+// (campaign, region) in row order — keyed on both because zone groups
+// can be shared across campaigns — headed "Campaign — Zone".
+function groupRows(rows: TurfRow[], grouped: boolean) {
+  if (!grouped) return [{ key: "", name: null as string | null, rows }];
+  const groups: { key: string; name: string | null; rows: TurfRow[] }[] = [];
+  const index = new Map<string, number>();
+  for (const t of rows) {
+    const key = `${t.campaignId}:${regionId(t) ?? "none"}`;
+    let i = index.get(key);
+    if (i === undefined) {
+      i = groups.length;
+      index.set(key, i);
+      const region = regionName(t);
+      groups.push({
+        key,
+        name: region ? `${t.campaignName} — ${region}` : t.campaignName,
+        rows: [],
+      });
+    }
+    groups[i]!.rows.push(t);
+  }
+  return groups;
+}
+
 // "01" — the label is the number; the word is the column header's job.
 function turfLabel(name: string) {
   const label = name.replace(/^turf\s+/i, "");
@@ -373,6 +409,20 @@ function qrValue(code: string) {
   return `${window.location.origin}/t/${code}`;
 }
 
+// "Prefix First Last +N": the first name truncates to the available
+// space; the overflow count is pinned and never clipped, so multiple
+// walkers always register even at dialog width.
+function NamesLine({ prefix, names }: { prefix: string; names: string[] }) {
+  return (
+    <span className="flex min-w-0 items-baseline gap-1">
+      <span className="truncate">
+        {prefix} {names[0]}
+      </span>
+      {names.length > 1 ? <span className="shrink-0">+{names.length - 1}</span> : null}
+    </span>
+  );
+}
+
 // Walk state inside the dialog, so a lead flipping through with Next
 // can't accidentally re-hand-out a turf that's already pending, out, or
 // walked. Rendered as an inset card matching the QR/code plates: white
@@ -380,16 +430,17 @@ function qrValue(code: string) {
 // Live via the same summaries the board uses — a scan landing while the
 // dialog is open flips this card in front of the lead.
 function QrStatus({ summary }: { summary: WalkSummary }) {
+  const { pending } = summary;
   const card = "flex items-center gap-2 rounded-lg border p-2.5 text-sm shadow-inner";
   if (summary.live) {
     return (
       <div className={card} style={{ ...blueBadge, borderColor: `${BLUE}40` }}>
         <Radio className="size-4 shrink-0 [stroke-width:2.5]" />
-        <span className="truncate">Out with {summary.names.join(", ")}</span>
+        <NamesLine prefix="Out with" names={summary.activeNames} />
       </div>
     );
   }
-  if (summary.pending) {
+  if (pending) {
     return (
       <div className={card} style={{ ...blueBadge, borderColor: `${BLUE}40` }}>
         <LoaderCircle className="size-4 shrink-0 animate-spin [stroke-width:2.5]" />
@@ -399,13 +450,13 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
   }
   if (summary.walks.length > 0) {
     return (
-      <div className={card} style={{ ...blueBadge, borderColor: `${BLUE}40` }}>
+      <div className={cn(card, "border-border bg-white text-black")}>
         {summary.walks.length >= 2 ? (
           <CheckCheck className="size-4 shrink-0 [stroke-width:2.5]" />
         ) : (
           <Check className="size-4 shrink-0 [stroke-width:2.5]" />
         )}
-        <span className="truncate">Walked by {summary.names.join(", ")}</span>
+        <NamesLine prefix="Walked by" names={summary.names} />
       </div>
     );
   }
@@ -421,21 +472,34 @@ function QrDialog({
   campaignId,
   open,
   onOpenChange,
+  onBack,
   onNext,
 }: {
   turf: TurfRow | null;
   campaignId: string | null;
   open: boolean;
   onOpenChange: (next: boolean) => void;
+  onBack: (() => void) | null;
   onNext: (() => void) | null;
 }) {
   const summaries = useWalkSummaries(campaignId);
+  // Copy feedback: the icon inside the code plate flips to a check for a
+  // beat. Reset whenever the dialog moves to another turf.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    setCopied(false);
+  }, [turf?.turfId]);
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1_500);
+    return () => clearTimeout(id);
+  }, [copied]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[300px] max-w-[80vw]">
         {turf?.turfCode ? (
           <>
-            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic">
+            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
               Turf {turfLabel(turf.name)}
               {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
@@ -450,21 +514,35 @@ function QrDialog({
                   className="h-auto w-full"
                 />
               </div>
-              <div className="rounded-lg border border-border bg-white py-2 text-center shadow-inner">
+              {/* The whole plate copies the code; the icon is the
+                  affordance (and flips to a check as feedback). */}
+              <button
+                type="button"
+                aria-label="Copy code"
+                onClick={() => {
+                  void navigator.clipboard.writeText(turf.turfCode!);
+                  setCopied(true);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-center gap-2.5",
+                  "rounded-lg border border-border bg-white py-2 shadow-inner",
+                )}
+              >
                 <span className="font-mono text-2xl tracking-widest text-black tabular-nums">
                   {turf.turfCode}
                 </span>
-              </div>
+                {copied ? (
+                  <Check className="size-4 shrink-0 text-black [stroke-width:2.5] animate-in fade-in duration-300" />
+                ) : (
+                  <Copy className="size-4 shrink-0 text-black [stroke-width:2.5] animate-in fade-in duration-300" />
+                )}
+              </button>
               <div className="mt-1 flex items-center justify-between">
-                <Button
-                  variant="outline"
-                  onClick={() => void navigator.clipboard.writeText(turf.turfCode!)}
-                >
-                  <Copy className="size-3.5" />
-                  Copy
-                </Button>
+                <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
                 <span className="flex items-center gap-2">
-                  <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+                  <Button variant="outline" disabled={!onBack} onClick={() => onBack?.()}>
+                    Back
+                  </Button>
                   <Button disabled={!onNext} onClick={() => onNext?.()}>
                     Next
                   </Button>
@@ -499,7 +577,7 @@ function WalksDialog({
       <DialogContent className="max-w-[85vw] pb-3 md:max-w-md">
         {turf ? (
           <>
-            <DialogTitle className="-mt-1 text-sm font-normal tracking-normal text-foreground italic">
+            <DialogTitle className="-mt-1 text-sm font-normal tracking-normal text-foreground italic tabular-nums">
               Turf {turfLabel(turf.name)}
               {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
@@ -523,7 +601,7 @@ function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
   if (summary.walks.length === 0) return <Pill />;
   const last = summary.walks[summary.walks.length - 1]!;
   return (
-    <Pill className="gap-1.5 font-mono tabular-nums" style={blueBadge}>
+    <Pill className="gap-1.5 font-mono tabular-nums">
       {summary.walks.length >= 2 ? <CheckCheck className="size-4" /> : <Check className="size-4" />}
       {formatMonthDay(last.openedAt, tz)}
     </Pill>
@@ -534,6 +612,7 @@ function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
 // scan is in flight (code resolved, walk not yet landed). Provisional
 // iconography — swap freely.
 function StatusBadge({ summary }: { summary: WalkSummary }) {
+  const { pending } = summary;
   if (summary.live) {
     return (
       <Pill className="justify-center" style={blueBadge}>
@@ -541,7 +620,7 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
       </Pill>
     );
   }
-  if (summary.pending) {
+  if (pending) {
     return (
       <Pill className="justify-center" style={blueBadge}>
         <LoaderCircle className="size-4 animate-spin" />
@@ -625,16 +704,23 @@ function TurfCards({
     );
   }
   return (
-    <div className="flex flex-col gap-3 pb-8">
-      {rows.map((t) => (
-        <TurfCard
-          key={t.turfId}
-          turf={t}
-          summary={summaries(t.turfId)}
-          pct={progressPct(progressByTurf.get(t.turfId), t.personCount)}
-          tz={tz}
-          onShowQr={onShowQr}
-        />
+    <div className="flex flex-col gap-6 pb-8">
+      {groupRows(rows, zoneId === null).map((group) => (
+        <div key={group.key} className="flex flex-col gap-3">
+          {group.name ? (
+            <h2 className="text-[18px] font-bold tracking-wide">{group.name}</h2>
+          ) : null}
+          {group.rows.map((t) => (
+            <TurfCard
+              key={t.turfId}
+              turf={t}
+              summary={summaries(t.turfId)}
+              pct={progressPct(progressByTurf.get(t.turfId), t.personCount)}
+              tz={tz}
+              onShowQr={onShowQr}
+            />
+          ))}
+        </div>
       ))}
     </div>
   );
@@ -657,14 +743,15 @@ function TurfCard({
   onShowQr: (turf: TurfRow) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { pending } = summary;
 
   const badge = "flex h-7 items-center gap-1 rounded-md px-2 text-sm";
   return (
     <div className="rounded-lg border border-border bg-white dark:bg-transparent">
       <div className="flex items-center gap-1.5 p-3">
-        <span className="w-8 text-lg font-bold tabular-nums">{turfLabel(turf.name)}</span>
+        <span className="w-8 text-[18px] font-bold tabular-nums">{turfLabel(turf.name)}</span>
         {summary.walks.length > 0 ? (
-          <span className={badge} style={blueBadge}>
+          <span className={cn(badge, "bg-muted")}>
             {summary.walks.length >= 2 ? (
               <CheckCheck className="size-4 [stroke-width:2.5]" />
             ) : (
@@ -676,7 +763,7 @@ function TurfCard({
           <span className={badge} style={blueBadge}>
             <Radio className="size-4 [stroke-width:2.5]" />
           </span>
-        ) : summary.pending ? (
+        ) : pending ? (
           <span className={badge} style={blueBadge}>
             <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
           </span>
@@ -706,16 +793,18 @@ function TurfCard({
           type="button"
           aria-label="History"
           onClick={() => setExpanded((prev) => !prev)}
-          className="flex items-center"
+          className="-ml-0.5 flex items-center"
         >
           <ChevronDown
             className={cn(
-              "size-5 text-muted-foreground [stroke-width:2.5] transition-transform duration-150",
+              "size-5 text-foreground [stroke-width:2.5] transition-transform duration-150",
               expanded && "rotate-180",
             )}
           />
         </button>
-        <span className="font-mono text-sm tabular-nums">{turf.turfCode ?? "—"}</span>
+        <span className={cn(badge, "ml-[8px] bg-muted font-mono tabular-nums")}>
+          {turf.turfCode ?? "—"}
+        </span>
         <span className="flex-1" />
         <Button
           variant="outline"
@@ -765,69 +854,81 @@ function CompactList({
   }
   const cell = "flex h-8 shrink-0 items-center justify-center rounded-md text-sm";
   return (
-    <div className="flex flex-col gap-1 pb-8">
-      {rows.map((t) => {
-        const summary = summaries(t.turfId);
-        const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
-        return (
-          <div key={t.turfId} className="flex items-center gap-1">
-            <span className={cn(cell, "w-9 bg-muted font-mono font-semibold tabular-nums")}>
-              {turfLabel(t.name)}
-            </span>
-            <Button
-              variant="outline"
-              aria-label="Scan"
-              className="min-w-0 flex-1"
-              disabled={!t.turfCode || t.status !== "active"}
-              onClick={() => onShowQr(t)}
-            >
-              <QrCode className="size-3.5" />
-            </Button>
-            <span
-              className={cn(cell, "w-9", summary.walks.length === 0 && "bg-muted")}
-              style={summary.walks.length > 0 ? blueBadge : undefined}
-            >
-              {summary.walks.length >= 2 ? (
-                <CheckCheck className="size-4 [stroke-width:2.5]" />
-              ) : summary.walks.length === 1 ? (
-                <Check className="size-4 [stroke-width:2.5]" />
-              ) : null}
-            </span>
-            <span
-              className={cn(cell, "w-9", !summary.live && !summary.pending && "bg-muted")}
-              style={summary.live || summary.pending ? blueBadge : undefined}
-            >
-              {summary.live ? (
-                <Radio className="size-4 [stroke-width:2.5]" />
-              ) : summary.pending ? (
-                <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
-              ) : null}
-            </span>
-            <span
-              className={cn(cell, "w-16 justify-start gap-1 bg-muted px-2 font-mono tabular-nums")}
-            >
-              <DoorClosed className="size-3.5 shrink-0" />
-              {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
-            </span>
-            <span
-              className={cn(cell, "w-12 justify-start bg-muted px-2 font-mono tabular-nums")}
-              style={pct !== null && pct > 0 ? progressStyle(pct) : undefined}
-            >
-              {pct === null ? "" : `${pct}%`}
-            </span>
-            <Button
-              variant="outline"
-              aria-label="Canvassers"
-              className="min-w-0 flex-1"
-              disabled={summary.walks.length === 0}
-              onClick={() => onShowWalks(t)}
-            >
-              <UsersRound className="size-3.5" />
-            </Button>
-          </div>
-        );
-      })}
+    <div className="flex flex-col gap-5 pb-8">
+      {groupRows(rows, zoneId === null).map((group) => (
+        <div key={group.key} className="flex flex-col gap-1">
+          {group.name ? (
+            <h2 className="mb-1 text-[18px] font-bold tracking-wide">{group.name}</h2>
+          ) : null}
+          {group.rows.map((t) => {
+            const summary = summaries(t.turfId);
+            const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
+            return (
+              <div key={t.turfId} className="flex items-center gap-1">
+                <span className={cn(cell, "w-9 bg-muted font-mono font-semibold tabular-nums")}>
+                  {turfLabel(t.name)}
+                </span>
+                <Button
+                  variant="outline"
+                  aria-label="Scan"
+                  className="min-w-0 flex-1"
+                  disabled={!t.turfCode || t.status !== "active"}
+                  onClick={() => onShowQr(t)}
+                >
+                  <QrCode className="size-3.5" />
+                </Button>
+                <span className={cn(cell, "w-9 bg-muted")}>
+                  {summary.walks.length >= 2 ? (
+                    <CheckCheck className="size-4 [stroke-width:2.5]" />
+                  ) : summary.walks.length === 1 ? (
+                    <Check className="size-4 [stroke-width:2.5]" />
+                  ) : null}
+                </span>
+                <CompactStatus summary={summary} cell={cell} />
+                <span
+                  className={cn(
+                    cell,
+                    "w-16 justify-start gap-1 bg-muted px-2 font-mono tabular-nums",
+                  )}
+                >
+                  <DoorClosed className="size-3.5 shrink-0" />
+                  {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
+                </span>
+                <span
+                  className={cn(cell, "w-12 justify-start bg-muted px-2 font-mono tabular-nums")}
+                  style={pct !== null && pct > 0 ? progressStyle(pct) : undefined}
+                >
+                  {pct === null ? "" : `${pct}%`}
+                </span>
+                <Button
+                  variant="outline"
+                  aria-label="Canvassers"
+                  className="min-w-0 flex-1"
+                  disabled={summary.walks.length === 0}
+                  onClick={() => onShowWalks(t)}
+                >
+                  <UsersRound className="size-3.5" />
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
+  );
+}
+
+function CompactStatus({ summary, cell }: { summary: WalkSummary; cell: string }) {
+  const { pending } = summary;
+  const active = summary.live || pending;
+  return (
+    <span className={cn(cell, "w-9", !active && "bg-muted")} style={active ? blueBadge : undefined}>
+      {summary.live ? (
+        <Radio className="size-4 [stroke-width:2.5]" />
+      ) : pending ? (
+        <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
+      ) : null}
+    </span>
   );
 }
 

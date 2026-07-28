@@ -5,6 +5,7 @@ import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
+import { roleLabel } from "~/lib/permissions";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { client } from "~/rpc/client";
 
@@ -47,7 +48,7 @@ function AccountPage() {
 
         <Field label="Role">
           <Pill>
-            <span className="capitalize">{user.role}</span>
+            <span>{roleLabel(user.role)}</span>
           </Pill>
         </Field>
 
