@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { ActionSheetIOS, Alert, Pressable, Text, View } from "react-native";
+import { ActionSheetIOS, Alert, Linking, Pressable, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -203,7 +203,29 @@ export default function SettingsScreen() {
           <SyncStatusLine status={syncStatus} />
         </View>
       </View>
+
+      {/* Absolute so the centered button stack keeps its position. */}
+      <View
+        className="absolute inset-x-0 flex-row justify-center gap-10"
+        style={{ bottom: insets.bottom + 12 }}
+      >
+        <FooterLink title="Privacy" url="https://turf.tools/privacy" />
+        <FooterLink title="Support" url="https://turf.tools/support" />
+      </View>
     </View>
+  );
+}
+
+function FooterLink({ title, url }: { title: string; url: string }) {
+  return (
+    <Pressable onPress={() => void Linking.openURL(url)} hitSlop={8} className="active:opacity-60">
+      <Text
+        className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
+        style={{ fontFamily: "Geist_400Regular" }}
+      >
+        {title}
+      </Text>
+    </Pressable>
   );
 }
 

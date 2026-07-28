@@ -31,7 +31,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Show current location on map.",
+          "locationWhenInUsePermission": "Shows your position on the map while you canvass. Your location stays on your device.",
           "locationAlwaysAndWhenInUsePermission": false,
           "locationAlwaysPermission": false
         }
