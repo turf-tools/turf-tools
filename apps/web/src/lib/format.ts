@@ -19,6 +19,12 @@ export function formatDate(value: Date | string | null | undefined, timezone: st
   });
 }
 
+// MM/DD/YY h:mm AM/PM — for timestamps where the clock matters (imports).
+export function formatDateTime(value: Date | string | null | undefined, timezone: string) {
+  if (!value) return "—";
+  return `${formatDate(value, timezone)} ${formatTime(value, timezone)}`;
+}
+
 // MM/DD — for badge-sized contexts (the walked-date chip) where the
 // year is noise.
 export function formatMonthDay(value: Date | string | null | undefined, timezone: string) {
