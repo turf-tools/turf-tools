@@ -19,25 +19,27 @@ import {
 import { hasPermission, type Permission } from "~/lib/permissions";
 import { cn } from "~/lib/utils";
 
-type NavItem = {
+export type NavItem = {
   to: string;
   label: string;
   icon: LucideIcon;
   requires?: Permission;
 };
 
-const PRIMARY: NavItem[] = [
-  { to: "/$orgSlug/overview", label: "Overview", icon: LayoutDashboard },
-  { to: "/$orgSlug/campaigns", label: "Campaigns", icon: Megaphone },
-  { to: "/$orgSlug/segments", label: "Segments", icon: Layers },
-  { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints },
+// Everything except Turfs requires voter-data access — field leads see
+// only the turfs board (plus Settings/Account below).
+export const PRIMARY: NavItem[] = [
+  { to: "/$orgSlug/overview", label: "Overview", icon: LayoutDashboard, requires: "voter.read" },
+  { to: "/$orgSlug/campaigns", label: "Campaigns", icon: Megaphone, requires: "voter.read" },
+  { to: "/$orgSlug/segments", label: "Segments", icon: Layers, requires: "voter.read" },
+  { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints, requires: "voter.read" },
   { to: "/$orgSlug/turfs", label: "Turfs", icon: Map },
-  { to: "/$orgSlug/lookup", label: "Lookup", icon: Search },
-  { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen },
-  { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck },
+  { to: "/$orgSlug/lookup", label: "Lookup", icon: Search, requires: "voter.read" },
+  { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen, requires: "voter.read" },
+  { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck, requires: "voter.read" },
 ];
 
-const SECONDARY: NavItem[] = [
+export const SECONDARY: NavItem[] = [
   { to: "/$orgSlug/users", label: "Users", icon: Users, requires: "users.manage" },
   { to: "/$orgSlug/data", label: "Data", icon: Database, requires: "datasets.manage" },
   { to: "/$orgSlug/settings", label: "Settings", icon: Settings },

@@ -23,10 +23,13 @@ type BreadcrumbProps = {
 export function Breadcrumb({ orgSlug, orgName, orgs, children }: BreadcrumbProps) {
   const isMulti = orgs.length > 1;
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <span className="font-bold text-foreground italic">Turf Tools</span>
-      <Separator />
-      <span className="italic text-foreground">{orgName}</span>
+    <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+      {/* The wordmark is redundant inside the app on a phone — the org
+          is the identity that matters; truncate it so the switcher and
+          right-side chrome never get pushed out. */}
+      <span className="hidden font-bold text-foreground italic md:inline">Turf Tools</span>
+      <Separator className="hidden md:inline" />
+      <span className="max-w-[45vw] truncate italic text-foreground md:max-w-none">{orgName}</span>
       {isMulti ? <OrgSwitcher currentSlug={orgSlug} orgs={orgs} /> : null}
       {children ? (
         <>
@@ -80,6 +83,6 @@ function OrgSwitcher({
   );
 }
 
-function Separator() {
-  return <span className="text-muted-foreground/50">/</span>;
+function Separator({ className }: { className?: string }) {
+  return <span className={cn("text-muted-foreground/50", className)}>/</span>;
 }

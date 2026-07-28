@@ -75,6 +75,19 @@ async function loadMembership(db: Db, userId: string, orgSlug: string): Promise<
   };
 }
 
+// buildWebContext plus the voter-data gate — for the non-RPC data routes
+// (exports, point streams, boundaries, custom fields). Field leads never
+// see voter data; the throw lands in each route's existing 401 catch.
+export async function buildVoterDataContext(
+  db: Db,
+  headers: Headers,
+  orgSlug: string,
+): Promise<WebContext> {
+  const ctx = await buildWebContext(db, headers, orgSlug);
+  if (!hasPermission(ctx.role, "voter.read")) throw new ORPCError("FORBIDDEN");
+  return ctx;
+}
+
 export const webBase = os.$context<WebContext>();
 export const webPub = webBase.route({ method: "GET" });
 export const webMut = webBase.route({ method: "POST" });

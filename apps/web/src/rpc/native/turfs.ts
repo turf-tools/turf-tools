@@ -1,7 +1,9 @@
 import { and, eq } from "@turf-tools/db";
-import { turfData, turfs } from "@turf-tools/db/schema";
+import { campaigns, turfData, turfs } from "@turf-tools/db/schema";
 import type { TurfData } from "@turf-tools/db/schema";
 import { z } from "zod";
+import { publish } from "~/lib/server/live";
+import { recordScan } from "~/lib/server/scans";
 import { nativePub as pub } from "../context";
 
 // Shared select shape for turf list/detail responses. The
@@ -34,14 +36,36 @@ export const getById = pub
 // Filtered to `status = 'active'` because turf codes can repeat
 // across archived rows (the unique constraint is partial). Archived
 // turfs no longer honor their codes — canvassers can't access them.
+//
+// An unattributed resolution (device has no canvasser yet, so the bind
+// is about to park behind the identity sheet) is also the handoff
+// signal: it records the scan so the lead's board flips to "pending"
+// the moment the canvasser commits. Attributed devices skip the signal
+// entirely — their walk lands a second later, and a pending state in
+// between would only flash. The signal ends by walk arrival or decay,
+// never a cancel: a lingering spinner is safer than a vanished one when
+// the goal is preventing duplicate handouts. (getById, the
+// relaunch-rebind path, deliberately doesn't signal.)
 export const getByCode = pub
-  .input(z.object({ code: z.string().min(1) }))
+  .input(z.object({ code: z.string().min(1), attributed: z.boolean().optional() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
-      .select(turfSelect)
+      .select({
+        ...turfSelect,
+        campaignId: turfs.campaignId,
+        organizationId: campaigns.organizationId,
+      })
       .from(turfs)
+      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
       .where(and(eq(turfs.turfCode, input.code), eq(turfs.status, "active")));
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    if (input.attributed === false) {
+      recordScan(row.turfId, row.organizationId, row.campaignId);
+      publish(row.organizationId);
+    }
+    const { organizationId: _, campaignId: __, ...turf } = row;
+    return turf;
   });
 
 // Fetch the buildings → doors → persons payload for a single turf.
