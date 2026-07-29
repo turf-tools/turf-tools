@@ -6,8 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   Text,
   TextInput,
@@ -84,15 +86,14 @@ export default function PersonScreen() {
   // Optimistic mirrors: taps update local state immediately so the
   // check renders/clears this frame; useEffect re-syncs from derived
   // once the event lands in the live query. Skipped while an open-ended
-  // input is focused — the landed event carries the text as of the last
-  // emit, and re-syncing mid-typing would eat keystrokes.
-  const textFocusedRef = useRef(false);
+  // draft is uncommitted — a landed event carries text as of the last
+  // emit, and re-syncing would eat keystrokes typed since.
   const textDirtyRef = useRef(false);
   const derivedResponses = summary?.responsesByQuestion ?? EMPTY_RESPONSES;
   const [responsesByQuestion, setResponsesByQuestion] =
     useState<Map<string, ResponseValue>>(derivedResponses);
   useEffect(() => {
-    if (textFocusedRef.current) return;
+    if (textDirtyRef.current) return;
     setResponsesByQuestion(derivedResponses);
   }, [derivedResponses]);
 
@@ -113,6 +114,9 @@ export default function PersonScreen() {
   // responses, and present responses imply "canvassed". Blank text and
   // empty option sets are dropped — only meaningful answers ship.
   const emitResult = (next: Map<string, ResponseValue>, outcome: string | null) => {
+    // Every emit is a full snapshot (text included), so any emit settles
+    // a pending text draft.
+    textDirtyRef.current = false;
     const responses: Record<string, ResponseValue> = {};
     let resolvedOutcome = outcome;
     if (!outcome) {
@@ -130,10 +134,10 @@ export default function PersonScreen() {
   };
 
   const clearResult = () => {
+    Keyboard.dismiss();
     if (unavailableOutcome === null && responsesByQuestion.size === 0) return;
     setUnavailableOutcome(null);
     setResponsesByQuestion(new Map());
-    textDirtyRef.current = false;
     emitResult(new Map(), null);
   };
 
@@ -141,6 +145,10 @@ export default function PersonScreen() {
   // local state and emit on blur / Submit (per-keystroke events would
   // flood the append-only log).
   const toggleOption = (questionId: string, optionId: string, multi: boolean) => {
+    // Answering another question while typing should also put the
+    // keyboard away — option buttons handle their own taps, so the
+    // blank-space dismisser never sees them.
+    Keyboard.dismiss();
     const next = new Map(responsesByQuestion);
     const current = next.get(questionId);
     const ids = current && "optionIds" in current ? current.optionIds : [];
@@ -174,6 +182,26 @@ export default function PersonScreen() {
     textDirtyRef.current = false;
     emitResult(responsesByQuestion, null);
   };
+
+  // Ref indirection so once-registered listeners/cleanups see fresh state.
+  const commitTextRef = useRef(commitText);
+  commitTextRef.current = commitText;
+
+  // Android's back gesture hides the keyboard without blurring the input,
+  // which would strand a draft — commit directly. No forced blur: didHide
+  // fires when the hide animation completes, so a quick re-tap into the
+  // input would get blurred by the previous dismissal's late event. iOS
+  // never hides the keyboard while an input is focused, so its blur path
+  // always commits first.
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const sub = Keyboard.addListener("keyboardDidHide", () => commitTextRef.current());
+    return () => sub.remove();
+  }, []);
+
+  // Last-resort commit: leaving the screen (back gesture, list nav) with
+  // an uncommitted draft must not drop the answer.
+  useEffect(() => () => commitTextRef.current(), []);
 
   const handleListPress = () => {
     setOpenSheet(true);
@@ -269,128 +297,133 @@ export default function PersonScreen() {
         className="flex-1"
       >
         <ScrollView keyboardShouldPersistTaps="handled">
-          {/* Person header */}
-          <View className="px-5 pt-5 pb-3">
-            <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
-              {toTitleCase(fullName)}
-            </Text>
-            <View className="flex-row items-center gap-2">
-              {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
-              {person.gender !== undefined && <Pill>{formatGender(person)}</Pill>}
-              {person.enrollment !== undefined && <Pill>{formatEnrollment(person)}</Pill>}
-              <View className="flex-1" />
-              {(() => {
-                const role = responsesExist ? "contacted" : "unavailable";
-                return (
-                  <>
-                    {noteExists && (
-                      <Pill
-                        style={recorded ? { backgroundColor: colors[role].background } : undefined}
-                        icon={
-                          <Scroll
-                            size={18}
-                            color={recorded ? colors[role].foreground : iconColor}
-                          />
-                        }
-                      />
-                    )}
-                    {recorded && (
-                      <Pill
-                        style={{ backgroundColor: colors[role].background }}
-                        icon={<Check size={18} color={colors[role].foreground} strokeWidth={2.5} />}
-                      />
-                    )}
-                  </>
-                );
-              })()}
-            </View>
-          </View>
-
-          {/* Mode switch buttons */}
-          <View className="px-5 py-3 gap-2">
-            <WideButton
-              label="Contact not available"
-              icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
-              selected={mode === "unavailable"}
-              onPress={() => {
-                if (mode === "unavailable") {
-                  clearResult();
-                  setMode("script");
-                } else {
-                  setMode("unavailable");
-                }
-              }}
-            />
-            <View className="flex-row gap-2">
-              <View className="flex-1">
-                <WideButton
-                  label="Add a note"
-                  icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
-                  selected={mode === "note"}
-                  onPress={() => setMode(mode === "note" ? "script" : "note")}
-                />
+          {/* Taps on blank space dismiss the keyboard (and blur-commit any
+              open-ended draft) — RN doesn't do this for non-interactive
+              views on its own. Child touchables still win the responder. */}
+          <Pressable onPress={Keyboard.dismiss} accessible={false}>
+            {/* Person header */}
+            <View className="px-5 pt-5 pb-3">
+              <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
+                {toTitleCase(fullName)}
+              </Text>
+              <View className="flex-row items-center gap-2">
+                {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
+                {person.gender !== undefined && <Pill>{formatGender(person)}</Pill>}
+                {person.enrollment !== undefined && <Pill>{formatEnrollment(person)}</Pill>}
+                <View className="flex-1" />
+                {(() => {
+                  const role = responsesExist ? "contacted" : "unavailable";
+                  return (
+                    <>
+                      {noteExists && (
+                        <Pill
+                          style={
+                            recorded ? { backgroundColor: colors[role].background } : undefined
+                          }
+                          icon={
+                            <Scroll
+                              size={18}
+                              color={recorded ? colors[role].foreground : iconColor}
+                            />
+                          }
+                        />
+                      )}
+                      {recorded && (
+                        <Pill
+                          style={{ backgroundColor: colors[role].background }}
+                          icon={
+                            <Check size={18} color={colors[role].foreground} strokeWidth={2.5} />
+                          }
+                        />
+                      )}
+                    </>
+                  );
+                })()}
               </View>
-              <View className="flex-1">
-                <WideButton
-                  label="View details"
-                  icon={
-                    <Scroll size={18} color={mode === "details" ? iconColor : mutedIconColor} />
+            </View>
+
+            {/* Mode switch buttons */}
+            <View className="px-5 py-3 gap-2">
+              <WideButton
+                label="Contact not available"
+                icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
+                selected={mode === "unavailable"}
+                onPress={() => {
+                  if (mode === "unavailable") {
+                    clearResult();
+                    setMode("script");
+                  } else {
+                    setMode("unavailable");
                   }
-                  selected={mode === "details"}
-                  onPress={() => setMode(mode === "details" ? "script" : "details")}
-                />
+                }}
+              />
+              <View className="flex-row gap-2">
+                <View className="flex-1">
+                  <WideButton
+                    label="Add a note"
+                    icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
+                    selected={mode === "note"}
+                    onPress={() => setMode(mode === "note" ? "script" : "note")}
+                  />
+                </View>
+                <View className="flex-1">
+                  <WideButton
+                    label="View details"
+                    icon={
+                      <Scroll size={18} color={mode === "details" ? iconColor : mutedIconColor} />
+                    }
+                    selected={mode === "details"}
+                    onPress={() => setMode(mode === "details" ? "script" : "details")}
+                  />
+                </View>
               </View>
             </View>
-          </View>
 
-          {/* Mode-specific content */}
-          <View className="px-5 pt-7">
-            {mode === "script" && (
-              <ScriptContent
-                scriptQuery={scriptQuery}
-                responses={responsesByQuestion}
-                onToggleOption={toggleOption}
-                onChangeText={changeText}
-                onTextFocus={(focused) => {
-                  textFocusedRef.current = focused;
-                  if (!focused) commitText();
-                }}
-                onSubmit={commitText}
-                onClear={clearResult}
-              />
-            )}
-            {mode === "unavailable" && (
-              <UnavailableContent
-                selectedOutcome={unavailableOutcome ?? undefined}
-                onSelectOption={(value) => {
-                  setUnavailableOutcome(value);
-                  setResponsesByQuestion(new Map());
-                  textDirtyRef.current = false;
-                  emitResult(new Map(), value);
-                }}
-                onClear={clearResult}
-                onCancel={() => {
-                  clearResult();
-                  setMode("script");
-                }}
-              />
-            )}
-            {mode === "note" && (
-              <NoteContent
-                notes={formattedNotes}
-                onSubmitNote={(text) => {
-                  recordEvent({
-                    personId,
-                    kind: "note",
-                    payload: { kind: "note", text },
-                  });
-                  setMode("script");
-                }}
-                onCancel={() => setMode("script")}
-              />
-            )}
-            {mode === "details" && <DetailsContent person={person} notes={formattedNotes} />}
-          </View>
+            {/* Mode-specific content */}
+            <View className="px-5 pt-7">
+              {mode === "script" && (
+                <ScriptContent
+                  scriptQuery={scriptQuery}
+                  responses={responsesByQuestion}
+                  onToggleOption={toggleOption}
+                  onChangeText={changeText}
+                  onTextBlur={commitText}
+                  onSubmit={commitText}
+                  onClear={clearResult}
+                />
+              )}
+              {mode === "unavailable" && (
+                <UnavailableContent
+                  selectedOutcome={unavailableOutcome ?? undefined}
+                  onSelectOption={(value) => {
+                    setUnavailableOutcome(value);
+                    setResponsesByQuestion(new Map());
+                    emitResult(new Map(), value);
+                  }}
+                  onClear={clearResult}
+                  onCancel={() => {
+                    clearResult();
+                    setMode("script");
+                  }}
+                />
+              )}
+              {mode === "note" && (
+                <NoteContent
+                  notes={formattedNotes}
+                  onSubmitNote={(text) => {
+                    recordEvent({
+                      personId,
+                      kind: "note",
+                      payload: { kind: "note", text },
+                    });
+                    setMode("script");
+                  }}
+                  onCancel={() => setMode("script")}
+                />
+              )}
+              {mode === "details" && <DetailsContent person={person} notes={formattedNotes} />}
+            </View>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -448,7 +481,7 @@ function ScriptContent({
   responses,
   onToggleOption,
   onChangeText,
-  onTextFocus,
+  onTextBlur,
   onSubmit,
   onClear,
 }: {
@@ -456,7 +489,7 @@ function ScriptContent({
   responses: Map<string, ResponseValue>;
   onToggleOption: (questionId: string, optionId: string, multi: boolean) => void;
   onChangeText: (questionId: string, text: string) => void;
-  onTextFocus: (focused: boolean) => void;
+  onTextBlur: () => void;
   onSubmit: () => void;
   onClear: () => void;
 }) {
@@ -498,7 +531,7 @@ function ScriptContent({
               <OpenEndedInput
                 text={value && "text" in value ? value.text : ""}
                 onChangeText={(t) => onChangeText(step.questionId, t)}
-                onFocusChange={onTextFocus}
+                onBlur={onTextBlur}
               />
             </View>
           );
@@ -548,11 +581,11 @@ function ScriptContent({
 function OpenEndedInput({
   text,
   onChangeText,
-  onFocusChange,
+  onBlur,
 }: {
   text: string;
   onChangeText: (text: string) => void;
-  onFocusChange: (focused: boolean) => void;
+  onBlur: () => void;
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const [focused, setFocused] = useState(false);
@@ -560,13 +593,10 @@ function OpenEndedInput({
     <TextInput
       value={text}
       onChangeText={onChangeText}
-      onFocus={() => {
-        setFocused(true);
-        onFocusChange(true);
-      }}
+      onFocus={() => setFocused(true)}
       onBlur={() => {
         setFocused(false);
-        onFocusChange(false);
+        onBlur();
       }}
       placeholder="Type an answer..."
       placeholderTextColor={isDark ? "#666" : "#999"}
