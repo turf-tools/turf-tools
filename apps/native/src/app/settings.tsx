@@ -258,13 +258,13 @@ function SyncStatusLine({ status }: { status: ReturnType<typeof useSyncStatus> }
   return (
     <View className="items-center gap-0.5" style={{ minHeight: 56 }}>
       <Text
-        className="text-lg text-muted-foreground dark:text-muted-foreground-dark"
+        className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
         style={{ fontFamily: "Geist_400Regular" }}
       >
         {headline ?? " "}
       </Text>
       <Text
-        className="text-lg text-muted-foreground dark:text-muted-foreground-dark"
+        className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
         style={{ fontFamily: "Geist_400Regular" }}
       >
         {pendingCount > 0
