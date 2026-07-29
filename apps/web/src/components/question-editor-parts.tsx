@@ -16,6 +16,11 @@ import { client } from "~/rpc/client";
 
 export type BadgeMeta = { label: string; color: string };
 
+export type ResponseType = "single_select" | "multi_select" | "open_ended";
+
+// Picker order.
+export const RESPONSE_TYPES: ResponseType[] = ["single_select", "multi_select", "open_ended"];
+
 // Keyed by questions.responseType.
 export const RESPONSE_TYPE_META: Record<string, BadgeMeta> = {
   single_select: { label: "Single Select", color: BLUE },
@@ -220,6 +225,15 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
   };
 
   if (!question) return null;
+
+  // Open-ended questions have no options — canvassers type the answer.
+  if (question.responseType === "open_ended") {
+    return (
+      <span className="text-sm text-muted-foreground italic">
+        Answers are typed in by the canvasser
+      </span>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-1.5">
