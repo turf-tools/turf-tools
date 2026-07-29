@@ -1,7 +1,7 @@
-import { MarkerView } from "@maplibre/maplibre-react-native";
+import { MarkerView, PointAnnotation } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
-import { AppState, View } from "react-native";
+import { AppState, Platform, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -182,36 +182,57 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
   const ringColor = isDark ? "#000000" : "#ffffff";
   const containerSize = Math.ceil(DOT_SIZE * HALO_SCALE);
 
-  return (
-    <MarkerView coordinate={coord} allowOverlap>
-      <View
-        pointerEvents="none"
-        className="items-center justify-center"
-        style={{ width: containerSize, height: containerSize }}
-      >
-        <Animated.View
-          style={[
-            {
-              position: "absolute",
-              width: DOT_SIZE,
-              height: DOT_SIZE,
-              borderRadius: DOT_SIZE / 2,
-              backgroundColor: dotColor,
-            },
-            haloStyle,
-          ]}
-        />
-        <View
-          className="rounded-full"
-          style={{
+  const marker = (
+    <View
+      pointerEvents="none"
+      className="items-center justify-center"
+      style={{ width: containerSize, height: containerSize }}
+    >
+      <Animated.View
+        style={[
+          {
+            position: "absolute",
             width: DOT_SIZE,
             height: DOT_SIZE,
-            borderWidth: OUTLINE_WIDTH,
+            borderRadius: DOT_SIZE / 2,
             backgroundColor: dotColor,
-            borderColor: ringColor,
-          }}
-        />
-      </View>
+          },
+          haloStyle,
+        ]}
+      />
+      <View
+        className="rounded-full"
+        style={{
+          width: DOT_SIZE,
+          height: DOT_SIZE,
+          borderWidth: OUTLINE_WIDTH,
+          backgroundColor: dotColor,
+          borderColor: ringColor,
+        }}
+      />
+    </View>
+  );
+
+  // iOS: PointAnnotation directly (it's what MarkerView renders on iOS
+  // anyway) with `enabled: false` — the map's annotation hit-test skips
+  // disabled views, so a tap on the dot falls through to whatever map
+  // layer is underneath (e.g. the building being stood at). The prop is
+  // exposed by our patch to @maplibre/maplibre-react-native (see
+  // patches/); MapLibre itself honors it in annotationTagAtPoint.
+  if (Platform.OS === "ios") {
+    return (
+      <PointAnnotation id="user-location-dot" coordinate={coord} enabled={false}>
+        {marker}
+      </PointAnnotation>
+    );
+  }
+
+  // Android: MarkerView is a live view (PointAnnotation would rasterize
+  // the children and freeze the halo). Tap pass-through unverified there —
+  // check when Android ships.
+  return (
+    <MarkerView coordinate={coord} allowOverlap>
+      {marker}
     </MarkerView>
   );
 }

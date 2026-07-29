@@ -1,0 +1,89 @@
+diff --git a/ios/MLRN/MLRNPointAnnotation.m b/ios/MLRN/MLRNPointAnnotation.m
+index 7552a0743490017c0b897a0fa59bcc14e04d1851..93dde4a7886daf2e7d222111d999b3e651996af9 100644
+--- a/ios/MLRN/MLRNPointAnnotation.m
++++ b/ios/MLRN/MLRNPointAnnotation.m
+@@ -110,7 +110,6 @@ - (MLNAnnotationView *)getAnnotationView {
+     return nil;
+   } else {
+     // custom view
+-    self.enabled = YES;
+     const CGFloat defaultZPosition = 0.0;
+     if (self.layer.zPosition == defaultZPosition) {
+       self.layer.zPosition = [self _getZPosition];
+@@ -125,6 +124,13 @@ - (CGFloat)_getZPosition {
+   return latitudeMax - self.coordinate.latitude;
+ }
+ 
++- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
++  if (!self.enabled) {
++    return nil;
++  }
++  return [super hitTest:point withEvent:event];
++}
++
+ - (void)_handleTap:(UITapGestureRecognizer *)recognizer {
+   [_map selectAnnotation:self animated:NO completionHandler:nil];
+ }
+diff --git a/ios/MLRN/MLRNPointAnnotationManager.m b/ios/MLRN/MLRNPointAnnotationManager.m
+index 7f8721e7f9aa712b253c26e77879e81e6e548d83..098a90e89e4d8faa41d0c14348aa632e84c81d30 100644
+--- a/ios/MLRN/MLRNPointAnnotationManager.m
++++ b/ios/MLRN/MLRNPointAnnotationManager.m
+@@ -8,6 +8,7 @@ @implementation MLRNPointAnnotationManager
+ RCT_EXPORT_VIEW_PROPERTY(id, NSString)
+ RCT_EXPORT_VIEW_PROPERTY(anchor, NSDictionary)
+ 
++RCT_EXPORT_VIEW_PROPERTY(enabled, BOOL)
+ RCT_REMAP_VIEW_PROPERTY(selected, reactSelected, BOOL)
+ RCT_REMAP_VIEW_PROPERTY(title, reactTitle, NSString)
+ RCT_REMAP_VIEW_PROPERTY(snippet, reactSnippet, NSString)
+diff --git a/lib/typescript/commonjs/src/components/PointAnnotation.d.ts b/lib/typescript/commonjs/src/components/PointAnnotation.d.ts
+index cd0d8845d53a326bc4e3874605dc023607f46af7..8a3db55d0fa17f00b4f13386344a9d943ab7c394 100644
+--- a/lib/typescript/commonjs/src/components/PointAnnotation.d.ts
++++ b/lib/typescript/commonjs/src/components/PointAnnotation.d.ts
+@@ -18,6 +18,12 @@ export interface PointAnnotationProps {
+      * The string containing the annotation’s snippet(subtitle). Not displayed in the default callout.
+      */
+     snippet?: string;
++    /**
++     * Whether the annotation participates in the map's tap hit-testing.
++     * Set false for purely decorative annotations so taps fall through to
++     * map layers underneath. iOS only.
++     */
++    enabled?: boolean;
+     /**
+      * Manually selects/deselects annotation
+      */
+diff --git a/lib/typescript/module/src/components/PointAnnotation.d.ts b/lib/typescript/module/src/components/PointAnnotation.d.ts
+index cd0d8845d53a326bc4e3874605dc023607f46af7..8a3db55d0fa17f00b4f13386344a9d943ab7c394 100644
+--- a/lib/typescript/module/src/components/PointAnnotation.d.ts
++++ b/lib/typescript/module/src/components/PointAnnotation.d.ts
+@@ -18,6 +18,12 @@ export interface PointAnnotationProps {
+      * The string containing the annotation’s snippet(subtitle). Not displayed in the default callout.
+      */
+     snippet?: string;
++    /**
++     * Whether the annotation participates in the map's tap hit-testing.
++     * Set false for purely decorative annotations so taps fall through to
++     * map layers underneath. iOS only.
++     */
++    enabled?: boolean;
+     /**
+      * Manually selects/deselects annotation
+      */
+diff --git a/src/components/PointAnnotation.tsx b/src/components/PointAnnotation.tsx
+index 0e7294f9e89497a42d67c8ebf6caba47982fc55f..31623f167298d045aa7ed6c96f20fee8781c1705 100644
+--- a/src/components/PointAnnotation.tsx
++++ b/src/components/PointAnnotation.tsx
+@@ -48,6 +48,12 @@ export interface PointAnnotationProps {
+    * The string containing the annotation’s snippet(subtitle). Not displayed in the default callout.
+    */
+   snippet?: string;
++  /**
++   * Whether the annotation participates in the map's tap hit-testing.
++   * Set false for purely decorative annotations so taps fall through to
++   * map layers underneath. iOS only.
++   */
++  enabled?: boolean;
+   /**
+    * Manually selects/deselects annotation
+    */
