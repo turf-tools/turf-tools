@@ -121,7 +121,7 @@ export default function CanvasserScreen() {
           User info
         </Text>
         <Text
-          className="px-4 mb-6 mt-6 text-center text-lg leading-6 text-muted-foreground dark:text-muted-foreground-dark"
+          className="px-4 mb-6 mt-6 text-center text-xl leading-6 text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
           Your contact information helps organizers know who did the canvassing, and allows them to
