@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -38,6 +39,16 @@ type Mode = "script" | "unavailable" | "note" | "details";
 // Stable reference so the derivedResponses useEffect doesn't fire
 // every render when the person has no events yet.
 const EMPTY_RESPONSES = new Map<string, ResponseValue>();
+
+// Trailing debounce for tap emits (answers and unavailable outcomes): a
+// tap burst at a doorstep collapses into one snapshot event instead of
+// one per tap — each isolated send costs a full cellular radio wake+tail,
+// so cadence, not payload, is what drains canvasser batteries. Flushed
+// early only where context dies — Submit / person change / unmount /
+// app background — so the crash-loss window is only ever these few
+// seconds of the newest edits. Text blur just schedules too: blur is an
+// edit boundary like a tap, and keeps emits off focused inputs.
+const EMIT_DEBOUNCE_MS = 5000;
 
 const UNAVAILABLE_OPTIONS: Array<{
   value: string;
@@ -85,23 +96,38 @@ export default function PersonScreen() {
 
   // Optimistic mirrors: taps update local state immediately so the
   // check renders/clears this frame; useEffect re-syncs from derived
-  // once the event lands in the live query. Skipped while an open-ended
-  // draft is uncommitted — a landed event carries text as of the last
-  // emit, and re-syncing would eat keystrokes typed since.
+  // once the event lands in the live query. Skipped while anything is
+  // uncommitted (text draft or debounced taps) — a landed event carries
+  // state as of the last emit, and re-syncing would revert edits made
+  // since.
   const textDirtyRef = useRef(false);
+  const pendingEmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const derivedResponses = summary?.responsesByQuestion ?? EMPTY_RESPONSES;
   const [responsesByQuestion, setResponsesByQuestion] =
     useState<Map<string, ResponseValue>>(derivedResponses);
   useEffect(() => {
-    if (textDirtyRef.current) return;
+    if (textDirtyRef.current || pendingEmitRef.current != null) return;
     setResponsesByQuestion(derivedResponses);
   }, [derivedResponses]);
+  // Fresh-state mirror for timer callbacks and unmount cleanups.
+  const responsesRef = useRef(responsesByQuestion);
+  responsesRef.current = responsesByQuestion;
 
   const derivedOutcome = summary?.currentOutcome ?? null;
   const [unavailableOutcome, setUnavailableOutcome] = useState<string | null>(derivedOutcome);
   useEffect(() => {
+    if (textDirtyRef.current || pendingEmitRef.current != null) return;
     setUnavailableOutcome(derivedOutcome);
   }, [derivedOutcome]);
+  const outcomeRef = useRef(unavailableOutcome);
+  outcomeRef.current = unavailableOutcome;
+  // Writes go through this so the ref is fresh for timer callbacks even
+  // before React re-renders — a debounced emit reads the (responses,
+  // outcome) pair from refs, and mutual exclusion must hold there too.
+  const setOutcome = (value: string | null) => {
+    setUnavailableOutcome(value);
+    outcomeRef.current = value;
+  };
 
   const [mode, setMode] = useState<Mode>("script");
 
@@ -114,9 +140,13 @@ export default function PersonScreen() {
   // responses, and present responses imply "canvassed". Blank text and
   // empty option sets are dropped — only meaningful answers ship.
   const emitResult = (next: Map<string, ResponseValue>, outcome: string | null) => {
-    // Every emit is a full snapshot (text included), so any emit settles
-    // a pending text draft.
+    // Every emit is a full snapshot, so any emit settles a pending text
+    // draft AND supersedes any debounced tap emit still on the timer.
     textDirtyRef.current = false;
+    if (pendingEmitRef.current != null) {
+      clearTimeout(pendingEmitRef.current);
+      pendingEmitRef.current = null;
+    }
     const responses: Record<string, ResponseValue> = {};
     let resolvedOutcome = outcome;
     if (!outcome) {
@@ -136,14 +166,26 @@ export default function PersonScreen() {
   const clearResult = () => {
     Keyboard.dismiss();
     if (unavailableOutcome === null && responsesByQuestion.size === 0) return;
-    setUnavailableOutcome(null);
+    setOutcome(null);
     setResponsesByQuestion(new Map());
-    emitResult(new Map(), null);
+    responsesRef.current = new Map();
+    scheduleEmit();
   };
 
-  // Option taps emit a snapshot immediately; text answers accumulate in
-  // local state and emit on blur / Submit (per-keystroke events would
-  // flood the append-only log).
+  // Trailing debounce: reads state fresh (from refs) at fire time so
+  // anything tapped or typed meanwhile rides along in the one snapshot.
+  const scheduleEmit = () => {
+    if (pendingEmitRef.current != null) clearTimeout(pendingEmitRef.current);
+    pendingEmitRef.current = setTimeout(() => {
+      pendingEmitRef.current = null;
+      emitResult(responsesRef.current, outcomeRef.current);
+    }, EMIT_DEBOUNCE_MS);
+  };
+
+  // All taps (answers, outcomes, clear) update state instantly but emit
+  // on the debounce; text accumulates until a commit boundary
+  // (per-keystroke or per-tap events would flood the append-only log and
+  // wake the radio per interaction).
   const toggleOption = (questionId: string, optionId: string, multi: boolean) => {
     // Answering another question while typing should also put the
     // keyboard away — option buttons handle their own taps, so the
@@ -163,9 +205,10 @@ export default function PersonScreen() {
     if (nextIds.length === 0) next.delete(questionId);
     else next.set(questionId, { optionIds: nextIds });
     setResponsesByQuestion(next);
+    responsesRef.current = next;
     // Picking a response also un-marks unavailable.
-    if (nextIds.length > 0) setUnavailableOutcome(null);
-    emitResult(next, null);
+    if (nextIds.length > 0) setOutcome(null);
+    scheduleEmit();
   };
 
   const changeText = (questionId: string, text: string) => {
@@ -173,19 +216,30 @@ export default function PersonScreen() {
     if (text.length === 0) next.delete(questionId);
     else next.set(questionId, { text });
     setResponsesByQuestion(next);
+    responsesRef.current = next;
     textDirtyRef.current = true;
-    if (text.trim().length > 0) setUnavailableOutcome(null);
+    if (text.trim().length > 0) setOutcome(null);
   };
 
-  const commitText = () => {
-    if (!textDirtyRef.current) return;
-    textDirtyRef.current = false;
-    emitResult(responsesByQuestion, null);
+  // Text's edit boundary: blur (and Android keyboard-hide) put the draft
+  // on the same debounce as taps — no emit while the input is focused,
+  // no immediate emit either.
+  const scheduleTextEmit = () => {
+    if (textDirtyRef.current) scheduleEmit();
+  };
+
+  // Hard boundary: emit anything uncommitted (text draft or debounced
+  // taps) right now. No-ops when nothing is pending.
+  const flushPending = () => {
+    if (!textDirtyRef.current && pendingEmitRef.current == null) return;
+    emitResult(responsesRef.current, outcomeRef.current);
   };
 
   // Ref indirection so once-registered listeners/cleanups see fresh state.
-  const commitTextRef = useRef(commitText);
-  commitTextRef.current = commitText;
+  const flushPendingRef = useRef(flushPending);
+  flushPendingRef.current = flushPending;
+  const scheduleTextEmitRef = useRef(scheduleTextEmit);
+  scheduleTextEmitRef.current = scheduleTextEmit;
 
   // Android's back gesture hides the keyboard without blurring the input,
   // which would strand a draft — commit directly. No forced blur: didHide
@@ -195,19 +249,32 @@ export default function PersonScreen() {
   // always commits first.
   useEffect(() => {
     if (Platform.OS !== "android") return;
-    const sub = Keyboard.addListener("keyboardDidHide", () => commitTextRef.current());
+    const sub = Keyboard.addListener("keyboardDidHide", () => scheduleTextEmitRef.current());
+    return () => sub.remove();
+  }, []);
+
+  // JS timers pause while backgrounded — a pending window would survive an
+  // app switch but not a kill. Flush on the way out.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") flushPendingRef.current();
+    });
     return () => sub.remove();
   }, []);
 
   // Last-resort commit: leaving the screen (back gesture, list nav) with
-  // an uncommitted draft must not drop the answer.
-  useEffect(() => () => commitTextRef.current(), []);
+  // anything uncommitted must not drop answers.
+  useEffect(() => () => flushPendingRef.current(), []);
 
   const handleListPress = () => {
     setOpenSheet(true);
     router.dismissTo(`/turfs/${turfId}`);
   };
   const handleNextPress = () => {
+    // Flush before a person-to-person route replace: expo-router may reuse
+    // this component with new params, so the unmount flush can't be relied
+    // on to fire under the old person's identity.
+    flushPending();
     if (!building || !indexes) return;
     // Next unmarked person in THIS building, starting after the current one.
     const personsInBuilding = building.doors.flatMap((d) => d.persons);
@@ -387,8 +454,8 @@ export default function PersonScreen() {
                   responses={responsesByQuestion}
                   onToggleOption={toggleOption}
                   onChangeText={changeText}
-                  onTextBlur={commitText}
-                  onSubmit={commitText}
+                  onTextBlur={scheduleTextEmit}
+                  onSubmit={flushPending}
                   onClear={clearResult}
                 />
               )}
@@ -396,9 +463,10 @@ export default function PersonScreen() {
                 <UnavailableContent
                   selectedOutcome={unavailableOutcome ?? undefined}
                   onSelectOption={(value) => {
-                    setUnavailableOutcome(value);
+                    setOutcome(value);
                     setResponsesByQuestion(new Map());
-                    emitResult(new Map(), value);
+                    responsesRef.current = new Map();
+                    scheduleEmit();
                   }}
                   onClear={clearResult}
                   onCancel={() => {
