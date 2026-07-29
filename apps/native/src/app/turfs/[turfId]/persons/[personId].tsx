@@ -287,7 +287,10 @@ export default function PersonScreen() {
       return;
     }
     // If the current person isn't marked yet, there's nobody else — stay put.
-    if (!isRecorded(summaries, personId)) return;
+    // Judged from the optimistic refs, not derived summaries: the flush
+    // above can't land in this render's summaries, and waiting for it
+    // dead-taps Next on the last person in a building.
+    if (responsesRef.current.size === 0 && outcomeRef.current == null) return;
     const nextBuilding = indexes.buildingsInOrder.find((b) => {
       if (b.buildingId === building.buildingId) return false;
       return b.doors.some((d) => d.persons.some((p) => !isRecorded(summaries, p.personId)));
