@@ -502,7 +502,7 @@ function QrDialog({
           <>
             <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
               Turf {turfLabel(turf.name)}
-              {regionName(turf) ? ` / ${regionName(turf)}` : ""}
+              {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
             <div className="flex flex-col gap-3">
               <QrStatus summary={summaries(turf.turfId)} />
@@ -580,7 +580,7 @@ function WalksDialog({
         {turf ? (
           <>
             <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
-              Turf {turfLabel(turf.name)} {regionName(turf) ? ` / ${regionName(turf)}` : ""}
+              Turf {turfLabel(turf.name)} {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
             <DialogCloseX />
             <WalkTable walks={summaries(turf.turfId).walks} tz={tz} />
