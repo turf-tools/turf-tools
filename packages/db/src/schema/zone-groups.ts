@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { datasets } from "./datasets";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
@@ -11,7 +12,7 @@ import { users } from "./auth/users";
 // Most orgs will only ever have one zone group. The abstraction exists for
 // the rare case where an org needs more than one zoning (different key
 // types, or alternative partitions for different campaigns).
-export const zoneGroups = pgTable("zone_groups", {
+export const zoneGroups = app.table("zone_groups", {
   zoneGroupId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()

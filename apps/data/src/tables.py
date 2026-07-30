@@ -159,10 +159,10 @@ def resolve_version(
     row = conn.execute(
         f"""
         SELECT d.slug, v.version_number, v.dataset_version_id, v.manifest
-        FROM {OPERATIONAL_PG_ALIAS}.public.organizations o
-        JOIN {OPERATIONAL_PG_ALIAS}.public.dataset_versions v
+        FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
+        JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
             ON v.dataset_version_id = o.active_dataset_version_id
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d
             ON d.dataset_id = v.dataset_id
         WHERE o.slug = ?
         """,
@@ -191,7 +191,7 @@ def load_manifest(
     row = conn.execute(
         f"""
         SELECT manifest
-        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_versions
+        FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions
         WHERE dataset_version_id = ?
         """,
         [dataset_version_id],
@@ -214,8 +214,8 @@ def version_id_for_schema(
     row = conn.execute(
         f"""
         SELECT v.dataset_version_id
-        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_versions v
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d ON d.dataset_id = v.dataset_id
+        FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
         WHERE d.slug || '_v' || v.version_number = ?
         """,
         [schema],
@@ -254,7 +254,7 @@ def finalize_version(
     derived_literal = json.dumps(derived_metadata).replace("'", "''")
     conn.execute(
         f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
-        f"UPDATE public.dataset_versions "
+        f"UPDATE app.dataset_versions "
         f"SET manifest = '{manifest_literal}'::jsonb, "
         f"derived_metadata = '{derived_literal}'::jsonb, status = 'ready' "
         f"WHERE dataset_version_id = '{dataset_version_id}'"

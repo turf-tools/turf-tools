@@ -1,13 +1,13 @@
 import {
   bigserial,
   jsonb,
-  pgTable,
   primaryKey,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { turfs } from "./turfs";
 
 // Append-only event log for canvass results. Two kinds:
@@ -29,7 +29,7 @@ import { turfs } from "./turfs";
 // sequence. canvasserId is the universal canvasser identity (no FK — it
 // references the future central identity system); null until that ships.
 
-export const canvassEvents = pgTable(
+export const canvassEvents = app.table(
   "canvass_events",
   {
     sequence: bigserial({ mode: "number" }).notNull(),

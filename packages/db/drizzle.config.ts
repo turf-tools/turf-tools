@@ -16,9 +16,9 @@ export default defineConfig({
   casing: "snake_case",
   dialect: "postgresql",
   dbCredentials: { url },
-  // Manage only the app's `public` schema. In dev, DuckLake's metadata catalog
-  // shares this Postgres in the `ducklake`/`ducklake_geo` schemas — without this
-  // filter, `drizzle-kit push` would see those tables as foreign and offer to
-  // drop them, corrupting the lake.
-  schemaFilter: ["public"],
+  // Manage only the app's `operational` schema. In dev, DuckLake's metadata
+  // catalogs share this Postgres in the `catalog`/`catalog_geo` schemas —
+  // without this filter, `drizzle-kit push` would see those tables as foreign
+  // and offer to drop them, corrupting the lake.
+  schemaFilter: ["app"],
 });

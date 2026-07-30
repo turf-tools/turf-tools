@@ -1,4 +1,5 @@
-import { integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { datasets } from "./datasets";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
@@ -6,7 +7,7 @@ import { users } from "./auth/users";
 // A segment is a targeting set defined by criteria over a dataset's persons —
 // e.g., "Swing Voters", "Base Voters", "Bushwick North". Standalone and
 // reusable across campaigns.
-export const segments = pgTable("segments", {
+export const segments = app.table("segments", {
   segmentId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()

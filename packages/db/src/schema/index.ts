@@ -1,3 +1,4 @@
+export * from "./app";
 export * from "./organizations";
 export * from "./auth/users";
 export * from "./auth/sessions";

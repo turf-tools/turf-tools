@@ -1,4 +1,5 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { campaigns } from "./campaigns";
 import type { GeoJsonPolygon } from "./turfs";
 
@@ -21,7 +22,7 @@ import type { GeoJsonPolygon } from "./turfs";
 //
 // `zoneId` is nullable so the cutter can produce drafts on campaigns
 // without a zone group (scope = whole segment).
-export const turfDrafts = pgTable(
+export const turfDrafts = app.table(
   "turf_drafts",
   {
     turfDraftId: uuid().primaryKey(),

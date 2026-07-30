@@ -1,11 +1,12 @@
-import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
 
 // One row per (user, org) pair. `role` is a free-form text value enforced in
 // application code.
 
-export const memberships = pgTable(
+export const memberships = app.table(
   "memberships",
   {
     membershipId: uuid().defaultRandom().primaryKey(),
