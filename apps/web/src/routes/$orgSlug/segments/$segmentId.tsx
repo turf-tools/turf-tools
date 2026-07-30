@@ -77,10 +77,13 @@ import { cn, toTitleCase } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/segments/$segmentId")({
-  loader: async ({ context: { queryClient }, params: { orgSlug, segmentId } }) => {
+  loader: async ({ context: { queryClient }, params: { orgSlug, segmentId }, preload }) => {
     const segments = await queryClient.fetchQuery(segmentsListQuery());
     const exists = segments.some((s) => s.segmentId === segmentId);
     if (!exists) {
+      // Redirect only on real navigations — a redirect thrown during a
+      // hover preload gets committed and auto-navigates.
+      if (preload) return;
       throw redirect({ to: "/$orgSlug/segments", params: { orgSlug } });
     }
     await queryClient.fetchQuery(segmentDetailQuery(segmentId));

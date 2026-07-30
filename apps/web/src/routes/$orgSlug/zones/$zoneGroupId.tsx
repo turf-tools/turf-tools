@@ -26,11 +26,14 @@ import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/zones/$zoneGroupId")({
-  loader: async ({ context: { queryClient }, params: { orgSlug, zoneGroupId } }) => {
+  loader: async ({ context: { queryClient }, params: { orgSlug, zoneGroupId }, preload }) => {
     const groups = await queryClient.fetchQuery(zoneGroupsQuery());
     const exists = groups.some((g) => g.zoneGroupId === zoneGroupId);
     if (!exists) {
-      // Loader at /zones picks the most-recent fallback.
+      // Redirect only on real navigations — a redirect thrown during a
+      // hover preload gets committed and auto-navigates. Loader at /zones
+      // picks the most-recent fallback.
+      if (preload) return;
       throw redirect({ to: "/$orgSlug/zones", params: { orgSlug } });
     }
     await queryClient.fetchQuery(zonesQuery(zoneGroupId));

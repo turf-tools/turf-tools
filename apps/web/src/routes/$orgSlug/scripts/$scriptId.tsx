@@ -50,10 +50,13 @@ type ScriptStepRow = {
 };
 
 export const Route = createFileRoute("/$orgSlug/scripts/$scriptId")({
-  loader: async ({ context: { queryClient }, params: { orgSlug, scriptId } }) => {
+  loader: async ({ context: { queryClient }, params: { orgSlug, scriptId }, preload }) => {
     const scripts = await queryClient.fetchQuery(scriptsListQuery());
     const exists = scripts.some((s) => s.scriptId === scriptId);
     if (!exists) {
+      // Redirect only on real navigations — a redirect thrown during a
+      // hover preload gets committed and auto-navigates.
+      if (preload) return;
       throw redirect({ to: "/$orgSlug/scripts", params: { orgSlug } });
     }
     const detail = await queryClient.fetchQuery(scriptDetailQuery(scriptId));
