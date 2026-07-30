@@ -66,7 +66,10 @@ function MobileMenu({ role, orgSlug }: { role: string | null; orgSlug: string })
         {[...visible(PRIMARY), ...visible(SECONDARY)].map((item) => (
           <DropdownMenuItem
             key={item.to}
-            render={<Link to={item.to} params={{ orgSlug }} />}
+            // No hover on touch, so intent-preload gets ~0 head start and the
+            // old page lingers while the target loader runs. Render-preload
+            // warms every section the moment the menu opens instead.
+            render={<Link to={item.to} params={{ orgSlug }} preload="render" />}
             className="gap-3"
           >
             <item.icon className="size-4" />
