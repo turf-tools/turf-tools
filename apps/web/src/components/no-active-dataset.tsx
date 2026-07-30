@@ -39,17 +39,7 @@ export function NoActiveDataset({
         <div className="mt-2 flex justify-end gap-2">
           <DialogClose render={<Button variant="outline" />}>Back to overview</DialogClose>
           {canManage ? (
-            <Button
-              render={
-                <Link
-                  to="/$orgSlug/data"
-                  params={{ orgSlug }}
-                  search={{ dataset: null, status: "current" }}
-                />
-              }
-            >
-              Go to Data
-            </Button>
+            <Button render={<Link to="/$orgSlug/data" params={{ orgSlug }} />}>Go to Data</Button>
           ) : null}
         </div>
       </DialogContent>
