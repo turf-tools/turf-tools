@@ -1,5 +1,6 @@
 import { sql } from "@turf-tools/db";
 import { z } from "zod";
+import { activeDatasetId } from "./active-dataset";
 import { webPub as pub } from "../context";
 
 // Per-turf attempted counts: persons whose *latest* result (by sequence —
@@ -19,7 +20,11 @@ type ProgressRow = { turfId: string; attempted: number };
 export const forOrg = pub
   .input(z.object({ campaignId: z.string().uuid().optional() }).optional())
   .handler(async ({ context, input }): Promise<ProgressRow[]> => {
-    const key = `${context.organizationId}:${input?.campaignId ?? "all"}`;
+    // Active-dataset scoped like turfs.listForOrg; the dataset is part of the
+    // cache key so switching datasets can't serve the old scope.
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId) return [];
+    const key = `${context.organizationId}:${datasetId}:${input?.campaignId ?? "all"}`;
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
 
@@ -35,6 +40,7 @@ export const forOrg = pub
         WHERE e.kind = 'result'
           AND e.person_id IS NOT NULL
           AND c.organization_id = ${context.organizationId}
+          AND c.dataset_id = ${datasetId}
           ${campaignFilter}
         ORDER BY e.turf_id, e.person_id, e.sequence DESC
       ) latest
