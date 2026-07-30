@@ -56,7 +56,11 @@ function ScriptsLayout() {
         (old) =>
           old?.map((s) => (s.scriptId === input.scriptId ? { ...s, name: input.name } : s)) ?? old,
       );
+      queryClient.setQueryData<{ name: string } & object>(["script", input.scriptId], (old) =>
+        old ? { ...old, name: input.name } : old,
+      );
       void queryClient.invalidateQueries({ queryKey: ["scripts"] });
+      void queryClient.invalidateQueries({ queryKey: ["script", input.scriptId] });
     },
   });
 
