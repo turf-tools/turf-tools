@@ -1,14 +1,6 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-  Activity,
-  Archive,
-  ArchiveRestore,
-  ChevronDown,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-} from "lucide-react";
+import { Activity, Archive, ArchiveRestore, MoreHorizontal, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { tintStyle } from "~/components/badge";
@@ -34,9 +26,9 @@ import { Pill } from "~/components/pill";
 import {
   QuestionTextEditor,
   RESPONSE_TYPE_META,
-  RESPONSE_TYPES,
   ResponseOptionsEditor,
   type ResponseType,
+  ResponseTypePicker,
 } from "~/components/question-editor-parts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import {
@@ -410,28 +402,11 @@ function CreateBody({
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-sm text-muted-foreground">Type</label>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-between font-normal"
-                  disabled={create.isPending}
-                />
-              }
-            >
-              <span>{RESPONSE_TYPE_META[responseType]!.label}</span>
-              <ChevronDown className="size-4 text-muted-foreground" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {RESPONSE_TYPES.map((t) => (
-                <DropdownMenuItem key={t} onClick={() => setResponseType(t)}>
-                  {RESPONSE_TYPE_META[t]!.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ResponseTypePicker
+            value={responseType}
+            onChange={setResponseType}
+            disabled={create.isPending}
+          />
         </div>
         <div className="mt-2 flex justify-end gap-2">
           <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>

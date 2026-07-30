@@ -28,6 +28,35 @@ export const RESPONSE_TYPE_META: Record<string, BadgeMeta> = {
   open_ended: { label: "Open Ended", color: BROWN },
 };
 
+export function ResponseTypePicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: ResponseType;
+  onChange: (value: ResponseType) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {RESPONSE_TYPES.map((t) => (
+        <button
+          type="button"
+          key={t}
+          onClick={() => onChange(t)}
+          disabled={disabled}
+          className={cn(
+            "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+            value === t ? "bg-foreground/10" : "bg-background hover:bg-muted",
+          )}
+        >
+          {RESPONSE_TYPE_META[t]!.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 type ResponseOption = {
   responseOptionId: string;
   text: string;
