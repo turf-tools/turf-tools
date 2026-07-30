@@ -373,7 +373,7 @@ function groupRows(rows: TurfRow[], grouped: boolean) {
       const region = regionName(t);
       groups.push({
         key,
-        name: region ? `${t.campaignName} — ${region}` : t.campaignName,
+        name: region ? `${t.campaignName} / ${region}` : t.campaignName,
         rows: [],
       });
     }
@@ -502,7 +502,7 @@ function QrDialog({
           <>
             <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
               Turf {turfLabel(turf.name)}
-              {regionName(turf) ? ` — ${regionName(turf)}` : ""}
+              {regionName(turf) ? ` / ${regionName(turf)}` : ""}
             </DialogTitle>
             <div className="flex flex-col gap-3">
               <QrStatus summary={summaries(turf.turfId)} />
@@ -579,9 +579,8 @@ function WalksDialog({
       <DialogContent className="max-w-[85vw] pb-3 md:max-w-md">
         {turf ? (
           <>
-            <DialogTitle className="tabular-nums">
-              Turf {turfLabel(turf.name)}
-              {regionName(turf) ? ` — ${regionName(turf)}` : ""}
+            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
+              Turf {turfLabel(turf.name)} {regionName(turf) ? ` / ${regionName(turf)}` : ""}
             </DialogTitle>
             <DialogCloseX />
             <WalkTable walks={summaries(turf.turfId).walks} tz={tz} />
@@ -709,9 +708,7 @@ function TurfCards({
     <div className="flex flex-col gap-6 pb-8">
       {groupRows(rows, zoneId === null).map((group) => (
         <div key={group.key} className="flex flex-col gap-3">
-          {group.name ? (
-            <h2 className="text-[18px] font-bold tracking-wide">{group.name}</h2>
-          ) : null}
+          {group.name ? <p className="text-muted-foreground leading-5">{group.name}</p> : null}
           {group.rows.map((t) => (
             <TurfCard
               key={t.turfId}
@@ -800,7 +797,7 @@ function TurfCard({
           <ChevronDown
             className={cn(
               "size-5 text-foreground [stroke-width:2.5] transition-transform duration-150",
-              expanded && "rotate-180",
+              expanded && "scale-y-[-1]",
             )}
           />
         </button>
@@ -859,9 +856,7 @@ function CompactList({
     <div className="flex flex-col gap-5 pb-8">
       {groupRows(rows, zoneId === null).map((group) => (
         <div key={group.key} className="flex flex-col gap-1">
-          {group.name ? (
-            <h2 className="mb-1 text-[18px] font-bold tracking-wide">{group.name}</h2>
-          ) : null}
+          {group.name ? <p className="mb-2 text-muted-foreground leading-5">{group.name}</p> : null}
           {group.rows.map((t) => {
             const summary = summaries(t.turfId);
             const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);

@@ -3,20 +3,27 @@ import { and, asc, eq, sql } from "@turf-tools/db";
 import { campaigns, segments, turfDrafts, turfs, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
+import { activeDatasetId } from "./active-dataset";
 import { webMut as mut, webPub as pub } from "../context";
 
-// Admin-scoped turf list: all turfs within the current user's org,
-// optionally filtered by campaign. The `segments` and `zones` joins
-// are LEFT joins because a turf can outlive its source segment or
-// zone (forever-snapshot policy); the row stays in the list with the
-// name missing rather than disappearing.
+// Admin-scoped turf list: turfs within the current user's org whose campaign
+// belongs to the active dataset (matching campaigns.list, so the board's
+// campaign filter can always name every row — dataset-level, not exact
+// version, so activating a newer version of the same dataset keeps
+// mid-campaign turfs visible). Optionally filtered by campaign. The
+// `segments` and `zones` joins are LEFT joins because a turf can outlive its
+// source segment or zone (forever-snapshot policy); the row stays in the
+// list with the name missing rather than disappearing.
 export const listForOrg = pub
   .input(z.object({ campaignId: z.string().uuid().optional() }).optional())
   .handler(async ({ context, input }) => {
-    const orgFilter = eq(campaigns.organizationId, context.organizationId);
-    const where = input?.campaignId
-      ? and(orgFilter, eq(turfs.campaignId, input.campaignId))
-      : orgFilter;
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId) return [];
+    const scope = and(
+      eq(campaigns.organizationId, context.organizationId),
+      eq(campaigns.datasetId, datasetId),
+    );
+    const where = input?.campaignId ? and(scope, eq(turfs.campaignId, input.campaignId)) : scope;
     const rows = await context.db
       .select({
         turfId: turfs.turfId,
