@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { ChevronDown, GripVertical, Plus, X } from "lucide-react";
+import { GripVertical, Plus, X } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -27,9 +27,9 @@ import {
   BlurSaveTextarea,
   QuestionTextEditor,
   RESPONSE_TYPE_META,
-  RESPONSE_TYPES,
   ResponseOptionsEditor,
   type ResponseType,
+  ResponseTypePicker,
 } from "~/components/question-editor-parts";
 import { scriptDetailQuery, scriptsListQuery } from "~/lib/queries/scripts";
 import {
@@ -675,27 +675,11 @@ function NewQuestionDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm text-muted-foreground">Type</label>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full justify-between font-normal"
-                  />
-                }
-              >
-                <span>{RESPONSE_TYPE_META[responseType]!.label}</span>
-                <ChevronDown className="size-4 text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {RESPONSE_TYPES.map((t) => (
-                  <DropdownMenuItem key={t} onClick={() => setResponseType(t)}>
-                    {RESPONSE_TYPE_META[t]!.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <ResponseTypePicker
+              value={responseType}
+              onChange={setResponseType}
+              disabled={pending}
+            />
           </div>
           <DialogError error={error} />
           <div className="mt-2 flex justify-end gap-2">
