@@ -5,9 +5,22 @@ import {
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { Activity, Columns2, Check, Upload } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createFileRoute,
+  redirect,
+  useNavigate,
+  type SearchSchemaInput,
+} from "@tanstack/react-router";
+import {
+  Activity,
+  Archive,
+  ArchiveRestore,
+  Check,
+  Columns2,
+  MoreHorizontal,
+  Upload,
+} from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
@@ -29,15 +42,12 @@ import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
 import { Input } from "~/components/input";
 import { Pill } from "~/components/pill";
-import { Rail } from "~/components/rail";
 import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDateTime } from "~/lib/format";
-import { AVAILABLE_IMPORTERS, importerLabel } from "~/lib/importers";
+import { importerLabel } from "~/lib/importers";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
-import { hasPermission } from "~/lib/permissions";
 import type { CustomFieldType } from "@turf-tools/db/schema";
-import { Archive, ArchiveRestore, MoreHorizontal } from "lucide-react";
 import {
   baseFieldsQuery,
   customFieldExamplesQuery,
@@ -45,7 +55,6 @@ import {
 } from "~/lib/queries/custom-fields";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
-import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -75,7 +84,6 @@ const FIELD_TYPE_META: Record<CustomFieldType, string> = {
 };
 
 type DataSearch = {
-  dataset: string | null;
   status: "current" | "archived" | "all";
 };
 
@@ -84,141 +92,53 @@ const STATUS_OPTIONS = [
   { value: "all", label: "All versions" },
 ];
 
-export const Route = createFileRoute("/$orgSlug/data")({
-  validateSearch: (search): DataSearch => ({
-    dataset: typeof search.dataset === "string" ? search.dataset : null,
+export const Route = createFileRoute("/$orgSlug/data/$datasetId")({
+  // SearchSchemaInput keeps ?status optional at link/redirect sites while the
+  // validated shape stays required.
+  validateSearch: (search: { status?: string } & SearchSchemaInput): DataSearch => ({
     status: search.status === "archived" || search.status === "all" ? search.status : "current",
   }),
-  beforeLoad: ({ context, params }) => {
-    if (!hasPermission(context.role, "datasets.manage")) {
-      throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
-    }
-  },
-  loaderDeps: ({ search }) => ({ dataset: search.dataset }),
-  loader: async ({ context: { queryClient }, deps }) => {
-    // Prefetch the selected dataset's field queries so the cards render
-    // complete on first paint — rail switches re-run this via loaderDeps,
-    // and the previous canvas stays up until the new data is ready.
+  loader: async ({ context: { queryClient }, params: { orgSlug, datasetId }, preload }) => {
     const rows = await queryClient.fetchQuery(datasetsListQuery());
-    const selected =
-      rows.find((r) => r.datasetId === deps.dataset)?.datasetId ?? rows[0]?.datasetId;
-    if (selected) {
-      const readyVersionId =
-        rows.find((r) => r.datasetId === selected && r.status === "ready")?.versionId ?? null;
-      await Promise.all([
-        queryClient.fetchQuery(customFieldsQuery(selected)),
-        queryClient.fetchQuery(baseFieldsQuery(readyVersionId)),
-      ]);
+    const exists = rows.some((r) => r.datasetId === datasetId);
+    if (!exists) {
+      // Redirect only on real navigations — a redirect thrown during a
+      // hover preload gets committed and auto-navigates. Loader at /data
+      // picks the fallback.
+      if (preload) return;
+      throw redirect({ to: "/$orgSlug/data", params: { orgSlug } });
     }
+    // Prefetch the fields queries so the cards render complete on first paint.
+    const readyVersionId =
+      rows.find((r) => r.datasetId === datasetId && r.status === "ready")?.versionId ?? null;
+    await Promise.all([
+      queryClient.fetchQuery(customFieldsQuery(datasetId)),
+      queryClient.fetchQuery(baseFieldsQuery(readyVersionId)),
+    ]);
   },
-  component: DataPage,
+  component: DatasetPage,
 });
 
 type VersionRow = Awaited<ReturnType<typeof client.datasets.list>>[number];
 
-function DataPage() {
+function DatasetPage() {
   const { session } = Route.useRouteContext();
-  const { orgSlug } = Route.useParams();
+  const { orgSlug, datasetId } = Route.useParams();
   const timezone = session?.user?.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
-  const queryClient = useQueryClient();
-  const { dataset: datasetParam } = Route.useSearch();
-  const navigate = useNavigate({ from: Route.fullPath });
-  const shouldFade = useFadeOnce("/data");
 
-  const { data: versionRows } = useSuspenseQuery({
-    ...datasetsListQuery(),
-    // Poll while any version is importing so rows advance to Ready on their own.
-    refetchInterval: (q) => (q.state.data?.some((r) => r.status === "importing") ? 3000 : false),
-  });
-
-  // One entry per dataset; the list endpoint returns flat version rows.
-  const datasetGroups = useMemo(() => {
-    const byId = new Map<
-      string,
-      { datasetId: string; name: string; importer: string; versions: VersionRow[] }
-    >();
-    for (const r of versionRows) {
-      const g = byId.get(r.datasetId) ?? {
-        datasetId: r.datasetId,
-        name: r.name,
-        importer: r.importer,
-        versions: [],
-      };
-      g.versions.push(r);
-      byId.set(r.datasetId, g);
-    }
-    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [versionRows]);
-
-  const selected = datasetGroups.find((d) => d.datasetId === datasetParam) ?? datasetGroups[0];
-  const selectDataset = (datasetId: string) =>
-    void navigate({ search: (prev) => ({ ...prev, dataset: datasetId }) });
-
-  // Canonicalize the URL to the dataset actually shown — bare /data and stale
-  // ?dataset= values otherwise render the fallback while the address bar
-  // disagrees. Component-level replace, not a loader redirect: index-redirects
-  // plus hover preload have caused auto-navigation here before.
-  useEffect(() => {
-    if (selected && selected.datasetId !== datasetParam) {
-      void navigate({
-        search: (prev) => ({ ...prev, dataset: selected.datasetId }),
-        replace: true,
-      });
-    }
-  }, [selected, datasetParam, navigate]);
-
-  const [createOpen, setCreateOpen] = useState(false);
-  const [updateOpen, setUpdateOpen] = useState(false);
-  const [appendOpen, setAppendOpen] = useState(false);
+  // The layout's observer owns the importing poll; this one just reads.
+  const { data: versionRows } = useSuspenseQuery(datasetsListQuery());
+  const versions = versionRows.filter((r) => r.datasetId === datasetId);
+  const first = versions[0];
+  if (!first) return null;
 
   return (
-    <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
-      <Rail>
-        {datasetGroups.map((d) => (
-          <Rail.Item
-            key={d.datasetId}
-            label={d.name}
-            active={selected?.datasetId === d.datasetId}
-            trailing={
-              d.versions.some((v) => v.isActive) ? (
-                <Check className="ml-2 size-4 shrink-0 [stroke-width:2.25]" />
-              ) : undefined
-            }
-            onSelect={() => selectDataset(d.datasetId)}
-          />
-        ))}
-        <Rail.New label="Import dataset" onClick={() => setCreateOpen(true)} />
-      </Rail>
-
-      <CreateDatasetDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={(datasetId) => {
-          void queryClient.invalidateQueries({ queryKey: ["datasets"] });
-          selectDataset(datasetId);
-        }}
-      />
-
-      {selected ? (
-        <DatasetEditor
-          key={selected.datasetId}
-          dataset={selected}
-          orgSlug={orgSlug}
-          timezone={timezone}
-          updateOpen={updateOpen}
-          setUpdateOpen={setUpdateOpen}
-          appendOpen={appendOpen}
-          setAppendOpen={setAppendOpen}
-        />
-      ) : (
-        <EditorPage>
-          <EditorHeader title="Data" subtitle="Voter files and other imported datasets" />
-          <p className="text-sm text-muted-foreground">
-            No datasets yet — create one to start importing.
-          </p>
-        </EditorPage>
-      )}
-    </div>
+    <DatasetEditor
+      key={datasetId}
+      dataset={{ datasetId, name: first.name, importer: first.importer, versions }}
+      orgSlug={orgSlug}
+      timezone={timezone}
+    />
   );
 }
 
@@ -226,18 +146,10 @@ function DatasetEditor({
   dataset,
   orgSlug,
   timezone,
-  updateOpen,
-  setUpdateOpen,
-  appendOpen,
-  setAppendOpen,
 }: {
   dataset: { datasetId: string; name: string; importer: string; versions: VersionRow[] };
   orgSlug: string;
   timezone: string;
-  updateOpen: boolean;
-  setUpdateOpen: (open: boolean) => void;
-  appendOpen: boolean;
-  setAppendOpen: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   // Loader-prefetched; suspense keeps the card from painting incomplete.
@@ -252,6 +164,9 @@ function DatasetEditor({
   });
 
   const importing = dataset.versions.some((v) => v.status === "importing");
+
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [appendOpen, setAppendOpen] = useState(false);
 
   // null in URL = "current" (the default). The Filter helper maps null →
   // its allLabel option; we translate between that and the search param.
@@ -803,123 +718,8 @@ function FieldDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Dialogs: create / update / append
+// Dialogs: update / append
 // ---------------------------------------------------------------------------
-
-function CreateDatasetDialog({
-  open,
-  onOpenChange,
-  onCreated,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreated: (datasetId: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
-  const [source, setSource] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) {
-      setName("");
-      setImporter(AVAILABLE_IMPORTERS[0].name);
-      setSource("");
-      setError(null);
-    }
-  }
-
-  const create = useMutation({
-    mutationFn: () =>
-      client.datasets.create({ name: name.trim(), importer, sourceUri: source.trim() }),
-    onSuccess: (res) => {
-      onCreated(res.datasetId);
-      onOpenChange(false);
-    },
-    onError: (e) => setError(e.message),
-  });
-
-  const pending = create.isPending;
-  const valid = name.trim().length > 0 && source.trim().length > 0;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle>Import dataset</DialogTitle>
-        <DialogDescription>
-          Import a source file as a new dataset. Type is fixed after creation; use updates
-          afterwards to get newer versions.
-        </DialogDescription>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!valid || pending) return;
-            create.mutate();
-          }}
-          className="flex flex-col gap-4"
-        >
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Name</label>
-            <Input
-              autoFocus
-              value={name}
-              onChange={(e) => {
-                setError(null);
-                setName(e.target.value);
-              }}
-              placeholder="Name of dataset..."
-              disabled={pending}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Type</label>
-            <div className="flex flex-wrap gap-1.5">
-              {AVAILABLE_IMPORTERS.map((imp) => {
-                const sel = importer === imp.name;
-                return (
-                  <button
-                    type="button"
-                    key={imp.name}
-                    onClick={() => setImporter(imp.name)}
-                    disabled={pending}
-                    className={cn(
-                      "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                      sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                    )}
-                  >
-                    {imp.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Source</label>
-            <Input
-              value={source}
-              onChange={(e) => {
-                setError(null);
-                setSource(e.target.value);
-              }}
-              placeholder="e.g. https://example.com/voters.parquet"
-              disabled={pending}
-            />
-            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
-          </div>
-          {error ? <DialogError error={error} /> : null}
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={!valid} loading={pending}>
-              Import
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function UpdateDialog({
   open,
