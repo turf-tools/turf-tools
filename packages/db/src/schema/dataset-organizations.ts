@@ -1,4 +1,5 @@
-import { pgTable, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { datasets } from "./datasets";
 import { organizations } from "./organizations";
 
@@ -7,7 +8,7 @@ import { organizations } from "./organizations";
 // (`organizations.activeDatasetVersionId`), so shared orgs activate independently.
 // Lives in its own file (like `memberships`) so `datasets` needn't import
 // `organizations`, keeping the two entity modules free of an import cycle.
-export const datasetOrganizations = pgTable(
+export const datasetOrganizations = app.table(
   "dataset_organizations",
   {
     datasetOrganizationId: uuid().defaultRandom().primaryKey(),

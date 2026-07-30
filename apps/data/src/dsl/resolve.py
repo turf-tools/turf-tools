@@ -129,10 +129,10 @@ def _canvass_outcome_person_ids(
             SELECT
                 e.person_id,
                 json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') AS outcome
-            FROM {OPERATIONAL_PG_ALIAS}.public.canvass_events e
-            JOIN {OPERATIONAL_PG_ALIAS}.public.turfs t ON t.turf_id = e.turf_id
-            JOIN {OPERATIONAL_PG_ALIAS}.public.campaigns c ON c.campaign_id = t.campaign_id
-            JOIN {OPERATIONAL_PG_ALIAS}.public.organizations o
+            FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+            JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
                 ON o.organization_id = c.organization_id
             WHERE e.kind = 'result'
                 AND e.person_id IS NOT NULL
@@ -170,10 +170,10 @@ def _canvass_response_person_ids(
             SELECT
                 e.person_id,
                 CAST(json_extract(CAST(e.payload AS VARCHAR), ?) AS VARCHAR[]) AS selected
-            FROM {OPERATIONAL_PG_ALIAS}.public.canvass_events e
-            JOIN {OPERATIONAL_PG_ALIAS}.public.turfs t ON t.turf_id = e.turf_id
-            JOIN {OPERATIONAL_PG_ALIAS}.public.campaigns c ON c.campaign_id = t.campaign_id
-            JOIN {OPERATIONAL_PG_ALIAS}.public.organizations o
+            FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+            JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
                 ON o.organization_id = c.organization_id
             WHERE e.kind = 'result'
                 AND e.person_id IS NOT NULL
@@ -193,8 +193,8 @@ def _load_segments_for_org(conn: duckdb.DuckDBPyConnection, org_slug: str) -> di
     rows = conn.execute(
         f"""
         SELECT s.segment_id::VARCHAR, s.name, s.criteria::VARCHAR
-        FROM {OPERATIONAL_PG_ALIAS}.public.segments s
-        JOIN {OPERATIONAL_PG_ALIAS}.public.organizations o
+        FROM {OPERATIONAL_PG_ALIAS}.app.segments s
+        JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
             ON o.organization_id = s.organization_id
         WHERE o.slug = ?
         """,

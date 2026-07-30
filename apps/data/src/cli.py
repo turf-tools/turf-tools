@@ -238,26 +238,26 @@ def _ensure_seed_dataset(conn: duckdb.DuckDBPyConnection, schema: str) -> str:
     pg = OPERATIONAL_PG_ALIAS
     conn.execute(
         f"CALL postgres_execute('{pg}', $ft$"
-        f"INSERT INTO public.datasets (slug, name, importer) "
+        f"INSERT INTO app.datasets (slug, name, importer) "
         f"VALUES ('{slug}', 'NY State Voter File', 'nys_voter_file') "
         f"ON CONFLICT (slug) DO NOTHING$ft$)"
     )
-    dataset_id = conn.execute(f"SELECT dataset_id FROM {pg}.public.datasets WHERE slug = ?", [slug]).fetchone()[0]
+    dataset_id = conn.execute(f"SELECT dataset_id FROM {pg}.app.datasets WHERE slug = ?", [slug]).fetchone()[0]
     conn.execute(
         f"CALL postgres_execute('{pg}', $ft$"
-        f"INSERT INTO public.dataset_versions (dataset_id, version_number, status) "
+        f"INSERT INTO app.dataset_versions (dataset_id, version_number, status) "
         f"SELECT '{dataset_id}', {int(version_number)}, 'importing' "
-        f"WHERE NOT EXISTS (SELECT 1 FROM public.dataset_versions "
+        f"WHERE NOT EXISTS (SELECT 1 FROM app.dataset_versions "
         f"WHERE dataset_id = '{dataset_id}' AND version_number = {int(version_number)})$ft$)"
     )
     version_id = conn.execute(
-        f"SELECT dataset_version_id FROM {pg}.public.dataset_versions WHERE dataset_id = ? AND version_number = ?",
+        f"SELECT dataset_version_id FROM {pg}.app.dataset_versions WHERE dataset_id = ? AND version_number = ?",
         [dataset_id, int(version_number)],
     ).fetchone()[0]
     conn.execute(
         f"CALL postgres_execute('{pg}', $ft$"
-        f"INSERT INTO public.dataset_organizations (dataset_id, organization_id) "
-        f"SELECT '{dataset_id}', organization_id FROM public.organizations "
+        f"INSERT INTO app.dataset_organizations (dataset_id, organization_id) "
+        f"SELECT '{dataset_id}', organization_id FROM app.organizations "
         f"ON CONFLICT (dataset_id, organization_id) DO NOTHING$ft$)"
     )
     return str(version_id)
@@ -268,7 +268,7 @@ def _activate_for_all_orgs(conn: duckdb.DuckDBPyConnection, version_id: str) -> 
     theirs via "Make active"; the seed just wires it up so the UI has data."""
     conn.execute(
         f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
-        f"UPDATE public.organizations SET active_dataset_version_id = '{version_id}'$ft$)"
+        f"UPDATE app.organizations SET active_dataset_version_id = '{version_id}'$ft$)"
     )
 
 

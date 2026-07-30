@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
-import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { integer, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { campaigns } from "./campaigns";
 import { datasetVersions } from "./datasets";
 import { scripts } from "./scripts";
@@ -26,7 +27,7 @@ import { users } from "./auth/users";
 // reusing them).
 export type TurfStatus = "active" | "archived";
 
-export const turfs = pgTable(
+export const turfs = app.table(
   "turfs",
   {
     turfId: uuid().defaultRandom().primaryKey(),

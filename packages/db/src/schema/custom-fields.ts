@@ -1,4 +1,5 @@
-import { integer, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { integer, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { users } from "./auth/users";
 import { datasets } from "./datasets";
 
@@ -13,7 +14,7 @@ export type CustomFieldType = "number" | "date" | "text" | "enum";
 // long-format `<slug>_custom_fields` table.
 // Criteria reference `customFieldId` (never the label), so rename is a
 // one-row UPDATE with no lake or saved-segment fallout.
-export const customFields = pgTable(
+export const customFields = app.table(
   "custom_fields",
   {
     customFieldId: uuid().defaultRandom().primaryKey(),
@@ -38,7 +39,7 @@ export const customFields = pgTable(
 // Provenance for one append — inserted after the synchronous ingest succeeds
 // (failed appends write nothing). Audit-only: nothing renders it today, but
 // lake values carry `upload_id` so every value traces back here.
-export const customFieldUploads = pgTable("custom_field_uploads", {
+export const customFieldUploads = app.table("custom_field_uploads", {
   customFieldUploadId: uuid().defaultRandom().primaryKey(),
   datasetId: uuid()
     .notNull()

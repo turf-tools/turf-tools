@@ -51,8 +51,8 @@ services:
       <<: *quickwit-env
       QUICKWIT_URL: http://quickwit:7280
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools
-      DUCKLAKE_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_catalog
-      DUCKLAKE_GEO_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_geo_catalog
+      DUCKLAKE_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake
+      DUCKLAKE_GEO_METADATA_POSTGRES_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/turf_tools_ducklake_geo
       # Layout inside the deployment's single bucket — not a per-deployment
       # choice, so it lives here rather than in the env file. Quickwit's prefix
       # is in QW_DEFAULT_INDEX_ROOT_URI above.

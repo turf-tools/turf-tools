@@ -1,4 +1,5 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { sql } from "drizzle-orm";
 import { turfs } from "./turfs";
 
@@ -17,7 +18,7 @@ import { turfs } from "./turfs";
 // Attribution is the client-claimed identity, same as `canvass_events` —
 // stored verbatim, no FK.
 
-export const walks = pgTable(
+export const walks = app.table(
   "walks",
   {
     walkId: uuid().defaultRandom().primaryKey(),

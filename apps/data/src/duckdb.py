@@ -115,7 +115,7 @@ def _attach_ducklake(
     alias: str,
     *,
     pg_url: str | None,
-    meta_schema: str | None,
+    meta_schema: str,
     local_catalog: str,
     local_data_dir: str,
     bucket: str,
@@ -125,11 +125,14 @@ def _attach_ducklake(
     """Attach one DuckLake catalog. Catalog backend (Postgres vs local DuckDB
     file) and storage (S3 vs local dir) are independent axes:
 
-    - **prod:** Postgres catalog + S3 storage (bucket set).
+    - **prod:** Postgres catalog (a DB per catalog) + S3 storage (bucket set).
     - **dev:** Postgres catalog (concurrency-safe, unlike a single-writer local
-      file) + local storage. Two catalogs share one dev Postgres DB via distinct
-      `META_SCHEMA`s; DuckLake requires the schema to pre-exist, so we ensure it.
+      file) + local storage. Two catalogs share the one dev Postgres DB.
     - **file fallback:** local DuckDB-file catalog + local dir (no Postgres).
+
+    Postgres catalogs always use `META_SCHEMA` (`catalog`/`catalog_geo`) — the
+    same schema names in every environment; only the database differs. DuckLake
+    requires the schema to pre-exist, so we ensure it.
     """
     data_path = _s3_path(bucket, prefix) if bucket else local_data_dir
     if not bucket:
@@ -141,12 +144,10 @@ def _attach_ducklake(
 
     conn.install_extension("postgres")
     conn.load_extension("postgres")
-    schema_opt = ""
-    if meta_schema:
-        conn.execute(f"ATTACH '{pg_url}' AS _meta_{alias} (TYPE postgres)")
-        conn.execute(f"CREATE SCHEMA IF NOT EXISTS _meta_{alias}.{meta_schema}")
-        conn.execute(f"DETACH _meta_{alias}")
-        schema_opt = f", META_SCHEMA '{meta_schema}'"
+    conn.execute(f"ATTACH '{pg_url}' AS _meta_{alias} (TYPE postgres)")
+    conn.execute(f"CREATE SCHEMA IF NOT EXISTS _meta_{alias}.{meta_schema}")
+    conn.execute(f"DETACH _meta_{alias}")
+    schema_opt = f", META_SCHEMA '{meta_schema}'"
     conn.execute(f"ATTACH 'ducklake:postgres:{pg_url}' AS {alias} (DATA_PATH '{data_path}'{schema_opt}{read_only_opt})")
 
 
@@ -213,7 +214,7 @@ def refresh_s3_secret_on_shared_connection(settings: Settings) -> None:
 
 # Alias under which the operational Postgres database is mounted into
 # DuckDB by `attach_operational_postgres`. Cross-database SQL refers to
-# tables as `operational_pg.public.<table>`.
+# tables as `operational_pg.app.<table>`.
 OPERATIONAL_PG_ALIAS = "operational_pg"
 
 

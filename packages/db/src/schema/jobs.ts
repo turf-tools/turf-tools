@@ -1,13 +1,5 @@
-import {
-  bigserial,
-  json,
-  jsonb,
-  pgTable,
-  primaryKey,
-  text,
-  timestamp,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { bigserial, json, jsonb, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 
 export const JOB_STATUSES = [
   "unstarted",
@@ -19,11 +11,11 @@ export const JOB_STATUSES = [
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
-export const jobStatus = pgTable("job_status", {
+export const jobStatus = app.table("job_status", {
   status: text().primaryKey().$type<JobStatus>(),
 });
 
-export const jobs = pgTable("jobs", {
+export const jobs = app.table("jobs", {
   jobId: uuid().defaultRandom().primaryKey(),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   status: text()
@@ -39,7 +31,7 @@ export const jobs = pgTable("jobs", {
   lockedByWorkerId: text(),
 });
 
-export const jobMessages = pgTable(
+export const jobMessages = app.table(
   "job_messages",
   {
     jobId: uuid()

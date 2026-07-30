@@ -1,8 +1,9 @@
 import { sql } from "drizzle-orm";
-import { check, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { datasetVersions } from "./datasets";
 
-export const organizations = pgTable(
+export const organizations = app.table(
   "organizations",
   {
     organizationId: uuid().defaultRandom().primaryKey(),
