@@ -25,13 +25,26 @@ from src.custom_fields import (
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
-from src.duckdb import get_connection, refresh_s3_secret_on_shared_connection, s3_secret_expires
+from src.duckdb import (
+    OPERATIONAL_PG_ALIAS,
+    attach_operational_postgres,
+    get_connection,
+    refresh_s3_secret_on_shared_connection,
+    s3_secret_expires,
+)
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
 from src.quickwit import search as quickwit_search
 from src.settings import get_settings
-from src.tables import NoActiveDatasetError, resolve, resolve_version, table_fqn
+from src.tables import (
+    QUERYABLE_TABLES,
+    NoActiveDatasetError,
+    dataset_version_schema,
+    resolve,
+    resolve_version,
+    table_fqn,
+)
 
 logger = logging.getLogger("uvicorn")
 
@@ -81,24 +94,30 @@ async def lifespan(app: FastAPI):
         logger.exception("DuckLake catalog init failed; continuing")
 
     # Warm the shared connection's buffer pool so the first user request
-    # doesn't pay cold S3 round-trips for Parquet footers + page reads.
+    # doesn't pay cold S3 round-trips for Parquet footers + page reads. Only
+    # active versions (org → active_dataset_version_id): old and pinned
+    # versions stay cold and pay their own first-read cost.
     try:
         conn = get_connection(settings, read_only=True)
+        attach_operational_postgres(conn, settings)
+        versions = conn.execute(
+            f"""
+            SELECT DISTINCT d.slug, v.version_number
+            FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
+            JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+                ON v.dataset_version_id = o.active_dataset_version_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
+            """
+        ).fetchall()
         # `count(COLUMNS(*))` expands at parse time to count(col1), count(col2), …
         # forcing DuckDB to read every column from Parquet — populates the buffer
         # pool so segment filtering + publish don't pay column-cold I/O on the
         # first user request.
-        tables = conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_catalog = 'ducklake' AND ("
-            "  table_name LIKE '%_persons_geocoded' "
-            "  OR table_name LIKE '%_doors_geocoded' "
-            "  OR table_name LIKE '%_buildings_geocoded'"
-            ")"
-        ).fetchall()
-        for (table,) in tables:
-            conn.execute(f'SELECT count(COLUMNS(*)) FROM "{table}"').fetchone()
-        logger.info("Warmup completed")
+        for slug, version_number in versions:
+            schema = dataset_version_schema(slug, version_number)
+            for table in sorted(QUERYABLE_TABLES):
+                conn.execute(f"SELECT count(COLUMNS(*)) FROM {table_fqn(schema, table)}").fetchone()
+        logger.info("Warmup completed (%d active version(s))", len(versions))
     except Exception:
         logger.exception("Warmup failed; continuing")
 
