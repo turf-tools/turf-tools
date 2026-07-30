@@ -10,6 +10,7 @@ large file is a single long step), so this is honest step-progress, not an ETA.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from hamilton.lifecycle import NodeExecutionHook
@@ -45,6 +46,24 @@ class ImportProgress:
             f"UPDATE public.dataset_versions "
             f"SET import_step = {int(self._step)}, import_total_steps = {int(self._total)} "
             f"WHERE dataset_version_id = '{self._dvid}'$ft$)"
+        )
+
+
+class JobLog:
+    """Synchronous `job_messages` writer for the blocking import pipeline.
+    `ctx.message` is event-loop-only (asyncpg), so the worker thread logs
+    through the same operational-Postgres attach as progress."""
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection, job_id: str) -> None:
+        self._conn = conn
+        self._job_id = job_id
+
+    def write(self, message: str, *, level: str = "info") -> None:
+        payload = json.dumps({"level": level, "message": message}).replace("'", "''")
+        self._conn.execute(
+            f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $jobmsg$"
+            f"INSERT INTO public.job_messages (job_id, payload) "
+            f"VALUES ('{self._job_id}', '{payload}'::json)$jobmsg$)"
         )
 
 

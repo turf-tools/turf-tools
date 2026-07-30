@@ -60,6 +60,9 @@ export const datasetVersions = pgTable(
     importStep: integer(),
     importTotalSteps: integer(),
     status: text().$type<DatasetVersionStatus>().notNull().default("importing"),
+    // Why the import failed — null unless status is "failed". Written by the
+    // import job alongside the status flip.
+    error: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     createdBy: uuid().references(() => users.id),
     // Soft-hide from the Data list; versions are never deleted (published turfs

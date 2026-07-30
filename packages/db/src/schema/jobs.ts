@@ -25,6 +25,7 @@ export const jobStatus = pgTable("job_status", {
 
 export const jobs = pgTable("jobs", {
   jobId: uuid().defaultRandom().primaryKey(),
+  createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   status: text()
     .$type<JobStatus>()
     .notNull()

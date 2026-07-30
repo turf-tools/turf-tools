@@ -40,6 +40,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       versionId: datasetVersions.datasetVersionId,
       versionNumber: datasetVersions.versionNumber,
       status: datasetVersions.status,
+      error: datasetVersions.error,
       derivedMetadata: datasetVersions.derivedMetadata,
       importedAt: datasetVersions.createdAt,
       archivedAt: datasetVersions.archivedAt,

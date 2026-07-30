@@ -17,6 +17,7 @@ import {
   ArchiveRestore,
   Check,
   Columns2,
+  FileText,
   MoreHorizontal,
   Upload,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import { Callout, DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
+  DialogCloseX,
   DialogContent,
   DialogDescription,
   DialogTitle,
@@ -294,8 +296,20 @@ function VersionsCard({
     status === "all" ? true : status === "archived" ? v.isArchived : !v.isArchived,
   );
 
+  // Which version the details dialog shows — held separately from the open
+  // flag so the dialog body doesn't flash a fallback during the close
+  // animation.
+  const [detailsVersion, setDetailsVersion] = useState<VersionRow | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <DetailsDialog
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        version={detailsVersion}
+        timezone={timezone}
+      />
       <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
         <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
           <TableRow>
@@ -371,6 +385,10 @@ function VersionsCard({
                     onMakeActive={() => makeActive.mutate(v.versionId)}
                     onArchive={() => archive.mutate(v.versionId)}
                     onUnarchive={() => unarchive.mutate(v.versionId)}
+                    onDetails={() => {
+                      setDetailsVersion(v);
+                      setDetailsOpen(true);
+                    }}
                   />
                 </TableCell>
               </TableRow>
@@ -389,6 +407,7 @@ function VersionRowMenu({
   onMakeActive,
   onArchive,
   onUnarchive,
+  onDetails,
 }: {
   canActivate: boolean;
   isArchived: boolean;
@@ -396,6 +415,7 @@ function VersionRowMenu({
   onMakeActive: () => void;
   onArchive: () => void;
   onUnarchive: () => void;
+  onDetails: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -406,6 +426,10 @@ function VersionRowMenu({
         <DropdownMenuItem disabled={!canActivate} onClick={onMakeActive}>
           <Check />
           Make active
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onDetails}>
+          <FileText />
+          Details
         </DropdownMenuItem>
         {isArchived ? (
           <DropdownMenuItem onClick={onUnarchive}>
@@ -420,6 +444,43 @@ function VersionRowMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+// One version's import at a glance: what ran and how it ended. The error
+// comes from `dataset_versions.error` (null unless the import failed).
+function DetailsDialog({
+  open,
+  onOpenChange,
+  version,
+  timezone,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  version: VersionRow | null;
+  timezone: string;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Details</DialogTitle>
+        <DialogCloseX />
+        <DialogDescription>
+          Imported v{version?.versionNumber} of {version?.name} with type{" "}
+          {importerLabel(version?.importer ?? "")}, started{" "}
+          {formatDateTime(version?.importedAt, timezone)}.
+        </DialogDescription>
+        {version?.status === "failed" ? (
+          <Callout tone="error">
+            {version.error ?? "Failed, but no error message was recorded."}
+          </Callout>
+        ) : version?.status === "importing" ? (
+          <p className="text-sm text-muted-foreground">Import in progress — no errors so far.</p>
+        ) : (
+          <Callout tone="success">Completed with no errors.</Callout>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

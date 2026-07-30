@@ -19,7 +19,7 @@ from src import postgres
 from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, quickwit, tiger
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
-from src.import_progress import ImportProgress, ProgressNodeHook
+from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
 from src.importers.registry import get_importer
 from src.job_runner import JobContext, job
 from src.quickwit import ensure_index, persons_index_id
@@ -42,14 +42,15 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
     try:
         # DuckDB + the geocode DAG are blocking (minutes); run off the event loop
         # so the worker keeps serving other jobs / the s3-secret refresh.
-        result = await asyncio.to_thread(_run, payload)
-    except Exception:
-        # Surface the failure in the UI — mark the version `failed` (pure Postgres,
-        # so it works even when the DuckLake attach is what failed). Then re-raise
-        # so the job framework records the reason on the job row.
+        result = await asyncio.to_thread(_run, payload, str(ctx.job_id))
+    except Exception as exc:
+        # Surface the failure in the UI — mark the version `failed` and stash the
+        # reason (pure Postgres, so it works even when the DuckLake attach is what
+        # failed). Then re-raise so the job framework records it on the job row.
         await postgres.execute(
-            "UPDATE dataset_versions SET status = 'failed' WHERE dataset_version_id = $1::uuid",
+            "UPDATE dataset_versions SET status = 'failed', error = left($2, 1000) WHERE dataset_version_id = $1::uuid",
             payload.dataset_version_id,
+            str(exc),
         )
         raise
     await ctx.message("Import complete", **result)
@@ -67,11 +68,12 @@ _FINAL_VARS = [
 ]
 
 
-def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
+def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
     settings = get_settings()
     conn = get_connection(settings)
     try:
         slug, version_number, importer_name = _resolve_version(conn, settings, payload.dataset_version_id)
+        log = JobLog(conn, job_id)
         schema = dataset_version_schema(slug, version_number)
         ensure_schema(conn, schema)
 
@@ -118,7 +120,10 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
         persons_validated = importer.load(payload.source, schema, conn, progress)
+        decoded = conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()
+        log.write(f"Decoded {decoded[0]:,} people from source" if decoded else "Source decoded")
         result = dr.execute(final_vars=_FINAL_VARS, inputs={"persons_validated": persons_validated, **dag_inputs})
+        log.write("Geocoding pipeline complete")
 
         # Build each key group's polygons before finalize, so a `ready` version
         # is always zonable and the map's boundary fetch never 404s. Override the
@@ -138,6 +143,9 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
                     "tiger_tabblock_raw": result["tiger_tabblock_raw"],
                 },
             )
+        if key_group_sources:
+            groups = len(key_group_sources)
+            log.write(f"Built boundaries for {groups} key group{'s' if groups != 1 else ''}")
 
         # Index persons into Quickwit for the search / Lookup feature — a
         # per-version index (`persons_<schema>`). Create it first (local-ingest
@@ -163,8 +171,10 @@ def _run(payload: ImportDatasetVersionPayload) -> dict[str, Any]:
                     "conn": conn,
                 },
             )
+            log.write("Search index built")
         except Exception as exc:  # noqa: BLE001 — search indexing is non-fatal
             print(f"WARNING: Quickwit indexing failed for {index_id}: {exc}", flush=True)
+            log.write(f"Search indexing failed (non-fatal): {exc}", level="warning")
         progress.advance()
 
         geocoded_fqn = result["persons_geocoded"].fqn
