@@ -185,7 +185,7 @@ def _check_no_ambiguous_assignments(
         SELECT
             row_number() OVER (ORDER BY d.sort_order, d.turf_draft_id) - 1 AS idx,
             ST_GeomFromGeoJSON(d.geometry::VARCHAR) AS geom
-        FROM {OPERATIONAL_PG_ALIAS}.public.turf_drafts d
+        FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts d
         WHERE d.campaign_id = ?::UUID AND d.zone_id IS NOT DISTINCT FROM ?::UUID
     ),
     matched_buildings AS (
@@ -244,15 +244,15 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
             z.zone_id::VARCHAR AS zone_id,
             z.keys::VARCHAR AS keys_json,
             (
-                SELECT count(*)::INT FROM {OPERATIONAL_PG_ALIAS}.public.turf_drafts d
+                SELECT count(*)::INT FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts d
                 WHERE d.campaign_id = c.campaign_id
                   AND d.zone_id IS NOT DISTINCT FROM ?::UUID
             ) AS draft_count
-        FROM {OPERATIONAL_PG_ALIAS}.public.campaigns c
-        JOIN {OPERATIONAL_PG_ALIAS}.public.segments s ON s.segment_id = c.segment_id
-        LEFT JOIN {OPERATIONAL_PG_ALIAS}.public.zone_groups zg
+        FROM {OPERATIONAL_PG_ALIAS}.app.campaigns c
+        JOIN {OPERATIONAL_PG_ALIAS}.app.segments s ON s.segment_id = c.segment_id
+        LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.zone_groups zg
             ON zg.zone_group_id = c.zone_group_id
-        LEFT JOIN {OPERATIONAL_PG_ALIAS}.public.zones z
+        LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.zones z
             ON z.zone_id = ?::UUID
             AND z.zone_group_id = c.zone_group_id
         WHERE c.campaign_id = ?::UUID
@@ -365,7 +365,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
             d.sort_order,
             d.geometry::VARCHAR AS geometry_json,
             ST_GeomFromGeoJSON(d.geometry::VARCHAR) AS geom
-        FROM {OPERATIONAL_PG_ALIAS}.public.turf_drafts d
+        FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts d
         WHERE d.campaign_id = ?::UUID
           AND d.zone_id IS NOT DISTINCT FROM ?::UUID
     ),
@@ -495,7 +495,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
 
 def _insert_turfs_sql() -> str:
     return f"""
-    INSERT INTO {OPERATIONAL_PG_ALIAS}.public.turfs (
+    INSERT INTO {OPERATIONAL_PG_ALIAS}.app.turfs (
         turf_id, campaign_id, segment_id, zone_id, zone_group_id,
         script_id, name, turf_code, geometry, door_count, person_count,
         created_by, dataset_version_id
@@ -510,7 +510,7 @@ def _insert_turfs_sql() -> str:
 
 def _insert_turf_data_sql() -> str:
     return f"""
-    INSERT INTO {OPERATIONAL_PG_ALIAS}.public.turf_data (turf_id, data)
+    INSERT INTO {OPERATIONAL_PG_ALIAS}.app.turf_data (turf_id, data)
     SELECT turf_id, json(data) FROM published_turf_rows;
     """
 

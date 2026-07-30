@@ -270,14 +270,14 @@ class PostgresJobStore:
             """
             WITH locked AS (
                 SELECT j.job_id, j.task, j.payload, j.concurrency_key
-                FROM jobs j
+                FROM app.jobs j
                 WHERE j.status = $1
                   AND j.task = ANY($2::text[])
                   AND (
                     j.concurrency_key IS NULL
                     OR NOT EXISTS (
                         SELECT 1
-                        FROM jobs active
+                        FROM app.jobs active
                         WHERE active.status = $3
                           AND active.concurrency_key = j.concurrency_key
                     )
@@ -300,7 +300,7 @@ class PostgresJobStore:
                 WHERE concurrency_rank = 1
                 LIMIT $5
             )
-            UPDATE jobs
+            UPDATE app.jobs
             SET status = $6, locked_by_worker_id = $7
             WHERE job_id IN (SELECT job_id FROM eligible)
             RETURNING job_id, task, payload, concurrency_key
@@ -329,7 +329,7 @@ class PostgresJobStore:
 
         await execute(
             """
-            UPDATE jobs
+            UPDATE app.jobs
             SET status = $1, result = $2::jsonb, failure_reason = NULL, locked_by_worker_id = NULL
             WHERE job_id = $3
             """,
@@ -343,7 +343,7 @@ class PostgresJobStore:
 
         await execute(
             """
-            UPDATE jobs
+            UPDATE app.jobs
             SET status = $1, failure_reason = $2, locked_by_worker_id = NULL
             WHERE job_id = $3
             """,
@@ -357,7 +357,7 @@ class PostgresJobStore:
 
         await execute(
             """
-            INSERT INTO job_messages (job_id, payload)
+            INSERT INTO app.job_messages (job_id, payload)
             VALUES ($1, $2::json)
             """,
             job_id,

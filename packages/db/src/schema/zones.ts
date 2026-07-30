@@ -1,4 +1,5 @@
-import { jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { users } from "./auth/users";
 import { zoneGroups } from "./zone-groups";
 
@@ -7,7 +8,7 @@ import { zoneGroups } from "./zone-groups";
 // `zone_groups.keyGroup` — every zone in a group shares the same unit type.
 // Polygons and counts are derived server-side from `keys`; this table only
 // stores the selection.
-export const zones = pgTable("zones", {
+export const zones = app.table("zones", {
   zoneId: uuid().defaultRandom().primaryKey(),
   zoneGroupId: uuid()
     .notNull()

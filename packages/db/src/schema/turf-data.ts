@@ -1,4 +1,5 @@
-import { jsonb, pgTable, timestamp, uuid } from "drizzle-orm/pg-core";
+import { jsonb, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { type GeoJsonPolygon, turfs } from "./turfs";
 
 // Per-turf payload — the buildings → doors → persons hierarchy a
@@ -10,7 +11,7 @@ import { type GeoJsonPolygon, turfs } from "./turfs";
 //
 // Cascade on turf delete — if the parent row is gone, the blob is
 // orphaned data.
-export const turfData = pgTable("turf_data", {
+export const turfData = app.table("turf_data", {
   turfId: uuid()
     .primaryKey()
     .references(() => turfs.turfId, { onDelete: "cascade" }),

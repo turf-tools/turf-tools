@@ -1,10 +1,11 @@
-import { boolean, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "../app";
 
 // Better Auth managed. The PK property must be `id` because BA's drizzle
 // introspection hard-codes that name — all four tables in `schema/auth/`
 // follow this constraint. Elsewhere in the schema we use `<table>Id`.
 
-export const users = pgTable(
+export const users = app.table(
   "users",
   {
     id: uuid().defaultRandom().primaryKey(),

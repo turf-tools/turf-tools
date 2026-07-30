@@ -34,9 +34,9 @@ export const forOrg = pub
         SELECT DISTINCT ON (e.turf_id, e.person_id)
           e.turf_id,
           e.payload->>'outcome' AS outcome
-        FROM canvass_events e
-        JOIN turfs t ON t.turf_id = e.turf_id
-        JOIN campaigns c ON c.campaign_id = t.campaign_id
+        FROM app.canvass_events e
+        JOIN app.turfs t ON t.turf_id = e.turf_id
+        JOIN app.campaigns c ON c.campaign_id = t.campaign_id
         WHERE e.kind = 'result'
           AND e.person_id IS NOT NULL
           AND c.organization_id = ${context.organizationId}
