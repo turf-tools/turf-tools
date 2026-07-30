@@ -2,8 +2,11 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 
 export const Route = createFileRoute("/$orgSlug/campaigns/")({
-  loader: async ({ context: { queryClient }, params: { orgSlug } }) => {
+  loader: async ({ context: { queryClient }, params: { orgSlug }, preload }) => {
     const campaigns = await queryClient.fetchQuery(campaignsListQuery());
+    // Redirect only on real navigations — a redirect thrown during a hover
+    // preload gets committed and auto-navigates.
+    if (preload) return;
     // Alphabetically first is the default — matches the list-column order.
     const fallback = [...campaigns].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (fallback) {

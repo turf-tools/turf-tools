@@ -116,10 +116,13 @@ function bboxOfPolys(fc: FeatureCollection): [number, number, number, number] | 
 }
 
 export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
-  loader: async ({ context: { queryClient }, params: { orgSlug, campaignId } }) => {
+  loader: async ({ context: { queryClient }, params: { orgSlug, campaignId }, preload }) => {
     const campaigns = await queryClient.fetchQuery(campaignsListQuery());
     const exists = campaigns.some((c) => c.campaignId === campaignId);
     if (!exists) {
+      // Redirect only on real navigations — a redirect thrown during a
+      // hover preload gets committed and auto-navigates.
+      if (preload) return;
       throw redirect({ to: "/$orgSlug/campaigns", params: { orgSlug } });
     }
     // Chrome essentials: campaign detail + turf stats + bound segment +
