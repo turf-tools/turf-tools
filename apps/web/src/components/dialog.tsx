@@ -108,7 +108,7 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
 function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
-      className={cn("mb-2 text-xl font-extrabold tracking-wide", className)}
+      className={cn("mb-2 -mt-1 text-xl font-extrabold tracking-wide", className)}
       {...props}
     />
   );
@@ -142,7 +142,7 @@ function DialogCloseX() {
         "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
       )}
     >
-      <X className="size-4" />
+      <X className="size-4 [stroke-width:2.5]" />
     </DialogPrimitive.Close>
   );
 }
