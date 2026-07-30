@@ -579,7 +579,7 @@ function WalksDialog({
       <DialogContent className="max-w-[85vw] pb-3 md:max-w-md">
         {turf ? (
           <>
-            <DialogTitle className="-mt-1 text-sm font-normal tracking-normal text-foreground italic tabular-nums">
+            <DialogTitle className="tabular-nums">
               Turf {turfLabel(turf.name)}
               {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
