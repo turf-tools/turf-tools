@@ -179,6 +179,11 @@ function DataPage() {
             key={d.datasetId}
             label={d.name}
             active={selected?.datasetId === d.datasetId}
+            trailing={
+              d.versions.some((v) => v.isActive) ? (
+                <Check className="ml-2 size-4 shrink-0 [stroke-width:2.25]" />
+              ) : undefined
+            }
             onSelect={() => selectDataset(d.datasetId)}
           />
         ))}
