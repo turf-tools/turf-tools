@@ -72,14 +72,14 @@ def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include
     ).fetchall()
     conn.execute(
         f"""
-        UPDATE {OPERATIONAL_PG_ALIAS}.public.custom_fields SET person_count = 0
-        WHERE dataset_id = (SELECT dataset_id FROM {OPERATIONAL_PG_ALIAS}.public.datasets WHERE slug = ?)
+        UPDATE {OPERATIONAL_PG_ALIAS}.app.custom_fields SET person_count = 0
+        WHERE dataset_id = (SELECT dataset_id FROM {OPERATIONAL_PG_ALIAS}.app.datasets WHERE slug = ?)
         """,
         [dataset_slug],
     )
     for field_id, n in counts:
         conn.execute(
-            f"UPDATE {OPERATIONAL_PG_ALIAS}.public.custom_fields SET person_count = ? WHERE custom_field_id = ?::UUID",
+            f"UPDATE {OPERATIONAL_PG_ALIAS}.app.custom_fields SET person_count = ? WHERE custom_field_id = ?::UUID",
             [n, field_id],
         )
     # Enum option sets are owned by APPEND (derived from the data at ingest)
@@ -90,8 +90,8 @@ def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include
         return
     enum_fields = conn.execute(
         f"""
-        SELECT f.custom_field_id::VARCHAR FROM {OPERATIONAL_PG_ALIAS}.public.custom_fields f
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d ON d.dataset_id = f.dataset_id
+        SELECT f.custom_field_id::VARCHAR FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields f
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = f.dataset_id
         WHERE d.slug = ? AND f.field_type = 'enum'
         """,
         [dataset_slug],
@@ -105,7 +105,7 @@ def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include
             ).fetchall()
         ]
         conn.execute(
-            f"UPDATE {OPERATIONAL_PG_ALIAS}.public.custom_fields SET values = ? WHERE custom_field_id = ?::UUID",
+            f"UPDATE {OPERATIONAL_PG_ALIAS}.app.custom_fields SET values = ? WHERE custom_field_id = ?::UUID",
             [values, field_id],
         )
 
@@ -119,8 +119,8 @@ def catalog_for(conn: duckdb.DuckDBPyConnection, version: ResolvedVersion) -> Fi
     rows = conn.execute(
         f"""
         SELECT f.custom_field_id::VARCHAR, f.field_type
-        FROM {OPERATIONAL_PG_ALIAS}.public.custom_fields f
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d ON d.dataset_id = f.dataset_id
+        FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields f
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = f.dataset_id
         WHERE d.slug = ?
         """,
         [version.dataset_slug],
@@ -275,7 +275,7 @@ def append_custom_fields(
         CREATE OR REPLACE TEMP TABLE _rows_ids AS
         SELECT r.external_id, f.custom_field_id::VARCHAR AS field_id, r.value
         FROM _rows r
-        JOIN {OPERATIONAL_PG_ALIAS}.public.custom_fields f
+        JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f
             ON f.label = r.label AND f.dataset_id = ?::UUID
         """,
         [dataset_id],
@@ -324,7 +324,7 @@ def _upsert_registry(conn: duckdb.DuckDBPyConnection, dataset_id: str, field_typ
     conflict = conn.execute(
         f"""
         SELECT f.label, f.field_type, f.archived_at IS NOT NULL
-        FROM {OPERATIONAL_PG_ALIAS}.public.custom_fields f
+        FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields f
         WHERE f.dataset_id = ?::UUID AND f.field_type <> ?
             AND f.label IN (SELECT DISTINCT label FROM _rows)
         LIMIT 1
@@ -339,17 +339,17 @@ def _upsert_registry(conn: duckdb.DuckDBPyConnection, dataset_id: str, field_typ
         )
     conn.execute(
         f"""
-        INSERT INTO {OPERATIONAL_PG_ALIAS}.public.custom_fields (custom_field_id, dataset_id, label, field_type)
+        INSERT INTO {OPERATIONAL_PG_ALIAS}.app.custom_fields (custom_field_id, dataset_id, label, field_type)
         SELECT uuid(), ?::UUID, label, ? FROM (SELECT DISTINCT label FROM _rows)
         WHERE label NOT IN (
-            SELECT label FROM {OPERATIONAL_PG_ALIAS}.public.custom_fields WHERE dataset_id = ?::UUID
+            SELECT label FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields WHERE dataset_id = ?::UUID
         )
         """,
         [dataset_id, field_type, dataset_id],
     )
     conn.execute(
         f"""
-        UPDATE {OPERATIONAL_PG_ALIAS}.public.custom_fields SET archived_at = NULL
+        UPDATE {OPERATIONAL_PG_ALIAS}.app.custom_fields SET archived_at = NULL
         WHERE dataset_id = ?::UUID AND archived_at IS NOT NULL
             AND label IN (SELECT DISTINCT label FROM _rows)
         """,
@@ -364,8 +364,8 @@ def _matched_count(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> int | 
     row = conn.execute(
         f"""
         SELECT max(v.version_number)
-        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_versions v
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d ON d.dataset_id = v.dataset_id
+        FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
         WHERE d.slug = ? AND v.status = 'ready'
         """,
         [dataset_slug],

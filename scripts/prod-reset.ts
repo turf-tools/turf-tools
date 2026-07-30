@@ -3,7 +3,7 @@ import { createLogger, run } from "./_logging";
 const log = createLogger("reset");
 
 const DATA_ENV = "/etc/turf-tools-data.env";
-const DBS = ["turf_tools", "turf_tools_ducklake_catalog", "turf_tools_ducklake_geo_catalog"];
+const DBS = ["turf_tools", "turf_tools_ducklake", "turf_tools_ducklake_geo"];
 
 log.task("stopping services");
 run(log, "sudo systemctl stop turf-tools-web turf-tools-data");

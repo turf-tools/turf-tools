@@ -1,4 +1,5 @@
-import { integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { integer, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { users } from "./auth/users";
 
 // A dataset is a deployment-level source of canvassable persons (a state voter
@@ -7,7 +8,7 @@ import { users } from "./auth/users";
 // deployment (upload once, update once → all referencing orgs move together).
 // Data lives once per version, each version in its own DuckLake schema
 // (`ducklake.<slug>_v<versionNumber>`).
-export const datasets = pgTable(
+export const datasets = app.table(
   "datasets",
   {
     datasetId: uuid().defaultRandom().primaryKey(),
@@ -43,7 +44,7 @@ export type DerivedMetadata = {
 // reference (a published turf, a canvass event) always resolves. Its data lives
 // in the DuckLake schema `${dataset.slug}_v${versionNumber}`. `manifest` is the
 // field catalog (what's filterable/zonable — the serialized importer Manifest).
-export const datasetVersions = pgTable(
+export const datasetVersions = app.table(
   "dataset_versions",
   {
     datasetVersionId: uuid().defaultRandom().primaryKey(),

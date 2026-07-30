@@ -1,11 +1,12 @@
-import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
 
 // A question is a named question with text and a response type.
 // Standalone and org-level; referenced by script steps and reusable
 // across scripts.
-export const questions = pgTable("questions", {
+export const questions = app.table("questions", {
   questionId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()
@@ -21,7 +22,7 @@ export const questions = pgTable("questions", {
 });
 
 // One selectable answer for a question. Order is per-question.
-export const responseOptions = pgTable("response_options", {
+export const responseOptions = app.table("response_options", {
   responseOptionId: uuid().defaultRandom().primaryKey(),
   questionId: uuid()
     .notNull()

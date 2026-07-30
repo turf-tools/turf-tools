@@ -1,4 +1,5 @@
-import { integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { organizations } from "./organizations";
 import { questions } from "./questions";
 import { users } from "./auth/users";
@@ -6,7 +7,7 @@ import { users } from "./auth/users";
 // A script is an ordered sequence of steps presented to canvassers at the
 // door. Standalone and reusable across campaigns; each campaign references
 // one script.
-export const scripts = pgTable("scripts", {
+export const scripts = app.table("scripts", {
   scriptId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()
@@ -21,7 +22,7 @@ export const scripts = pgTable("scripts", {
 // A step is either stepType='question' (referencing a reusable
 // question) or stepType='text' (carrying its copy inline). Type/payload
 // consistency is enforced at the RPC layer.
-export const scriptSteps = pgTable("script_steps", {
+export const scriptSteps = app.table("script_steps", {
   scriptStepId: uuid().defaultRandom().primaryKey(),
   scriptId: uuid()
     .notNull()

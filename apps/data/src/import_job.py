@@ -48,7 +48,8 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
         # reason (pure Postgres, so it works even when the DuckLake attach is what
         # failed). Then re-raise so the job framework records it on the job row.
         await postgres.execute(
-            "UPDATE dataset_versions SET status = 'failed', error = left($2, 1000) WHERE dataset_version_id = $1::uuid",
+            "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000) "
+            "WHERE dataset_version_id = $1::uuid",
             payload.dataset_version_id,
             str(exc),
         )
@@ -194,8 +195,8 @@ def _resolve_version(
     row = conn.execute(
         f"""
         SELECT d.slug, v.version_number, d.importer
-        FROM {OPERATIONAL_PG_ALIAS}.public.dataset_versions v
-        JOIN {OPERATIONAL_PG_ALIAS}.public.datasets d ON d.dataset_id = v.dataset_id
+        FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
         WHERE v.dataset_version_id = ?
         """,
         [dataset_version_id],

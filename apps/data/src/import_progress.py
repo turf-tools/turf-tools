@@ -43,7 +43,7 @@ class ImportProgress:
     def _write(self) -> None:
         self._conn.execute(
             f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
-            f"UPDATE public.dataset_versions "
+            f"UPDATE app.dataset_versions "
             f"SET import_step = {int(self._step)}, import_total_steps = {int(self._total)} "
             f"WHERE dataset_version_id = '{self._dvid}'$ft$)"
         )
@@ -62,7 +62,7 @@ class JobLog:
         payload = json.dumps({"level": level, "message": message}).replace("'", "''")
         self._conn.execute(
             f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $jobmsg$"
-            f"INSERT INTO public.job_messages (job_id, payload) "
+            f"INSERT INTO app.job_messages (job_id, payload) "
             f"VALUES ('{self._job_id}', '{payload}'::json)$jobmsg$)"
         )
 

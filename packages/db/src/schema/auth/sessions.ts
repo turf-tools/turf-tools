@@ -1,10 +1,11 @@
-import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { app } from "../app";
 import { users } from "./users";
 
 // Better Auth session row. Cookie holds the opaque `token`; server looks up
 // the session per request.
 
-export const sessions = pgTable(
+export const sessions = app.table(
   "sessions",
   {
     id: uuid().defaultRandom().primaryKey(),

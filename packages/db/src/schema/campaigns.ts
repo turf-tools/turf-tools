@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { app } from "./app";
 import { datasets } from "./datasets";
 import { organizations } from "./organizations";
 import { scripts } from "./scripts";
@@ -11,7 +12,7 @@ import { zoneGroups } from "./zone-groups";
 // the campaign's zones. The three FKs are nullable because a campaign can
 // be saved as a draft before all the pieces are picked; an "active"
 // campaign should have all three set (enforced at the app level).
-export const campaigns = pgTable("campaigns", {
+export const campaigns = app.table("campaigns", {
   campaignId: uuid().defaultRandom().primaryKey(),
   organizationId: uuid()
     .notNull()
