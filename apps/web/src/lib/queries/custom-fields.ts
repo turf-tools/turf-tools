@@ -26,12 +26,16 @@ export const customFieldExamplesQuery = (customFieldId: string) =>
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-// The dataset's base (manifest) fields, from its latest ready version — the
-// Data page's fields card shows them beneath any custom fields.
-export const baseFieldsQuery = (datasetId: string) =>
+// A ready version's base (manifest) fields — the Data page's fields card
+// shows them beneath any custom fields. Version-keyed: a version's manifest
+// never changes once ready, so the cache needs no invalidation — when an
+// import lands, the card asks under the new version's key and fetches fresh.
+// null (no ready version yet, fresh dataset mid-import) renders empty
+// without a request.
+export const baseFieldsQuery = (versionId: string | null) =>
   queryOptions({
-    queryKey: ["base-fields", datasetId] as const,
-    queryFn: () => client.datasets.baseFields({ datasetId }),
-    // Immutable per version; make-active invalidates globally and prefetches.
+    queryKey: ["base-fields", versionId] as const,
+    queryFn: (): Promise<Array<{ label: string; kind: string }>> =>
+      versionId ? client.datasets.baseFields({ versionId }) : Promise.resolve([]),
     staleTime: Number.POSITIVE_INFINITY,
   });

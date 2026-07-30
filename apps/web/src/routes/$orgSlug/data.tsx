@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { Activity, Columns2, Check, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -97,9 +103,11 @@ export const Route = createFileRoute("/$orgSlug/data")({
     const selected =
       rows.find((r) => r.datasetId === deps.dataset)?.datasetId ?? rows[0]?.datasetId;
     if (selected) {
+      const readyVersionId =
+        rows.find((r) => r.datasetId === selected && r.status === "ready")?.versionId ?? null;
       await Promise.all([
         queryClient.fetchQuery(customFieldsQuery(selected)),
-        queryClient.fetchQuery(baseFieldsQuery(selected)),
+        queryClient.fetchQuery(baseFieldsQuery(readyVersionId)),
       ]);
     }
   },
@@ -229,7 +237,14 @@ function DatasetEditor({
   const queryClient = useQueryClient();
   // Loader-prefetched; suspense keeps the card from painting incomplete.
   const { data: fields } = useSuspenseQuery(customFieldsQuery(dataset.datasetId));
-  const { data: baseFields } = useSuspenseQuery(baseFieldsQuery(dataset.datasetId));
+  // Versions arrive newest-first, so this is the latest ready version. The
+  // key flips when an import lands — keep the old list up while the new
+  // version's fields load instead of suspending the whole route.
+  const readyVersionId = dataset.versions.find((v) => v.status === "ready")?.versionId ?? null;
+  const { data: baseFields = [] } = useQuery({
+    ...baseFieldsQuery(readyVersionId),
+    placeholderData: keepPreviousData,
+  });
 
   const importing = dataset.versions.some((v) => v.status === "importing");
 
@@ -410,7 +425,7 @@ function VersionsCard({
                 <TableCell>
                   <Pill variant="number" className="min-w-0">
                     <span className="truncate">
-                      {v.rowCount != null ? v.rowCount.toLocaleString() : "—"}
+                      {v.rowCount != null ? v.rowCount.toLocaleString() : ""}
                     </span>
                   </Pill>
                 </TableCell>
