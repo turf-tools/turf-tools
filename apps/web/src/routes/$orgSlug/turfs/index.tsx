@@ -357,11 +357,12 @@ function useProgressByTurf(campaignId: string | null) {
   return useMemo(() => new Map((data ?? []).map((r) => [r.turfId, r.attempted])), [data]);
 }
 
-// Region-grouped rendering for mobile "All zones": one group per
+// Region-grouped rendering for the mobile views: one group per
 // (campaign, region) in row order — keyed on both because zone groups
-// can be shared across campaigns — headed "Campaign — Zone".
-function groupRows(rows: TurfRow[], grouped: boolean) {
-  if (!grouped) return [{ key: "", name: null as string | null, rows }];
+// can be shared across campaigns — headed "Campaign / Zone". Always on,
+// even filtered to a single zone: the heading anchors context once the
+// filters scroll away, and the layout stays put across filter changes.
+function groupRows(rows: TurfRow[]) {
   const groups: { key: string; name: string | null; rows: TurfRow[] }[] = [];
   const index = new Map<string, number>();
   for (const t of rows) {
@@ -706,7 +707,7 @@ function TurfCards({
   }
   return (
     <div className="flex flex-col gap-6 pb-8">
-      {groupRows(rows, zoneId === null).map((group) => (
+      {groupRows(rows).map((group) => (
         <div key={group.key} className="flex flex-col gap-3">
           {group.name ? <p className="text-muted-foreground leading-5">{group.name}</p> : null}
           {group.rows.map((t) => (
@@ -854,7 +855,7 @@ function CompactList({
   const cell = "flex h-8 shrink-0 items-center justify-center rounded-md text-sm";
   return (
     <div className="flex flex-col gap-5 pb-8">
-      {groupRows(rows, zoneId === null).map((group) => (
+      {groupRows(rows).map((group) => (
         <div key={group.key} className="flex flex-col gap-1">
           {group.name ? <p className="mb-2 text-muted-foreground leading-5">{group.name}</p> : null}
           {group.rows.map((t) => {
