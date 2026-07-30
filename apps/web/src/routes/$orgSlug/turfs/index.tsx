@@ -648,9 +648,9 @@ function ProgressPill({ pct }: { pct: number | null }) {
 // Inset mini-table: dividers stop at the container padding rather than
 // running edge-to-edge. Read-only — the lead observes, never edits. One
 // shared component for the card expansion and the canvassers dialog. No
-// End column: audit detail that doesn't earn its width (Start + the
+// End column: audit detail that doesn't earn its width (Walked + the
 // live badge carry the story). table-fixed so a marathon name truncates
-// instead of scrunching the time columns.
+// instead of scrunching the time column.
 function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
   if (walks.length === 0) {
     return <div className="py-2 text-sm text-muted-foreground">No walks yet</div>;
@@ -659,19 +659,19 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
     <table className="w-full table-fixed text-sm">
       <thead>
         <tr className="text-left text-muted-foreground">
-          <th className="h-8 w-16 font-normal">Walked</th>
+          <th className="h-8 w-40 font-normal">Walked</th>
           <th className="h-8 font-normal">Canvasser</th>
-          <th className="h-8 w-20 font-normal">Start</th>
         </tr>
       </thead>
       <tbody>
         {[...walks].reverse().map((w) => (
           <tr key={w.walkId} className="border-t border-border">
-            <td className="h-9 font-mono tabular-nums">{formatMonthDay(w.openedAt, tz)}</td>
+            <td className="h-9 font-mono tabular-nums">
+              {formatMonthDay(w.openedAt, tz)} {formatTime(w.openedAt, tz)}
+            </td>
             <td className="h-9 pr-2">
               <span className="block truncate">{w.canvasserName}</span>
             </td>
-            <td className="h-9 font-mono tabular-nums">{formatTime(w.openedAt, tz)}</td>
           </tr>
         ))}
       </tbody>
