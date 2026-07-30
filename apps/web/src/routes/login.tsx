@@ -72,8 +72,10 @@ function LoginPage() {
     setError(null);
   };
 
+  // dvh, not vh: mobile 100vh assumes collapsed browser chrome, so the page
+  // overflows (and scrolls) while the URL bar is showing.
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="flex min-h-dvh items-center justify-center px-4">
       <div className="fixed top-3 right-4 flex items-center gap-3">
         <LoadingIndicator />
         <LightDarkToggle />
