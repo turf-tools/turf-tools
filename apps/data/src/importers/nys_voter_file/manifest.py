@@ -26,8 +26,8 @@ NYS_MANIFEST = Manifest(
     fields=[
         # Identity + demographics
         [
-            FieldDef(column="first_name", label="First name", filter_kind="text"),
-            FieldDef(column="last_name", label="Last name", filter_kind="text"),
+            FieldDef(column="first_name", label="First Name", filter_kind="text"),
+            FieldDef(column="last_name", label="Last Name", filter_kind="text"),
             # Composite: reads several columns directly, so no single `column`.
             FieldDef(key="address", label="Address", filter_kind="address"),
             # zip5 doubles as the `nyc_zips` boundary key (derivable from the address,
