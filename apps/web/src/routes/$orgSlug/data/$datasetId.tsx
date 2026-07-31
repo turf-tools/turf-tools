@@ -599,6 +599,10 @@ function FieldsCard({
   );
 }
 
+// Keep in sync with the sampling LIMIT in the data server's
+// /custom-fields/examples, which caps the scalar-field sample.
+const EXAMPLE_LIMIT = 10;
+
 // Rename / archive / clear a custom field. Rename is
 // safe by construction (criteria and lake values are id-keyed); archive is
 // display-only and re-appending the label revives it; clear deletes values
@@ -634,8 +638,8 @@ function FieldDialog({
     ...customFieldExamplesQuery(field?.customFieldId ?? ""),
     enabled: open && field != null && !isEnum,
   });
-  const examples = isEnum ? (field?.values ?? []).slice(0, 5) : (sampled ?? null);
-  const moreCount = isEnum ? Math.max(0, (field?.values?.length ?? 0) - 5) : 0;
+  const examples = isEnum ? (field?.values ?? []).slice(0, EXAMPLE_LIMIT) : (sampled ?? null);
+  const moreCount = isEnum ? Math.max(0, (field?.values?.length ?? 0) - EXAMPLE_LIMIT) : 0;
 
   const done = () => {
     onDone();
