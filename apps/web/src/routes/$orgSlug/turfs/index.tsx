@@ -770,12 +770,12 @@ function TurfCard({
         ) : null}
         <span className="ml-auto flex items-center gap-1.5">
           <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
-            <DoorClosed className="size-3.5" />
-            {turf.doorCount != null ? turf.doorCount.toLocaleString() : "—"}
-          </span>
-          <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
             <UserRound className="size-3.5" />
             {turf.personCount != null ? turf.personCount.toLocaleString() : "—"}
+          </span>
+          <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
+            <DoorClosed className="size-3.5" />
+            {turf.doorCount != null ? turf.doorCount.toLocaleString() : "—"}
           </span>
           {pct !== null ? (
             <span
@@ -966,8 +966,8 @@ function TurfsTable({
           <TableHead className="w-30">Code</TableHead>
           <TableHead className="w-24">Walked</TableHead>
           <TableHead className="w-16">Status</TableHead>
-          <TableHead className="w-22">Doors</TableHead>
           <TableHead className="w-22">People</TableHead>
+          <TableHead className="w-22">Doors</TableHead>
           <TableHead className="w-20">Progress</TableHead>
           <TableHead className="">Canvassers</TableHead>
           <TableHead className="">Zone</TableHead>
@@ -1013,14 +1013,14 @@ function TurfsTable({
               </TableCell>
               <TableCell>
                 <Pill variant="number" className="gap-1.5">
-                  <DoorClosed className="size-3.5 shrink-0 text-foreground" />
-                  {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
+                  <UserRound className="size-3.5 shrink-0 text-foreground" />
+                  {t.personCount != null ? t.personCount.toLocaleString() : "—"}
                 </Pill>
               </TableCell>
               <TableCell>
                 <Pill variant="number" className="gap-1.5">
-                  <UserRound className="size-3.5 shrink-0 text-foreground" />
-                  {t.personCount != null ? t.personCount.toLocaleString() : "—"}
+                  <DoorClosed className="size-3.5 shrink-0 text-foreground" />
+                  {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
                 </Pill>
               </TableCell>
               <TableCell>

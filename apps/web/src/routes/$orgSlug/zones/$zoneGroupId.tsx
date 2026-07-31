@@ -382,12 +382,12 @@ function ZoneGroupEditor() {
               {zoneOverlay ? (
                 <>
                   <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                    <DoorClosed className="size-3.5 text-foreground" />
-                    {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
-                  </Pill>
-                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
                     <UserRound className="size-3.5 text-foreground" />
                     {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
+                  </Pill>
+                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                    <DoorClosed className="size-3.5 text-foreground" />
+                    {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
                   </Pill>
                 </>
               ) : (
@@ -510,12 +510,12 @@ function ZoneGroupEditor() {
               {overlayCountsByKey ? (
                 <div className="flex justify-end gap-1.5">
                   <Pill variant="number" className="!w-fit gap-1.5">
-                    <DoorClosed className="size-3.5 text-foreground" />
-                    {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
-                  </Pill>
-                  <Pill variant="number" className="!w-fit gap-1.5">
                     <UserRound className="size-3.5 text-foreground" />
                     {(overlayCountsByKey[displayedHoverKey]?.people ?? 0).toLocaleString()}
+                  </Pill>
+                  <Pill variant="number" className="!w-fit gap-1.5">
+                    <DoorClosed className="size-3.5 text-foreground" />
+                    {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
                   </Pill>
                 </div>
               ) : null}
