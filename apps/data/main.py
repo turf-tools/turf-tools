@@ -346,7 +346,7 @@ async def custom_fields_examples(req: _CustomFieldExamplesRequest):
     if table is None:
         return {"values": []}
     rows = conn.execute(
-        f"SELECT DISTINCT value FROM {table} WHERE field_id = ? ORDER BY random() LIMIT 5",
+        f"SELECT DISTINCT value FROM {table} WHERE field_id = ? ORDER BY random() LIMIT 10",
         [req.field_id],
     ).fetchall()
     return {"values": [r[0] for r in rows]}
