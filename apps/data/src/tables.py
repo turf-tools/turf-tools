@@ -229,6 +229,7 @@ def finalize_version(
     dataset_version_id: str,
     manifest: Manifest,
     derived_metadata: dict,
+    activate_for_organization_id: str | None = None,
 ) -> None:
     """Land a version's `manifest` + `derived_metadata` and mark it `ready`, once
     its DuckLake tables are built. The single write point for both callers: the
@@ -238,8 +239,13 @@ def finalize_version(
     to persist — keeps the version's data and its manifest landed in one place.
     `derived_metadata` is the caller's `compute_derived_metadata` result
     (`rowCount`, `elections`, …), cached so reads never recompute over the
-    immutable version. `active_dataset_version_id` is left untouched: activation
-    is the web's concern ("Make active"), which invalidates the web's caches.
+    immutable version. `activate_for_organization_id` is the org that initiated
+    the import: if it has no active version, it's auto-activated onto this one
+    (an org's first working import is always wanted live). Only that org — an
+    import must never flip another org's active version, shared dataset or not.
+    Orgs already on a version keep it until an explicit "Make active". The web
+    tolerates this server-side flip: its manifest cache treats a null result as
+    always-stale, so the no-dataset gate lifts on the next navigation.
 
     Postgres implicit-casts json→jsonb on INSERT but not on UPDATE, and DuckDB
     (no native jsonb type) sends the value as varchar — so a bound-param UPDATE
@@ -260,6 +266,15 @@ def finalize_version(
         f"WHERE dataset_version_id = '{dataset_version_id}'"
         f"$ft$)"
     )
+    if activate_for_organization_id is not None:
+        conn.execute(
+            f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
+            f"UPDATE app.organizations "
+            f"SET active_dataset_version_id = '{dataset_version_id}' "
+            f"WHERE organization_id = '{activate_for_organization_id}' "
+            f"AND active_dataset_version_id IS NULL"
+            f"$ft$)"
+        )
 
 
 class NoActiveDatasetError(RuntimeError):

@@ -233,10 +233,15 @@ export const create = pub
         })
         .returning({ datasetVersionId: datasetVersions.datasetVersionId });
       // Enqueue the geocode job — the data-server worker picks it up, runs the
-      // importer + DAG, and marks the version `ready`.
+      // importer + DAG, and marks the version `ready`. The org id lets finalize
+      // auto-activate this org (only) if it has no active version yet.
       await tx.insert(jobs).values({
         task: "import_dataset_version",
-        payload: { dataset_version_id: version!.datasetVersionId, source: input.sourceUri },
+        payload: {
+          dataset_version_id: version!.datasetVersionId,
+          source: input.sourceUri,
+          organization_id: context.organizationId,
+        },
       });
       return { datasetId: ds!.datasetId };
     });
@@ -289,7 +294,11 @@ export const update = pub
         .returning({ datasetVersionId: datasetVersions.datasetVersionId });
       await tx.insert(jobs).values({
         task: "import_dataset_version",
-        payload: { dataset_version_id: version!.datasetVersionId, source: input.sourceUri },
+        payload: {
+          dataset_version_id: version!.datasetVersionId,
+          source: input.sourceUri,
+          organization_id: context.organizationId,
+        },
       });
       return { versionId: version!.datasetVersionId };
     });
