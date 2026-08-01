@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, desc, eq } from "@turf-tools/db";
+import { and, asc, desc, eq, sql } from "@turf-tools/db";
 import {
   datasetOrganizations,
   datasets,
@@ -176,20 +176,43 @@ export const create = pub
     }),
   )
   .handler(async ({ context, input }) => {
-    const slug = slugify(input.name);
-    if (!slug)
+    const base = slugify(input.name);
+    if (!base)
       throw new ORPCError("BAD_REQUEST", { message: "Name must contain letters or numbers." });
 
-    const clash = await context.db
+    // A duplicate name *within the org* almost certainly means "update the
+    // existing dataset", so reject with that pointer. Name reuse across orgs
+    // is fine — orgs can't see each other's datasets.
+    const dupe = await context.db
       .select({ id: datasets.datasetId })
       .from(datasets)
-      .where(eq(datasets.slug, slug))
+      .innerJoin(datasetOrganizations, eq(datasetOrganizations.datasetId, datasets.datasetId))
+      .where(
+        and(
+          eq(datasetOrganizations.organizationId, context.organizationId),
+          sql`lower(${datasets.name}) = ${input.name.trim().toLowerCase()}`,
+        ),
+      )
       .limit(1);
-    if (clash.length > 0)
+    if (dupe.length > 0)
       throw new ORPCError("CONFLICT", {
         message:
-          "A dataset with this name already exists. If you are trying to update an existing dataset, use “Update” on its row to import a newer version.",
+          "You already have a dataset with this name. You can “Update” the existing dataset to import a newer version.",
       });
+
+    // Slugs name physical DuckLake schemas, so they must stay deployment-unique
+    // — but that's storage's concern, not the user's. On a collision (another
+    // org used the name), mint the next free numbered variant.
+    const taken = new Set(
+      (
+        await context.db
+          .select({ slug: datasets.slug })
+          .from(datasets)
+          .where(sql`${datasets.slug} ~ ${`^${base}(_[0-9]+)?$`}`)
+      ).map((r) => r.slug),
+    );
+    let slug = base;
+    for (let n = 2; taken.has(slug); n++) slug = `${base}_${n}`;
 
     return context.db.transaction(async (tx) => {
       const [ds] = await tx
