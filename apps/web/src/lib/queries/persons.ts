@@ -13,18 +13,25 @@ export type PersonSearchFields = {
 };
 
 const filledKeys = (f: PersonSearchFields) =>
-  Object.entries(f)
-    .filter(([, v]) => v.trim().length > 0)
-    .map(([k]) => k);
+  (Object.keys(f) as (keyof PersonSearchFields)[]).filter((k) => f[k].trim().length > 0);
 
 const anyFieldFilled = (f: PersonSearchFields) => filledKeys(f).length > 0;
 
+// One value extends the other — typing forward or backspacing within a field.
+const refines = (a: string, b: string) => {
+  const [x, y] = [a.trim().toLowerCase(), b.trim().toLowerCase()];
+  return x.startsWith(y) || y.startsWith(x);
+};
+
 // Two searches are "the same lookup" (refining a field, adding one, or paging)
-// when their filled fields overlap. A search sharing no filled field — e.g. you
-// cleared the name and started typing an address — is a *different* lookup.
+// when their filled fields overlap and every shared field is a continuation of
+// the other's text. Sharing no filled field (cleared the name, started typing
+// an address) or replacing a field's text outright ("J" → "M") is a
+// *different* lookup.
 const sameLookup = (a: PersonSearchFields, b: PersonSearchFields) => {
   const bKeys = new Set(filledKeys(b));
-  return filledKeys(a).some((k) => bKeys.has(k));
+  const shared = filledKeys(a).filter((k) => bKeys.has(k));
+  return shared.length > 0 && shared.every((k) => refines(a[k], b[k]));
 };
 
 // Paginated person search. Disabled when every field is blank. We keep the
