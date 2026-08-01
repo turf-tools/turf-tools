@@ -476,7 +476,7 @@ function DetailsDialog({
             {version.error ?? "Failed, but no error message was recorded."}
           </Callout>
         ) : version?.status === "importing" ? (
-          <p className="text-sm text-muted-foreground">Import in progress — no errors so far.</p>
+          <Callout tone="pending">Import in progress — no errors so far.</Callout>
         ) : (
           <Callout tone="success">Completed with no errors.</Callout>
         )}

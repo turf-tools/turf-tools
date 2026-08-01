@@ -1,15 +1,17 @@
 import type { ReactNode } from "react";
 import { tintStyle } from "~/components/badge";
-import { GREEN, RED } from "~/lib/palette";
+import { GREEN, RED, YELLOW } from "~/lib/palette";
 import { cn } from "~/lib/utils";
 
-// Message cards for dialogs and forms (errors, success confirmations),
-// on the badge tint system with the scheme red/green. Unlike badges
+// Message cards for dialogs and forms (errors, success confirmations,
+// still-running work), on the badge tint system with the scheme
+// red/yellow/green — the same three the status badges use. Unlike badges
 // these carry a border — multi-line prose on a light tint needs the
 // frame to read as a discrete callout (set --badge-border-alpha to 0
 // at /badges to preview borderless).
 const TONE_COLORS = {
   error: RED,
+  pending: YELLOW,
   success: GREEN,
 };
 
