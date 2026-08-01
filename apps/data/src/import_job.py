@@ -4,7 +4,9 @@ Keyed off a `dataset_versions` row: resolve its dataset (slug + importer) and
 version number → schema, run the importer's `load` (source → persons_validated),
 then the shared geocode DAG, then `finalize_version` (manifest + row_count +
 `ready`). This is the production analogue of `seed-persons`, enqueued by the web
-when an admin imports a dataset. The user then promotes it via "Make active".
+when an admin imports a dataset. The importing org is auto-activated onto the
+new version by `finalize_version` when it has nothing active; otherwise the
+user promotes it via "Make active".
 """
 
 from __future__ import annotations
@@ -34,6 +36,9 @@ if TYPE_CHECKING:
 class ImportDatasetVersionPayload(BaseModel):
     dataset_version_id: str
     source: str  # path or object-storage key of the raw file the importer decodes
+    # Org that initiated the import — auto-activated onto the new version when it
+    # has no active one.
+    organization_id: str
 
 
 @job(task="import_dataset_version")
@@ -181,7 +186,14 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         geocoded_fqn = result["persons_geocoded"].fqn
         derived = compute_derived_metadata(conn, geocoded_fqn, manifest)
         progress.advance()
-        finalize_version(conn, settings, payload.dataset_version_id, manifest, derived)
+        finalize_version(
+            conn,
+            settings,
+            payload.dataset_version_id,
+            manifest,
+            derived,
+            activate_for_organization_id=payload.organization_id,
+        )
         return {"row_count": derived["rowCount"], "schema": schema}
     finally:
         conn.close()
