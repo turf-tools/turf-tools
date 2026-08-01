@@ -29,8 +29,11 @@ export function Breadcrumb({ orgSlug, orgName, orgs, children }: BreadcrumbProps
           right-side chrome never get pushed out. */}
       <span className="hidden font-bold text-foreground italic md:inline">Turf Tools</span>
       <Separator className="hidden md:inline" />
-      <span className="max-w-[45vw] truncate italic text-foreground md:max-w-none">{orgName}</span>
-      {isMulti ? <OrgSwitcher currentSlug={orgSlug} orgs={orgs} /> : null}
+      {isMulti ? (
+        <OrgSwitcher currentSlug={orgSlug} orgName={orgName} orgs={orgs} />
+      ) : (
+        <OrgName orgName={orgName} />
+      )}
       {children ? (
         <>
           <Separator />
@@ -41,27 +44,42 @@ export function Breadcrumb({ orgSlug, orgName, orgs, children }: BreadcrumbProps
   );
 }
 
+// `pr-px` gives the last italic glyph's overhang room before truncate's
+// overflow-hidden clips it.
+function OrgName({ orgName }: { orgName: string }) {
+  return (
+    <span className="max-w-[45vw] truncate pr-px italic text-foreground md:max-w-none">
+      {orgName}
+    </span>
+  );
+}
+
 function OrgSwitcher({
   currentSlug,
+  orgName,
   orgs,
 }: {
   currentSlug: string;
+  orgName: string;
   orgs: ReadonlyArray<SessionOrg>;
 }) {
   const navigate = useNavigate();
   const sorted = [...orgs].sort((a, b) => a.orgName.localeCompare(b.orgName));
   return (
     <DropdownMenu>
+      {/* The whole name + caret is the trigger; `-ml-1 px-1` keeps the text
+          where the plain span sits while the hover pill gets breathing room. */}
       <DropdownMenuTrigger
         aria-label="Switch organization"
         onMouseDown={(e) => e.preventDefault()}
         className={cn(
-          "flex h-6 w-6 items-center rounded-md justify-center -ml-1",
+          "flex h-6 min-w-0 items-center gap-1 rounded-md -ml-1 px-1",
           "text-muted-foreground hover:bg-muted hover:text-foreground",
           "outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         )}
       >
-        <ChevronDown className="size-4" />
+        <OrgName orgName={orgName} />
+        <ChevronDown className="size-4 shrink-0" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={6} className="w-max max-w-72">
         {sorted.map((o) => {
