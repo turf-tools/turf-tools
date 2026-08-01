@@ -116,7 +116,7 @@
    (toward white in dark mode). Tune live at /badges, then bake values here. */
 :root {
   --badge-bg-alpha: 25%;
-  --badge-fg-shift: 17%;
+  --badge-fg-shift: 25%;
   --badge-fg-shift-dark: 17%;
   --badge-border-alpha: 40%;
 }
