@@ -2,18 +2,29 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { emailOTP } from "better-auth/plugins";
-import { Resend } from "resend";
+import nodemailer, { type Transporter } from "nodemailer";
 import { and, db, eq, isNull } from "@turf-tools/db";
 import { accounts, memberships, sessions, users, verifications } from "@turf-tools/db/schema";
 import { normalizeEmail } from "./normalize-email";
 
-// Resolved lazily so dev can boot without RESEND_API_KEY; the login URL +
+// Resolved lazily so dev can boot without SMTP config; the login URL +
 // OTP code print to the server console in that case.
-let resendClient: Resend | null = null;
-function getResend(): Resend | null {
-  if (!process.env.RESEND_API_KEY) return null;
-  resendClient ??= new Resend(process.env.RESEND_API_KEY);
-  return resendClient;
+let transporter: Transporter | null = null;
+function getTransport(): Transporter | null {
+  const host = process.env.SMTP_HOST;
+  if (!host) return null;
+  if (!transporter) {
+    const port = Number(process.env.SMTP_PORT ?? 465);
+    transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: process.env.SMTP_USER
+        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD }
+        : undefined,
+    });
+  }
+  return transporter;
 }
 
 export const auth = betterAuth({
@@ -143,13 +154,13 @@ export const auth = betterAuth({
         const to = row.displayEmail;
         const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
         const verifyUrl = `${baseUrl}/auth/email/${encodeURIComponent(email)}/${otp}`;
-        const resend = getResend();
-        if (!resend) {
+        const transport = getTransport();
+        const from = process.env.EMAIL_FROM;
+        if (!transport || !from) {
           console.log(`[auth] otp for ${to}: ${otp} (${verifyUrl})`);
           return;
         }
-        const from = process.env.RESEND_FROM ?? "Turf Tools <onboarding@resend.dev>";
-        await resend.emails.send({
+        await transport.sendMail({
           from,
           to,
           subject: "Log in to Turf Tools",
