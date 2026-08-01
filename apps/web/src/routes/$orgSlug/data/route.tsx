@@ -3,7 +3,7 @@ import { createFileRoute, Outlet, redirect, useNavigate, useParams } from "@tans
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "~/components/button";
-import { DialogError } from "~/components/callout";
+import { Callout, DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -83,6 +83,7 @@ function DataLayout() {
       <CreateDatasetDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
+        takenNames={datasets.map((d) => d.name)}
         onCreated={(datasetId) => {
           void queryClient.invalidateQueries({ queryKey: ["datasets"] });
           void goToDataset(datasetId);
@@ -97,16 +98,19 @@ function DataLayout() {
 function CreateDatasetDialog({
   open,
   onOpenChange,
+  takenNames,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  takenNames: ReadonlyArray<string>;
   onCreated: (datasetId: string) => void;
 }) {
   const [name, setName] = useState("");
   const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
   const [source, setSource] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [showDuplicate, setShowDuplicate] = useState(false);
 
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
@@ -116,6 +120,7 @@ function CreateDatasetDialog({
       setImporter(AVAILABLE_IMPORTERS[0].name);
       setSource("");
       setError(null);
+      setShowDuplicate(false);
     }
   }
 
@@ -130,6 +135,11 @@ function CreateDatasetDialog({
   });
 
   const pending = create.isPending;
+  // Mirrors the server's org-scoped duplicate-name check from the already-
+  // loaded list — the server stays authoritative. Only surfaced on submit:
+  // typing toward "Voter File 2026" passes through "Voter File", and warning
+  // on a name that was never going to be submitted is noise.
+  const duplicate = takenNames.some((n) => n.trim().toLowerCase() === name.trim().toLowerCase());
   const valid = name.trim().length > 0 && source.trim().length > 0;
 
   return (
@@ -144,6 +154,10 @@ function CreateDatasetDialog({
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid || pending) return;
+            if (duplicate) {
+              setShowDuplicate(true);
+              return;
+            }
             create.mutate();
           }}
           className="flex flex-col gap-4"
@@ -155,11 +169,18 @@ function CreateDatasetDialog({
               value={name}
               onChange={(e) => {
                 setError(null);
+                setShowDuplicate(false);
                 setName(e.target.value);
               }}
               placeholder="Name of dataset..."
               disabled={pending}
             />
+            {showDuplicate ? (
+              <Callout tone="pending">
+                You already have a dataset with this name. You can “Update” the existing dataset to
+                import a newer version.
+              </Callout>
+            ) : null}
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium">Type</label>
