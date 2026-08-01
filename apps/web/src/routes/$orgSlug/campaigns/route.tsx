@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
+  Link,
   Outlet,
   useChildMatches,
   useNavigate,
@@ -244,6 +245,12 @@ function CampaignsLayout() {
     },
   });
 
+  // A campaign can't exist without a segment and a script — gate the create
+  // dialog behind both so it never opens in a state where it can't succeed.
+  const needSegment = segments.length === 0;
+  const needScript = scripts.length === 0;
+  const [prereqsOpen, setPrereqsOpen] = useState(false);
+
   const [configOpen, setConfigOpen] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   // Pending patch + draft count snapshotted at Save-click time, used by
@@ -384,7 +391,10 @@ function CampaignsLayout() {
               onRename={renameCampaign.open}
             />
           ))}
-          <Rail.New label="New campaign" onClick={createCampaign.open} />
+          <Rail.New
+            label="New campaign"
+            onClick={needSegment || needScript ? () => setPrereqsOpen(true) : createCampaign.open}
+          />
         </Rail>
 
         <EditorPage>
@@ -430,6 +440,14 @@ function CampaignsLayout() {
           </div>
         </EditorPage>
       </div>
+
+      <PrereqsDialog
+        open={prereqsOpen}
+        onOpenChange={setPrereqsOpen}
+        orgSlug={orgSlug}
+        needSegment={needSegment}
+        needScript={needScript}
+      />
 
       <CreateCampaignDialog
         open={createCampaign.isOpen}
@@ -510,6 +528,51 @@ function CampaignsLayout() {
 // ---------------------------------------------------------------------------
 
 type SelectOption = { value: string; label: string };
+
+// Shown in place of the create dialog when the org has no segments and/or no
+// scripts — a campaign requires one of each, so the form couldn't succeed.
+// One "Go to" button per missing prerequisite.
+function PrereqsDialog({
+  open,
+  onOpenChange,
+  orgSlug,
+  needSegment,
+  needScript,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  orgSlug: string;
+  needSegment: boolean;
+  needScript: boolean;
+}) {
+  const missing =
+    needSegment && needScript ? "segments or scripts" : needSegment ? "segments" : "scripts";
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>No {missing} yet</DialogTitle>
+        <DialogDescription>
+          A campaign combines a segment (people) and a script (questions). You don't have any{" "}
+          {missing} yet so you'll need to create {needSegment && needScript ? "one of each" : "one"}{" "}
+          first.
+        </DialogDescription>
+        <div className="mt-2 flex justify-end gap-2">
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          {needSegment ? (
+            <Button render={<Link to="/$orgSlug/segments" params={{ orgSlug }} />}>
+              Go to Segments
+            </Button>
+          ) : null}
+          {needScript ? (
+            <Button render={<Link to="/$orgSlug/scripts" params={{ orgSlug }} />}>
+              Go to Scripts
+            </Button>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // Sentinel for the "construct fresh zone group from key group" path —
 // sits alongside real zone-group ids in the create-dialog dropdown.
