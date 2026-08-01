@@ -243,6 +243,7 @@ function DatasetEditor({
         <FieldsCard
           fields={fields}
           baseFields={baseFields}
+          hasImport={readyVersionId != null}
           onSelect={(f) => {
             setFieldTarget(f);
             setFieldDialogOpen(true);
@@ -503,10 +504,13 @@ type FieldRow = {
 function FieldsCard({
   fields,
   baseFields,
+  hasImport,
   onSelect,
 }: {
   fields: FieldRow[];
   baseFields: Array<{ label: string; kind: string }>;
+  // False until a version finishes importing — fields don't exist yet.
+  hasImport: boolean;
   onSelect: (f: FieldRow) => void;
 }) {
   const queryClient = useQueryClient();
@@ -575,20 +579,26 @@ function FieldsCard({
             </button>
           ))}
         </div>
-        <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Base fields</div>
-        <div className="flex flex-col gap-1 p-2 pt-1 pb-3">
-          {baseFields.map((f) => (
-            <div
-              key={f.label}
-              className="flex items-center justify-between gap-2 rounded-md px-1.5"
-            >
-              <span className="min-w-0 truncate text-sm">{f.label}</span>
-              <span className="shrink-0 text-sm text-muted-foreground">
-                {BASE_KIND_LABELS[f.kind] ?? ""}
-              </span>
+        {hasImport ? (
+          <>
+            <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Base fields</div>
+            <div className="flex flex-col gap-1 p-2 pt-1 pb-3">
+              {baseFields.map((f) => (
+                <div
+                  key={f.label}
+                  className="flex items-center justify-between gap-2 rounded-md px-1.5"
+                >
+                  <span className="min-w-0 truncate text-sm">{f.label}</span>
+                  <span className="shrink-0 text-sm text-muted-foreground">
+                    {BASE_KIND_LABELS[f.kind] ?? ""}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        ) : (
+          <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">No imported dataset</div>
+        )}
       </div>
       {hasArchived ? (
         <div className="flex items-center justify-between border-t border-border px-3 py-2.5">
