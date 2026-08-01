@@ -316,7 +316,7 @@ class CustomFieldDef(BaseModel):
     """A custom (appended) field in the compiler catalog. `kind` is the
     field's type; `key` is the registry id (`custom_fields.custom_field_id`)."""
 
-    kind: Literal["number", "date", "text", "enum"]
+    kind: Literal["number", "date", "text", "text_multi", "enum"]
     key: str
 
 

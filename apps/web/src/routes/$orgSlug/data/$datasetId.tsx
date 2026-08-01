@@ -70,7 +70,7 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 const BASE_KIND_LABELS: Record<string, string> = {
   enum: "Category",
   text: "Text",
-  "text-multi": "Text",
+  "text-multi": "Code",
   "date-range": "Date",
   "age-range": "Age",
   "voting-history-count": "Voting history",
@@ -83,6 +83,7 @@ const FIELD_TYPE_META: Record<CustomFieldType, string> = {
   number: "Number",
   date: "Date",
   text: "Text",
+  text_multi: "Code",
 };
 
 type DataSearch = {

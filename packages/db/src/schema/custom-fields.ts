@@ -5,9 +5,12 @@ import { datasets } from "./datasets";
 
 // Custom-field types — scalar values, latest-upload-wins per person. Each
 // maps 1:1 onto an existing filter kind (number-range / date-range / text /
-// enum). Membership lists are a one-column upload with a constant value
-// (e.g. Employer → amazon), not a dedicated type.
-export type CustomFieldType = "number" | "date" | "text" | "enum";
+// text-multi / enum). Membership lists are a one-column upload with a constant
+// value (e.g. Employer → amazon), not a dedicated type.
+// `text_multi` ("Code") matches whole values against a typed-in list, so "3"
+// can't match "13"; `text` is a substring search and `enum` needs a picker
+// small enough to enumerate.
+export type CustomFieldType = "number" | "date" | "text" | "text_multi" | "enum";
 
 // A custom field — a user-appended, dataset-scoped, typed column that floats
 // across dataset versions. One row per field; values live in the lake's

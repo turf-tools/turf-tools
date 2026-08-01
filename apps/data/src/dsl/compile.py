@@ -174,7 +174,10 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
             return _custom_clause(f, def_, catalog, params)
         return _text_clause(f, def_, params)
     if isinstance(f, TextMultiFilter):
-        return _text_multi_clause(f, _field(catalog, f.key), params)
+        def_ = _field(catalog, f.key)
+        if isinstance(def_, CustomFieldDef):
+            return _custom_clause(f, def_, catalog, params)
+        return _text_multi_clause(f, def_, params)
     if isinstance(f, DateRangeFilter):
         def_ = _field(catalog, f.key)
         if isinstance(def_, CustomFieldDef):
@@ -210,7 +213,7 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
 
 
 def _custom_clause(
-    f: EnumFilter | TextFilter | DateRangeFilter | NumberRangeFilter,
+    f: EnumFilter | TextFilter | TextMultiFilter | DateRangeFilter | NumberRangeFilter,
     def_: CustomFieldDef,
     catalog: FieldCatalog,
     params: list[Any],
@@ -226,6 +229,17 @@ def _custom_clause(
         placeholders = ", ".join("?" for _ in f.values)
         pred = f"value IN ({placeholders})"
         pred_params: list[Any] = list(f.values)
+    elif isinstance(f, TextMultiFilter):
+        if def_.kind != "text_multi":
+            raise CriteriaError(f"Field {f.key} is not a code field")
+        # Whole-value match against the typed-in list — the point of the type
+        # is that "3" doesn't match "13" the way the Text substring would.
+        vals = [v.strip() for v in f.values if v.strip()]
+        if not vals:
+            return ""
+        placeholders = ", ".join("?" for _ in vals)
+        pred = f"value IN ({placeholders})"
+        pred_params = list(vals)
     elif isinstance(f, TextFilter):
         if def_.kind != "text":
             raise CriteriaError(f"Field {f.key} is not a text field")

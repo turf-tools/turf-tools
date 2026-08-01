@@ -25,14 +25,22 @@ if TYPE_CHECKING:
 # Dataset-scoped custom-field tables live in the catalog's default schema.
 _SCHEMA = "main"
 
-# Enum option sets above this are almost certainly free text — fail loudly and
-# suggest the text type instead of silently building a 5,000-toggle picker.
+# Enum option sets above this are almost certainly not pickable — fail loudly
+# rather than silently building a 5,000-toggle picker. The error names both
+# escalations since only the caller knows whether the values are identifiers
+# (Code) or free text (Text).
 _ENUM_VALUES_CAP = 100
 
-_FIELD_TYPES = ("number", "date", "text", "enum")
+_FIELD_TYPES = ("number", "date", "text", "text_multi", "enum")
 
 # Display names for error messages — mirrors the UI's FIELD_TYPE_META.
-_TYPE_LABELS = {"number": "Number", "date": "Date", "text": "Text", "enum": "Category"}
+_TYPE_LABELS = {
+    "number": "Number",
+    "date": "Date",
+    "text": "Text",
+    "text_multi": "Code",
+    "enum": "Category",
+}
 
 
 def custom_fields_fqn(dataset_slug: str) -> str:
@@ -244,7 +252,8 @@ def parse_upload(
         if distinct > _ENUM_VALUES_CAP:
             raise ValueError(
                 f"{distinct} distinct values is too many for a Category field "
-                f"(max {_ENUM_VALUES_CAP}), use the Text type instead."
+                f"(max {_ENUM_VALUES_CAP}). Use Code to match whole values "
+                f"(like districts), or Text to search within them (like names)."
             )
 
     return label, row_count, skipped_count
