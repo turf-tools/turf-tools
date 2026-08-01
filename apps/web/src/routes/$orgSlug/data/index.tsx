@@ -1,6 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
+import { recallSelection } from "~/lib/last-selected";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 
 export const Route = createFileRoute("/$orgSlug/data/")({
@@ -9,9 +10,11 @@ export const Route = createFileRoute("/$orgSlug/data/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    // Rows arrive name-sorted, so this is the alphabetically first dataset —
-    // matches the rail order.
-    const fallback = rows[0];
+    // Last-visited dataset first; cold start lands on the active one (the
+    // dataset you're running on beats alphabetical order), then first-by-name.
+    const remembered = recallSelection(orgSlug, "data");
+    const fallback =
+      rows.find((r) => r.datasetId === remembered) ?? rows.find((r) => r.isActive) ?? rows[0];
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/data/$datasetId",
