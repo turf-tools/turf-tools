@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { recallSelection } from "~/lib/last-selected";
 import { segmentsListQuery } from "~/lib/queries/segments";
 
 export const Route = createFileRoute("/$orgSlug/segments/")({
@@ -7,8 +8,12 @@ export const Route = createFileRoute("/$orgSlug/segments/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    // Alphabetically first is the default — matches the list-column order.
-    const fallback = [...segments].sort((a, b) => a.name.localeCompare(b.name))[0];
+    // Last-visited segment first; alphabetically first on a cold start —
+    // matches the list-column order.
+    const remembered = recallSelection(orgSlug, "segments");
+    const fallback =
+      segments.find((s) => s.segmentId === remembered) ??
+      [...segments].sort((a, b) => a.name.localeCompare(b.name))[0];
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/segments/$segmentId",
