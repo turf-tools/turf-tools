@@ -89,13 +89,14 @@ export type FilterCatalog = {
 export type CustomFieldOption = {
   customFieldId: string;
   label: string;
-  fieldType: "number" | "date" | "text" | "enum";
+  fieldType: "number" | "date" | "text" | "text_multi" | "enum";
   values: string[] | null;
   isArchived: boolean;
 };
 
-// Custom fields become ordinary defs (enum/text/date-range/number-range)
-// keyed by field id, so the standard editors work against them unchanged.
+// Custom fields become ordinary defs (enum/text/text-multi/date-range/
+// number-range) keyed by field id, so the standard editors work against them
+// unchanged.
 function customFieldToFilterDef(f: CustomFieldOption): FilterDef {
   if (f.fieldType === "enum")
     return {
@@ -106,6 +107,8 @@ function customFieldToFilterDef(f: CustomFieldOption): FilterDef {
     };
   if (f.fieldType === "date") return { kind: "date-range", key: f.customFieldId, label: f.label };
   if (f.fieldType === "text") return { kind: "text", key: f.customFieldId, label: f.label };
+  if (f.fieldType === "text_multi")
+    return { kind: "text-multi", key: f.customFieldId, label: f.label };
   return { kind: "number-range", key: f.customFieldId, label: f.label };
 }
 

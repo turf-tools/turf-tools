@@ -483,7 +483,13 @@ def test_mixed_verb_sequence_preserves_order() -> None:
 CUSTOM_CATALOG = build_field_catalog(
     NYS_MANIFEST,
     custom_table="ducklake.main.nys_custom_fields",
-    custom_fields={"f-num": "number", "f-date": "date", "f-text": "text", "f-enum": "enum"},
+    custom_fields={
+        "f-num": "number",
+        "f-date": "date",
+        "f-text": "text",
+        "f-code": "text_multi",
+        "f-enum": "enum",
+    },
 )
 
 
@@ -528,6 +534,40 @@ def test_custom_enum_and_text_clauses() -> None:
     assert "WHERE field_id = ? AND value IN (?, ?)" in where
     assert "WHERE field_id = ? AND value ILIKE ?" in where
     assert params == ["f-enum", "a", "b", "f-text", "%smith%"]
+
+
+def test_custom_code_matches_whole_values_not_substrings() -> None:
+    # The reason Code exists: a Text filter for "3" would compile to
+    # `value ILIKE '%3%'` and sweep up 13, 23, 30-39. Code binds each value
+    # whole, so district 3 stays district 3.
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        _narrow(TextMultiFilter(kind="text-multi", key="f-code", values=["3", "40"])),
+        None,
+        params,
+    )
+    assert where == (
+        "WHERE external_id IN (SELECT external_id FROM ducklake.main.nys_custom_fields "
+        "WHERE field_id = ? AND value IN (?, ?))"
+    )
+    assert params == ["f-code", "3", "40"]
+
+
+def test_custom_code_blank_values_are_inactive() -> None:
+    # Whitespace-only tokens are dropped; an all-blank list is an inactive
+    # filter (matches everyone), not an `IN ()` syntax error.
+    params: list = []
+    assert (
+        criteria_to_where(
+            CUSTOM_CATALOG,
+            _narrow(TextMultiFilter(kind="text-multi", key="f-code", values=["  ", ""])),
+            None,
+            params,
+        )
+        == ""
+    )
+    assert params == []
 
 
 def test_custom_field_kind_mismatch_raises() -> None:

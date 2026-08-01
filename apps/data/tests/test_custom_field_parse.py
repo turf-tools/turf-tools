@@ -111,6 +111,16 @@ def test_enum_distinct_cap(conn, tmp_path):
         parse_upload(conn, src, "enum", None, None)
 
 
+def test_distinct_cap_is_category_only(conn, tmp_path):
+    # The cap exists because Category builds a picker. Code has no picker, so
+    # a large code set (statewide precincts, VAN ids) must go straight through
+    # — it's the escalation the cap's error message points at.
+    lines = "id,precinct\n" + "\n".join(f"{i},{i:05d}" for i in range(5000))
+    src = _csv(tmp_path, lines + "\n")
+    label, rows, skipped = parse_upload(conn, src, "text_multi", None, None)
+    assert (label, rows, skipped) == ("precinct", 5000, 0)
+
+
 def test_values_are_trimmed(conn, tmp_path):
     src = _csv(tmp_path, "id,employer\n 1 , amazon \n")
     parse_upload(conn, src, "enum", None, None)
