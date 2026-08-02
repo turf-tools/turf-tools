@@ -29,6 +29,7 @@ export const get = pub
         order: scriptSteps.order,
         questionId: scriptSteps.questionId,
         stepText: scriptSteps.text,
+        showIfOptionId: scriptSteps.showIfOptionId,
       })
       .from(scriptSteps)
       .where(eq(scriptSteps.scriptId, input.scriptId))
@@ -80,8 +81,16 @@ export const get = pub
       optionsByQuestion.set(opt.questionId, list);
     }
 
+    // `showIfOptionId`: render this step only while that option is selected
+    // (and its question step is itself visible). Null = always shown.
     type NativeScriptStep =
-      | { scriptStepId: string; stepType: "text"; order: number; text: string }
+      | {
+          scriptStepId: string;
+          stepType: "text";
+          order: number;
+          text: string;
+          showIfOptionId: string | null;
+        }
       | {
           scriptStepId: string;
           stepType: "question";
@@ -89,6 +98,7 @@ export const get = pub
           questionId: string;
           responseType: string;
           text: string;
+          showIfOptionId: string | null;
           options: Array<{ responseOptionId: string; text: string; order: number }>;
         };
 
@@ -100,6 +110,7 @@ export const get = pub
           stepType: "text",
           order: s.order,
           text: s.stepText ?? "",
+          showIfOptionId: s.showIfOptionId,
         });
       } else if (s.stepType === "question" && s.questionId) {
         const q = questionById.get(s.questionId);
@@ -111,6 +122,7 @@ export const get = pub
           questionId: q.questionId,
           responseType: q.responseType,
           text: q.text,
+          showIfOptionId: s.showIfOptionId,
           options: (optionsByQuestion.get(q.questionId) ?? []).map((o) => ({
             responseOptionId: o.responseOptionId,
             text: o.text,

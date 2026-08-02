@@ -111,6 +111,7 @@ export const webRouter = {
     removeStep: scripts.removeStep,
     reorderSteps: scripts.reorderSteps,
     updateTextStep: scripts.updateTextStep,
+    setStepCondition: scripts.setStepCondition,
   },
   questions: {
     list: questions.list,

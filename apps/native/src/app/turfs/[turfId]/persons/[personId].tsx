@@ -50,6 +50,46 @@ const EMPTY_RESPONSES = new Map<string, ResponseValue>();
 // edit boundary like a tap, and keeps emits off focused inputs.
 const EMIT_DEBOUNCE_MS = 5000;
 
+// One forward pass over the ordered steps: a step with `showIfOptionId` is
+// visible only while that option is selected AND its question's step is itself
+// visible — so changing an upstream answer collapses the whole chain. Archived
+// options never arrive on the wire, so a condition on one simply never matches.
+type ScriptStepLike = {
+  stepType: string;
+  showIfOptionId: string | null;
+  questionId?: string;
+  options?: Array<{ responseOptionId: string }>;
+};
+
+function visibleScriptSteps<S extends ScriptStepLike>(
+  steps: readonly S[],
+  responses: ReadonlyMap<string, ResponseValue>,
+): S[] {
+  const questionByOption = new Map<string, string>();
+  for (const s of steps) {
+    if (s.stepType === "question" && s.questionId) {
+      for (const o of s.options ?? []) questionByOption.set(o.responseOptionId, s.questionId);
+    }
+  }
+  const hiddenQuestions = new Set<string>();
+  const visible: S[] = [];
+  for (const s of steps) {
+    let show = true;
+    if (s.showIfOptionId != null) {
+      const controller = questionByOption.get(s.showIfOptionId);
+      const value = controller ? responses.get(controller) : undefined;
+      const selected = value && "optionIds" in value ? value.optionIds : [];
+      show =
+        controller != null &&
+        !hiddenQuestions.has(controller) &&
+        selected.includes(s.showIfOptionId);
+    }
+    if (show) visible.push(s);
+    else if (s.stepType === "question" && s.questionId) hiddenQuestions.add(s.questionId);
+  }
+  return visible;
+}
+
 const UNAVAILABLE_OPTIONS: Array<{
   value: string;
   label: string;
@@ -109,9 +149,11 @@ export default function PersonScreen() {
     if (textDirtyRef.current || pendingEmitRef.current != null) return;
     setResponsesByQuestion(derivedResponses);
   }, [derivedResponses]);
-  // Fresh-state mirror for timer callbacks and unmount cleanups.
+  // Fresh-state mirrors for timer callbacks and unmount cleanups.
   const responsesRef = useRef(responsesByQuestion);
   responsesRef.current = responsesByQuestion;
+  const scriptRef = useRef(scriptQuery.data);
+  scriptRef.current = scriptQuery.data;
 
   const derivedOutcome = summary?.currentOutcome ?? null;
   const [unavailableOutcome, setUnavailableOutcome] = useState<string | null>(derivedOutcome);
@@ -150,7 +192,25 @@ export default function PersonScreen() {
     const responses: Record<string, ResponseValue> = {};
     let resolvedOutcome = outcome;
     if (!outcome) {
+      // Never ship an answer to a step the current answers hide — stale
+      // hidden answers can hydrate in from events that predate a condition.
+      // Questions outside the script still ship.
+      const steps = scriptRef.current?.steps;
+      const hiddenQuestions = new Set<string>();
+      if (steps) {
+        const visible = new Set(
+          visibleScriptSteps(steps, next)
+            .filter((s) => s.stepType === "question")
+            .map((s) => s.questionId),
+        );
+        for (const s of steps) {
+          if (s.stepType === "question" && s.questionId && !visible.has(s.questionId)) {
+            hiddenQuestions.add(s.questionId);
+          }
+        }
+      }
       for (const [questionId, value] of next) {
+        if (hiddenQuestions.has(questionId)) continue;
         if ("optionIds" in value) {
           if (value.optionIds.length > 0) responses[questionId] = value;
         } else if (value.text.trim().length > 0) {
@@ -204,6 +264,22 @@ export default function PersonScreen() {
         : [optionId];
     if (nextIds.length === 0) next.delete(questionId);
     else next.set(questionId, { optionIds: nextIds });
+    // Drop answers of steps this change hid, so re-shown steps start blank
+    // and the next snapshot omits them. Questions outside the script are
+    // left alone.
+    const steps = scriptQuery.data?.steps;
+    if (steps) {
+      const visibleQuestions = new Set(
+        visibleScriptSteps(steps, next)
+          .filter((s) => s.stepType === "question")
+          .map((s) => s.questionId),
+      );
+      for (const s of steps) {
+        if (s.stepType === "question" && s.questionId && !visibleQuestions.has(s.questionId)) {
+          next.delete(s.questionId);
+        }
+      }
+    }
     setResponsesByQuestion(next);
     responsesRef.current = next;
     // Picking a response also un-marks unavailable.
@@ -581,7 +657,7 @@ function ScriptContent({
       <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark leading-6">
         {script.name}
       </Text>
-      {script.steps.map((step) => {
+      {visibleScriptSteps(script.steps, responses).map((step) => {
         if (step.stepType === "text") {
           return (
             <Text
