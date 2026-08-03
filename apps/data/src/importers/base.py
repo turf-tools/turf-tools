@@ -16,6 +16,7 @@ field is free manifest data; adding a kind is the expensive cross-language chang
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
@@ -128,6 +129,34 @@ class Progress(Protocol):
     plus the DAG's node count."""
 
     def advance(self, n: int = 1) -> None: ...
+
+
+def redact_source(source: str) -> str:
+    """A source safe to put in an error message: scheme, host, and path only.
+
+    Presigned URLs carry their signature in the query string and some URIs embed
+    `user:secret@`, so the raw string is a credential. The host and path are what
+    identify the file (and catch a typo), and neither is secret.
+    """
+    parts = urlsplit(source)
+    if not parts.scheme:
+        return source  # local path — nothing to strip
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+class SourceUnreadableError(RuntimeError):
+    """The import source couldn't be read.
+
+    Raised by `load` instead of letting the driver's error through: this message
+    lands verbatim in `dataset_versions.error` and is what the admin reads in the
+    UI, so it says what to check. DuckDB's own text for a missing remote file
+    ("HTTP 0 Internal Server Error") is both noise and misleading — raise `from`
+    the original so the chain still reaches the job log. Build the message with
+    `redact_source`; never interpolate a raw source.
+    """
 
 
 class Importer(Protocol):

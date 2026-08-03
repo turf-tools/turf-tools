@@ -14,6 +14,8 @@ import json
 import os
 from typing import TYPE_CHECKING
 
+import duckdb
+from src.importers.base import SourceUnreadableError, redact_source
 from src.importers.nys_voter_file.decode import decode_txt_to_table
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 from src.importers.nys_voter_file.transform import nys_sboe_transformation_query
@@ -22,7 +24,6 @@ from src.models import Person, TableRef
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 if TYPE_CHECKING:
-    import duckdb
     from src.importers.base import Manifest, Progress
 
 _EXPECTED_COLUMNS = set(Person.model_fields.keys())
@@ -75,7 +76,7 @@ class NysVoterFileImporter:
         # `read_csv` blocks forever. Fail fast instead. (`://` = object-storage key.)
         source = os.path.expanduser(source)
         if "://" not in source and not os.path.exists(source):
-            raise FileNotFoundError(f"Import source not found: {source!r}")
+            raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
         ensure_schema(conn, schema)
         raw_fqn = table_fqn(schema, "persons_raw")
         transformed_fqn = table_fqn(schema, "persons_transformed")
@@ -83,11 +84,18 @@ class NysVoterFileImporter:
 
         # 1. Source → persons_raw. Raw `.txt` gets the fixed-width decode; an
         #    already-tabular parquet/CSV loads directly.
-        if source.lower().endswith(".txt"):
-            decode_txt_to_table(source, raw_fqn, conn)
-        else:
-            conn.execute(f"DROP TABLE IF EXISTS {raw_fqn}")
-            conn.read_parquet(source).create(raw_fqn)
+        #    A remote source can't be checked up front the way a local path can,
+        #    so this is where a bad URL surfaces.
+        try:
+            if source.lower().endswith(".txt"):
+                decode_txt_to_table(source, raw_fqn, conn)
+            else:
+                conn.execute(f"DROP TABLE IF EXISTS {raw_fqn}")
+                conn.read_parquet(source).create(raw_fqn)
+        except (duckdb.Error, OSError) as exc:
+            raise SourceUnreadableError(
+                f"Could not read the import source {redact_source(source)!r}. Check that it exists and is reachable."
+            ) from exc
         progress.advance()
 
         # 2. Transform to the canonical Person schema (raw NYS codes → canonical

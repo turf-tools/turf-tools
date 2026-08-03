@@ -11,12 +11,13 @@ from pydantic import BaseModel
 from src.job_runner import (
     COMPLETED,
     IN_PROGRESS,
+    INTERRUPTED_REASON,
     PERMANENTLY_FAILED,
     UNSTARTED,
     ClaimedJob,
     JobContext,
     JobManager,
-    JobRegistry,
+    ReapedJob,
     job,
 )
 
@@ -39,12 +40,16 @@ class StoredJob:
     result: Any = None
     failure_reason: str | None = None
     locked_by_worker_id: str | None = None
+    heartbeat_at: float | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class MemoryJobStore:
-    def __init__(self, jobs: list[StoredJob]) -> None:
+    """In-memory store with an explicit clock, so lease tests don't sleep."""
+
+    def __init__(self, jobs: list[StoredJob], *, now: float = 0.0) -> None:
         self.jobs = jobs
+        self.now = now
 
     async def claim_jobs(self, *, worker_id: str, tasks: Iterable[str], limit: int) -> list[ClaimedJob]:
         claimed: list[ClaimedJob] = []
@@ -66,6 +71,7 @@ class MemoryJobStore:
 
             stored_job.status = IN_PROGRESS
             stored_job.locked_by_worker_id = worker_id
+            stored_job.heartbeat_at = self.now
             if key is not None:
                 claimed_keys.add(key)
             claimed.append(
@@ -92,6 +98,29 @@ class MemoryJobStore:
         stored_job.failure_reason = failure_reason
         stored_job.locked_by_worker_id = None
 
+    async def heartbeat(self, *, worker_id: str, job_ids: Iterable[uuid.UUID]) -> None:
+        wanted = set(job_ids)
+        for stored_job in self.jobs:
+            if (
+                stored_job.job_id in wanted
+                and stored_job.status == IN_PROGRESS
+                and stored_job.locked_by_worker_id == worker_id
+            ):
+                stored_job.heartbeat_at = self.now
+
+    async def reap_expired_jobs(self, *, lease_seconds: float) -> list[ReapedJob]:
+        reaped: list[ReapedJob] = []
+        for stored_job in self.jobs:
+            if stored_job.status != IN_PROGRESS:
+                continue
+            if (stored_job.heartbeat_at or 0.0) >= self.now - lease_seconds:
+                continue
+            stored_job.status = PERMANENTLY_FAILED
+            stored_job.failure_reason = INTERRUPTED_REASON
+            stored_job.locked_by_worker_id = None
+            reaped.append(ReapedJob(job_id=stored_job.job_id, task=stored_job.task, payload=stored_job.payload))
+        return reaped
+
     async def write_message(self, *, job_id: uuid.UUID, payload: Mapping[str, Any]) -> None:
         self._job(job_id).messages.append(dict(payload))
 
@@ -102,24 +131,17 @@ class MemoryJobStore:
         raise KeyError(job_id)
 
 
-def test_job_decorator_registers_function_with_inferred_payload_model() -> None:
-    registry = JobRegistry()
-
-    @job(registry=registry)
+def test_job_decorator_builds_registered_job_with_inferred_payload_model() -> None:
+    @job
     def example(payload: Payload, ctx: JobContext) -> dict[str, Any]:
         return {"name": payload.name, "worker": ctx.worker_id}
 
-    registered = registry.get("example")
-
-    assert registered is not None
-    assert registered.func is example
-    assert registered.payload_model is Payload
+    assert example.task == "example"
+    assert example.payload_model is Payload
 
 
 def test_run_once_completes_successful_job_and_writes_messages() -> None:
-    registry = JobRegistry()
-
-    @job(registry=registry)
+    @job
     async def example(payload: Payload, ctx: JobContext) -> dict[str, Any]:
         await ctx.message("started", count=payload.count)
         await ctx.message({"phase": "done"})
@@ -128,7 +150,7 @@ def test_run_once_completes_successful_job_and_writes_messages() -> None:
     stored_job = StoredJob(job_id=uuid.uuid4(), task="example", payload={"name": "Ada", "count": 3})
     store = MemoryJobStore([stored_job])
 
-    handled = asyncio.run(JobManager(registry=registry, store=store, worker_id="worker-1").run_once())
+    handled = asyncio.run(JobManager(jobs=[example], store=store, worker_id="worker-1").run_once())
 
     assert handled == 1
     assert stored_job.status == COMPLETED
@@ -141,16 +163,14 @@ def test_run_once_completes_successful_job_and_writes_messages() -> None:
 
 
 def test_run_once_supports_payload_only_job_functions() -> None:
-    registry = JobRegistry()
-
-    @job(registry=registry)
+    @job
     def example(payload: Payload) -> dict[str, Any]:
         return {"name": payload.name}
 
     stored_job = StoredJob(job_id=uuid.uuid4(), task="example", payload={"name": "Ada"})
     store = MemoryJobStore([stored_job])
 
-    handled = asyncio.run(JobManager(registry=registry, store=store).run_once())
+    handled = asyncio.run(JobManager(jobs=[example], store=store).run_once())
 
     assert handled == 1
     assert stored_job.status == COMPLETED
@@ -158,16 +178,14 @@ def test_run_once_supports_payload_only_job_functions() -> None:
 
 
 def test_run_once_marks_validation_errors_permanently_failed() -> None:
-    registry = JobRegistry()
-
-    @job(registry=registry)
+    @job
     def example(payload: Payload, ctx: JobContext) -> None:
         raise AssertionError("job function should not run")
 
     stored_job = StoredJob(job_id=uuid.uuid4(), task="example", payload={"count": 3})
     store = MemoryJobStore([stored_job])
 
-    handled = asyncio.run(JobManager(registry=registry, store=store).run_once())
+    handled = asyncio.run(JobManager(jobs=[example], store=store).run_once())
 
     assert handled == 1
     assert stored_job.status == PERMANENTLY_FAILED
@@ -177,16 +195,14 @@ def test_run_once_marks_validation_errors_permanently_failed() -> None:
 
 
 def test_run_once_marks_exceptions_permanently_failed() -> None:
-    registry = JobRegistry()
-
-    @job(registry=registry)
+    @job
     def example(payload: Payload, ctx: JobContext) -> None:
         raise RuntimeError(f"boom {payload.name}")
 
     stored_job = StoredJob(job_id=uuid.uuid4(), task="example", payload={"name": "Ada"})
     store = MemoryJobStore([stored_job])
 
-    handled = asyncio.run(JobManager(registry=registry, store=store).run_once())
+    handled = asyncio.run(JobManager(jobs=[example], store=store).run_once())
 
     assert handled == 1
     assert stored_job.status == PERMANENTLY_FAILED
@@ -197,10 +213,9 @@ def test_run_once_marks_exceptions_permanently_failed() -> None:
 
 
 def test_run_once_claims_only_one_job_per_active_concurrency_key() -> None:
-    registry = JobRegistry()
     seen: list[str] = []
 
-    @job(registry=registry)
+    @job
     def example(payload: Payload, ctx: JobContext) -> dict[str, Any]:
         seen.append(payload.name)
         return {"name": payload.name}
@@ -211,7 +226,7 @@ def test_run_once_claims_only_one_job_per_active_concurrency_key() -> None:
         StoredJob(job_id=uuid.uuid4(), task="example", payload={"name": "third"}, concurrency_key="other-key"),
     ]
     store = MemoryJobStore(jobs)
-    manager = JobManager(registry=registry, store=store, max_concurrent_jobs=3)
+    manager = JobManager(jobs=[example], store=store, max_concurrent_jobs=3)
 
     handled = asyncio.run(manager.run_once())
 
@@ -223,9 +238,7 @@ def test_run_once_claims_only_one_job_per_active_concurrency_key() -> None:
 
 
 def test_run_once_skips_jobs_with_already_active_concurrency_key() -> None:
-    registry = JobRegistry()
-
-    @job(registry=registry)
+    @job
     def example(payload: Payload, ctx: JobContext) -> dict[str, Any]:
         return {"name": payload.name}
 
@@ -240,7 +253,7 @@ def test_run_once_skips_jobs_with_already_active_concurrency_key() -> None:
     runnable = StoredJob(job_id=uuid.uuid4(), task="example", payload={"name": "runnable"}, concurrency_key=None)
     store = MemoryJobStore([active, blocked, runnable])
 
-    handled = asyncio.run(JobManager(registry=registry, store=store, max_concurrent_jobs=3).run_once())
+    handled = asyncio.run(JobManager(jobs=[example], store=store, max_concurrent_jobs=3).run_once())
 
     assert handled == 1
     assert active.status == IN_PROGRESS
@@ -249,10 +262,107 @@ def test_run_once_skips_jobs_with_already_active_concurrency_key() -> None:
 
 
 def test_job_requires_payload_model_annotation() -> None:
-    registry = JobRegistry()
-
     with pytest.raises(TypeError, match="Pydantic payload model"):
 
-        @job(registry=registry)
+        @job
         def example(payload: dict[str, Any], ctx: JobContext) -> None:
             return None
+
+
+def test_maintain_once_reaps_job_whose_lease_expired() -> None:
+    statuses_seen_by_sweep: list[str] = []
+
+    # A job the previous process claimed and never finished. Reaping doesn't
+    # need the handler — it fails rows, it never runs them.
+    stored_job = StoredJob(
+        job_id=uuid.uuid4(),
+        task="example",
+        payload={"name": "Ada"},
+        status=IN_PROGRESS,
+        locked_by_worker_id="worker-that-died",
+        heartbeat_at=0.0,
+    )
+    store = MemoryJobStore([stored_job], now=1000.0)
+
+    # Sweeps run after reaping, so cleanup sees the job already failed and a
+    # freshly interrupted import is cleaned in the same tick.
+    async def sweep() -> None:
+        statuses_seen_by_sweep.append(stored_job.status)
+
+    manager = JobManager(store=store, lease_seconds=90.0, sweeps=(sweep,))
+
+    reaped = asyncio.run(manager.maintain_once())
+
+    assert [r.job_id for r in reaped] == [stored_job.job_id]
+    assert stored_job.status == PERMANENTLY_FAILED
+    assert stored_job.failure_reason == INTERRUPTED_REASON
+    assert stored_job.locked_by_worker_id is None
+    assert statuses_seen_by_sweep == [PERMANENTLY_FAILED]
+
+
+def test_maintain_once_contains_a_failing_sweep() -> None:
+    """A broken sweep is retried next tick anyway, so it must not take down the
+    maintenance pass or the sweeps after it."""
+    ran: list[str] = []
+
+    async def broken_sweep() -> None:
+        raise RuntimeError("transient")
+
+    async def working_sweep() -> None:
+        ran.append("worked")
+
+    store = MemoryJobStore([])
+    manager = JobManager(store=store, sweeps=(broken_sweep, working_sweep))
+
+    assert asyncio.run(manager.maintain_once()) == []
+    assert ran == ["worked"]
+
+
+def test_maintain_once_leaves_a_recently_stamped_job_alone() -> None:
+    stored_job = StoredJob(
+        job_id=uuid.uuid4(),
+        task="example",
+        payload={"name": "Ada"},
+        status=IN_PROGRESS,
+        locked_by_worker_id="live-worker",
+        heartbeat_at=950.0,
+    )
+    store = MemoryJobStore([stored_job], now=1000.0)
+    manager = JobManager(store=store, lease_seconds=90.0)
+
+    assert asyncio.run(manager.maintain_once()) == []
+    assert stored_job.status == IN_PROGRESS
+
+
+def test_heartbeat_keeps_a_long_running_job_from_being_reaped() -> None:
+    """The whole point: a job that outlives its lease survives while its worker
+    is alive to stamp it, and only then reports its own result."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    @job
+    async def slow(payload: Payload) -> dict[str, Any]:
+        started.set()
+        await release.wait()
+        return {"done": payload.name}
+
+    stored_job = StoredJob(job_id=uuid.uuid4(), task="slow", payload={"name": "Ada"})
+    store = MemoryJobStore([stored_job])
+    manager = JobManager(jobs=[slow], store=store, lease_seconds=90.0)
+
+    async def scenario() -> None:
+        running = asyncio.create_task(manager.run_once())
+        await started.wait()
+
+        # Push well past the lease, ticking maintenance as the real loop would.
+        for _ in range(4):
+            store.now += 60.0
+            assert await manager.maintain_once() == []
+
+        assert stored_job.status == IN_PROGRESS
+        release.set()
+        await running
+        assert stored_job.status == COMPLETED
+        assert stored_job.result == {"done": "Ada"}
+
+    asyncio.run(scenario())
