@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
-import src.import_job  # noqa: F401 — registers the `import_dataset_version` job with the worker
 from src.custom_fields import (
     append_custom_fields,
     catalog_for,
@@ -32,6 +31,7 @@ from src.duckdb import (
     refresh_s3_secret_on_shared_connection,
     s3_secret_expires,
 )
+from src.import_job import fail_interrupted_versions, import_dataset_version
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
@@ -127,7 +127,10 @@ async def lifespan(app: FastAPI):
 
     await get_pool()
 
-    job_manager_task = asyncio.create_task(JobManager().run_forever(), name="job-manager")
+    job_manager_task = asyncio.create_task(
+        JobManager(jobs=(import_dataset_version,), sweeps=(fail_interrupted_versions,)).run_forever(),
+        name="job-manager",
+    )
     job_manager_task.add_done_callback(_log_background_task_failure)
 
     # Only the AWS credential chain expires; static keys need no timer.
