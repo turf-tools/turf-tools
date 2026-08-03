@@ -1,4 +1,6 @@
 import os
+import tempfile
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -81,6 +83,15 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     conn.execute(f"SET memory_limit = '{memory_limit}'")
     conn.execute(f"SET threads = {threads}")
     conn.execute("SET enable_object_cache = true")
+
+    # Spill space. An in-memory DuckDB has no temp_directory, so an operator
+    # that crosses memory_limit errors out instead of going out-of-core;
+    # with one set, work stays in RAM up to the limit and degrades to disk
+    # past it. Per-connection subdir — concurrent connections (shared RO +
+    # an import) must not share temp files. DuckDB creates the dir on first
+    # spill and removes its files on clean shutdown.
+    temp_base = os.environ.get("DUCKDB_TEMP_DIRECTORY") or os.path.join(tempfile.gettempdir(), "duckdb-spill")
+    conn.execute(f"SET temp_directory = '{_sql_str(os.path.join(temp_base, uuid.uuid4().hex))}'")
 
     ro = ", READ_ONLY" if read_only else ""
     _attach_ducklake(
