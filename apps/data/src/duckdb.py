@@ -88,10 +88,12 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     # that crosses memory_limit errors out instead of going out-of-core;
     # with one set, work stays in RAM up to the limit and degrades to disk
     # past it. Per-connection subdir — concurrent connections (shared RO +
-    # an import) must not share temp files. DuckDB creates the dir on first
-    # spill and removes its files on clean shutdown.
+    # an import) must not share temp files. Pre-created: DuckDB only creates
+    # the leaf directory, so a missing parent fails at first spill.
     temp_base = os.environ.get("DUCKDB_TEMP_DIRECTORY") or os.path.join(tempfile.gettempdir(), "duckdb-spill")
-    conn.execute(f"SET temp_directory = '{_sql_str(os.path.join(temp_base, uuid.uuid4().hex))}'")
+    spill_dir = os.path.join(temp_base, uuid.uuid4().hex)
+    os.makedirs(spill_dir, exist_ok=True)
+    conn.execute(f"SET temp_directory = '{_sql_str(spill_dir)}'")
 
     ro = ", READ_ONLY" if read_only else ""
     _attach_ducklake(
