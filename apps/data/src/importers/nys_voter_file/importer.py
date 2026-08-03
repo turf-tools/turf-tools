@@ -33,9 +33,24 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
-def _parse_or_empty(raw: object) -> list[dict]:
-    # Pandas returns NaN (a float) for SQL NULL; guard before parsing.
-    return parse_voting_history(raw if isinstance(raw, str) else None)
+def _voting_history_json(raw: str | None) -> str:
+    """Scalar-UDF body: one raw voter_history blob → JSON array of entries."""
+    return json.dumps(parse_voting_history(raw))
+
+
+def register_voting_history_udf(conn: duckdb.DuckDBPyConnection) -> None:
+    """Register `parse_voting_history_json` on `conn`. Pair with
+    `conn.remove_function` — the connection may outlive the load."""
+    # Type names as strings: `duckdb.typing` was removed in duckdb 1.5.
+    conn.create_function(
+        "parse_voting_history_json",
+        _voting_history_json,
+        ["VARCHAR"],
+        "VARCHAR",
+        # NULL input reaches the UDF (→ `[]`) instead of short-circuiting to a
+        # NULL voting_history.
+        null_handling="special",
+    )
 
 
 class NysVoterFileImporter:
@@ -110,22 +125,22 @@ class NysVoterFileImporter:
         progress.advance()
 
         # 3. Parse the raw voter_history string → typed STRUCT[]; drop the
-        #    transient column. Producing the final validated table.
-        df = conn.sql(f"SELECT external_id, voter_history AS raw_vh FROM {transformed_fqn}").df()
-        df["voting_history_json"] = df["raw_vh"].map(lambda raw: json.dumps(_parse_or_empty(raw)))
-        df = df[["external_id", "voting_history_json"]]
-        conn.register("_parsed_voting_history_df", df)
-        conn.execute(f"""
-            CREATE OR REPLACE TABLE {validated_fqn} AS
-            SELECT
-              p.* EXCLUDE (voter_history),
-              CAST(v.voting_history_json::JSON
-                   AS STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]
-                  ) AS voting_history
-            FROM {transformed_fqn} p
-            LEFT JOIN _parsed_voting_history_df v USING (external_id)
-        """)
-        conn.unregister("_parsed_voting_history_df")
+        #    transient column. The parser runs as a scalar UDF so DuckDB streams
+        #    rows through it in batches — the full column never sits in Python.
+        register_voting_history_udf(conn)
+        try:
+            conn.execute(f"""
+                CREATE OR REPLACE TABLE {validated_fqn} AS
+                SELECT
+                  * EXCLUDE (voter_history),
+                  CAST(parse_voting_history_json(voter_history)::JSON
+                       AS STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]
+                      ) AS voting_history
+                FROM {transformed_fqn}
+            """)
+        finally:
+            # The connection outlives this load (seeds reuse it); leave no name behind.
+            conn.remove_function("parse_voting_history_json")
 
         # 4. Validate the result carries the Person-required columns + a sample of
         #    rows through the model. Extra (manifest) columns are allowed.

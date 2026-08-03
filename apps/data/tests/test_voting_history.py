@@ -254,3 +254,36 @@ def test_enrollment_defunct_ny_only_parties_bucket_to_other():
     """WEP and SAM are NY-only defunct ballot lines; bucketed to 'other'."""
     assert NYS_ENROLLMENT_LABELS[("OTH", "WEP")] == "other"
     assert NYS_ENROLLMENT_LABELS[("OTH", "SAM")] == "other"
+
+
+def test_udf_parses_voting_history_inside_duckdb(conn):
+    """The parse runs as a DuckDB scalar UDF during import (streamed, never the
+    whole column in Python). Pins the mechanism end to end: registration, NULL
+    handling, and the JSON → STRUCT[] cast, against a real DuckLake connection."""
+    from src.importers.nys_voter_file.importer import register_voting_history_udf
+
+    conn.execute(
+        "CREATE TABLE _vh_probe AS SELECT * FROM (VALUES "
+        "  ('a', '20201103 GE(P);20180626 PR(A)'),"
+        "  ('b', NULL),"
+        "  ('c', 'not an election')"
+        ") t(external_id, voter_history)"
+    )
+    register_voting_history_udf(conn)
+    try:
+        rows = conn.execute("""
+            SELECT external_id,
+                   CAST(parse_voting_history_json(voter_history)::JSON
+                        AS STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]
+                       ) AS voting_history
+            FROM _vh_probe ORDER BY external_id
+        """).fetchall()
+    finally:
+        conn.remove_function("parse_voting_history_json")
+
+    parsed = {row[0]: row[1] for row in rows}
+    assert [e["year"] for e in parsed["a"]] == [2020, 2018]
+    assert parsed["a"][0]["type"] == "general"
+    assert parsed["a"][0]["method"] == "poll_site"
+    assert parsed["b"] == []
+    assert parsed["c"] == []
