@@ -43,6 +43,8 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-tint: var(--destructive-tint);
+  --color-destructive-tint-hover: var(--destructive-tint-hover);
   --color-success: var(--success);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -119,6 +121,14 @@
   --badge-fg-shift: 25%;
   --badge-fg-shift-dark: 17%;
   --badge-border-alpha: 40%;
+  /* Destructive button/menu backgrounds reuse the badge tint math so they
+     match red badges and callouts exactly; hover just deepens the tint. */
+  --destructive-tint: color-mix(in srgb, var(--palette-red) var(--badge-bg-alpha), transparent);
+  --destructive-tint-hover: color-mix(
+    in srgb,
+    var(--palette-red) calc(var(--badge-bg-alpha) + 10%),
+    transparent
+  );
 }
 
 @layer components {
