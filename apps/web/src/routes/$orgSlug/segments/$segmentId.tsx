@@ -60,7 +60,7 @@ import {
   type VotingHistoryDetailFilter,
   VERB_META,
 } from "~/lib/filters";
-import { rememberSelection } from "~/lib/last-selected";
+import { useRememberSelection } from "~/lib/last-selected";
 import {
   segmentCascadeQuery,
   segmentCountsQuery,
@@ -100,9 +100,7 @@ function SegmentEditor() {
   const { sections } = useFilterCatalog();
 
   // The segments index redirects back here next visit.
-  useEffect(() => {
-    rememberSelection(orgSlug, "segments", segmentId);
-  }, [orgSlug, segmentId]);
+  useRememberSelection(orgSlug, "segments", segmentId);
 
   // Loader prefetched, so this is a cache hit.
   const { data: activeSegmentDetail } = useQuery({

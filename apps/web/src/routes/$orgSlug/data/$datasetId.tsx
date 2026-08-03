@@ -21,7 +21,7 @@ import {
   MoreHorizontal,
   Upload,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
@@ -48,7 +48,7 @@ import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDateTime } from "~/lib/format";
 import { importerLabel } from "~/lib/importers";
-import { rememberSelection } from "~/lib/last-selected";
+import { useRememberSelection } from "~/lib/last-selected";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
 import type { CustomFieldType } from "@turf-tools/db/schema";
 import {
@@ -131,9 +131,7 @@ function DatasetPage() {
   const timezone = session?.user?.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
 
   // The data index redirects back here next visit.
-  useEffect(() => {
-    rememberSelection(orgSlug, "data", datasetId);
-  }, [orgSlug, datasetId]);
+  useRememberSelection(orgSlug, "data", datasetId);
 
   // The layout's observer owns the importing poll; this one just reads.
   const { data: versionRows } = useSuspenseQuery(datasetsListQuery());

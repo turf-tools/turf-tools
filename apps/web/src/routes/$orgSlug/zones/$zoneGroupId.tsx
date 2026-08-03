@@ -17,6 +17,7 @@ import { Pill } from "~/components/pill";
 import { Swatch } from "~/components/swatch";
 import { Switch } from "~/components/switch";
 import { darkAtom } from "~/lib/atoms/theme";
+import { useRememberSelection } from "~/lib/last-selected";
 import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -44,6 +45,8 @@ export const Route = createFileRoute("/$orgSlug/zones/$zoneGroupId")({
 function ZoneGroupEditor() {
   const queryClient = useQueryClient();
   const { orgSlug, zoneGroupId } = Route.useParams();
+  // The zones index redirects back here next visit.
+  useRememberSelection(orgSlug, "zones", zoneGroupId);
   const isDark = useAtomValue(darkAtom);
 
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());

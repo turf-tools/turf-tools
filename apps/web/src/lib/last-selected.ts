@@ -6,6 +6,8 @@
 // selection). A stale id is harmless: index loaders validate against the
 // fetched list and fall through to their default.
 
+import { useEffect } from "react";
+
 const storageKey = (orgSlug: string, section: string) => `last-selected:${orgSlug}:${section}`;
 
 // try/catch: sessionStorage is absent during SSR and can throw in private modes.
@@ -23,4 +25,26 @@ export function recallSelection(orgSlug: string, section: string): string | null
   } catch {
     return null;
   }
+}
+
+// Record the visited entity so the section's index redirects back to it.
+export function useRememberSelection(orgSlug: string, section: string, id: string) {
+  useEffect(() => {
+    rememberSelection(orgSlug, section, id);
+  }, [orgSlug, section, id]);
+}
+
+// Remembered selection while it still exists, else alphabetically first —
+// matching the list-column order.
+export function recallOrFirst<T extends { name: string }>(
+  orgSlug: string,
+  section: string,
+  items: readonly T[],
+  id: (item: T) => string,
+): T | undefined {
+  const remembered = recallSelection(orgSlug, section);
+  return (
+    items.find((item) => id(item) === remembered) ??
+    [...items].sort((a, b) => a.name.localeCompare(b.name))[0]
+  );
 }
