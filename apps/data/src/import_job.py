@@ -23,10 +23,10 @@ from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
 from src.importers.registry import get_importer
-from src.job_runner import JobContext, job
+from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContext, job
 from src.quickwit import ensure_index, persons_index_id
 from src.settings import get_settings
-from src.tables import dataset_version_schema, ensure_schema, finalize_version
+from src.tables import dataset_version_schema, drop_schema, ensure_schema, finalize_version
 
 if TYPE_CHECKING:
     import duckdb
@@ -41,6 +41,41 @@ class ImportDatasetVersionPayload(BaseModel):
     organization_id: str
 
 
+async def _mark_version_failed(dataset_version_id: str, error: str) -> None:
+    """Surface a failure in the UI. Pure Postgres, so it works even when the
+    DuckLake attach is what failed. Guarded on `importing` so a late write can't
+    clobber a version that already finished."""
+    await postgres.execute(
+        "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000) "
+        "WHERE dataset_version_id = $1::uuid AND status = 'importing'",
+        dataset_version_id,
+        error,
+    )
+
+
+async def fail_interrupted_versions() -> None:
+    """Maintenance sweep: fail versions stuck `importing` with no live import
+    job. When a worker dies mid-import the reaper fails the job row, but only
+    this moves the version off `importing` — and a version that looks in-flight
+    blocks further imports on its dataset. Guarding on "no live job" is what
+    makes every re-run safe: a retried import has a fresh job and is skipped."""
+    await postgres.execute(
+        """
+        UPDATE app.dataset_versions
+        SET status = 'failed', error = $1
+        WHERE status = 'importing'
+          AND NOT EXISTS (
+              SELECT 1 FROM app.jobs
+              WHERE task = 'import_dataset_version'
+                AND payload->>'dataset_version_id' = dataset_versions.dataset_version_id::text
+                AND status = ANY($2::text[])
+          )
+        """,
+        INTERRUPTED_REASON,
+        [UNSTARTED, IN_PROGRESS],
+    )
+
+
 @job(task="import_dataset_version")
 async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobContext) -> dict[str, Any]:
     await ctx.message("Import started", dataset_version_id=payload.dataset_version_id)
@@ -49,15 +84,9 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
         # so the worker keeps serving other jobs / the s3-secret refresh.
         result = await asyncio.to_thread(_run, payload, str(ctx.job_id))
     except Exception as exc:
-        # Surface the failure in the UI — mark the version `failed` and stash the
-        # reason (pure Postgres, so it works even when the DuckLake attach is what
-        # failed). Then re-raise so the job framework records it on the job row.
-        await postgres.execute(
-            "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000) "
-            "WHERE dataset_version_id = $1::uuid",
-            payload.dataset_version_id,
-            str(exc),
-        )
+        # Mark the version failed, then re-raise so the job framework records it
+        # on the job row too.
+        await _mark_version_failed(payload.dataset_version_id, str(exc))
         raise
     await ctx.message("Import complete", **result)
     return result
@@ -81,6 +110,10 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         slug, version_number, importer_name = _resolve_version(conn, settings, payload.dataset_version_id)
         log = JobLog(conn, job_id)
         schema = dataset_version_schema(slug, version_number)
+        # A retried import reuses its version number, so the schema may still hold
+        # whatever the failed attempt wrote. Nothing reads a version that isn't
+        # `ready`, so starting empty is always safe.
+        drop_schema(conn, schema)
         ensure_schema(conn, schema)
 
         importer = get_importer(importer_name)()
