@@ -17,10 +17,10 @@ from starlette.background import BackgroundTask
 from src import timing
 from src.custom_fields import (
     append_custom_fields,
-    catalog_for,
     custom_fields_fqn,
     custom_fields_table_for,
     load_upload_table,
+    query_context,
     sync_registry,
 )
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
@@ -404,9 +404,8 @@ async def persons_count(req: _PersonsCountRequest):
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -447,8 +446,7 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     modifies the running set.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
-    catalog = catalog_for(conn, version)
+    version, catalog = query_context(conn, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     persons_table = resolve("{persons_geocoded}", version.schema)
     params: list = []
@@ -482,9 +480,8 @@ async def persons_sample(req: _PersonsSampleRequest):
     """
     limit = max(1, min(req.limit, 500))
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -616,9 +613,8 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     group_expr = boundary_key_expr_for(catalog, req.key_group)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
@@ -693,9 +689,8 @@ async def segments_export(req: _SegmentExportRequest):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
 
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, None, params)
@@ -746,9 +741,8 @@ async def buildings_list(req: _BuildingsListRequest):
     polygon" client-side.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -797,9 +791,8 @@ async def buildings_points(req: _BuildingsPointsRequest):
     instead of meter-scale.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)

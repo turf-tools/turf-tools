@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING, Any
 from src.dsl.criteria import FieldCatalog, build_field_catalog
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
 from src.settings import get_settings
-from src.tables import ResolvedVersion, dataset_version_schema, table_fqn
+from src.tables import (
+    NoActiveDatasetError,
+    ResolvedVersion,
+    dataset_version_schema,
+    resolve_version_by_id,
+    table_fqn,
+)
 from src.timing import timed
 
 if TYPE_CHECKING:
@@ -58,14 +64,26 @@ def ensure_custom_fields_table(conn: duckdb.DuckDBPyConnection, dataset_slug: st
     )
 
 
+# Existence probes cached per dataset — the answer is monotonic (the values
+# table is created by `append_custom_fields` and never dropped; `clear` only
+# deletes rows), so only the None→exists transition invalidates, on append.
+# Saves a catalog round trip — or a raised-and-swallowed exception — per
+# criteria request.
+_values_table_cache: dict[str, str | None] = {}
+
+
 def custom_fields_table_for(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> str | None:
     """FQN of the dataset's values table, or None before any append — custom
     filters then compile to match-nothing rather than erroring."""
+    if dataset_slug in _values_table_cache:
+        return _values_table_cache[dataset_slug]
     fqn = custom_fields_fqn(dataset_slug)
     try:
         conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
     except Exception:  # noqa: BLE001 — missing table is the expected miss
+        _values_table_cache[dataset_slug] = None
         return None
+    _values_table_cache[dataset_slug] = fqn
     return fqn
 
 
@@ -116,6 +134,40 @@ def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include
         conn.execute(
             f"UPDATE {OPERATIONAL_PG_ALIAS}.app.custom_fields SET values = ? WHERE custom_field_id = ?::UUID",
             [values, field_id],
+        )
+
+
+def query_context(conn: duckdb.DuckDBPyConnection, org_slug: str) -> tuple[ResolvedVersion, FieldCatalog]:
+    """The active version + compiler catalog for an org, in one operational-PG
+    round trip. Everything that can change between requests — the active
+    pointer, the custom-field registry (fields are created/renamed by web-side
+    writes this process never sees; archived included, saved segments must
+    still compile) — is read fresh together; the version payload and the
+    values-table probe come from caches (immutable / monotonic)."""
+    with timed("resolve"):
+        attach_operational_postgres(conn, get_settings())
+        rows = conn.execute(
+            f"""
+            SELECT o.active_dataset_version_id, f.custom_field_id::VARCHAR, f.field_type
+            FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
+            LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+                ON v.dataset_version_id = o.active_dataset_version_id
+            LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.dataset_id = v.dataset_id
+            WHERE o.slug = ?
+            """,
+            [org_slug],
+        ).fetchall()
+        if not rows or rows[0][0] is None:
+            raise NoActiveDatasetError(org_slug)
+        version = resolve_version_by_id(conn, str(rows[0][0]))
+    with timed("catalog"):
+        custom_fields = {fid: ftype for (_vid, fid, ftype) in rows if fid is not None}
+        if not custom_fields:
+            return version, build_field_catalog(version.manifest)
+        return version, build_field_catalog(
+            version.manifest,
+            custom_table=custom_fields_table_for(conn, version.dataset_slug),
+            custom_fields=custom_fields,
         )
 
 
@@ -298,6 +350,8 @@ def append_custom_fields(
     matched_count = _matched_count(conn, dataset_slug)
 
     ensure_custom_fields_table(conn, dataset_slug)
+    # The table now exists — drop any cached "no values table" miss.
+    _values_table_cache.pop(dataset_slug, None)
     values_table = custom_fields_fqn(dataset_slug)
     conn.execute("BEGIN TRANSACTION")
     try:
