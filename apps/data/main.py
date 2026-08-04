@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+from src import timing
 from src.custom_fields import (
     append_custom_fields,
     catalog_for,
@@ -45,6 +47,7 @@ from src.tables import (
     resolve_version,
     table_fqn,
 )
+from src.timing import timed
 
 logger = logging.getLogger("uvicorn")
 
@@ -159,6 +162,18 @@ async def lifespan(app: FastAPI):
 # loading, geocoding, Quickwit indexing — runs as Hamilton DAGs via CLI
 # jobs. This service exposes health and endpoints for data queries.
 app = FastAPI(title="Data Service", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def server_timing(request: Request, call_next):
+    # Phase timings for the browser's Network panel and the bench harness;
+    # phases register via `src.timing.timed` anywhere on the call path.
+    timing.start_request()
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    response.headers["Server-Timing"] = timing.header_value((time.perf_counter() - t0) * 1000)
+    return response
+
 
 # Permissive CORS for dev. Lock down via a
 # settings-driven allow list before deploying.
@@ -406,7 +421,8 @@ async def persons_count(req: _PersonsCountRequest):
         """,
         schema,
     )
-    row = conn.execute(sql, params).fetchone()
+    with timed("query"):
+        row = conn.execute(sql, params).fetchone()
     if row is None:
         raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
     return {
@@ -437,7 +453,8 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     persons_table = resolve("{persons_geocoded}", version.schema)
     params: list = []
     sql = cascade_sql(catalog, criteria, persons_table, params)
-    row = conn.execute(sql, params).fetchone()
+    with timed("query"):
+        row = conn.execute(sql, params).fetchone()
     counts = list(row)
     steps_result = []
     prev = counts[0]
@@ -482,7 +499,8 @@ async def persons_sample(req: _PersonsSampleRequest):
         """,
         schema,
     )
-    rows = conn.execute(sql, params).fetchall()
+    with timed("query"):
+        rows = conn.execute(sql, params).fetchall()
     return {
         "persons": [
             {
@@ -618,7 +636,8 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         """,
         schema,
     )
-    rows = conn.execute(sql, params).fetchall()
+    with timed("query"):
+        rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
     for key, buildings, doors, people in rows:
         if key is None:
@@ -749,9 +768,10 @@ async def buildings_list(req: _BuildingsListRequest):
         """,
         schema,
     )
-    cursor = conn.execute(sql, params)
-    cols = [d[0] for d in cursor.description]
-    rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
+    with timed("query"):
+        cursor = conn.execute(sql, params)
+        cols = [d[0] for d in cursor.description]
+        rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
     return {"buildings": rows}
 
 
@@ -800,8 +820,9 @@ async def buildings_points(req: _BuildingsPointsRequest):
         """,
         schema,
     )
-    cursor = conn.execute(sql, params)
-    rows = cursor.fetchall()
+    with timed("query"):
+        cursor = conn.execute(sql, params)
+        rows = cursor.fetchall()
     header = array.array("d", [0.0, 0.0])
     deltas = array.array("f")
     if rows:

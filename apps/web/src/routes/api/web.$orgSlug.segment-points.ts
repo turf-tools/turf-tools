@@ -7,7 +7,7 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
-import { dataFetch, passthrough } from "~/lib/server/data-proxy";
+import { dataFetch, passthrough, prefixDataTiming } from "~/lib/server/data-proxy";
 import { buildVoterDataContext } from "~/rpc/context";
 
 const corsHeaders = {
@@ -27,16 +27,19 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-points")({
         if (!orgSlug) {
           return new Response("Not Found", { status: 404, headers: corsHeaders });
         }
+        const t0 = performance.now();
         let context;
         try {
           context = await buildVoterDataContext(db, request.headers, orgSlug);
         } catch {
           return new Response("Unauthorized", { status: 401, headers: corsHeaders });
         }
+        const authMs = performance.now() - t0;
         const body = (await request.json()) as {
           criteria: unknown;
           keyFilter?: { keyGroup: string; keys: string[] } | null;
         };
+        const tFetch = performance.now();
         const upstream = await dataFetch("/buildings/points", {
           method: "POST",
           headers: {
@@ -55,7 +58,15 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-points")({
             headers: corsHeaders,
           });
         }
-        return passthrough(upstream, corsHeaders);
+        const upstreamTiming = upstream.headers.get("Server-Timing");
+        return passthrough(upstream, {
+          ...corsHeaders,
+          "Server-Timing": [
+            `auth;dur=${authMs.toFixed(1)}`,
+            `data-fetch;dur=${(performance.now() - tFetch).toFixed(1)}`,
+            ...(upstreamTiming ? [prefixDataTiming(upstreamTiming)] : []),
+          ].join(", "),
+        });
       },
     },
   },

@@ -38,6 +38,8 @@
     "images:push:data": "bash deploy/build-images.sh --only data",
     "org:create": "pnpm -F @turf-tools/scripts exec tsx prod-create-org.ts",
     "org:add-user": "pnpm -F @turf-tools/scripts exec tsx prod-add-user.ts",
+    "bench": "pnpm -F @turf-tools/scripts exec tsx bench/bench.ts",
+    "bench:report": "pnpm -F @turf-tools/scripts exec tsx bench/report.ts",
     "prepare": "vp config"
   },
   "devDependencies": {

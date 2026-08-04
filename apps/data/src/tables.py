@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
 from src.importers.base import Manifest
 from src.models import quote_ident
+from src.timing import timed
 
 if TYPE_CHECKING:
     import duckdb
@@ -155,28 +156,29 @@ def resolve_version(
     the web app gates data-dependent views until an import completes). Reads the
     operational Postgres via the shared attach.
     """
-    attach_operational_postgres(conn, settings)
-    row = conn.execute(
-        f"""
-        SELECT d.slug, v.version_number, v.dataset_version_id, v.manifest
-        FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
-        JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
-            ON v.dataset_version_id = o.active_dataset_version_id
-        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d
-            ON d.dataset_id = v.dataset_id
-        WHERE o.slug = ?
-        """,
-        [org_slug],
-    ).fetchone()
-    if row is None:
-        raise NoActiveDatasetError(org_slug)
-    dataset_slug, version_number, dataset_version_id, manifest = row
-    return ResolvedVersion(
-        dataset_version_id=str(dataset_version_id),
-        dataset_slug=dataset_slug,
-        version_number=version_number,
-        manifest=_parse_manifest(manifest),
-    )
+    with timed("resolve"):
+        attach_operational_postgres(conn, settings)
+        row = conn.execute(
+            f"""
+            SELECT d.slug, v.version_number, v.dataset_version_id, v.manifest
+            FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
+            JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+                ON v.dataset_version_id = o.active_dataset_version_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d
+                ON d.dataset_id = v.dataset_id
+            WHERE o.slug = ?
+            """,
+            [org_slug],
+        ).fetchone()
+        if row is None:
+            raise NoActiveDatasetError(org_slug)
+        dataset_slug, version_number, dataset_version_id, manifest = row
+        return ResolvedVersion(
+            dataset_version_id=str(dataset_version_id),
+            dataset_slug=dataset_slug,
+            version_number=version_number,
+            manifest=_parse_manifest(manifest),
+        )
 
 
 def load_manifest(

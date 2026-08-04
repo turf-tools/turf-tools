@@ -18,6 +18,7 @@ from src.dsl.criteria import FieldCatalog, build_field_catalog
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
 from src.settings import get_settings
 from src.tables import ResolvedVersion, dataset_version_schema, table_fqn
+from src.timing import timed
 
 if TYPE_CHECKING:
     import duckdb
@@ -123,6 +124,11 @@ def catalog_for(conn: duckdb.DuckDBPyConnection, version: ResolvedVersion) -> Fi
     dataset's custom fields (archived included — saved segments referencing an
     archived field must still compile). One small PG read + one table probe
     per request."""
+    with timed("catalog"):
+        return _catalog_for(conn, version)
+
+
+def _catalog_for(conn: duckdb.DuckDBPyConnection, version: ResolvedVersion) -> FieldCatalog:
     attach_operational_postgres(conn, get_settings())
     rows = conn.execute(
         f"""
