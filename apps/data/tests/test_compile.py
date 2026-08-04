@@ -673,8 +673,123 @@ def test_cascade_emits_one_filter_per_step() -> None:
     assert "step_1" in sql
     assert "step_2" in sql
     assert sql.count("FILTER (WHERE") == 2
-    # Each step compiles independently; params repeat for prefix-1 then prefix-2.
-    assert params == ["democratic", "democratic", "republican"]
+    # Each step's filter compiles exactly once, in step order. The `add` verb
+    # widens the running set, so no pushdown copy is appended.
+    assert params == ["democratic", "republican"]
+
+
+def test_cascade_pushdown_appends_first_clause_params() -> None:
+    params: list = []
+    sql = cascade_sql(
+        CATALOG,
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
+            ]
+        ),
+        "persons",
+        params,
+    )
+    # All-narrow chain: the first clause pushes into WHERE (its params bind
+    # last, after the projection's) and step_0 becomes a scalar subquery.
+    assert "WHERE" in sql
+    assert "(SELECT count(*) FROM persons) AS step_0" in sql
+    assert params == ["democratic", "F", "democratic"]
+
+
+def _cascade_oracle(conn, criteria: Criteria) -> list[int]:
+    """Per-prefix counts via the (verb-aware) WHERE compiler — the ground
+    truth cascade_sql must reproduce in one scan."""
+    counts = [conn.execute("SELECT count(*) FROM persons").fetchone()[0]]
+    for i in range(1, len(criteria.steps) + 1):
+        params: list = []
+        where = criteria_to_where(CATALOG, Criteria(steps=criteria.steps[:i]), None, params)
+        counts.append(conn.execute(f"SELECT count(*) FROM persons {where}", params).fetchone()[0])
+    return counts
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        # Pure narrowing chain — takes the first-step WHERE pushdown path.
+        [
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226", "10025"])),
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+        ],
+        # A widening `add` — pushdown must not apply; counts can grow.
+        [
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
+            Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226"])),
+        ],
+        # `remove` after narrow, plus an inactive step (empty enum) mid-chain.
+        [
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226", "10025"])),
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=[])),
+            Step(verb="remove", filter=EnumFilter(kind="enum", key="gender", values=["M"])),
+        ],
+        # `remove` as the first step.
+        [
+            Step(verb="remove", filter=EnumFilter(kind="enum", key="gender", values=["M"])),
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226"])),
+        ],
+        # Inactive leading step: the prefix stays the full universe.
+        [
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=[])),
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
+        ],
+    ],
+)
+def test_cascade_counts_match_prefix_where_compilation(steps) -> None:
+    import duckdb
+
+    conn = duckdb.connect()
+    conn.execute("""
+        CREATE TABLE persons AS
+        FROM (VALUES
+            ('11226', 'F', 'democratic'),
+            ('11226', 'M', 'democratic'),
+            ('11226', 'F', 'republican'),
+            ('10025', 'F', 'democratic'),
+            ('10025', 'M', 'republican'),
+            ('10314', 'F', 'democratic'),
+            ('10314', 'M', NULL)
+        ) t(zip5, gender, enrollment)
+    """)
+    criteria = Criteria(steps=steps)
+    params: list = []
+    sql = cascade_sql(CATALOG, criteria, "persons", params)
+    got = list(conn.execute(sql, params).fetchone())
+    assert got == _cascade_oracle(conn, criteria)
+
+
+def test_cascade_supports_stacked_subquery_filters() -> None:
+    """Two custom-field steps: both compile to semi-join subqueries, which
+    lateral column aliases can't chain (DuckDB BinderException) — the clause
+    columns live in a real projection precisely so this shape works."""
+    import duckdb
+
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE persons (external_id VARCHAR, zip5 VARCHAR)")
+    conn.execute("INSERT INTO persons VALUES ('p1','11226'), ('p2','10025'), ('p3','10025')")
+    conn.execute("CREATE TABLE cf (external_id VARCHAR, field_id VARCHAR, value VARCHAR)")
+    conn.execute("INSERT INTO cf VALUES ('p1','f-enum','1'), ('p1','f-code','40'), ('p2','f-enum','2')")
+
+    catalog = build_field_catalog(
+        NYS_MANIFEST, custom_table="cf", custom_fields={"f-enum": "enum", "f-code": "text_multi"}
+    )
+    criteria = Criteria(
+        steps=[
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="f-enum", values=["1", "2"])),
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="f-code", values=["40"])),
+        ]
+    )
+    params: list = []
+    sql = cascade_sql(catalog, criteria, "persons", params)
+    step_0, step_1, step_2 = conn.execute(sql, params).fetchone()
+    assert (step_0, step_1, step_2) == (3, 2, 1)
 
 
 # ---------------------------------------------------------------------------
