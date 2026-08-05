@@ -153,10 +153,14 @@ export function buildFilterCatalog(
 // catalog is system-filters-only.
 export function useFilterCatalog(): FilterCatalog & { isLoading: boolean } {
   const { data, isLoading } = useQuery(manifestQuery());
-  const { data: customFields } = useQuery(customFieldsQuery());
+  const { data: customFields, isLoading: customFieldsLoading } = useQuery(customFieldsQuery());
   const catalog = useMemo(
     () => buildFilterCatalog(data?.manifest ?? null, customFields ?? []),
     [data, customFields],
   );
-  return { ...catalog, isLoading };
+  // Both queries are loader-prefetched, so this is false on first render —
+  // except when hydration beats the streamed query-state chunk under slow
+  // SSR, where consumers use it to fade in once complete instead of
+  // painting def-less cards that reflow.
+  return { ...catalog, isLoading: isLoading || customFieldsLoading };
 }
