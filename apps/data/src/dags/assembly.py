@@ -230,6 +230,7 @@ def persons_geocoded(
                  blockface_id AS osm_blockface_id
           FROM {osm_only_fqn}
         )
+        , assembled AS (
         SELECT
             -- np.* carries all passthrough person columns (incl. any extra
             -- manifest fields). address_line_1 is the canonical rebuild; the geo
@@ -251,6 +252,18 @@ def persons_geocoded(
         INNER JOIN {canonical_fqn} c ON c.external_id = np.external_id
         INNER JOIN positions p       ON p.external_id = np.external_id
         LEFT  JOIN {match_fqn} m     ON m.external_id = np.external_id
+        )
+        -- `*_i`: lake-internal integer companions to the address-string ids —
+        -- count(DISTINCT) over an 8-byte column reads a fraction of the bytes
+        -- the ~25-char strings cost, and dense_rank is an exact bijection.
+        -- ORDER BY zip5 clusters row groups so geography-correlated filters
+        -- (zip, district) prune via zonemaps instead of scanning everything.
+        SELECT
+            *,
+            IF(building_id IS NULL, NULL, dense_rank() OVER (ORDER BY building_id)) AS building_i,
+            IF(door_id IS NULL, NULL, dense_rank() OVER (ORDER BY door_id))         AS door_i
+        FROM assembled
+        ORDER BY zip5
     """)
 
     version = _current_version(conn)

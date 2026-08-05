@@ -413,8 +413,8 @@ async def persons_count(req: _PersonsCountRequest):
         f"""
         SELECT
             count(*) AS "personCount",
-            count(DISTINCT door_id) AS "doorCount",
-            count(DISTINCT building_id) AS "buildingCount"
+            count(DISTINCT door_i) AS "doorCount",
+            count(DISTINCT building_i) AS "buildingCount"
         FROM {{persons_geocoded}}
         {where}
         """,
@@ -581,7 +581,7 @@ async def person_detail(req: _PersonDetailRequest):
     # always exist on persons_geocoded, so EXCLUDE is safe.
     sql = resolve(
         "SELECT * EXCLUDE ("
-        "voting_history, building_id, door_id, blockface_id, "
+        "voting_history, building_id, door_id, building_i, door_i, blockface_id, "
         "match_score, position_source, latitude, longitude"
         "), to_json(voting_history) AS voting_history "
         "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",
@@ -623,8 +623,8 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         f"""
         SELECT
             {group_expr} AS key,
-            count(DISTINCT building_id) AS buildings,
-            count(DISTINCT door_id) AS doors,
+            count(DISTINCT building_i) AS buildings,
+            count(DISTINCT door_i) AS doors,
             count(*) AS people
         FROM {{persons_geocoded}}
         {where}
@@ -752,11 +752,11 @@ async def buildings_list(req: _BuildingsListRequest):
             b.building_id              AS "buildingId",
             b.longitude,
             b.latitude,
-            count(DISTINCT fp.door_id) AS "doorCount",
+            count(DISTINCT fp.door_i)  AS "doorCount",
             count(*)                   AS "personCount"
         FROM {{buildings_geocoded}} b
         JOIN (
-            SELECT building_id, door_id FROM {{persons_geocoded}} {where}
+            SELECT building_id, door_i FROM {{persons_geocoded}} {where}
         ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
