@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.dsl.criteria import FieldCatalog, build_field_catalog
-from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
+from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, heal_stale_attach
 from src.settings import get_settings
 from src.tables import (
     NoActiveDatasetError,
@@ -146,17 +146,20 @@ def query_context(conn: duckdb.DuckDBPyConnection, org_slug: str) -> tuple[Resol
     values-table probe come from caches (immutable / monotonic)."""
     with timed("resolve"):
         attach_operational_postgres(conn, get_settings())
-        rows = conn.execute(
-            f"""
-            SELECT o.active_dataset_version_id, f.custom_field_id::VARCHAR, f.field_type
-            FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
-            LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
-                ON v.dataset_version_id = o.active_dataset_version_id
-            LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.dataset_id = v.dataset_id
-            WHERE o.slug = ?
-            """,
-            [org_slug],
-        ).fetchall()
+        rows = heal_stale_attach(
+            conn,
+            lambda: conn.execute(
+                f"""
+                SELECT o.active_dataset_version_id, f.custom_field_id::VARCHAR, f.field_type
+                FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
+                LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+                    ON v.dataset_version_id = o.active_dataset_version_id
+                LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.dataset_id = v.dataset_id
+                WHERE o.slug = ?
+                """,
+                [org_slug],
+            ).fetchall(),
+        )
         if not rows or rows[0][0] is None:
             raise NoActiveDatasetError(org_slug)
         version = resolve_version_by_id(conn, str(rows[0][0]))

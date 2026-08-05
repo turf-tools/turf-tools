@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
+from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, heal_stale_attach
 from src.importers.base import Manifest
 from src.models import quote_ident
 from src.timing import timed
@@ -166,10 +166,13 @@ def resolve_version(
     """
     with timed("resolve"):
         attach_operational_postgres(conn, settings)
-        row = conn.execute(
-            f"SELECT active_dataset_version_id FROM {OPERATIONAL_PG_ALIAS}.app.organizations WHERE slug = ?",
-            [org_slug],
-        ).fetchone()
+        row = heal_stale_attach(
+            conn,
+            lambda: conn.execute(
+                f"SELECT active_dataset_version_id FROM {OPERATIONAL_PG_ALIAS}.app.organizations WHERE slug = ?",
+                [org_slug],
+            ).fetchone(),
+        )
         if row is None or row[0] is None:
             raise NoActiveDatasetError(org_slug)
         return resolve_version_by_id(conn, str(row[0]))

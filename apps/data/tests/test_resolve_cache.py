@@ -138,3 +138,35 @@ def test_values_table_probe_cached_both_ways() -> None:
     custom_fields._values_table_cache.pop("ds-2", None)
     miss.exists = True
     assert custom_fields_table_for(miss, "ds-2") is not None
+
+
+class _StaleConn(_StubConn):
+    """First operational query raises the stale-catalog error; healthy after
+    `pg_clear_cache` runs — the fresh-deployment poisoned-attach shape."""
+
+    def __init__(self):
+        super().__init__()
+        self.cleared = False
+
+    def execute(self, sql: str, params: list | None = None):
+        if "pg_clear_cache" in sql:
+            self.cleared = True
+            return _Result([])
+        if not self.cleared and "organizations" in sql:
+            import duckdb
+
+            raise duckdb.CatalogException('Table with name "app.organizations" does not exist')
+        return super().execute(sql, params)
+
+
+def test_stale_attach_healed_once_and_retried() -> None:
+    conn = _StaleConn()
+    version, _catalog = query_context(conn, "default")
+    assert conn.cleared
+    assert version.version_number == 1
+
+
+def test_resolve_version_heals_stale_attach() -> None:
+    conn = _StaleConn()
+    assert resolve_version(conn, None, "default").version_number == 1
+    assert conn.cleared

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -254,3 +255,20 @@ def attach_operational_postgres(conn: duckdb.DuckDBPyConnection, settings: Setti
     # attached.
     escaped = settings.database_url.replace("'", "''")
     conn.execute(f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)")
+
+
+def heal_stale_attach[T](conn: duckdb.DuckDBPyConnection, run: Callable[[], T]) -> T:
+    """Run a query that touches the operational attach, healing the postgres
+    extension's catalog cache once on a miss.
+
+    The extension builds its catalog cache at first query, so on a fresh
+    deployment a query that lands before the first schema push freezes the
+    schema-less state into this connection permanently. `pg_clear_cache`
+    rebuilds it; one retry covers that window. A genuinely missing table
+    re-raises after the single retry.
+    """
+    try:
+        return run()
+    except duckdb.CatalogException:
+        conn.execute("CALL pg_clear_cache()")
+        return run()
