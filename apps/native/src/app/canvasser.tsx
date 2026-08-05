@@ -2,7 +2,7 @@ import { router } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { X } from "lucide-react-native";
 import { useState } from "react";
-import { Alert, Keyboard, Pressable, Text, View } from "react-native";
+import { Alert, Keyboard, Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { Input } from "@/components/input";
@@ -99,7 +99,9 @@ export default function CanvasserScreen() {
         hitSlop={4}
         className="absolute z-10 items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={{
-          top: insets.top - 35,
+          // iOS's deep top inset lets the control tuck up beside the notch;
+          // Android's slim status bar needs it pushed below instead.
+          top: Platform.OS === "android" ? insets.top + 12 : insets.top - 35,
           right: 20,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
@@ -116,7 +118,9 @@ export default function CanvasserScreen() {
       <View className="flex-1 items-center px-6 pt-[160px]">
         <Text
           className="mb-2 self-center text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
-          style={{ fontFamily: "Geist_700Bold" }}
+          style={{
+            fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
+          }}
         >
           User info
         </Text>

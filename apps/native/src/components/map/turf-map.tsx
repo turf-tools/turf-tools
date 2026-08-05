@@ -8,7 +8,7 @@ import {
   SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { useCallback, useMemo, useRef } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View, Platform } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
@@ -292,7 +292,11 @@ export function TurfMap({
         />
       </ShapeSource>
 
-      <UserLocationDot isDark={isDark} />
+      {/* Android: the dot's location watch + MarkerView path fritzes the
+          status bar on first load and can crash — disabled pending a
+          proper Android implementation (likely MLRN's built-in
+          UserLocation layer). */}
+      {Platform.OS === "ios" && <UserLocationDot isDark={isDark} />}
     </MapView>
   );
 }

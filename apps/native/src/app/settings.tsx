@@ -1,5 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { ActionSheetIOS, Alert, Linking, Pressable, Text, View } from "react-native";
+import {
+  ActionSheetIOS,
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  Text,
+  View,
+} from "react-native";
 import { router } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -12,8 +21,10 @@ import {
   Timer,
   UserRound,
 } from "lucide-react-native";
+import { useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
+import { WideButton } from "@/components/wide-button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
 import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { SYNC_OPTIONS, syncIntervalAtom, userSyncingAtom } from "@/lib/atoms/sync";
@@ -56,7 +67,14 @@ export default function SettingsScreen() {
     }
   };
 
+  // ActionSheetIOS crashes on Android — a styled modal stands in there.
+  const [syncPickerOpen, setSyncPickerOpen] = useState(false);
+
   const handleSyncFrequency = () => {
+    if (Platform.OS !== "ios") {
+      setSyncPickerOpen(true);
+      return;
+    }
     const options = [...SYNC_OPTIONS.map((o) => o.label), "Cancel"];
     ActionSheetIOS.showActionSheetWithOptions(
       {
@@ -136,7 +154,9 @@ export default function SettingsScreen() {
         hitSlop={4}
         className="absolute z-10 items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={{
-          top: insets.top - 35,
+          // iOS's deep top inset lets the control tuck up beside the notch;
+          // Android's slim status bar needs it pushed below instead.
+          top: Platform.OS === "android" ? insets.top + 12 : insets.top - 35,
           right: 20,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
@@ -151,7 +171,9 @@ export default function SettingsScreen() {
       <View className="flex-1 items-center justify-center p-6">
         <Text
           className="mb-8 text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
-          style={{ fontFamily: "Geist_700Bold" }}
+          style={{
+            fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
+          }}
         >
           Settings
         </Text>
@@ -212,6 +234,49 @@ export default function SettingsScreen() {
         <FooterLink title="Privacy" url="https://turf.tools/privacy" />
         <FooterLink title="Support" url="https://turf.tools/support" />
       </View>
+
+      {Platform.OS !== "ios" && (
+        <Modal
+          transparent
+          visible={syncPickerOpen}
+          animationType="fade"
+          onRequestClose={() => setSyncPickerOpen(false)}
+        >
+          <Pressable
+            className="flex-1 justify-end bg-black/40"
+            onPress={() => setSyncPickerOpen(false)}
+          >
+            <Pressable
+              onPress={() => {}}
+              className="gap-2 rounded-t-2xl bg-background dark:bg-background-dark p-5"
+              style={{ paddingBottom: insets.bottom + 20 }}
+            >
+              <Text
+                className="mb-1 text-lg text-foreground dark:text-foreground-dark"
+                style={{ fontFamily: "Geist_700Bold" }}
+              >
+                Sync frequency
+              </Text>
+              {SYNC_OPTIONS.map((o) => (
+                <WideButton
+                  key={o.value}
+                  label={o.label}
+                  selected={o.value === syncInterval}
+                  onPress={() => {
+                    void setSyncInterval(o.value);
+                    setSyncPickerOpen(false);
+                  }}
+                />
+              ))}
+              <WideButton
+                label="Cancel"
+                variant="action"
+                onPress={() => setSyncPickerOpen(false)}
+              />
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
     </View>
   );
 }

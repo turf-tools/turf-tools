@@ -587,6 +587,9 @@ function ScriptContent({
             <Text
               key={step.scriptStepId}
               className="font-sans text-lg transform -skew-x-12 leading-6"
+              style={
+                Platform.OS === "android" ? { fontFamily: "Geist_400Regular_Italic" } : undefined
+              }
             >
               {step.text}
             </Text>

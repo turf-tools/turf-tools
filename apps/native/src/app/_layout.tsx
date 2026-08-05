@@ -4,13 +4,13 @@ import "@/global.css";
 import { Geist_400Regular, Geist_700Bold } from "@expo-google-fonts/geist";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { useFonts } from "expo-font";
-import { router, SplashScreen, Stack } from "expo-router";
+import { router, SplashScreen, Stack, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Menu } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { useEffect, useState } from "react";
-import { AppState, LogBox, Pressable } from "react-native";
+import { AppState, LogBox, Platform, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { activeTurfAtom, loadActiveTurf } from "@/lib/atoms/active-turf";
@@ -41,6 +41,13 @@ function GlobalMenuButton() {
   const insets = useSafeAreaInsets();
   const theme = useAtomValue(themeAtom);
   const iconColor = theme === "dark" ? "#ededed" : "#1b1b1b";
+  const pathname = usePathname();
+  // On Android the modal presentation doesn't cover root chrome the way
+  // iOS's does, so this button would sit on top of those screens' own
+  // close controls (same spot) — yield to them there.
+  if (Platform.OS === "android" && ["/settings", "/canvasser", "/scan"].includes(pathname)) {
+    return null;
+  }
   return (
     <Pressable
       onPress={() => router.push("/settings")}
@@ -160,6 +167,11 @@ export default function RootLayout() {
   const [fontsLoaded] = useFonts({
     Geist_400Regular,
     Geist_700Bold,
+    // Real italics, vendored from vercel/geist-font (OFL, see assets/fonts):
+    // Android's renderer drops skew transforms, so the slanted wordmark uses
+    // these there; iOS keeps its skew styling.
+    Geist_400Regular_Italic: require("../../assets/fonts/Geist-Italic.ttf"),
+    Geist_700Bold_Italic: require("../../assets/fonts/Geist-BoldItalic.ttf"),
   });
 
   useEffect(() => {

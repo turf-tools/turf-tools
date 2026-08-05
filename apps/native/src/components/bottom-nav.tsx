@@ -1,5 +1,5 @@
 import { DoorOpen, List, Mic, Search } from "lucide-react-native";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type ButtonAction = "search" | "list" | "next" | "mic";
@@ -28,7 +28,13 @@ export function BottomNav({ buttons, onPress, isDark = false }: Props) {
   return (
     <View
       className="flex-row items-center gap-3 px-8 border-t border-border dark:border-border-dark bg-background dark:bg-background-dark"
-      style={{ paddingBottom: Math.max(insets.bottom, 8), paddingTop: 25 }}
+      style={{
+        // Android's reported bottom inset can under-count the rendered
+        // system bar, clipping the buttons — cushion it there only.
+        paddingBottom:
+          Platform.OS === "android" ? Math.max(insets.bottom, 8) + 36 : Math.max(insets.bottom, 8),
+        paddingTop: 25,
+      }}
     >
       {buttons.map((action, idx) => {
         if (action === null) {
