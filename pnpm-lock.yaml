@@ -384,6 +384,9 @@ importers:
 
   scripts:
     dependencies:
+      '@orpc/client':
+        specifier: ^1.13.13
+        version: 1.14.3
       '@turf-tools/db':
         specifier: workspace:*
         version: link:../packages/db
