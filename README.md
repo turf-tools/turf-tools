@@ -1,6 +1,10 @@
 # Turf Tools
 
-Open source field organizing and canvassing platform. Very much a work in progress.
+Open source field organizing and canvassing platform.
+
+The platform incldues three key components: (1) performant voter file data processing (including fully open-source geocoding) (2) a native canvassing application that runs on iOS and Android (3) a website for creating segments, scripts, and campaigns, and for cutting turf.
+
+This project is in active development and currently undergoing early testing.
 
 ## Prerequisites
 
