@@ -482,7 +482,14 @@ function DetailsDialog({
         <DialogDescription>
           {version?.status === "ready" ? `Imported v${version.versionNumber} of ` : "Import of "}
           {version?.name} with type {importerLabel(version?.importer ?? "")}, started{" "}
-          {formatDateTime(version?.importedAt, timezone)}.
+          {formatDateTime(version?.importedAt, timezone)}
+          {version?.sourceUri ? (
+            <>
+              {", from "}
+              <span title={version.sourceUri}>{version.sourceUri.split("/").pop()}</span>
+            </>
+          ) : null}
+          .
         </DialogDescription>
         {version?.status === "failed" ? (
           <Callout tone="error">

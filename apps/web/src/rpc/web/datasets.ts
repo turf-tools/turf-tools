@@ -41,6 +41,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       versionNumber: datasetVersions.versionNumber,
       status: datasetVersions.status,
       error: datasetVersions.error,
+      sourceUri: datasetVersions.sourceUri,
       derivedMetadata: datasetVersions.derivedMetadata,
       importedAt: datasetVersions.createdAt,
       archivedAt: datasetVersions.archivedAt,
