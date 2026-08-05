@@ -75,19 +75,10 @@ export const SCENARIOS: Scenario[] = [
       ],
     },
   },
-  {
-    name: "canvass",
-    description: "canvass outcome filter (resolves person ids from canvass_events)",
-    criteria: {
-      steps: [
-        narrow({
-          kind: "canvass-outcome",
-          key: "canvass_outcome",
-          outcomes: ["canvassed", "not_home"],
-        }),
-      ],
-    },
-  },
+  // No canvass-outcome scenario: its cost tracks each environment's
+  // canvass_events volume, so cross-environment cells aren't comparable —
+  // unlike the rest of the battery, which only assumes the same voter file.
+  // Reinstate with a seeded, identical events fixture if we want it back.
   {
     name: "burst",
     description: "steps-narrow criteria, all endpoints fired concurrently",
