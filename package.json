@@ -9,7 +9,7 @@
     "ready": "vp fmt && vp lint && vp run test -r && vp run build -r",
     "dev": "concurrently -n db,web,native,data,search -c gray,blue,green,yellow,magenta \"pnpm run dev:db\" \"pnpm run dev:web\" \"pnpm run dev:native\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
     "dev:ios": "concurrently -n db,web,native,data,search -c gray,blue,green,yellow,magenta \"pnpm run dev:db\" \"pnpm run dev:web\" \"pnpm --filter native run ios\" \"pnpm run dev:data\" \"pnpm run dev:search\"",
-    "dev:search": "wait-on tcp:127.0.0.1:5432 && pnpm db:quickwit && cd apps/data && quickwit run --config quickwit/node.yaml 2>&1 | grep --line-buffered -E '(REST server is ready|ERROR|FATAL)'",
+    "dev:search": "wait-on tcp:127.0.0.1:5432 && pnpm db:quickwit && cd apps/data && mkdir -p qwdata && quickwit run --config quickwit/node.yaml 2>&1 | grep --line-buffered -E '(REST server is ready|ERROR|FATAL|command failed)'",
     "dev:db": "docker compose -f docker-compose.dev.yml up postgres",
     "dev:web": "wait-on tcp:127.0.0.1:5432 && pnpm db:setup && vp run web#dev",
     "dev:native": "pnpm --filter native dev",
