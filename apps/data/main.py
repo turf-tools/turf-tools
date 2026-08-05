@@ -8,6 +8,7 @@ import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -803,27 +804,31 @@ async def buildings_points(req: _BuildingsPointsRequest):
                 (b.longitude + 180.0) / 360.0 AS mx,
                 0.5 - ln(tan(pi()/4 + radians(b.latitude)/2)) / (2*pi()) AS my
             FROM {{buildings_geocoded}} b
-            WHERE b.building_id IN (
-                SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
+            WHERE b.building_i IN (
+                SELECT DISTINCT building_i FROM {{persons_geocoded}} {where}
             )
         ),
         o AS (SELECT avg(mx) AS ox, avg(my) AS oy FROM pts)
-        SELECT pts.mx - o.ox, pts.my - o.oy, o.ox, o.oy
+        SELECT pts.mx - o.ox AS dx, pts.my - o.oy AS dy, o.ox AS ox, o.oy AS oy
         FROM pts, o
         """,
         schema,
     )
+    # fetchnumpy + vectorized repack: materializing hundreds of thousands of
+    # rows as Python tuples costs several times the query itself.
     with timed("query"):
         cursor = conn.execute(sql, params)
-        rows = cursor.fetchall()
-    header = array.array("d", [0.0, 0.0])
-    deltas = array.array("f")
-    if rows:
-        header[0] = rows[0][2]
-        header[1] = rows[0][3]
-        for dx, dy, _, _ in rows:
-            deltas.append(dx)
-            deltas.append(dy)
+        cols = cursor.fetchnumpy()
+    dx, dy = cols["dx"], cols["dy"]
+    if len(dx) == 0:
+        return Response(
+            content=array.array("d", [0.0, 0.0]).tobytes(),
+            media_type="application/octet-stream",
+        )
+    header = np.array([cols["ox"][0], cols["oy"][0]], dtype=np.float64)
+    deltas = np.empty((len(dx), 2), dtype=np.float32)
+    deltas[:, 0] = dx
+    deltas[:, 1] = dy
     return Response(
         content=header.tobytes() + deltas.tobytes(),
         media_type="application/octet-stream",
