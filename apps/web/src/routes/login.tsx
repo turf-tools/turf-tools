@@ -130,9 +130,13 @@ function EmailStep({
           onChange={(e) => setEmail(e.target.value)}
           required
           autoFocus
-          className="text-[16px]"
+          className="h-11 md:h-9 text-[16px]"
         />
-        <Button type="submit" className="h-10 disabled:opacity-100 text-[16px]" disabled={pending}>
+        <Button
+          type="submit"
+          className="h-12 md:h-10 disabled:opacity-100 text-[16px]"
+          disabled={pending}
+        >
           {pending ? "Sending…" : "Send login link"}
         </Button>
       </form>
@@ -146,13 +150,23 @@ function EmailStep({
 }
 
 function SentStep({ email, onBack }: { email: string; onBack: () => void }) {
+  // The margin is tuned so "Back to login" lands exactly where "Send login
+  // link" was when the copy wraps to its typical two lines (the mobile
+  // variant offsets the taller mobile input). A three-line wrap from a long
+  // email shifts it — accepted. select-none stops iOS from auto-selecting
+  // the freshly-mounted text under the just-tapped submit button.
   return (
     <>
-      <p className="mb-14 text-center text-[16px] text-muted-foreground">
+      <p className="mb-16 md:mb-14 text-center text-[16px] text-muted-foreground select-none">
         We've sent a temporary login link, please check your inbox at{" "}
         <span className="text-foreground">{email}</span>.
       </p>
-      <Button variant="outline" type="button" onClick={onBack} className="h-10 w-full text-[16px]">
+      <Button
+        variant="outline"
+        type="button"
+        onClick={onBack}
+        className="h-12 md:h-10 w-full text-[16px]"
+      >
         Back to login
       </Button>
     </>

@@ -486,7 +486,7 @@ function DetailsDialog({
           {version?.sourceUri ? (
             <>
               {", from "}
-              <span title={version.sourceUri}>{version.sourceUri.split("/").pop()}</span>
+              <span className="break-all">{version.sourceUri}</span>
             </>
           ) : null}
           .

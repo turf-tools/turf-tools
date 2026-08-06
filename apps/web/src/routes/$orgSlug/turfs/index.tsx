@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   LoaderCircle,
   Megaphone,
+  Phone,
   QrCode,
   Radio,
   Rows3,
@@ -584,7 +585,18 @@ function WalksDialog({
               Turf {turfLabel(turf.name)} {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
             <DialogCloseX />
-            <WalkTable walks={summaries(turf.turfId).walks} tz={tz} />
+            {/* Scrolls past 10 rows instead of pushing the dialog past the
+                viewport (it's centered, so overflow clips at both ends). */}
+            {(() => {
+              const walks = summaries(turf.turfId).walks;
+              return (
+                <div
+                  className={cn("overflow-y-auto", walks.length > 10 && "max-h-[min(60vh,420px)]")}
+                >
+                  <WalkTable walks={walks} tz={tz} />
+                </div>
+              );
+            })()}
           </>
         ) : null}
       </DialogContent>
@@ -659,7 +671,7 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
     <table className="w-full table-fixed text-sm">
       <thead>
         <tr className="text-left text-muted-foreground">
-          <th className="h-8 w-40 font-normal">Walked</th>
+          <th className="h-8 w-20 md:w-42 font-normal">Walked</th>
           <th className="h-8 font-normal">Canvasser</th>
         </tr>
       </thead>
@@ -667,10 +679,26 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
         {[...walks].reverse().map((w) => (
           <tr key={w.walkId} className="border-t border-border">
             <td className="h-9 font-mono tabular-nums">
-              {formatMonthDay(w.openedAt, tz)} {formatTime(w.openedAt, tz)}
+              {formatMonthDay(w.openedAt, tz)}
+              <span className="hidden md:inline"> {formatTime(w.openedAt, tz)}</span>
             </td>
             <td className="h-9 pr-2">
-              <span className="block truncate">{w.canvasserName}</span>
+              {w.canvasserPhone ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  nativeButton={false}
+                  // -ml matches the ghost padding so the name stays flush
+                  // with the column (and with phone-less rows).
+                  className="-ml-2.5 max-w-full min-w-0 font-normal"
+                  render={<a href={`sms:${w.canvasserPhone}`} />}
+                >
+                  <span className="truncate">{w.canvasserName}</span>
+                  <Phone className="ml-px size-3.5 shrink-0 text-muted-foreground [stroke-width:2.25]" />
+                </Button>
+              ) : (
+                <span className="block truncate">{w.canvasserName}</span>
+              )}
             </td>
           </tr>
         ))}
@@ -746,8 +774,13 @@ function TurfCard({
   const { pending } = summary;
 
   const badge = "flex h-7 items-center gap-1 rounded-md px-2 text-sm";
+  // The whole card is a tap target for expansion; interactive children
+  // (Scan, the walk table's actions) stop propagation.
   return (
-    <div className="rounded-lg border border-border bg-white dark:bg-transparent">
+    <div
+      className="rounded-lg border border-border bg-white dark:bg-transparent"
+      onClick={() => setExpanded((prev) => !prev)}
+    >
       <div className="flex items-center gap-1.5 p-3">
         <span className="w-8 text-[18px] font-bold tabular-nums">{turfLabel(turf.name)}</span>
         {summary.walks.length > 0 ? (
@@ -792,7 +825,10 @@ function TurfCard({
         <button
           type="button"
           aria-label="History"
-          onClick={() => setExpanded((prev) => !prev)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
           className="-ml-0.5 flex items-center"
         >
           <ChevronDown
@@ -809,14 +845,17 @@ function TurfCard({
         <Button
           variant="outline"
           disabled={!turf.turfCode || turf.status !== "active"}
-          onClick={() => onShowQr(turf)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onShowQr(turf);
+          }}
         >
           <QrCode className="size-3.5" />
           Scan
         </Button>
       </div>
       {expanded ? (
-        <div className="px-3 pt-2 pb-3">
+        <div className="px-3 pt-2 pb-3" onClick={(e) => e.stopPropagation()}>
           <WalkTable walks={summary.walks} tz={tz} />
         </div>
       ) : null}

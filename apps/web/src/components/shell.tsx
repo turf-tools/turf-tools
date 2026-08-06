@@ -21,8 +21,11 @@ const COLLAPSED_WIDTH = "w-12";
 export function Shell({ children, role, orgSlug, orgName, orgs }: ShellProps) {
   const [collapsed, setCollapsed] = useState(false);
 
+  // dvh, not vh — mobile 100vh assumes collapsed browser chrome, so the
+  // layout height changes under the sticky header mid-scroll and content
+  // can flash above it.
   return (
-    <div className="mx-auto min-h-screen max-w-[1600px]">
+    <div className="mx-auto min-h-dvh max-w-[1600px]">
       <TopBar orgSlug={orgSlug} orgName={orgName} orgs={orgs} role={role} />
       <div className="flex">
         {/* Mobile has no sidebar — the top bar's menu button carries nav. */}
