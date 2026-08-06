@@ -20,6 +20,7 @@ type TopNavVariant = "default" | "minimal";
 
 type TopNavConfig = {
   title: string;
+  titleSuffix: string | null;
   showBack: boolean;
   variant: TopNavVariant;
 };
@@ -50,6 +51,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
         {topConfig && (
           <TopNav
             title={topConfig.title}
+            titleSuffix={topConfig.titleSuffix}
             showBack={topConfig.showBack}
             variant={topConfig.variant}
             isDark={isDark}
@@ -71,6 +73,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
 // Combined hook: register both top and bottom nav for the focused screen.
 export function useScreenNav(options: {
   title: string;
+  titleSuffix?: string | null;
   showBack?: boolean;
   topVariant?: TopNavVariant;
   bottomButtons: Array<ButtonAction | null>;
@@ -84,16 +87,17 @@ export function useScreenNav(options: {
 
   const buttonsKey = options.bottomButtons.join(",");
   const titleKey = options.title;
+  const titleSuffix = options.titleSuffix ?? null;
   const showBack = options.showBack ?? true;
   const variant = options.topVariant ?? "default";
 
   useFocusEffect(
     useCallback(() => {
-      ctxRef.current?.setTopConfig({ title: titleKey, showBack, variant });
+      ctxRef.current?.setTopConfig({ title: titleKey, titleSuffix, showBack, variant });
       ctxRef.current?.setBottomConfig({
         buttons: buttonsKey.split(",") as Array<ButtonAction>,
         onPress: (action) => optionsRef.current.onBottomPress(action),
       });
-    }, [buttonsKey, titleKey, showBack, variant]),
+    }, [buttonsKey, titleKey, titleSuffix, showBack, variant]),
   );
 }

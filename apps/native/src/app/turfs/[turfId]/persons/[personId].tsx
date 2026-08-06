@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Ban, Check, Pencil, Scroll } from "lucide-react-native";
+import { Ban, Check, Pencil, Scroll, X } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -29,7 +29,13 @@ import {
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
 import { toTitleCase } from "@/lib/format";
-import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
+import {
+  formatAge,
+  formatEnrollment,
+  formatGender,
+  formatPersonName,
+  formatUnitShort,
+} from "@/lib/format";
 import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
 import type { CanvassEventPayload, ResponseValue, TurfDataPerson } from "@turf-tools/db/schema";
@@ -171,6 +177,46 @@ export default function PersonScreen() {
     responsesRef.current = new Map();
     scheduleEmit();
   };
+
+  // Backing out of unavailable mode without having chosen an outcome is a
+  // pure mode switch — in-progress script responses survive. With an
+  // outcome chosen, leaving un-chooses it (responses were already cleared
+  // when the option was tapped, so clearResult only affects the outcome).
+  const exitUnavailable = () => {
+    Keyboard.dismiss();
+    if (outcomeRef.current != null) clearResult();
+    setMode("script");
+  };
+
+  // Deterministic caret-reveal: the keyboard insets make room, but UIKit
+  // doesn't reliably scroll a focused multiline input into view — so when
+  // the keyboard announces itself, measure the focused input in window
+  // coordinates and scroll just enough to clear the keyboard top.
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(0);
+  const focusedInputRef = useRef<TextInput | null>(null);
+  const registerInput = (input: TextInput | null) => {
+    focusedInputRef.current = input;
+  };
+  useEffect(() => {
+    const sub = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        const input = focusedInputRef.current;
+        if (!input) return;
+        input.measureInWindow((_x, y, _w, h) => {
+          const overlap = y + h + 16 - e.endCoordinates.screenY;
+          if (overlap > 0) {
+            scrollRef.current?.scrollTo({
+              y: scrollOffsetRef.current + overlap,
+              animated: true,
+            });
+          }
+        });
+      },
+    );
+    return () => sub.remove();
+  }, []);
 
   // Trailing debounce: reads state fresh (from refs) at fire time so
   // anything tapped or typed meanwhile rides along in the one snapshot.
@@ -319,9 +365,11 @@ export default function PersonScreen() {
   };
 
   const buildingAddress = building ? toTitleCase((building.address.street ?? "").trim()) : "";
+  const titleUnit = formatUnitShort(door?.unit);
 
   useScreenNav({
     title: buildingAddress || "Person",
+    titleSuffix: titleUnit,
     bottomButtons: ["search", "list", "next", "mic"],
     onBottomPress: (action) => {
       if (action === "list") handleListPress();
@@ -354,19 +402,31 @@ export default function PersonScreen() {
   const noteExists = formattedNotes.length > 0;
   const responsesExist = responsesByQuestion.size > 0;
   const recorded = responsesExist || unavailableOutcome != null;
-  const fullName =
-    [person.firstName, person.middleName, person.lastName, person.nameSuffix]
-      .filter(Boolean)
-      .join(" ")
-      .trim() || "Unknown";
+  const fullName = formatPersonName(person);
 
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
+      {/* iOS keyboard avoidance lives on the ScrollView
+          (automaticallyAdjustKeyboardInsets) — UIKit computes the real
+          overlap in window coordinates, which the KAV can't do from in
+          here (its frame is offset by the nav chrome, so its padding
+          math under-shoots). The KAV stays for Android only. */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior="height"
+        enabled={Platform.OS === "android"}
         className="flex-1"
       >
-        <ScrollView keyboardShouldPersistTaps="handled">
+        <ScrollView
+          ref={scrollRef}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
+          keyboardDismissMode="interactive"
+          contentContainerStyle={{ paddingBottom: 8 }}
+          onScroll={(e) => {
+            scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
+        >
           {/* Taps on blank space dismiss the keyboard (and blur-commit any
               open-ended draft) — RN doesn't do this for non-interactive
               views on its own. Child touchables still win the responder. */}
@@ -415,13 +475,12 @@ export default function PersonScreen() {
             {/* Mode switch buttons */}
             <View className="px-5 py-3 gap-2">
               <WideButton
-                label="Contact not available"
+                label="Could not reach person"
                 icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
                 selected={mode === "unavailable"}
                 onPress={() => {
                   if (mode === "unavailable") {
-                    clearResult();
-                    setMode("script");
+                    exitUnavailable();
                   } else {
                     setMode("unavailable");
                   }
@@ -430,17 +489,27 @@ export default function PersonScreen() {
               <View className="flex-row gap-2">
                 <View className="flex-1">
                   <WideButton
-                    label="Add a note"
-                    icon={<Pencil size={18} color={mode === "note" ? iconColor : mutedIconColor} />}
+                    label={mode === "note" ? "Close note" : "Add a note"}
+                    icon={
+                      mode === "note" ? (
+                        <X size={18} color={iconColor} />
+                      ) : (
+                        <Pencil size={18} color={mutedIconColor} />
+                      )
+                    }
                     selected={mode === "note"}
                     onPress={() => setMode(mode === "note" ? "script" : "note")}
                   />
                 </View>
                 <View className="flex-1">
                   <WideButton
-                    label="View details"
+                    label={mode === "details" ? "Close details" : "View details"}
                     icon={
-                      <Scroll size={18} color={mode === "details" ? iconColor : mutedIconColor} />
+                      mode === "details" ? (
+                        <X size={18} color={iconColor} />
+                      ) : (
+                        <Scroll size={18} color={mutedIconColor} />
+                      )
                     }
                     selected={mode === "details"}
                     onPress={() => setMode(mode === "details" ? "script" : "details")}
@@ -460,6 +529,7 @@ export default function PersonScreen() {
                   onTextBlur={scheduleTextEmit}
                   onSubmit={flushPending}
                   onClear={clearResult}
+                  registerInput={registerInput}
                 />
               )}
               {mode === "unavailable" && (
@@ -472,14 +542,12 @@ export default function PersonScreen() {
                     scheduleEmit();
                   }}
                   onClear={clearResult}
-                  onCancel={() => {
-                    clearResult();
-                    setMode("script");
-                  }}
+                  onCancel={exitUnavailable}
                 />
               )}
               {mode === "note" && (
                 <NoteContent
+                  registerInput={registerInput}
                   notes={formattedNotes}
                   onSubmitNote={(text) => {
                     recordEvent({
@@ -555,6 +623,7 @@ function ScriptContent({
   onTextBlur,
   onSubmit,
   onClear,
+  registerInput,
 }: {
   scriptQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof client.scripts.get>>>>;
   responses: Map<string, ResponseValue>;
@@ -563,6 +632,7 @@ function ScriptContent({
   onTextBlur: () => void;
   onSubmit: () => void;
   onClear: () => void;
+  registerInput: (input: TextInput | null) => void;
 }) {
   const colors = useColors();
   if (scriptQuery.isLoading) return <ActivityIndicator />;
@@ -606,6 +676,7 @@ function ScriptContent({
                 text={value && "text" in value ? value.text : ""}
                 onChangeText={(t) => onChangeText(step.questionId, t)}
                 onBlur={onTextBlur}
+                registerInput={registerInput}
               />
             </View>
           );
@@ -656,25 +727,38 @@ function OpenEndedInput({
   text,
   onChangeText,
   onBlur,
+  registerInput,
 }: {
   text: string;
   onChangeText: (text: string) => void;
   onBlur: () => void;
+  registerInput: (input: TextInput | null) => void;
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   return (
     <TextInput
+      ref={inputRef}
       value={text}
       onChangeText={onChangeText}
-      onFocus={() => setFocused(true)}
+      onFocus={() => {
+        setFocused(true);
+        registerInput(inputRef.current);
+      }}
       onBlur={() => {
         setFocused(false);
+        registerInput(null);
         onBlur();
       }}
       placeholder="Type an answer..."
       placeholderTextColor={isDark ? "#666" : "#999"}
       multiline
+      // Done key dismisses (blur commits the draft; nothing submits).
+      // Costs newline entry — fine for doorstep answers, and deliberately
+      // NOT applied to the note composer, which keeps its newlines.
+      returnKeyType="done"
+      submitBehavior="blurAndSubmit"
       className={`font-sans text-lg text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border rounded-lg p-4 min-h-[80px] ${
         focused
           ? "border-foreground dark:border-foreground-dark"
@@ -695,14 +779,17 @@ function NoteContent({
   notes,
   onSubmitNote,
   onCancel,
+  registerInput,
 }: {
   notes: Array<{ text: string; createdAt: string }>;
   onSubmitNote: (text: string) => void;
   onCancel: () => void;
+  registerInput: (input: TextInput | null) => void;
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const [focused, setFocused] = useState(false);
   const [pendingText, setPendingText] = useState("");
+  const inputRef = useRef<TextInput>(null);
 
   const handleSubmit = () => {
     const trimmed = pendingText.trim();
@@ -714,10 +801,17 @@ function NoteContent({
   return (
     <View className="gap-4">
       <TextInput
+        ref={inputRef}
         value={pendingText}
         onChangeText={setPendingText}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onFocus={() => {
+          setFocused(true);
+          registerInput(inputRef.current);
+        }}
+        onBlur={() => {
+          setFocused(false);
+          registerInput(null);
+        }}
         placeholder="Type a note..."
         placeholderTextColor={isDark ? "#666" : "#999"}
         multiline
@@ -742,7 +836,9 @@ function NoteContent({
           <WideButton label="Submit" variant="submit" onPress={handleSubmit} />
         </View>
       </View>
-      <DetailSection title="Notes" items={noteItems(notes)} />
+      <View className="mt-5">
+        <DetailSection title="Previous notes" items={noteItems(notes)} />
+      </View>
     </View>
   );
 }
@@ -796,8 +892,13 @@ function DetailList({ items }: { items: Array<{ label: string; date: string }> }
       {items.map((item, idx) => (
         <View key={idx}>
           {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
-          <View className="flex-row py-3 gap-4">
-            <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-20">
+          <View className="flex-row py-3 gap-8">
+            {/* fontVariant via style, not the tabular-nums class — NativeWind
+                drops font-variant-numeric (only -caps is mapped). */}
+            <Text
+              className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-20"
+              style={{ fontVariant: ["tabular-nums"] }}
+            >
               {item.date}
             </Text>
             <Text className="font-sans text-lg text-foreground dark:text-foreground-dark flex-1">

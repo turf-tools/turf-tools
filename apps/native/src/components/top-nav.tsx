@@ -14,13 +14,16 @@ const SHADOW = {
 
 type Props = {
   title: string;
+  // Rendered after a • separator and never truncated — the title shrinks
+  // first, so a long street ellipsizes while the unit stays visible.
+  titleSuffix?: string | null;
   showBack: boolean;
   // "minimal" hides the title and border (used on the map/list screen).
   variant?: "default" | "minimal";
   isDark: boolean;
 };
 
-export function TopNav({ title, showBack, variant = "default", isDark }: Props) {
+export function TopNav({ title, titleSuffix, showBack, variant = "default", isDark }: Props) {
   const insets = useSafeAreaInsets();
   const isMinimal = variant === "minimal";
 
@@ -49,14 +52,24 @@ export function TopNav({ title, showBack, variant = "default", isDark }: Props) 
         </View>
 
         {/* Center: title */}
-        <View className="flex-1 items-center px-3">
+        <View className="flex-1 flex-row items-center justify-center px-6">
           {!!title && (
             <Text
               className="text-foreground dark:text-foreground-dark"
-              style={{ fontFamily: "Geist_700Bold", fontSize: 18 }}
+              style={{ fontFamily: "Geist_700Bold", fontSize: 18, flexShrink: 1 }}
               numberOfLines={1}
             >
               {title}
+            </Text>
+          )}
+          {!!titleSuffix && (
+            <Text
+              className="text-foreground dark:text-foreground-dark"
+              style={{ fontFamily: "Geist_700Bold", fontSize: 18, flexShrink: 0 }}
+              numberOfLines={1}
+            >
+              {" • "}
+              {titleSuffix}
             </Text>
           )}
         </View>
