@@ -11,27 +11,44 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import Constants from "expo-constants";
+import * as Updates from "expo-updates";
 import {
   BrushCleaning,
   X,
   MoonStar,
+  QrCode,
   Sun,
   Download,
   RefreshCw,
   Timer,
   UserRound,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/button";
 import { WideButton } from "@/components/wide-button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
 import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { SYNC_OPTIONS, syncIntervalAtom, userSyncingAtom } from "@/lib/atoms/sync";
 import { themeAtom } from "@/lib/atoms/theme";
-import { clearPullCache, pullCanvassEvents, useSyncStatus } from "@/lib/canvass-events";
+import {
+  clearPullCache,
+  derivePersonSummaries,
+  isRecorded,
+  pullCanvassEvents,
+  useCanvassEvents,
+  useSyncStatus,
+} from "@/lib/canvass-events";
 import { queryClient } from "@/lib/query-client";
 import { clearHost, client } from "@/rpc/client";
+
+// Dev-only escape hatch — hidden from the shipped menu but kept wired
+// for quick re-enable.
+const SHOW_RESET_APP_STATE = false as boolean;
+
+const appVersion = Constants.expoConfig?.version ?? "?";
 
 export default function SettingsScreen() {
   const [theme, setTheme] = useAtom(themeAtom);
@@ -44,6 +61,44 @@ export default function SettingsScreen() {
   // 30s polls don't flip this; the button only reflects user intent.
   const [syncing, setSyncing] = useAtom(userSyncingAtom);
   const syncStatus = useSyncStatus(activeTurf?.turfId ?? null);
+
+  // OTA self-update — the background check on cold boot only applies a
+  // downloaded update on the NEXT cold start, so this is the one path
+  // that gets a device onto the latest bundle right now, no app-switcher
+  // gymnastics. check/fetch reject in dev builds, hence the guard.
+  const [updating, setUpdating] = useState(false);
+  const handleUpdate = async () => {
+    if (updating) return;
+    if (__DEV__ || !Updates.isEnabled) {
+      Alert.alert("Updates unavailable", "In-app updates only work in installed builds.");
+      return;
+    }
+    setUpdating(true);
+    try {
+      const check = await Updates.checkForUpdateAsync();
+      if (!check.isAvailable) {
+        Alert.alert("Up to date", "You're already running the latest version.");
+        return;
+      }
+      await Updates.fetchUpdateAsync();
+      Alert.alert("Update ready", "The app will restart to apply it.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Restart", onPress: () => void Updates.reloadAsync() },
+      ]);
+    } catch {
+      Alert.alert("Couldn't update", "Check your network connection and try again.");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleShare = () => {
+    if (!activeTurf) {
+      Alert.alert("Nothing to share", "Open a turf first, then share it from here.");
+      return;
+    }
+    router.push("/share");
+  };
 
   const handleSync = async () => {
     if (!activeTurf) {
@@ -186,6 +241,12 @@ export default function SettingsScreen() {
             icon={<Download size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button
+            title="Share this turf"
+            variant="outline"
+            onPress={handleShare}
+            icon={<QrCode size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+          />
+          <Button
             title={canvasser?.name ?? "Add your name"}
             variant="outline"
             onPress={() => router.push("/canvasser")}
@@ -203,12 +264,14 @@ export default function SettingsScreen() {
               )
             }
           />
-          <Button
-            title="Reset app state"
-            variant="outline"
-            onPress={handleResetAppState}
-            icon={<BrushCleaning size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
-          />
+          {SHOW_RESET_APP_STATE && (
+            <Button
+              title="Reset app state"
+              variant="outline"
+              onPress={handleResetAppState}
+              icon={<BrushCleaning size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
+            />
+          )}
           <Button
             title={`Sync frequency: ${syncLabel}`}
             variant="outline"
@@ -222,7 +285,11 @@ export default function SettingsScreen() {
             disabled={syncing}
             icon={<RefreshCw size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
-          <SyncStatusLine status={syncStatus} />
+          {activeTurf ? (
+            <SyncStatusWithProgress turfId={activeTurf.turfId} status={syncStatus} />
+          ) : (
+            <SyncStatusLine status={syncStatus} progress={null} />
+          )}
         </View>
       </View>
 
@@ -233,6 +300,17 @@ export default function SettingsScreen() {
       >
         <FooterLink title="Privacy" url="https://turf.tools/privacy" />
         <FooterLink title="Support" url="https://turf.tools/support" />
+        {/* Quiet OTA trigger — tapping the version checks for and applies
+            the latest update ("Check for updates" is reserved for a future
+            App Store-pointing action). */}
+        <Pressable onPress={() => void handleUpdate()} hitSlop={8} className="active:opacity-60">
+          <Text
+            className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
+            style={{ fontFamily: "Geist_400Regular" }}
+          >
+            {updating ? "Checking..." : `Ver ${appVersion}`}
+          </Text>
+        </Pressable>
       </View>
 
       {Platform.OS !== "ios" && (
@@ -310,7 +388,43 @@ function relativeTime(ms: number): string {
   return `${days}d ago`;
 }
 
-function SyncStatusLine({ status }: { status: ReturnType<typeof useSyncStatus> }) {
+// Attempted / total from the local event log, so it works offline. A person
+// counts once their latest result is non-empty (same rule as the building
+// rows); the denominator is the turf's server-side person count. Separate
+// component so the event-log hooks only mount when a turf is active.
+function SyncStatusWithProgress({
+  turfId,
+  status,
+}: {
+  turfId: string;
+  status: ReturnType<typeof useSyncStatus>;
+}) {
+  const events = useCanvassEvents(turfId);
+  const summaries = useMemo(() => derivePersonSummaries(events), [events]);
+  const { data: meta } = useQuery({
+    queryKey: ["turf", turfId] as const,
+    queryFn: () => client.turfs.getById({ turfId }),
+    staleTime: Infinity,
+  });
+  const total = meta?.personCount ?? 0;
+  let progress: number | null = null;
+  if (total > 0) {
+    let attempted = 0;
+    for (const personId of summaries.keys()) {
+      if (isRecorded(summaries, personId)) attempted += 1;
+    }
+    progress = Math.min(100, Math.round((100 * attempted) / total));
+  }
+  return <SyncStatusLine status={status} progress={progress} />;
+}
+
+function SyncStatusLine({
+  status,
+  progress,
+}: {
+  status: ReturnType<typeof useSyncStatus>;
+  progress: number | null;
+}) {
   const { lastPullAt, lastErrorAt, pendingCount } = status;
   const erroredLast = lastErrorAt && (!lastPullAt || lastErrorAt > lastPullAt);
   const headline = erroredLast
@@ -318,24 +432,27 @@ function SyncStatusLine({ status }: { status: ReturnType<typeof useSyncStatus> }
     : lastPullAt
       ? `Last sync ${relativeTime(lastPullAt)}`
       : null;
-  // Always reserve space for both lines so the layout doesn't shift as
-  // status text appears, disappears, or wraps to a second line.
+  // Lines pack together (no blank placeholders between them); minHeight
+  // still reserves the block so the stack doesn't shift as lines come
+  // and go.
+  const lines = [
+    headline,
+    pendingCount > 0
+      ? `${pendingCount} ${pendingCount === 1 ? "result" : "results"} pending`
+      : null,
+    progress != null ? `Turf progress ${progress}%` : null,
+  ].filter((line): line is string => line != null);
   return (
-    <View className="items-center gap-0.5" style={{ minHeight: 56 }}>
-      <Text
-        className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
-        style={{ fontFamily: "Geist_400Regular" }}
-      >
-        {headline ?? " "}
-      </Text>
-      <Text
-        className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
-        style={{ fontFamily: "Geist_400Regular" }}
-      >
-        {pendingCount > 0
-          ? `${pendingCount} ${pendingCount === 1 ? "result" : "results"} pending`
-          : " "}
-      </Text>
+    <View className="items-center gap-0.5" style={{ minHeight: 84 }}>
+      {lines.map((line) => (
+        <Text
+          key={line}
+          className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
+          style={{ fontFamily: "Geist_400Regular" }}
+        >
+          {line}
+        </Text>
+      ))}
     </View>
   );
 }
