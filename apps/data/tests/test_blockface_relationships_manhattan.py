@@ -62,7 +62,7 @@ def manhattan(tiger_cache_dir):
         for ext in ("ducklake", "spatial"):
             conn.install_extension(ext)
             conn.load_extension(ext)
-        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
+        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS ducklake_geo (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/voter.ducklake' AS ducklake (DATA_PATH '{tmpdir}/voter_data/')")
         conn.execute("USE ducklake")
 

@@ -40,9 +40,9 @@ LINES = {
 def geo_tables(dual_conn):
     """Production-shaped blockface_unpivoted + edges with the plus-sign."""
     conn = dual_conn
-    conn.execute("CREATE SCHEMA IF NOT EXISTS geo_ducklake.tiger")
+    conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.tiger")
     conn.execute("""
-        CREATE TABLE geo_ducklake.tiger.blockface_unpivoted (
+        CREATE TABLE ducklake_geo.tiger.blockface_unpivoted (
             blockface_id        VARCHAR,
             side                VARCHAR,
             raw_from            VARCHAR,
@@ -57,7 +57,7 @@ def geo_tables(dual_conn):
         )
     """)
     conn.execute("""
-        CREATE TABLE geo_ducklake.tiger.edges (
+        CREATE TABLE ducklake_geo.tiger.edges (
             tiger_line_id       VARCHAR,
             full_name           VARCHAR,
             feature_class_code  VARCHAR,
@@ -73,7 +73,7 @@ def geo_tables(dual_conn):
         name = "MAIN ST" if line_id in ("E", "W") else "CROSS ST"
         conn.execute(
             """
-            INSERT INTO geo_ducklake.tiger.edges VALUES
+            INSERT INTO ducklake_geo.tiger.edges VALUES
             (?, ?, 'S1400', ?, ?, [], '36', '061', ST_GeomFromText(?))
             """,
             [line_id, name, from_node, to_node, wkt],
@@ -81,14 +81,14 @@ def geo_tables(dual_conn):
         for side in ("left", "right"):
             conn.execute(
                 """
-                INSERT INTO geo_ducklake.tiger.blockface_unpivoted VALUES
+                INSERT INTO ducklake_geo.tiger.blockface_unpivoted VALUES
                 (?, ?, '1', '99', ?, ?, ?, [], ?, ?, ST_GeomFromText(?))
                 """,
                 [f"{line_id}:{side}", side, zip_code, name, line_id, from_node, to_node, wkt],
             )
     return {
-        "unpivoted": TableRef(catalog="geo_ducklake", schema="tiger", table="blockface_unpivoted", version=0),
-        "edges": TableRef(catalog="geo_ducklake", schema="tiger", table="edges", version=0),
+        "unpivoted": TableRef(catalog="ducklake_geo", schema="tiger", table="blockface_unpivoted", version=0),
+        "edges": TableRef(catalog="ducklake_geo", schema="tiger", table="edges", version=0),
     }
 
 

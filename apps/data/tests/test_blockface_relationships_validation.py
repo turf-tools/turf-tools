@@ -55,6 +55,8 @@ def _cache_warm(tiger_cache_dir: str) -> bool:
 def setup(tiger_cache_dir):
     if not _cache_warm(tiger_cache_dir):
         pytest.skip("TIGER cache for county 36061 not present; warm it via the pipeline integration test.")
+    if not FIXTURE.exists():
+        pytest.skip("East Village ground-truth fixture not present (gitignored; not distributed).")
 
     with open(FIXTURE) as f:
         buildings = json.load(f)["buildings"]
@@ -64,7 +66,7 @@ def setup(tiger_cache_dir):
         for ext in ("ducklake", "spatial"):
             conn.install_extension(ext)
             conn.load_extension(ext)
-        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS geo_ducklake (DATA_PATH '{tmpdir}/geo_data/')")
+        conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS ducklake_geo (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/voter.ducklake' AS ducklake (DATA_PATH '{tmpdir}/voter_data/')")
         conn.execute("USE ducklake")
 
