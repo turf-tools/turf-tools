@@ -2,7 +2,7 @@
 
 Open source canvassing platform and mobile app.
 
-The software in this repository includes three key components: (1) performant voter file data processing (including a fully open-source geocoding pipeline) (2) a native canvassing application that runs on iOS and Android (3) a web platform for creating segments, scripts, and campaigns, and for cutting turf.
+The software in this repository includes three key components: (1) performant voter file data processing (including a fully open-source geocoding pipeline) (2) a canvassing application that runs natively on iOS and Android (3) a web platform for creating segments, scripts, and campaigns, and for cutting turf.
 
 The project is in active development and currently undergoing early testing.
 
