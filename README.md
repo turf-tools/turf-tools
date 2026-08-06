@@ -1,10 +1,10 @@
 # Turf Tools
 
-Open source field organizing and canvassing platform.
+Open source canvassing platform and mobile app.
 
-The platform includes three key components: (1) performant voter file data processing (including fully open-source geocoding) (2) a native canvassing application that runs on iOS and Android (3) a website for creating segments, scripts, and campaigns, and for cutting turf.
+The software in this repository includes three key components: (1) performant voter file data processing (including a fully open-source geocoding pipeline) (2) a native canvassing application that runs on iOS and Android (3) a web platform for creating segments, scripts, and campaigns, and for cutting turf.
 
-This project is in active development and currently undergoing early testing.
+The project is in active development and currently undergoing early testing.
 
 ## Prerequisites
 
@@ -39,9 +39,9 @@ The overall structure is as follows:
 
 ```
 apps/
-  web/       TanStack Start — admin UI, oRPC API, system orchestrator
-  native/    Expo/React Native — mobile canvassing app
-  data/      FastAPI + DuckDB — voter file processing, geocoding, search indexing
+  web/       TanStack Start (admin UI, oRPC API, system orchestrator)
+  native/    Expo/React Native (mobile canvassing app)
+  data/      FastAPI + DuckDB (voter file processing, geocoding, search indexing)
 
 packages/
   db/        Drizzle schema + Postgres client
