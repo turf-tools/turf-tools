@@ -118,12 +118,22 @@ function SegmentsLayout() {
 
   const renameSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; name: string }) => client.segments.rename(input),
-    onSuccess: (_data, input) => {
+    onSuccess: async (_data, input) => {
+      // Cancel any in-flight list fetch before patching — a response that
+      // started pre-rename carries the old name and would land after the
+      // patch and clobber it (the invalidate below dedupes into an
+      // in-flight fetch instead of starting a fresh one).
+      await queryClient.cancelQueries({ queryKey: ["segments"] });
       queryClient.setQueryData<typeof segments>(
         ["segments"],
         (old) =>
           old?.map((s) => (s.segmentId === input.segmentId ? { ...s, name: input.name } : s)) ??
           old,
+      );
+      queryClient.setQueryData(
+        ["segment", input.segmentId],
+        (old: Record<string, unknown> | null | undefined) =>
+          old ? { ...old, name: input.name } : old,
       );
       void queryClient.invalidateQueries({ queryKey: ["segments"] });
     },
