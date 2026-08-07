@@ -7,7 +7,7 @@ import {
   type ShapeSourceRef,
   SymbolLayer,
 } from "@maplibre/maplibre-react-native";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View, Platform } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
@@ -52,6 +52,11 @@ export function TurfMap({
   bottomInset = 0,
 }: Props) {
   const colors = useColors();
+  // Android shows a black frame between the map view mounting and its
+  // first fully-rendered frame (maplibre-react-native #367 — no upstream
+  // fix). Cover with a theme-colored pane until the map reports ready;
+  // iOS doesn't flash, so it keeps its untouched path.
+  const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
   const featureCollection = useMemo(
     () => buildFeatureCollection(turf.buildings, buildingRoles),
     [turf.buildings, buildingRoles],
@@ -130,6 +135,7 @@ export function TurfMap({
         logoEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
+        onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
         onRegionDidChange={handleRegionEvent}
       >
@@ -299,6 +305,15 @@ export function TurfMap({
           UserLocation layer). */}
         {Platform.OS === "ios" && <UserLocationDot isDark={isDark} />}
       </MapView>
+      {!mapFullyRendered && (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFillObject,
+            { backgroundColor: isDark ? "#0a0a0a" : "#fcfcfc" },
+          ]}
+        />
+      )}
       <AttributionBadge isDark={isDark} />
     </View>
   );
