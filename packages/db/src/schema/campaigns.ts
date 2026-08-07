@@ -29,4 +29,8 @@ export const campaigns = app.table("campaigns", {
     .notNull()
     .references(() => users.id),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  // Soft retirement: archived campaigns disappear from active lists and
+  // their turfs drop out of the turfs view, but nothing is deleted and
+  // turf codes keep working. Unarchive restores everything.
+  archivedAt: timestamp({ withTimezone: true }),
 });

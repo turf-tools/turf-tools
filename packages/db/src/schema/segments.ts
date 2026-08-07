@@ -25,4 +25,7 @@ export const segments = app.table("segments", {
     .references(() => users.id),
   doorCount: integer(),
   personCount: integer(),
+  // Soft retirement — archived segments leave the rail and pickers but
+  // stay resolvable for anything that references them (campaigns, turfs).
+  archivedAt: timestamp({ withTimezone: true }),
 });

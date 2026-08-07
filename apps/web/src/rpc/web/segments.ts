@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, ne } from "@turf-tools/db";
+import { and, asc, eq, isNull, ne, sql } from "@turf-tools/db";
 import { campaigns, segments } from "@turf-tools/db/schema";
 import { z } from "zod";
 import type { Criteria } from "~/lib/filters";
@@ -58,6 +58,7 @@ const segmentSelect = {
   personCount: segments.personCount,
   datasetId: segments.datasetId,
   createdAt: segments.createdAt,
+  isArchived: sql<boolean>`(${segments.archivedAt} IS NOT NULL)`,
 };
 
 // List segments in the current user's organization, oldest first.
@@ -174,40 +175,46 @@ export const clone = pub
     return inserted[0]!;
   });
 
-// Delete a segment. Blocks if any campaign still references it — same
-// reasoning as zone groups: silently orphaning a campaign's segmentId is
-// worse than a clear error.
-export const remove = pub
+// Soft-retire a segment: it leaves the rail and pickers but stays
+// resolvable for the campaigns and turfs that reference it. There is
+// no delete — turfs and campaigns reference segments forever.
+export const archive = pub
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ segmentId: segments.segmentId })
-      .from(segments)
+    const updated = await context.db
+      .update(segments)
+      .set({ archivedAt: new Date() })
       .where(
         and(
           eq(segments.segmentId, input.segmentId),
           eq(segments.organizationId, context.organizationId),
         ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
-
-    const inUse = await context.db
-      .select({ campaignId: campaigns.campaignId })
-      .from(campaigns)
-      .where(eq(campaigns.segmentId, input.segmentId));
-    if (inUse.length > 0) {
-      throw new ORPCError("CONFLICT", {
-        message:
-          `Segment is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
-          "Detach or delete those campaigns first.",
-      });
-    }
-
-    await context.db.delete(segments).where(eq(segments.segmentId, input.segmentId));
+      )
+      .returning({ segmentId: segments.segmentId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
     return { ok: true as const };
   });
 
-// Count how many campaigns currently reference a given segment.
+export const unarchive = pub
+  .input(z.object({ segmentId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const updated = await context.db
+      .update(segments)
+      .set({ archivedAt: null })
+      .where(
+        and(
+          eq(segments.segmentId, input.segmentId),
+          eq(segments.organizationId, context.organizationId),
+        ),
+      )
+      .returning({ segmentId: segments.segmentId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
+    return { ok: true as const };
+  });
+
+// Count the active campaigns referencing a given segment — a reference
+// from an archived campaign is expected history, not something the
+// archive warning should count.
 export const countCampaigns = pub
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -225,7 +232,7 @@ export const countCampaigns = pub
     const refs = await context.db
       .select({ campaignId: campaigns.campaignId })
       .from(campaigns)
-      .where(eq(campaigns.segmentId, input.segmentId));
+      .where(and(eq(campaigns.segmentId, input.segmentId), isNull(campaigns.archivedAt)));
     return { count: refs.length };
   });
 

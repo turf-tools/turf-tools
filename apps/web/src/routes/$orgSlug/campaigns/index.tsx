@@ -8,7 +8,10 @@ export const Route = createFileRoute("/$orgSlug/campaigns/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    const fallback = recallOrFirst(orgSlug, "campaigns", campaigns, (c) => c.campaignId);
+    // Archived campaigns stay reachable from the rail but never win the
+    // index redirect.
+    const active = campaigns.filter((c) => !c.isArchived);
+    const fallback = recallOrFirst(orgSlug, "campaigns", active, (c) => c.campaignId);
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/campaigns/$campaignId",
@@ -22,7 +25,7 @@ export const Route = createFileRoute("/$orgSlug/campaigns/")({
 function CampaignsEmpty() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      No campaigns yet, create one to get started.
+      No active campaigns yet, create one to get started.
     </div>
   );
 }

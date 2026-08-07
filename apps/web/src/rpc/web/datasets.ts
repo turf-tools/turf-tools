@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, desc, eq, sql } from "@turf-tools/db";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "@turf-tools/db";
 import {
   datasetOrganizations,
   datasets,
@@ -98,18 +98,23 @@ export const makeActive = pub
   });
 
 // Archive a version — soft-hides it from the default Data list. Allowed on any
-// granted `ready`/`failed` version except the org's active one (switch away
-// first) and never while it's still importing.
+// granted `ready`/`failed` version except one some org has active (version
+// history is shared state, so the check spans every org attached to the
+// dataset, not just the caller's) and never while it's still importing.
 export const archive = pub
   .input(z.object({ versionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const [org] = await context.db
-      .select({ activeDatasetVersionId: organizations.activeDatasetVersionId })
+    const [activeFor] = await context.db
+      .select({ organizationId: organizations.organizationId })
       .from(organizations)
-      .where(eq(organizations.organizationId, context.organizationId));
-    if (org?.activeDatasetVersionId === input.versionId)
+      .where(eq(organizations.activeDatasetVersionId, input.versionId))
+      .limit(1);
+    if (activeFor)
       throw new ORPCError("BAD_REQUEST", {
-        message: "Can't archive the active version — make another version active first.",
+        message:
+          activeFor.organizationId === context.organizationId
+            ? "Can't archive the active version — make another version active first."
+            : "Can't archive — another organization has this version active.",
       });
 
     const [v] = await context.db
@@ -162,6 +167,124 @@ export const unarchive = pub
       .set({ archivedAt: null })
       .where(eq(datasetVersions.datasetVersionId, input.versionId));
     return { ok: true };
+  });
+
+// Archive every remaining version of a dataset at once — the bulk
+// equivalent of clicking each row, under the same guards: nothing any
+// org has active, nothing mid-import. A fully-archived dataset drops
+// out of the rail (derived — there is no dataset-level flag).
+export const archiveAll = pub
+  .input(z.object({ datasetId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const [grant] = await context.db
+      .select({ datasetOrganizationId: datasetOrganizations.datasetOrganizationId })
+      .from(datasetOrganizations)
+      .where(
+        and(
+          eq(datasetOrganizations.datasetId, input.datasetId),
+          eq(datasetOrganizations.organizationId, context.organizationId),
+        ),
+      );
+    if (!grant) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
+
+    const versions = await context.db
+      .select({ versionId: datasetVersions.datasetVersionId, status: datasetVersions.status })
+      .from(datasetVersions)
+      .where(eq(datasetVersions.datasetId, input.datasetId));
+    if (versions.some((v) => v.status === "importing"))
+      throw new ORPCError("BAD_REQUEST", { message: "Can't archive an in-progress import." });
+
+    const [activeFor] = await context.db
+      .select({ organizationId: organizations.organizationId })
+      .from(organizations)
+      .where(
+        inArray(
+          organizations.activeDatasetVersionId,
+          versions.map((v) => v.versionId),
+        ),
+      )
+      .limit(1);
+    if (activeFor)
+      throw new ORPCError("BAD_REQUEST", {
+        message:
+          activeFor.organizationId === context.organizationId
+            ? "Can't archive the active version — make another dataset active first."
+            : "Can't archive — another organization has a version of this dataset active.",
+      });
+
+    await context.db
+      .update(datasetVersions)
+      .set({ archivedAt: new Date() })
+      .where(
+        and(eq(datasetVersions.datasetId, input.datasetId), isNull(datasetVersions.archivedAt)),
+      );
+    return { ok: true as const };
+  });
+
+// Restore every archived version of a dataset — the round-trip partner
+// of archiveAll, so a whole dataset can be archived and revived without
+// any dataset-level flag. Unarchiving is always safe; no guards.
+export const unarchiveAll = pub
+  .input(z.object({ datasetId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const [grant] = await context.db
+      .select({ datasetOrganizationId: datasetOrganizations.datasetOrganizationId })
+      .from(datasetOrganizations)
+      .where(
+        and(
+          eq(datasetOrganizations.datasetId, input.datasetId),
+          eq(datasetOrganizations.organizationId, context.organizationId),
+        ),
+      );
+    if (!grant) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
+
+    await context.db
+      .update(datasetVersions)
+      .set({ archivedAt: null })
+      .where(eq(datasetVersions.datasetId, input.datasetId));
+    return { ok: true as const };
+  });
+
+// Rename a dataset. Display-name only — the slug keys physical DuckLake
+// schemas and is fixed at creation. Like version curation, the name is
+// shared state, so a rename is visible to every org attached.
+export const rename = pub
+  .input(z.object({ datasetId: z.string().uuid(), name: z.string().min(1) }))
+  .handler(async ({ context, input }) => {
+    const [grant] = await context.db
+      .select({ datasetOrganizationId: datasetOrganizations.datasetOrganizationId })
+      .from(datasetOrganizations)
+      .where(
+        and(
+          eq(datasetOrganizations.datasetId, input.datasetId),
+          eq(datasetOrganizations.organizationId, context.organizationId),
+        ),
+      );
+    if (!grant) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
+
+    // Same org-scoped duplicate check as create, excluding this dataset.
+    const dupe = await context.db
+      .select({ id: datasets.datasetId })
+      .from(datasets)
+      .innerJoin(datasetOrganizations, eq(datasetOrganizations.datasetId, datasets.datasetId))
+      .where(
+        and(
+          eq(datasetOrganizations.organizationId, context.organizationId),
+          sql`lower(${datasets.name}) = ${input.name.trim().toLowerCase()}`,
+          ne(datasets.datasetId, input.datasetId),
+        ),
+      )
+      .limit(1);
+    if (dupe.length > 0)
+      throw new ORPCError("CONFLICT", {
+        message: "You already have a dataset with this name.",
+      });
+
+    await context.db
+      .update(datasets)
+      .set({ name: input.name.trim() })
+      .where(eq(datasets.datasetId, input.datasetId));
+    return { ok: true as const };
   });
 
 // Create a dataset (identity: name + importer + derived slug), grant it to the

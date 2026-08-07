@@ -56,6 +56,7 @@ class _PublishScope:
     campaign_id: str
     segment_id: str
     zone_id: str | None
+    zone_name: str | None
     zone_group_id: str | None
     script_id: str
     key_group: str | None
@@ -124,8 +125,11 @@ async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
                     scope.campaign_id,
                     scope.segment_id,
                     scope.zone_id,
+                    scope.zone_name,
+                    json.dumps(scope.keys) if scope.zone_id else None,
                     scope.zone_group_id,
                     scope.script_id,
+                    criteria.model_dump_json(),
                     req.createdBy,
                     version.dataset_version_id,
                 ],
@@ -242,6 +246,7 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
             s.criteria::VARCHAR AS criteria_json,
             zg.key_group,
             z.zone_id::VARCHAR AS zone_id,
+            z.name AS zone_name,
             z.keys::VARCHAR AS keys_json,
             (
                 SELECT count(*)::INT FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts d
@@ -271,6 +276,7 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
         criteria_json,
         key_group,
         zone_id,
+        zone_name,
         keys_json,
         draft_count,
     ) = row
@@ -303,6 +309,7 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
         campaign_id=campaign_id,
         segment_id=segment_id,
         zone_id=zone_id,
+        zone_name=zone_name,
         zone_group_id=campaign_zone_group_id,
         script_id=script_id,
         key_group=key_group,
@@ -461,8 +468,18 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
             ?::UUID AS campaign_id,
             ?::UUID AS segment_id,
             ?::UUID AS zone_id,
+            -- Zones are mutable working state; name and keys are stamped
+            -- so by-zone grouping, labels, and map rendering stay stable
+            -- after renames/redraws (keys resolve to boundary polygons —
+            -- the geography as cut).
+            ?::VARCHAR AS zone_name,
+            ?::VARCHAR AS zone_keys_json,
             ?::UUID AS zone_group_id,
             ?::UUID AS script_id,
+            -- The resolved criteria the WHERE was compiled from — segment
+            -- refs already expanded, so the snapshot stays reproducible
+            -- even after referenced segments change or disappear.
+            ?::VARCHAR AS criteria_json,
             'Turf ' || (d.idx + 1)::VARCHAR AS name,
             d.geometry_json,
             coalesce(c.door_count, 0) AS door_count,
@@ -477,8 +494,9 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
     )
     SELECT
         turf_id, turf_code,
-        campaign_id, segment_id, zone_id, zone_group_id, script_id,
-        name, geometry_json,
+        campaign_id, segment_id, zone_id, zone_name, zone_keys_json,
+        zone_group_id, script_id,
+        criteria_json, name, geometry_json,
         door_count, person_count,
         created_by, dataset_version_id,
         json_object(
@@ -495,13 +513,13 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
 def _insert_turfs_sql() -> str:
     return f"""
     INSERT INTO {OPERATIONAL_PG_ALIAS}.app.turfs (
-        turf_id, campaign_id, segment_id, zone_id, zone_group_id,
-        script_id, name, turf_code, geometry, door_count, person_count,
-        created_by, dataset_version_id
+        turf_id, campaign_id, segment_id, zone_id, zone_name, zone_keys,
+        zone_group_id, script_id, name, turf_code, criteria, geometry,
+        door_count, person_count, created_by, dataset_version_id
     )
     SELECT
-        turf_id, campaign_id, segment_id, zone_id, zone_group_id,
-        script_id, name, turf_code, json(geometry_json),
+        turf_id, campaign_id, segment_id, zone_id, zone_name, json(zone_keys_json),
+        zone_group_id, script_id, name, turf_code, json(criteria_json), json(geometry_json),
         door_count, person_count, created_by, dataset_version_id
     FROM published_turf_rows;
     """

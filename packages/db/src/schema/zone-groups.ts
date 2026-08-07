@@ -27,4 +27,7 @@ export const zoneGroups = app.table("zone_groups", {
   createdBy: uuid()
     .notNull()
     .references(() => users.id),
+  // Soft retirement — archived groups leave the rail and pickers but stay
+  // resolvable for anything that references them (campaigns, turfs).
+  archivedAt: timestamp({ withTimezone: true }),
 });

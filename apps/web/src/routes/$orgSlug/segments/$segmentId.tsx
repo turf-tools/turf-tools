@@ -629,7 +629,12 @@ function StepRow({
   onRemove: () => void;
   dragControls?: ReturnType<typeof useDragControls>;
   currentSegmentId: string;
-  allSegments: ReadonlyArray<{ segmentId: string; name: string; criteria: unknown }>;
+  allSegments: ReadonlyArray<{
+    segmentId: string;
+    name: string;
+    criteria: unknown;
+    isArchived: boolean;
+  }>;
 }) {
   const { definitionFor } = useFilterCatalog();
   const { filter, verb } = step;
@@ -1452,7 +1457,12 @@ function SegmentFilterEditor({
   filter: SegmentFilter;
   onChange: (next: Filter) => void;
   currentSegmentId: string;
-  allSegments: ReadonlyArray<{ segmentId: string; name: string; criteria: unknown }>;
+  allSegments: ReadonlyArray<{
+    segmentId: string;
+    name: string;
+    criteria: unknown;
+    isArchived: boolean;
+  }>;
 }) {
   // Segments that would form a cycle if selected — current segment plus
   // any that transitively reference it. The set is content-dependent;
@@ -1466,7 +1476,10 @@ function SegmentFilterEditor({
   }, [allSegments, currentSegmentId]);
 
   const selectable = [...allSegments]
-    .filter((s) => !cyclic.has(s.segmentId))
+    // Archived segments can't be newly referenced, but an existing
+    // reference to one keeps resolving (the `selected` lookup below
+    // reads the unfiltered list).
+    .filter((s) => !cyclic.has(s.segmentId) && !s.isArchived)
     .sort((a, b) => a.name.localeCompare(b.name));
   const selected = filter.segmentId
     ? allSegments.find((s) => s.segmentId === filter.segmentId)

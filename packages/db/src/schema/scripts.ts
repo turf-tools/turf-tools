@@ -17,6 +17,9 @@ export const scripts = app.table("scripts", {
     .notNull()
     .references(() => users.id),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+  // Soft retirement — archived scripts leave the rail and pickers but
+  // stay resolvable for the campaigns and turfs that reference them.
+  archivedAt: timestamp({ withTimezone: true }),
 });
 
 // A step is either stepType='question' (referencing a reusable

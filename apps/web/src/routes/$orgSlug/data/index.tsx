@@ -12,9 +12,14 @@ export const Route = createFileRoute("/$orgSlug/data/")({
     if (preload) return;
     // Last-visited dataset first; cold start lands on the active one (the
     // dataset you're running on beats alphabetical order), then first-by-name.
+    // Filtering to unarchived versions drops fully-archived datasets — they
+    // stay reachable from the rail toggle but never win the redirect.
+    const current = rows.filter((r) => !r.isArchived);
     const remembered = recallSelection(orgSlug, "data");
     const fallback =
-      rows.find((r) => r.datasetId === remembered) ?? rows.find((r) => r.isActive) ?? rows[0];
+      current.find((r) => r.datasetId === remembered) ??
+      current.find((r) => r.isActive) ??
+      current[0];
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/data/$datasetId",
@@ -30,7 +35,7 @@ function DataEmpty() {
     <EditorPage>
       <EditorHeader title="Data" subtitle="Voter files and other imported datasets" />
       <p className="text-sm text-muted-foreground">
-        No datasets yet — create one to start importing.
+        No active datasets yet, import one to get started.
       </p>
     </EditorPage>
   );

@@ -146,7 +146,9 @@ function TurfsIndex() {
     void navigate({ search: (prev) => ({ ...prev, ...patch }), replace });
   };
 
-  const campaignOptions = campaigns?.map((c) => ({ value: c.campaignId, label: c.name })) ?? [];
+  const campaignOptions =
+    campaigns?.filter((c) => !c.isArchived).map((c) => ({ value: c.campaignId, label: c.name })) ??
+    [];
   const campaignName =
     campaignId === null
       ? null

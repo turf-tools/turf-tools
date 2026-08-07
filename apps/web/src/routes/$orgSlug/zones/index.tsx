@@ -8,7 +8,10 @@ export const Route = createFileRoute("/$orgSlug/zones/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    const fallback = recallOrFirst(orgSlug, "zones", groups, (g) => g.zoneGroupId);
+    // Archived groups stay reachable from the rail but never win the
+    // index redirect.
+    const active = groups.filter((g) => !g.isArchived);
+    const fallback = recallOrFirst(orgSlug, "zones", active, (g) => g.zoneGroupId);
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/zones/$zoneGroupId",
@@ -22,7 +25,7 @@ export const Route = createFileRoute("/$orgSlug/zones/")({
 function ZonesEmpty() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      No zone groups yet — create one to get started.
+      No active zone groups yet, create one to get started.
     </div>
   );
 }
