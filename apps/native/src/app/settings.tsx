@@ -304,11 +304,13 @@ export default function SettingsScreen() {
             the latest update ("Check for updates" is reserved for a future
             App Store-pointing action). */}
         <Pressable onPress={() => void handleUpdate()} hitSlop={8} className="active:opacity-60">
+          {/* Label stays fixed while checking — it just dims until the
+              result alert lands. */}
           <Text
             className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
-            style={{ fontFamily: "Geist_400Regular" }}
+            style={{ fontFamily: "Geist_400Regular", opacity: updating ? 0.5 : 1 }}
           >
-            {updating ? "Checking..." : `Ver ${appVersion}`}
+            Ver {appVersion}
           </Text>
         </Pressable>
       </View>
