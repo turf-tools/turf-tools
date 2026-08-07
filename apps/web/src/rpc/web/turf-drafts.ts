@@ -48,7 +48,6 @@ export const list = pub
       .select({
         turfDraftId: turfDrafts.turfDraftId,
         geometry: turfDrafts.geometry,
-        name: turfDrafts.name,
         sortOrder: turfDrafts.sortOrder,
       })
       .from(turfDrafts)
@@ -75,7 +74,6 @@ export const replaceAll = pub
         z.object({
           turfDraftId: z.string().uuid(),
           geometry: polygonSchema,
-          name: z.string().nullable(),
           sortOrder: z.number().int().nonnegative(),
         }),
       ),
@@ -111,7 +109,6 @@ export const replaceAll = pub
             zoneId: input.zoneId,
             segmentId,
             geometry: d.geometry,
-            name: d.name,
             sortOrder: d.sortOrder,
           })),
         );

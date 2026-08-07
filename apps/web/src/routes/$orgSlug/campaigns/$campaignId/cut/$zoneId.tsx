@@ -233,7 +233,6 @@ export function Cutter({
       payload: Array<{
         turfDraftId: string;
         geometry: { type: "Polygon"; coordinates: number[][][] };
-        name: string | null;
         sortOrder: number;
       }>,
     ) => client.turfDrafts.replaceAll({ campaignId, zoneId, drafts: payload }),
@@ -252,7 +251,6 @@ export function Cutter({
         .map((t, i) => ({
           turfDraftId: t.id,
           geometry: verticesToPolygon(t.vertices),
-          name: null,
           sortOrder: i,
         }));
       mutateDrafts(payload);

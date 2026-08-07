@@ -1,4 +1,4 @@
-import { index, integer, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, timestamp, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { campaigns } from "./campaigns";
 import type { GeoJsonPolygon } from "./turfs";
@@ -35,7 +35,6 @@ export const turfDrafts = app.table(
     // The cutter's in-memory shape is a flat `[[lng,lat],...]`; we
     // convert to/from GeoJSON at the save/read boundary.
     geometry: jsonb().$type<GeoJsonPolygon>().notNull(),
-    name: text(),
     sortOrder: integer().notNull(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),

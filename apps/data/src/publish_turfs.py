@@ -361,7 +361,6 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
         SELECT
             row_number() OVER (ORDER BY d.sort_order, d.turf_draft_id) - 1 AS idx,
             d.turf_draft_id,
-            d.name,
             d.sort_order,
             d.geometry::VARCHAR AS geometry_json,
             ST_GeomFromGeoJSON(d.geometry::VARCHAR) AS geom
@@ -464,7 +463,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
             ?::UUID AS zone_id,
             ?::UUID AS zone_group_id,
             ?::UUID AS script_id,
-            coalesce(d.name, 'Turf ' || (d.idx + 1)::VARCHAR) AS name,
+            'Turf ' || (d.idx + 1)::VARCHAR AS name,
             d.geometry_json,
             coalesce(c.door_count, 0) AS door_count,
             coalesce(c.person_count, 0) AS person_count,
