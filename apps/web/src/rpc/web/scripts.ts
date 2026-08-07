@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq } from "@turf-tools/db";
-import { campaigns, scripts, scriptSteps, questions } from "@turf-tools/db/schema";
+import { and, asc, eq, inArray } from "@turf-tools/db";
+import { campaigns, responseOptions, scripts, scriptSteps, questions } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
 
@@ -43,6 +43,7 @@ export const getById = pub
         stepType: scriptSteps.stepType,
         questionId: scriptSteps.questionId,
         text: scriptSteps.text,
+        showIfOptionId: scriptSteps.showIfOptionId,
       })
       .from(scriptSteps)
       .where(eq(scriptSteps.scriptId, input.scriptId))
@@ -117,6 +118,7 @@ export const clone = pub
       .where(eq(scriptSteps.scriptId, input.scriptId))
       .orderBy(asc(scriptSteps.order));
     if (sourceSteps.length > 0) {
+      // Conditions copy verbatim — options are org-level, so they stay valid.
       await context.db.insert(scriptSteps).values(
         sourceSteps.map((s) => ({
           scriptId: newScript.scriptId,
@@ -124,6 +126,7 @@ export const clone = pub
           stepType: s.stepType,
           questionId: s.questionId,
           text: s.text,
+          showIfOptionId: s.showIfOptionId,
         })),
       );
     }
@@ -251,6 +254,7 @@ export const addStep = pub.input(addStepInput).handler(async ({ context, input }
       stepType: scriptSteps.stepType,
       questionId: scriptSteps.questionId,
       text: scriptSteps.text,
+      showIfOptionId: scriptSteps.showIfOptionId,
     });
   return rows[0]!;
 });
@@ -268,14 +272,37 @@ export const removeStep = pub
         ),
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
-    await context.db
-      .delete(scriptSteps)
-      .where(
-        and(
-          eq(scriptSteps.scriptStepId, input.scriptStepId),
-          eq(scriptSteps.scriptId, input.scriptId),
-        ),
-      );
+    await context.db.transaction(async (tx) => {
+      const removed = await tx
+        .delete(scriptSteps)
+        .where(
+          and(
+            eq(scriptSteps.scriptStepId, input.scriptStepId),
+            eq(scriptSteps.scriptId, input.scriptId),
+          ),
+        )
+        .returning({ questionId: scriptSteps.questionId });
+      // Conditions pointing at the removed question's options now have no
+      // controller in this script — clear them so those steps show again.
+      const questionId = removed[0]?.questionId;
+      if (questionId) {
+        await tx
+          .update(scriptSteps)
+          .set({ showIfOptionId: null })
+          .where(
+            and(
+              eq(scriptSteps.scriptId, input.scriptId),
+              inArray(
+                scriptSteps.showIfOptionId,
+                tx
+                  .select({ id: responseOptions.responseOptionId })
+                  .from(responseOptions)
+                  .where(eq(responseOptions.questionId, questionId)),
+              ),
+            ),
+          );
+      }
+    });
     return { ok: true as const };
   });
 
@@ -314,6 +341,51 @@ export const reorderSteps = pub
           .update(scriptSteps)
           .set({ order: i })
           .where(eq(scriptSteps.scriptStepId, input.scriptStepIds[i]!));
+      }
+      // Conditions may only point backward; a reorder can invert a pair.
+      // Clear any condition whose controller no longer precedes its step.
+      const steps = await tx
+        .select({
+          scriptStepId: scriptSteps.scriptStepId,
+          order: scriptSteps.order,
+          questionId: scriptSteps.questionId,
+          showIfOptionId: scriptSteps.showIfOptionId,
+        })
+        .from(scriptSteps)
+        .where(eq(scriptSteps.scriptId, input.scriptId));
+      const conditionedOptionIds = steps
+        .map((s) => s.showIfOptionId)
+        .filter((id): id is string => id != null);
+      if (conditionedOptionIds.length > 0) {
+        const options = await tx
+          .select({
+            responseOptionId: responseOptions.responseOptionId,
+            questionId: responseOptions.questionId,
+          })
+          .from(responseOptions)
+          .where(inArray(responseOptions.responseOptionId, conditionedOptionIds));
+        const questionByOption = new Map(options.map((o) => [o.responseOptionId, o.questionId]));
+        const orderByQuestion = new Map(
+          steps.filter((s) => s.questionId != null).map((s) => [s.questionId!, s.order]),
+        );
+        const invalid = steps.filter((s) => {
+          if (s.showIfOptionId == null) return false;
+          const controllerQuestion = questionByOption.get(s.showIfOptionId);
+          const controllerOrder =
+            controllerQuestion != null ? orderByQuestion.get(controllerQuestion) : undefined;
+          return controllerOrder === undefined || controllerOrder >= s.order;
+        });
+        if (invalid.length > 0) {
+          await tx
+            .update(scriptSteps)
+            .set({ showIfOptionId: null })
+            .where(
+              inArray(
+                scriptSteps.scriptStepId,
+                invalid.map((s) => s.scriptStepId),
+              ),
+            );
+        }
       }
     });
     return { ok: true as const };
@@ -354,6 +426,75 @@ export const updateTextStep = pub
     await context.db
       .update(scriptSteps)
       .set({ text: input.text })
+      .where(eq(scriptSteps.scriptStepId, input.scriptStepId));
+    return { ok: true as const };
+  });
+
+// Set or clear a step's visibility condition. The controlling option must
+// belong to an unarchived single-select question that appears as an earlier
+// step in the same script — the invariant that keeps visibility a single
+// forward pass (see schema comment).
+export const setStepCondition = pub
+  .input(
+    z.object({
+      scriptId: z.string().uuid(),
+      scriptStepId: z.string().uuid(),
+      showIfOptionId: z.string().uuid().nullable(),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ scriptId: scripts.scriptId })
+      .from(scripts)
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+
+    const steps = await context.db
+      .select({
+        scriptStepId: scriptSteps.scriptStepId,
+        order: scriptSteps.order,
+        questionId: scriptSteps.questionId,
+      })
+      .from(scriptSteps)
+      .where(eq(scriptSteps.scriptId, input.scriptId));
+    const target = steps.find((s) => s.scriptStepId === input.scriptStepId);
+    if (!target) throw new ORPCError("NOT_FOUND", { message: "Step not found" });
+
+    if (input.showIfOptionId !== null) {
+      const rows = await context.db
+        .select({
+          questionId: responseOptions.questionId,
+          optionArchivedAt: responseOptions.archivedAt,
+          responseType: questions.responseType,
+          organizationId: questions.organizationId,
+        })
+        .from(responseOptions)
+        .innerJoin(questions, eq(questions.questionId, responseOptions.questionId))
+        .where(eq(responseOptions.responseOptionId, input.showIfOptionId));
+      const option = rows[0];
+      if (!option || option.organizationId !== context.organizationId)
+        throw new ORPCError("NOT_FOUND", { message: "Option not found" });
+      if (option.optionArchivedAt != null)
+        throw new ORPCError("BAD_REQUEST", { message: "Can't condition on an archived option" });
+      if (option.responseType !== "single_select")
+        throw new ORPCError("BAD_REQUEST", {
+          message: "Conditions can only reference single-select questions",
+        });
+      const controller = steps.find((s) => s.questionId === option.questionId);
+      if (!controller || controller.order >= target.order)
+        throw new ORPCError("BAD_REQUEST", {
+          message: "The controlling question must be an earlier step in this script",
+        });
+    }
+
+    await context.db
+      .update(scriptSteps)
+      .set({ showIfOptionId: input.showIfOptionId })
       .where(eq(scriptSteps.scriptStepId, input.scriptStepId));
     return { ok: true as const };
   });

@@ -1,8 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { GripVertical, Plus, X } from "lucide-react";
+import { Check, CornerDownRight, GripVertical, Plus, X } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "~/components/badge";
 import { DialogError } from "~/components/callout";
@@ -48,6 +48,7 @@ type ScriptStepRow = {
   stepType: string;
   questionId: string | null;
   text: string | null;
+  showIfOptionId: string | null;
 };
 
 export const Route = createFileRoute("/$orgSlug/scripts/$scriptId")({
@@ -166,6 +167,8 @@ function ScriptEditor() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["questions"] });
+      // The server clears conditions that pointed at the removed question.
+      void queryClient.invalidateQueries({ queryKey: ["script", scriptId] });
     },
   });
 
@@ -183,6 +186,30 @@ function ScriptEditor() {
     },
     onError: (e, _ids, ctx) => {
       console.error("scripts.reorderSteps failed", e);
+      toast.error(e.message);
+      if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
+    },
+    onSuccess: () => {
+      // The server clears conditions the new order made forward-pointing.
+      void queryClient.invalidateQueries({ queryKey: ["script", scriptId] });
+    },
+  });
+
+  const setCondition = useMutation({
+    mutationFn: (input: { scriptStepId: string; showIfOptionId: string | null }) =>
+      client.scripts.setStepCondition({ scriptId, ...input }),
+    onMutate: (input) => {
+      const prev = setSteps((s) =>
+        s.map((x) =>
+          x.scriptStepId === input.scriptStepId
+            ? { ...x, showIfOptionId: input.showIfOptionId }
+            : x,
+        ),
+      );
+      return { prev };
+    },
+    onError: (e, _input, ctx) => {
+      console.error("scripts.setStepCondition failed", e);
       toast.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
     },
@@ -300,9 +327,13 @@ function ScriptEditor() {
                   key={step.scriptStepId}
                   number={idx + 1}
                   step={step}
+                  earlierSteps={displaySteps.slice(0, idx)}
                   onRemove={() => removeStep.mutate(step.scriptStepId)}
                   onChangeText={(text) =>
                     updateText.mutate({ scriptStepId: step.scriptStepId, text })
+                  }
+                  onSetCondition={(showIfOptionId) =>
+                    setCondition.mutate({ scriptStepId: step.scriptStepId, showIfOptionId })
                   }
                   onDragEnd={handleDragEnd}
                 />
@@ -330,8 +361,10 @@ function ReorderStepRow({
 }: {
   number: number;
   step: ScriptStepRow;
+  earlierSteps: ScriptStepRow[];
   onRemove: () => void;
   onChangeText: (text: string) => void;
+  onSetCondition: (showIfOptionId: string | null) => void;
   onDragEnd?: () => void;
 }) {
   const controls = useDragControls();
@@ -353,14 +386,18 @@ function ReorderStepRow({
 function StepRow({
   number,
   step,
+  earlierSteps,
   onRemove,
   onChangeText,
+  onSetCondition,
   dragControls,
 }: {
   number: number;
   step: ScriptStepRow;
+  earlierSteps: ScriptStepRow[];
   onRemove: () => void;
   onChangeText: (text: string) => void;
+  onSetCondition: (showIfOptionId: string | null) => void;
   dragControls?: ReturnType<typeof useDragControls>;
 }) {
   return (
@@ -381,6 +418,92 @@ function StepRow({
           dragControls={dragControls}
         />
       )}
+      <StepConditionRow step={step} earlierSteps={earlierSteps} onSet={onSetCondition} />
+    </div>
+  );
+}
+
+// Visibility-condition control at the foot of a step card: "Show only if" an
+// earlier single-select step's option is chosen. Hidden entirely when there's
+// no condition set and nothing earlier to condition on.
+function StepConditionRow({
+  step,
+  earlierSteps,
+  onSet,
+}: {
+  step: ScriptStepRow;
+  earlierSteps: ScriptStepRow[];
+  onSet: (showIfOptionId: string | null) => void;
+}) {
+  const candidateIds = earlierSteps
+    .filter((s) => s.stepType === "question" && s.questionId)
+    .map((s) => s.questionId!);
+  // Details are loader-prefetched, so these are cache hits.
+  const details = useQueries({ queries: candidateIds.map((id) => questionDetailQuery(id)) });
+  const candidates = details
+    .map((d) => d.data)
+    .filter(
+      (q): q is NonNullable<typeof q> =>
+        q != null && q.responseType === "single_select" && q.options.length > 0,
+    );
+
+  let current: { question: string; option: string } | null = null;
+  if (step.showIfOptionId != null) {
+    for (const q of candidates) {
+      const opt = q.options.find((o) => o.responseOptionId === step.showIfOptionId);
+      if (opt) {
+        current = { question: q.name, option: opt.text };
+        break;
+      }
+    }
+  }
+
+  if (step.showIfOptionId == null && candidates.length === 0) return null;
+
+  return (
+    <div className="mt-3">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(step.showIfOptionId == null && "text-muted-foreground")}
+            />
+          }
+        >
+          <CornerDownRight />
+          {step.showIfOptionId == null
+            ? "Show only if…"
+            : current
+              ? `Show only if ${current.question}: ${current.option}`
+              : "Show only if: (unavailable option)"}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {step.showIfOptionId != null ? (
+            <>
+              <DropdownMenuItem onClick={() => onSet(null)}>Always show</DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
+          {candidates.map((q) => (
+            <Fragment key={q.questionId}>
+              <div className="px-2 pt-1.5 pb-0.5 text-sm text-muted-foreground">{q.name}</div>
+              {q.options.map((o) => (
+                <DropdownMenuItem
+                  key={o.responseOptionId}
+                  onClick={() => onSet(o.responseOptionId)}
+                >
+                  <span className="truncate">{o.text || "Empty option"}</span>
+                  {o.responseOptionId === step.showIfOptionId ? (
+                    <Check className="ml-auto size-4 shrink-0" />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+            </Fragment>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -553,7 +676,7 @@ function QuestionStepBody({
         </div>
       </div>
       <QuestionTextEditor questionId={questionId} />
-      <div className="mt-4 mb-1">
+      <div className={cn("mb-1", question.responseType === "open_ended" ? "mt-3" : "mt-4")}>
         <ResponseOptionsEditor questionId={questionId} />
       </div>
     </>
@@ -561,7 +684,18 @@ function QuestionStepBody({
 }
 
 // Reads from the same question cache the editor writes to, so edits flow live.
+// Conditional steps are all shown (it's an editing aid, not a simulation),
+// each annotated with its controlling option.
 function ScriptPreview({ name, steps }: { name: string; steps: ScriptStepRow[] }) {
+  const questionIds = steps.filter((s) => s.questionId).map((s) => s.questionId!);
+  const details = useQueries({ queries: questionIds.map((id) => questionDetailQuery(id)) });
+  const conditionByOption = new Map<string, string>();
+  for (const d of details) {
+    const q = d.data;
+    if (!q) continue;
+    for (const o of q.options) conditionByOption.set(o.responseOptionId, `${q.name}: ${o.text}`);
+  }
+
   return (
     <div className="flex-1 min-w-0 flex flex-col rounded-md border border-border bg-card overflow-y-auto">
       <div className="px-4 py-4 flex flex-col gap-5">
@@ -570,15 +704,29 @@ function ScriptPreview({ name, steps }: { name: string; steps: ScriptStepRow[] }
           <span className="text-muted-foreground ml-2">(Preview)</span>
         </div>
         {steps.map((step) => {
+          const annotation =
+            step.showIfOptionId != null ? (
+              <p className="text-sm italic text-muted-foreground">
+                Only if {conditionByOption.get(step.showIfOptionId) ?? "(unavailable option)"}
+              </p>
+            ) : null;
           if (step.stepType === "text") {
             return (
-              <p key={step.scriptStepId} className="text-sm italic whitespace-pre-wrap">
-                {step.text?.trim() ? step.text : <span>Empty text</span>}
-              </p>
+              <div key={step.scriptStepId} className="flex flex-col gap-1">
+                {annotation}
+                <p className="text-sm italic whitespace-pre-wrap">
+                  {step.text?.trim() ? step.text : <span>Empty text</span>}
+                </p>
+              </div>
             );
           }
           if (step.questionId) {
-            return <QuestionPreview key={step.scriptStepId} questionId={step.questionId} />;
+            return (
+              <div key={step.scriptStepId} className="flex flex-col gap-1">
+                {annotation}
+                <QuestionPreview questionId={step.questionId} />
+              </div>
+            );
           }
           return null;
         })}

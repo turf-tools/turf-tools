@@ -1,7 +1,7 @@
 import { integer, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { organizations } from "./organizations";
-import { questions } from "./questions";
+import { questions, responseOptions } from "./questions";
 import { users } from "./auth/users";
 
 // A script is an ordered sequence of steps presented to canvassers at the
@@ -31,4 +31,9 @@ export const scriptSteps = app.table("script_steps", {
   stepType: text().notNull(),
   questionId: uuid().references(() => questions.questionId),
   text: text(),
+  // Conditional visibility: show this step only while the referenced option is
+  // selected. The option must belong to a single-select question on an earlier
+  // step of the same script (RPC-enforced), so visibility is a single forward
+  // pass and cycles are impossible.
+  showIfOptionId: uuid().references(() => responseOptions.responseOptionId),
 });
