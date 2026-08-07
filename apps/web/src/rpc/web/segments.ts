@@ -22,7 +22,7 @@ type PersonsCount = {
 };
 
 type PersonsCountByKey = {
-  counts: Record<string, { buildings: number; doors: number; people: number }>;
+  counts: Record<string, { doors: number; people: number }>;
 };
 
 type PersonsSample = {

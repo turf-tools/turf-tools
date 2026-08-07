@@ -40,7 +40,9 @@ import { colorFor } from "~/lib/zone-colors";
 
 // Cutting loads every building in the target into the cutter at once; above
 // this the cutter bogs down, so we hard-block and steer toward subdividing.
-const MAX_CUT_BUILDINGS = 20000;
+// Thresholded on doors — the count the page actually shows — which also
+// bounds buildings (every building has at least one door).
+const MAX_CUT_DOORS = 20000;
 
 function deriveKeyFilter(
   zoneGroup: { keyGroup: string } | null | undefined,
@@ -224,20 +226,18 @@ function CampaignEditor() {
   // sidebar pills. Better to drop the pills until real data lands.
   const zoneCounts = useMemo(() => {
     if (!perKeyCounts || !zones || countsStale) return null;
-    const out: Record<string, { buildings: number; doors: number; people: number }> = {};
+    const out: Record<string, { doors: number; people: number }> = {};
     for (const z of zones) {
-      let buildings = 0;
       let doors = 0;
       let people = 0;
       for (const k of z.keys) {
         const c = perKeyCounts[k];
         if (c) {
-          buildings += c.buildings;
           doors += c.doors;
           people += c.people;
         }
       }
-      out[z.zoneId] = { buildings, doors, people };
+      out[z.zoneId] = { doors, people };
     }
     return out;
   }, [perKeyCounts, zones, countsStale]);
@@ -413,12 +413,12 @@ function CampaignEditor() {
           zoneGroupName={activeZoneGroup?.name ?? null}
           onSelect={setSelectedZoneId}
           onCut={(zoneId) => {
-            const buildings =
+            const doors =
               zoneId === null
-                ? (segmentTotals?.buildingCount ?? 0)
-                : (zoneCounts?.[zoneId]?.buildings ?? 0);
-            if (buildings > MAX_CUT_BUILDINGS) {
-              setLimitCount(buildings);
+                ? (segmentTotals?.doorCount ?? 0)
+                : (zoneCounts?.[zoneId]?.doors ?? 0);
+            if (doors > MAX_CUT_DOORS) {
+              setLimitCount(doors);
               setLimitOpen(true);
               return;
             }
@@ -452,11 +452,11 @@ function CampaignEditor() {
 
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent>
-          <DialogTitle>Too many buildings</DialogTitle>
+          <DialogTitle>Too many doors</DialogTitle>
           <DialogDescription>
             Turf cutting is currently limited to{" "}
-            <span className="font-bold text-foreground">{MAX_CUT_BUILDINGS.toLocaleString()}</span>{" "}
-            buildings and you have{" "}
+            <span className="font-bold text-foreground">{MAX_CUT_DOORS.toLocaleString()}</span>{" "}
+            doors and you have{" "}
             <span className="font-bold text-foreground">{limitCount.toLocaleString()}</span>. Try
             again with a smaller segment or use zones to subdivide.
           </DialogDescription>
@@ -488,7 +488,7 @@ function ZonesList({
   campaignId: string;
   zones: Awaited<ReturnType<typeof client.zones.list>> | null;
   selectedZoneId: string | null;
-  zoneCounts: Record<string, { buildings: number; doors: number; people: number }> | null;
+  zoneCounts: Record<string, { doors: number; people: number }> | null;
   turfStats: TurfStats | null;
   totals: {
     drafts: number;
