@@ -24,9 +24,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
+from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, heal_stale_attach
 from src.importers.base import Manifest
 from src.models import quote_ident
+from src.timing import timed
 
 if TYPE_CHECKING:
     import duckdb
@@ -143,6 +144,12 @@ def _parse_manifest(manifest: object) -> Manifest:
     return Manifest.model_validate(data)
 
 
+# Resolved versions are immutable once queryable (a version's slug, number,
+# and manifest never change after import; only the org's *active pointer*
+# moves), so they cache forever by id. Bounded by version count.
+_resolved_versions: dict[str, ResolvedVersion] = {}
+
+
 def resolve_version(
     conn: "duckdb.DuckDBPyConnection",
     settings: "Settings",
@@ -150,33 +157,52 @@ def resolve_version(
 ) -> ResolvedVersion:
     """Resolve an org to its active dataset version.
 
-    org → dataset_organizations → dataset → active version. Raises
-    `NoActiveDatasetError` when the org has no active dataset (the empty state —
-    the web app gates data-dependent views until an import completes). Reads the
-    operational Postgres via the shared attach.
+    Raises `NoActiveDatasetError` when the org has no active dataset (the
+    empty state — the web app gates data-dependent views until an import
+    completes). The active *pointer* is read fresh on every call (one indexed
+    row via the Postgres attach) so activation takes effect on the next
+    request; the version payload itself — the expensive part, manifest
+    transfer + validation — comes from the immutable cache.
     """
-    attach_operational_postgres(conn, settings)
+    with timed("resolve"):
+        attach_operational_postgres(conn, settings)
+        row = heal_stale_attach(
+            conn,
+            lambda: conn.execute(
+                f"SELECT active_dataset_version_id FROM {OPERATIONAL_PG_ALIAS}.app.organizations WHERE slug = ?",
+                [org_slug],
+            ).fetchone(),
+        )
+        if row is None or row[0] is None:
+            raise NoActiveDatasetError(org_slug)
+        return resolve_version_by_id(conn, str(row[0]))
+
+
+def resolve_version_by_id(conn: "duckdb.DuckDBPyConnection", dataset_version_id: str) -> ResolvedVersion:
+    """The immutable half of resolution: version id → cached payload."""
+    cached = _resolved_versions.get(dataset_version_id)
+    if cached is not None:
+        return cached
     row = conn.execute(
         f"""
-        SELECT d.slug, v.version_number, v.dataset_version_id, v.manifest
-        FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
-        JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
-            ON v.dataset_version_id = o.active_dataset_version_id
-        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d
-            ON d.dataset_id = v.dataset_id
-        WHERE o.slug = ?
+        SELECT d.slug, v.version_number, v.manifest
+        FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
+        WHERE v.dataset_version_id = ?::UUID
         """,
-        [org_slug],
+        [dataset_version_id],
     ).fetchone()
     if row is None:
-        raise NoActiveDatasetError(org_slug)
-    dataset_slug, version_number, dataset_version_id, manifest = row
-    return ResolvedVersion(
-        dataset_version_id=str(dataset_version_id),
+        raise ValueError(f"dataset_version {dataset_version_id!r} not found")
+    dataset_slug, version_number, manifest = row
+    resolved = ResolvedVersion(
+        dataset_version_id=dataset_version_id,
         dataset_slug=dataset_slug,
         version_number=version_number,
         manifest=_parse_manifest(manifest),
     )
+    _resolved_versions[dataset_version_id] = resolved
+    return resolved
 
 
 def load_manifest(

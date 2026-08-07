@@ -55,9 +55,9 @@ def test_table_fqn_leaves_plain_slugs_unquoted() -> None:
 
 
 def test_table_fqn_quotes_hyphenated_slugs() -> None:
-    # Slugs with hyphens (`nyc-dsa`) must round-trip through SQL
+    # Slugs with hyphens (`test-org`) must round-trip through SQL
     # without being interpreted as an operator.
-    assert table_fqn("nyc-dsa", "persons_geocoded") == 'ducklake."nyc-dsa".persons_geocoded'
+    assert table_fqn("test-org", "persons_geocoded") == 'ducklake."test-org".persons_geocoded'
 
 
 def test_table_fqn_escapes_embedded_quotes() -> None:

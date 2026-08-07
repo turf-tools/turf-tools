@@ -21,7 +21,7 @@ import {
   MoreHorizontal,
   Upload,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
@@ -48,7 +48,7 @@ import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDateTime } from "~/lib/format";
 import { importerLabel } from "~/lib/importers";
-import { rememberSelection } from "~/lib/last-selected";
+import { useRememberSelection } from "~/lib/last-selected";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
 import type { CustomFieldType } from "@turf-tools/db/schema";
 import {
@@ -131,9 +131,7 @@ function DatasetPage() {
   const timezone = session?.user?.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
 
   // The data index redirects back here next visit.
-  useEffect(() => {
-    rememberSelection(orgSlug, "data", datasetId);
-  }, [orgSlug, datasetId]);
+  useRememberSelection(orgSlug, "data", datasetId);
 
   // The layout's observer owns the importing poll; this one just reads.
   const { data: versionRows } = useSuspenseQuery(datasetsListQuery());
@@ -217,9 +215,11 @@ function DatasetEditor({
           <Columns2 className="size-4" />
           Append
         </Button>
+        {/* Until an import has actually landed you're still importing, not
+            updating — a failed or in-flight first attempt isn't a version. */}
         <Button onClick={() => setUpdateOpen(true)} disabled={importing}>
           <Upload className="size-4" />
-          Update
+          {readyVersionId ? "Update" : "Import"}
         </Button>
       </EditorHeader>
 
@@ -228,6 +228,7 @@ function DatasetEditor({
         onOpenChange={setUpdateOpen}
         datasetId={dataset.datasetId}
         datasetName={dataset.name}
+        hasReadyVersion={readyVersionId != null}
         onUpdated={() => void queryClient.invalidateQueries({ queryKey: ["datasets"] })}
       />
       <AppendDialog
@@ -355,7 +356,12 @@ function VersionsCard({
             return (
               <TableRow key={v.versionId} className={cn(v.isArchived && "text-muted-foreground")}>
                 <TableCell>
-                  <Pill className="tabular-nums">v{v.versionNumber}</Pill>
+                  {/* A number is what a successful import earns. In-flight and
+                      failed attempts hold one internally (it names their
+                      DuckLake schema) but never show it. */}
+                  <Pill className="tabular-nums">
+                    {v.status === "ready" ? `v${v.versionNumber}` : ""}
+                  </Pill>
                 </TableCell>
                 <TableCell>
                   <Pill color={status.color} className="tabular-nums">
@@ -474,9 +480,16 @@ function DetailsDialog({
         <DialogTitle>Details</DialogTitle>
         <DialogCloseX />
         <DialogDescription>
-          Imported v{version?.versionNumber} of {version?.name} with type{" "}
-          {importerLabel(version?.importer ?? "")}, started{" "}
-          {formatDateTime(version?.importedAt, timezone)}.
+          {version?.status === "ready" ? `Imported v${version.versionNumber} of ` : "Import of "}
+          {version?.name} with type {importerLabel(version?.importer ?? "")}, started{" "}
+          {formatDateTime(version?.importedAt, timezone)}
+          {version?.sourceUri ? (
+            <>
+              {", from "}
+              <span className="break-all">{version.sourceUri}</span>
+            </>
+          ) : null}
+          .
         </DialogDescription>
         {version?.status === "failed" ? (
           <Callout tone="error">
@@ -808,12 +821,14 @@ function UpdateDialog({
   onOpenChange,
   datasetId,
   datasetName,
+  hasReadyVersion,
   onUpdated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   datasetId: string;
   datasetName: string;
+  hasReadyVersion: boolean;
   onUpdated: () => void;
 }) {
   const [source, setSource] = useState("");
@@ -843,11 +858,20 @@ function UpdateDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Update dataset</DialogTitle>
+        <DialogTitle>{hasReadyVersion ? "Update dataset" : "Import dataset"}</DialogTitle>
         <DialogDescription>
-          Imports a new version of{" "}
-          <span className="font-medium text-foreground">{datasetName}</span>. Segments and campaigns
-          carry over; the new version stays inactive until you make it active.
+          {hasReadyVersion ? (
+            <>
+              Imports a new version of{" "}
+              <span className="font-medium text-foreground">{datasetName}</span>. Segments and
+              campaigns carry over; the new version stays inactive until you make it active.
+            </>
+          ) : (
+            <>
+              Imports <span className="font-medium text-foreground">{datasetName}</span>. It becomes
+              available once the import finishes.
+            </>
+          )}
         </DialogDescription>
         <form
           onSubmit={(e) => {
@@ -875,7 +899,7 @@ function UpdateDialog({
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
-              Import version
+              {hasReadyVersion ? "Import version" : "Import"}
             </Button>
           </div>
         </form>

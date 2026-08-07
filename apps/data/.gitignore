@@ -30,6 +30,7 @@ osm_cache/
 # (PII). Local-only; regenerate via `scripts/sample_voter_file.py`.
 fixtures/*.parquet
 fixtures/*.txt
+fixtures/*.json
 
 # Quickwit local data
 qwdata/

@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { ChevronDown, Copy, Pencil, Settings2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
 import {
@@ -242,6 +243,15 @@ function CampaignsLayout() {
     onError: (e, input, ctx) => {
       console.error("campaigns.update failed", e);
       if (ctx?.previous) queryClient.setQueryData(["campaign", input.campaignId], ctx.previous);
+      // The dialog has already closed by the time the write settles, so a
+      // silent rollback reads as the app changing its mind — say so.
+      toast.error("Couldn't save the campaign configuration. Please try again.");
+    },
+    // Settle-with-invalidation: the campaigns LIST also carries segmentId /
+    // zoneGroupId and seeds the configure dialog, so both keys must re-sync.
+    onSettled: (_data, _error, input) => {
+      void queryClient.invalidateQueries({ queryKey: ["campaign", input.campaignId] });
+      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
     },
   });
 

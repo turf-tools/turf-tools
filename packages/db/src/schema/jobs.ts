@@ -29,6 +29,9 @@ export const jobs = app.table("jobs", {
   result: jsonb(),
   concurrencyKey: text(),
   lockedByWorkerId: text(),
+  // Refreshed by the running worker. A job whose heartbeat has gone stale was
+  // killed without reporting (deploy, OOM), and gets reaped as failed.
+  heartbeatAt: timestamp({ withTimezone: true }),
 });
 
 export const jobMessages = app.table(

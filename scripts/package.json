@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@orpc/client": "^1.13.13",
     "@turf-tools/db": "workspace:*",
     "chalk": "^5.6.2",
     "drizzle-orm": "beta",

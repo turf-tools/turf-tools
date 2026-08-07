@@ -20,7 +20,13 @@ import {
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { formatAge, formatEnrollment, formatGender } from "@/lib/format";
+import {
+  formatAge,
+  formatEnrollment,
+  formatGender,
+  formatPersonName,
+  formatUnitLabel,
+} from "@/lib/format";
 import { useTurf } from "@/lib/turf-data";
 
 export default function BuildingScreen() {
@@ -152,9 +158,7 @@ function DoorSection({
   allResults: Map<string, PersonSummary>;
   isFirst?: boolean;
 }) {
-  const rawUnit = (door.unit ?? "").trim();
-  const stripped = rawUnit.replace(/^(APT|UNIT|#)\s*/i, "").trim();
-  const unitLabel = stripped ? `Apt ${stripped}` : "Unit";
+  const unitLabel = formatUnitLabel(door.unit) ?? "Unit";
   return (
     <View style={{ marginBottom: -7 }}>
       <Text
@@ -192,11 +196,7 @@ function PersonRow({
   const role = responded ? "contacted" : "unavailable";
   const recordEvent = useRecordEvent(turfId);
 
-  const fullName =
-    [person.firstName, person.middleName, person.lastName, person.nameSuffix]
-      .filter(Boolean)
-      .join(" ")
-      .trim() || "Unknown";
+  const fullName = formatPersonName(person);
 
   const onPress = () => {
     router.push(`/turfs/${turfId}/persons/${person.personId}`);

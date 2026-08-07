@@ -30,6 +30,9 @@ docs/plans
 # One-time migration scripts, run by hand against live deployments
 deploy/migrate-off-public.sql
 
+# Benchmark output (scripts/bench)
+scripts/bench/results/
+
 # Per-user Claude Code state (personal settings + runtime locks).
 # Shared `.claude/settings.json` and similar can still be committed.
 .claude/settings.local.json

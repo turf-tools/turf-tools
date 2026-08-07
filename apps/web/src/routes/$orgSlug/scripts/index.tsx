@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { recallOrFirst } from "~/lib/last-selected";
 import { scriptsListQuery } from "~/lib/queries/scripts";
 
 export const Route = createFileRoute("/$orgSlug/scripts/")({
@@ -7,8 +8,7 @@ export const Route = createFileRoute("/$orgSlug/scripts/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    // Alphabetically first is the default — matches the list-column order.
-    const fallback = [...scripts].sort((a, b) => a.name.localeCompare(b.name))[0];
+    const fallback = recallOrFirst(orgSlug, "scripts", scripts, (s) => s.scriptId);
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/scripts/$scriptId",

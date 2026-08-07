@@ -21,6 +21,7 @@ import json
 from typing import TYPE_CHECKING
 
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
+from src.timing import timed
 
 from .criteria import (
     CanvassOutcomeFilter,
@@ -50,13 +51,14 @@ def resolve_criteria(
     needs_canvass = _has_canvass_refs(criteria)
     if not needs_segments and not needs_canvass:
         return criteria
-    attach_operational_postgres(conn, settings)
-    if needs_segments:
-        segments = _load_segments_for_org(conn, org_slug)
-        criteria = expand_segment_refs(criteria, segments)
-    if needs_canvass:
-        criteria = _resolve_canvass_refs(criteria, conn, org_slug)
-    return criteria
+    with timed("criteria"):
+        attach_operational_postgres(conn, settings)
+        if needs_segments:
+            segments = _load_segments_for_org(conn, org_slug)
+            criteria = expand_segment_refs(criteria, segments)
+        if needs_canvass:
+            criteria = _resolve_canvass_refs(criteria, conn, org_slug)
+        return criteria
 
 
 def _has_segment_refs(criteria: Criteria) -> bool:

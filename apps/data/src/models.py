@@ -20,7 +20,7 @@ def quote_ident(name: str) -> str:
     Embedded double quotes are escaped by doubling. Used by `TableRef.fqn`
     and `tables.table_fqn` to keep generated SQL readable when
     slugs are plain (`default`, `acme`) and still safe when they aren't
-    (`nyc-dsa`).
+    (`test-org`).
     """
     if _SAFE_IDENT_RE.match(name):
         return name
@@ -46,7 +46,7 @@ class TableRef:
 
         Schema is quoted only when it contains characters that aren't
         valid in a bare SQL identifier (so a plain `default` stays
-        unquoted but `nyc-dsa` becomes `"nyc-dsa"`).
+        unquoted but `test-org` becomes `"test-org"`).
         """
         return f"{self.catalog}.{quote_ident(self.schema)}.{self.table}"
 

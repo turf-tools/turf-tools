@@ -24,6 +24,9 @@ import { turfs } from "./turfs";
 //
 // clientEventId is the client-supplied UUID for retry dedup.
 //
+// canvasserName and cavasserPhone are stamped by the client.
+// Any future verification service can join on phone.
+//
 // createdAt is CLIENT time (when it happened in the field); receivedAt is
 // server time (when the server ingested it). The canonical ordering key is
 // sequence. canvasserId is the universal canvasser identity (no FK — it
@@ -38,16 +41,11 @@ export const canvassEvents = app.table(
       .notNull()
       .references(() => turfs.turfId),
     canvasserId: text(),
-    // Attribution stamped by the client at record time — a pure claim. Plain
-    // columns (not jsonb): the
-    // future verification join and reporting group-bys key on the phone.
-    // Verification, when it ships, is a read-time join on the contact;
-    // never a flag stored here.
     canvasserName: text(),
     canvasserPhone: text(),
     personId: text(),
-    doorId: uuid(),
-    buildingId: uuid(),
+    doorId: text(),
+    buildingId: text(),
     kind: text().notNull(),
     payload: jsonb().notNull(),
     inputType: text(),

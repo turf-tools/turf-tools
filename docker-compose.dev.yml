@@ -9,7 +9,6 @@
 services:
   postgres:
     image: postgres:17
-    container_name: turf-tools-dev-postgres
     ports:
       - "127.0.0.1:5432:5432"
     environment:

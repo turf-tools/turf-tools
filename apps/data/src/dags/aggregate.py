@@ -56,7 +56,8 @@ def buildings_geocoded(
             AVG(latitude)                           AS latitude,
             AVG(longitude)                          AS longitude,
             COUNT(*)                                AS person_count,
-            COUNT(DISTINCT door_id)                 AS door_count
+            COUNT(DISTINCT door_i)                  AS door_count,
+            ANY_VALUE(building_i)                   AS building_i
         FROM {persons_fqn}
         GROUP BY building_id, zip5
     """)
@@ -100,7 +101,8 @@ def doors_geocoded(
             ANY_VALUE(address_line_2)               AS address_line_2,
             AVG(latitude)                           AS latitude,
             AVG(longitude)                          AS longitude,
-            COUNT(*)                                AS person_count
+            COUNT(*)                                AS person_count,
+            ANY_VALUE(door_i)                       AS door_i
         FROM {persons_fqn}
         GROUP BY door_id
     """)

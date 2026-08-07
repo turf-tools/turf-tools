@@ -8,7 +8,7 @@ import {
   SymbolLayer,
 } from "@maplibre/maplibre-react-native";
 import { useCallback, useMemo, useRef } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, StyleSheet, Text, View, Platform } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
@@ -122,178 +122,230 @@ export function TurfMap({
   }
 
   return (
-    <MapView
-      style={styles.map}
-      mapStyle={getMaptilerStyleUrl(isDark)}
-      attributionEnabled
-      logoEnabled={false}
-      rotateEnabled={false}
-      pitchEnabled={false}
-      onRegionIsChanging={handleRegionEvent}
-      onRegionDidChange={handleRegionEvent}
-    >
-      <Camera
-        ref={cameraRef}
-        defaultSettings={{
-          bounds: {
-            ne: initialBounds.ne,
-            sw: initialBounds.sw,
-            paddingTop: 60,
-            paddingBottom: 60 + bottomInset,
-            paddingLeft: 40,
-            paddingRight: 40,
-          },
-        }}
-      />
-
-      <LabelLayers isDark={isDark} />
-
-      <ShapeSource
-        ref={shapeSourceRef}
-        id={BUILDINGS_SOURCE_ID}
-        shape={featureCollection}
-        cluster
-        clusterRadius={CLUSTER_RADIUS}
-        clusterMaxZoomLevel={CLUSTER_MAX_ZOOM}
-        maxZoomLevel={TILE_MAX_ZOOM}
-        clusterProperties={{
-          doorCount: [
-            ["+", ["accumulated"], ["get", "doorCount"]],
-            ["get", "doorCount"],
-          ],
-          personCount: [
-            ["+", ["accumulated"], ["get", "personCount"]],
-            ["get", "personCount"],
-          ],
-          // Aggregate min + max role so the cluster can stay neutral when any
-          // member is unrecorded (min = 0), and otherwise color by the
-          // strongest signal (max). Mirrors the per-building rule that only
-          // colors a building once *every* person is recorded.
-          role: [
-            ["max", ["accumulated"], ["get", "role"]],
-            ["get", "role"],
-          ],
-          minRole: [
-            ["min", ["accumulated"], ["get", "role"]],
-            ["get", "role"],
-          ],
-          recordedCount: [
-            ["+", ["accumulated"], ["get", "recordedCount"]],
-            ["case", [">", ["get", "role"], 0], 1, 0],
-          ],
-        }}
-        onPress={handlePress}
-        hitbox={{ width: 4, height: 4 }}
+    <View style={styles.map}>
+      <MapView
+        style={styles.map}
+        mapStyle={getMaptilerStyleUrl(isDark)}
+        attributionEnabled={false}
+        logoEnabled={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
+        onRegionIsChanging={handleRegionEvent}
+        onRegionDidChange={handleRegionEvent}
       >
-        {/* Shadow layers */}
-        <CircleLayer
-          id={`${CLUSTERS_LAYER_ID}-shadow`}
-          filter={["has", "point_count"]}
-          style={{
-            circleRadius: [
-              "interpolate",
-              ["linear"],
-              ["get", "point_count"],
-              2,
-              32,
-              10,
-              36,
-              50,
-              42,
-            ],
-            circleColor: "hsl(0, 0%, 0%)",
-            circleOpacity: 0.35,
-            circleBlur: 1,
-          }}
-        />
-        <CircleLayer
-          id={`${BUILDINGS_PINS_LAYER_ID}-shadow`}
-          filter={["!", ["has", "point_count"]]}
-          style={{
-            circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 19, 18, 27],
-            circleColor: "hsl(0, 0%, 0%)",
-            circleOpacity: 0.35,
-            circleBlur: 1,
+        <Camera
+          ref={cameraRef}
+          defaultSettings={{
+            bounds: {
+              ne: initialBounds.ne,
+              sw: initialBounds.sw,
+              paddingTop: 60,
+              paddingBottom: 60 + bottomInset,
+              paddingLeft: 40,
+              paddingRight: 40,
+            },
           }}
         />
 
-        {/* Cluster bubbles */}
-        <CircleLayer
-          id={CLUSTERS_LAYER_ID}
-          filter={["has", "point_count"]}
-          style={{
-            circleRadius: [
-              "interpolate",
-              ["linear"],
-              ["get", "point_count"],
-              2,
-              20,
-              10,
-              24,
-              50,
-              30,
-            ],
-            // Neutral when any member is unrecorded; otherwise color by the
-            // strongest role across the cluster.
-            circleColor: [
-              "case",
-              ["==", ["get", "minRole"], 0],
-              isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
-              ["==", ["get", "role"], 2],
-              colors.contacted.background,
-              ["==", ["get", "role"], 1],
-              colors.unavailable.background,
-              isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
-            ],
-            circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
-            circleStrokeWidth: isDark ? 1 : 1.5,
-          }}
-        />
-        <SymbolLayer
-          id={CLUSTERS_LABEL_LAYER_ID}
-          filter={["has", "point_count"]}
-          style={{
-            textField: ["get", "doorCount"],
-            textSize: ["interpolate", ["linear"], ["zoom"], 12, 12, 18, 16],
-            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
-            textAllowOverlap: true,
-            textIgnorePlacement: true,
-          }}
-        />
+        <LabelLayers isDark={isDark} />
 
-        {/* Individual building pins */}
-        <CircleLayer
-          id={BUILDINGS_PINS_LAYER_ID}
-          filter={["!", ["has", "point_count"]]}
-          style={{
-            circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 16],
-            circleColor: [
-              "case",
-              ["==", ["get", "role"], 2],
-              colors.contacted.background,
-              ["==", ["get", "role"], 1],
-              colors.unavailable.background,
-              isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
+        <ShapeSource
+          ref={shapeSourceRef}
+          id={BUILDINGS_SOURCE_ID}
+          shape={featureCollection}
+          cluster
+          clusterRadius={CLUSTER_RADIUS}
+          clusterMaxZoomLevel={CLUSTER_MAX_ZOOM}
+          maxZoomLevel={TILE_MAX_ZOOM}
+          clusterProperties={{
+            doorCount: [
+              ["+", ["accumulated"], ["get", "doorCount"]],
+              ["get", "doorCount"],
             ],
-            circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
-            circleStrokeWidth: isDark ? 1 : 1.5,
+            personCount: [
+              ["+", ["accumulated"], ["get", "personCount"]],
+              ["get", "personCount"],
+            ],
+            // Aggregate min + max role so the cluster can stay neutral when any
+            // member is unrecorded (min = 0), and otherwise color by the
+            // strongest signal (max). Mirrors the per-building rule that only
+            // colors a building once *every* person is recorded.
+            role: [
+              ["max", ["accumulated"], ["get", "role"]],
+              ["get", "role"],
+            ],
+            minRole: [
+              ["min", ["accumulated"], ["get", "role"]],
+              ["get", "role"],
+            ],
+            recordedCount: [
+              ["+", ["accumulated"], ["get", "recordedCount"]],
+              ["case", [">", ["get", "role"], 0], 1, 0],
+            ],
           }}
-        />
-        <SymbolLayer
-          id={BUILDINGS_LABEL_LAYER_ID}
-          filter={["!", ["has", "point_count"]]}
-          style={{
-            textField: ["get", "doorCount"],
-            textSize: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 14],
-            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
-            textAllowOverlap: true,
-            textIgnorePlacement: true,
-          }}
-        />
-      </ShapeSource>
+          onPress={handlePress}
+          hitbox={{ width: 4, height: 4 }}
+        >
+          {/* Shadow layers */}
+          <CircleLayer
+            id={`${CLUSTERS_LAYER_ID}-shadow`}
+            filter={["has", "point_count"]}
+            style={{
+              circleRadius: [
+                "interpolate",
+                ["linear"],
+                ["get", "point_count"],
+                2,
+                32,
+                10,
+                36,
+                50,
+                42,
+              ],
+              circleColor: "hsl(0, 0%, 0%)",
+              circleOpacity: 0.35,
+              circleBlur: 1,
+            }}
+          />
+          <CircleLayer
+            id={`${BUILDINGS_PINS_LAYER_ID}-shadow`}
+            filter={["!", ["has", "point_count"]]}
+            style={{
+              circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 19, 18, 27],
+              circleColor: "hsl(0, 0%, 0%)",
+              circleOpacity: 0.35,
+              circleBlur: 1,
+            }}
+          />
 
-      <UserLocationDot isDark={isDark} />
-    </MapView>
+          {/* Cluster bubbles */}
+          <CircleLayer
+            id={CLUSTERS_LAYER_ID}
+            filter={["has", "point_count"]}
+            style={{
+              circleRadius: [
+                "interpolate",
+                ["linear"],
+                ["get", "point_count"],
+                2,
+                20,
+                10,
+                24,
+                50,
+                30,
+              ],
+              // Neutral when any member is unrecorded; otherwise color by the
+              // strongest role across the cluster.
+              circleColor: [
+                "case",
+                ["==", ["get", "minRole"], 0],
+                isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
+                ["==", ["get", "role"], 2],
+                colors.contacted.background,
+                ["==", ["get", "role"], 1],
+                colors.unavailable.background,
+                isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
+              ],
+              circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+              circleStrokeWidth: isDark ? 1 : 1.5,
+            }}
+          />
+          <SymbolLayer
+            id={CLUSTERS_LABEL_LAYER_ID}
+            filter={["has", "point_count"]}
+            style={{
+              textField: ["get", "doorCount"],
+              textSize: ["interpolate", ["linear"], ["zoom"], 12, 12, 18, 16],
+              textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+            }}
+          />
+
+          {/* Individual building pins */}
+          <CircleLayer
+            id={BUILDINGS_PINS_LAYER_ID}
+            filter={["!", ["has", "point_count"]]}
+            style={{
+              circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 16],
+              circleColor: [
+                "case",
+                ["==", ["get", "role"], 2],
+                colors.contacted.background,
+                ["==", ["get", "role"], 1],
+                colors.unavailable.background,
+                isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
+              ],
+              circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+              circleStrokeWidth: isDark ? 1 : 1.5,
+            }}
+          />
+          <SymbolLayer
+            id={BUILDINGS_LABEL_LAYER_ID}
+            filter={["!", ["has", "point_count"]]}
+            style={{
+              textField: ["get", "doorCount"],
+              textSize: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 14],
+              textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+            }}
+          />
+        </ShapeSource>
+
+        {/* Android: the dot's location watch + MarkerView path fritzes the
+          status bar on first load and can crash — disabled pending a
+          proper Android implementation (likely MLRN's built-in
+          UserLocation layer). */}
+        {Platform.OS === "ios" && <UserLocationDot isDark={isDark} />}
+      </MapView>
+      <AttributionBadge isDark={isDark} />
+    </View>
+  );
+}
+
+// Required by MapTiler's terms on every plan (text form; only the logo is
+// waivable) and by OSM's ODbL guidelines, which want it visible by default
+// — the built-in ⓘ was buried under the bottom sheet and reads as app UI
+// anyway. Sits just above the sheet's collapsed peek. Tap opens the
+// license pages.
+function AttributionBadge({ isDark }: { isDark: boolean }) {
+  return (
+    <Pressable
+      onPress={() =>
+        Alert.alert("Map data", "© MapTiler © OpenStreetMap contributors", [
+          {
+            text: "MapTiler",
+            onPress: () => void Linking.openURL("https://www.maptiler.com/copyright/"),
+          },
+          {
+            text: "OpenStreetMap",
+            onPress: () => void Linking.openURL("https://www.openstreetmap.org/copyright"),
+          },
+          { text: "Close", style: "cancel" },
+        ])
+      }
+      style={{
+        position: "absolute",
+        right: 6,
+        // Sheet's collapsed snap is 40 — stay above it.
+        bottom: 46,
+        borderRadius: 4,
+        paddingHorizontal: 5,
+        paddingVertical: 2,
+        backgroundColor: isDark ? "rgba(10,10,10,0.55)" : "rgba(255,255,255,0.55)",
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 10,
+          fontFamily: "Geist_400Regular",
+          color: isDark ? "#999" : "#555",
+        }}
+      >
+        © MapTiler © OpenStreetMap contributors
+      </Text>
+    </Pressable>
   );
 }
 

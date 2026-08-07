@@ -42,6 +42,27 @@ export type TurfIndexes = {
   personsInOrder: TurfDataPerson[];
 };
 
+// Walk order within a building: highest floor first (canvassers ride up
+// and knock down; PH counts as the top), letters ascending within a
+// floor (5A, 5B, 5C), unit-less doors last. The publish pipeline emits
+// doors in hash-group order, so this is the only ordering anywhere.
+const UNIT_DESIGNATORS = /^(?:APT|APARTMENT|UNIT|STE|SUITE|FL|FLOOR|BLDG|BUILDING|#)\s*/i;
+
+function sortDoors(doors: TurfDataDoor[]): TurfDataDoor[] {
+  const keyed = doors.map((door) => {
+    const stripped = (door.unit ?? "").trim().replace(UNIT_DESIGNATORS, "").trim();
+    const match = stripped.match(/^(\d+)\s*(.*)$/);
+    const floor = /^PH/i.test(stripped) ? Infinity : match ? parseInt(match[1]!, 10) : -1;
+    return { door, hasUnit: stripped.length > 0, floor, rest: match ? match[2]! : stripped };
+  });
+  keyed.sort((a, b) => {
+    if (a.hasUnit !== b.hasUnit) return a.hasUnit ? -1 : 1;
+    if (a.floor !== b.floor) return b.floor - a.floor;
+    return a.rest.localeCompare(b.rest, undefined, { numeric: true });
+  });
+  return keyed.map((k) => k.door);
+}
+
 export function buildTurfIndexes(turf: TurfData): TurfIndexes {
   const buildingsById = new Map<string, TurfDataBuilding>();
   const doorsById = new Map<string, TurfDataDoor>();
@@ -51,7 +72,10 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
   const buildingByPersonId = new Map<string, TurfDataBuilding>();
   const personsInOrder: TurfDataPerson[] = [];
 
-  for (const building of turf.buildings) {
+  // Sorted shallow copies — the react-query cached blob stays untouched.
+  const buildings = turf.buildings.map((b) => ({ ...b, doors: sortDoors(b.doors) }));
+
+  for (const building of buildings) {
     buildingsById.set(building.buildingId, building);
     for (const door of building.doors) {
       doorsById.set(door.doorId, door);
@@ -72,7 +96,7 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
     doorByPersonId,
     buildingByDoorId,
     buildingByPersonId,
-    buildingsInOrder: turf.buildings,
+    buildingsInOrder: buildings,
     personsInOrder,
   };
 }

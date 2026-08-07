@@ -41,6 +41,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       versionNumber: datasetVersions.versionNumber,
       status: datasetVersions.status,
       error: datasetVersions.error,
+      sourceUri: datasetVersions.sourceUri,
       derivedMetadata: datasetVersions.derivedMetadata,
       importedAt: datasetVersions.createdAt,
       archivedAt: datasetVersions.archivedAt,
@@ -247,10 +248,11 @@ export const create = pub
     });
   });
 
-// Import a newer version into an existing dataset (the "Update" action). Adds
-// v(n+1) as `importing` and enqueues the geocode job; the org keeps running on
-// its current active version until the new one is Ready and explicitly made
-// active. Blocks a second concurrent import on the same dataset.
+// Import into an existing dataset — the "Update" action, or "Import" while the
+// dataset has no version that ever landed. Adds v(n+1) as `importing`, or takes
+// over a trailing failed row, and enqueues the geocode job; the org keeps
+// running on its current active version until the new one is Ready and
+// explicitly made active. Blocks a second concurrent import on the same dataset.
 export const update = pub
   .input(z.object({ datasetId: z.string().uuid(), sourceUri: z.string().min(1) }))
   .handler(async ({ context, input }) => {
@@ -270,7 +272,11 @@ export const update = pub
       if (!grant) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
 
       const versions = await tx
-        .select({ versionNumber: datasetVersions.versionNumber, status: datasetVersions.status })
+        .select({
+          versionId: datasetVersions.datasetVersionId,
+          versionNumber: datasetVersions.versionNumber,
+          status: datasetVersions.status,
+        })
         .from(datasetVersions)
         .where(eq(datasetVersions.datasetId, input.datasetId))
         .orderBy(desc(datasetVersions.versionNumber));
@@ -278,20 +284,60 @@ export const update = pub
         throw new ORPCError("CONFLICT", {
           message: "An import is already in progress for this dataset. Wait for it to finish.",
         });
+
+      // A failed import produced nothing worth keeping and its number was never
+      // shown, so the next import takes that row over rather than stepping past
+      // it — a failure must not consume a version. The job drops and recreates
+      // the version's DuckLake schema, clearing whatever the attempt left.
+      const reclaimable = versions[0]?.status === "failed" ? versions[0] : null;
+
+      if (reclaimable) {
+        // Re-assert `failed` in the WHERE: the read above ran on this
+        // transaction's snapshot, so two concurrent imports both see the row as
+        // reclaimable. Whoever commits second matches nothing and is rejected,
+        // the way the unique index rejects a double insert.
+        const claimed = await tx
+          .update(datasetVersions)
+          .set({
+            status: "importing",
+            sourceUri: input.sourceUri,
+            error: null,
+            importStep: null,
+            importTotalSteps: null,
+            // Reset so the UI times this attempt, not the one that failed.
+            createdAt: new Date(),
+            createdBy: context.user.id,
+            archivedAt: null,
+          })
+          .where(
+            and(
+              eq(datasetVersions.datasetVersionId, reclaimable.versionId),
+              eq(datasetVersions.status, "failed"),
+            ),
+          )
+          .returning({ versionId: datasetVersions.datasetVersionId });
+        if (claimed.length === 0)
+          throw new ORPCError("CONFLICT", {
+            message: "An import is already in progress for this dataset. Wait for it to finish.",
+          });
+      }
+
       // The unique (dataset_id, version_number) index makes a concurrent double-
       // update fail on insert rather than mint a duplicate number.
-      const nextNumber = (versions[0]?.versionNumber ?? 0) + 1;
-
-      const [version] = await tx
-        .insert(datasetVersions)
-        .values({
-          datasetId: input.datasetId,
-          versionNumber: nextNumber,
-          status: "importing",
-          sourceUri: input.sourceUri,
-          createdBy: context.user.id,
-        })
-        .returning({ datasetVersionId: datasetVersions.datasetVersionId });
+      const version = reclaimable
+        ? { datasetVersionId: reclaimable.versionId }
+        : (
+            await tx
+              .insert(datasetVersions)
+              .values({
+                datasetId: input.datasetId,
+                versionNumber: (versions[0]?.versionNumber ?? 0) + 1,
+                status: "importing",
+                sourceUri: input.sourceUri,
+                createdBy: context.user.id,
+              })
+              .returning({ datasetVersionId: datasetVersions.datasetVersionId })
+          )[0];
       await tx.insert(jobs).values({
         task: "import_dataset_version",
         payload: {

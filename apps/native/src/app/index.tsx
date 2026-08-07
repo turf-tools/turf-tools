@@ -2,7 +2,7 @@ import { router, useFocusEffect } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Scan } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Keyboard, Pressable, Text, type TextInput, View } from "react-native";
+import { Alert, Keyboard, Platform, Pressable, Text, type TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { Input } from "@/components/input";
@@ -140,7 +140,9 @@ export default function LandingScreen() {
         <View style={{ flex: 1.4 }} />
         <Text
           className="mb-2 text-5xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
-          style={{ fontFamily: "Geist_700Bold" }}
+          style={{
+            fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
+          }}
         >
           Turf Tools
         </Text>

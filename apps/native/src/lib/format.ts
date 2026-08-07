@@ -20,6 +20,38 @@ export function ageFromDob(dob: string | null | undefined): number | null {
   return Math.floor(ms / (365.25 * 24 * 60 * 60 * 1000));
 }
 
+// Full display name with the middle name reduced to an initial (no period).
+export function formatPersonName(p: TurfDataPerson): string {
+  const middle = (p.middleName ?? "").trim();
+  const middleInitial = middle ? middle.charAt(0) : null;
+  return (
+    [p.firstName, middleInitial, p.lastName, p.nameSuffix].filter(Boolean).join(" ").trim() ||
+    "Unknown"
+  );
+}
+
+// "APT 3B" (or bare "3B") → "Apt 3B". FL/STE/BLDG designators keep their
+// own meaning and render title-cased instead of being relabeled "Apt".
+// Null for unit-less doors — callers pick their own fallback.
+export function formatUnitLabel(unit: string | null | undefined): string | null {
+  const raw = (unit ?? "").trim();
+  if (!raw) return null;
+  if (/^(FL|FLOOR|STE|SUITE|BLDG|BUILDING)\b/i.test(raw)) return toTitleCase(raw);
+  const stripped = raw.replace(/^(APT|APARTMENT|UNIT|#)\s*/i, "").trim();
+  return stripped ? `Apt ${stripped}` : null;
+}
+
+// Bare unit for the nav title: leading designator dropped, remainder
+// as-is ("APT 3B" → "3B", "APT 7FL" → "7FL"). The separator dot carries
+// the "this is a unit" meaning — no per-designator relabeling.
+export function formatUnitShort(unit: string | null | undefined): string | null {
+  const raw = (unit ?? "").trim();
+  if (!raw) return null;
+  return (
+    raw.replace(/^(APT|APARTMENT|UNIT|STE|SUITE|FL|FLOOR|BLDG|BUILDING|#)\s*/i, "").trim() || null
+  );
+}
+
 // Display variants for the canonical `enrollment` values produced by the
 // data pipeline (apps/data/src/transformations.py). `short` is the
 // pill abbreviation; `label` is the long form for detail views.

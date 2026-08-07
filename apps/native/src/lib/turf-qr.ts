@@ -9,3 +9,10 @@ export function parseTurfQr(data: string): ScannedEntry | null {
   if (!match) return null;
   return { host: match[1]!, code: match[2]! };
 }
+
+// Inverse of parseTurfQr, for showing a scannable code on-device.
+// localhost/LAN hosts get http to match the RPC client's protocol rule.
+export function buildTurfQr(host: string, code: string): string {
+  const protocol = /^localhost(:|$)|^127\.|^192\.168\.|^10\./.test(host) ? "http" : "https";
+  return `${protocol}://${host}/t/${code}`;
+}

@@ -16,6 +16,7 @@ import {
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Swatch } from "~/components/swatch";
+import { useRememberSelection } from "~/lib/last-selected";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignDetailQuery,
@@ -148,6 +149,8 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
 function CampaignEditor() {
   const navigate = useNavigate();
   const { orgSlug, campaignId } = Route.useParams();
+  // The campaigns index redirects back here next visit.
+  useRememberSelection(orgSlug, "campaigns", campaignId);
 
   const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());

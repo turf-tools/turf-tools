@@ -4,6 +4,25 @@
 // the upstream-failure shape, and the streaming pass-through pattern
 // all live in one place.
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
+// Per-request capture of the data service's Server-Timing header and the
+// web-side fetch wall (time-to-headers: event-loop queue + processing +
+// network; fetchMs − data-total = time the request spent queued). A route
+// that wants upstream phase timings in its own response wraps its handler
+// in `dataTiming.run({}, ...)` and reads the store afterwards; calls outside
+// a scope record nothing.
+export const dataTiming = new AsyncLocalStorage<{ header?: string; fetchMs?: number }>();
+
+// Re-namespace upstream phases (resolve, query, total, …) as data-* so they
+// coexist with the web tier's own entries in one Server-Timing header.
+export function prefixDataTiming(header: string): string {
+  return header
+    .split(",")
+    .map((part) => `data-${part.trim()}`)
+    .join(", ");
+}
+
 // Read at call-time so Nitro / dev server reloads pick it up without
 // needing to re-import. Vite only injects `VITE_*` vars into
 // import.meta.env; non-prefixed vars live on process.env server-side.
@@ -14,8 +33,15 @@ function dataUrl(path: string): string {
 }
 
 // Generic fetch against the data service. Caller controls method/body/headers.
-export function dataFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(dataUrl(path), init);
+export async function dataFetch(path: string, init?: RequestInit): Promise<Response> {
+  const t0 = performance.now();
+  const res = await fetch(dataUrl(path), init);
+  const store = dataTiming.getStore();
+  if (store) {
+    store.header = res.headers.get("Server-Timing") ?? undefined;
+    store.fetchMs = performance.now() - t0;
+  }
+  return res;
 }
 
 // Structured failure for upstream-returned non-2xx. Carries the HTTP

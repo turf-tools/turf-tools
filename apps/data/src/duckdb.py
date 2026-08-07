@@ -1,4 +1,7 @@
 import os
+import tempfile
+import uuid
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -81,6 +84,17 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     conn.execute(f"SET memory_limit = '{memory_limit}'")
     conn.execute(f"SET threads = {threads}")
     conn.execute("SET enable_object_cache = true")
+
+    # Spill space. An in-memory DuckDB has no temp_directory, so an operator
+    # that crosses memory_limit errors out instead of going out-of-core;
+    # with one set, work stays in RAM up to the limit and degrades to disk
+    # past it. Per-connection subdir — concurrent connections (shared RO +
+    # an import) must not share temp files. Pre-created: DuckDB only creates
+    # the leaf directory, so a missing parent fails at first spill.
+    temp_base = os.environ.get("DUCKDB_TEMP_DIRECTORY") or os.path.join(tempfile.gettempdir(), "duckdb-spill")
+    spill_dir = os.path.join(temp_base, uuid.uuid4().hex)
+    os.makedirs(spill_dir, exist_ok=True)
+    conn.execute(f"SET temp_directory = '{_sql_str(spill_dir)}'")
 
     ro = ", READ_ONLY" if read_only else ""
     _attach_ducklake(
@@ -241,3 +255,20 @@ def attach_operational_postgres(conn: duckdb.DuckDBPyConnection, settings: Setti
     # attached.
     escaped = settings.database_url.replace("'", "''")
     conn.execute(f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)")
+
+
+def heal_stale_attach[T](conn: duckdb.DuckDBPyConnection, run: Callable[[], T]) -> T:
+    """Run a query that touches the operational attach, healing the postgres
+    extension's catalog cache once on a miss.
+
+    The extension builds its catalog cache at first query, so on a fresh
+    deployment a query that lands before the first schema push freezes the
+    schema-less state into this connection permanently. `pg_clear_cache`
+    rebuilds it; one retry covers that window. A genuinely missing table
+    re-raises after the single retry.
+    """
+    try:
+        return run()
+    except duckdb.CatalogException:
+        conn.execute("CALL pg_clear_cache()")
+        return run()

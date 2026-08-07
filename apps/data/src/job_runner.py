@@ -7,19 +7,36 @@ import inspect
 import json
 import traceback
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, get_type_hints, overload
 
 from pydantic import BaseModel, ValidationError
 
 type JobFunc = Callable[..., Any]
+# A periodic maintenance pass, run by every worker on each maintenance tick,
+# after reaping. Must be idempotent: it re-runs forever, which is what makes it
+# the reliable cleanup path for interrupted jobs — a pass that fails is simply
+# retried on the next tick.
+type Sweep = Callable[[], Awaitable[None]]
 PayloadModel = type[BaseModel]
 
 UNSTARTED = "unstarted"
 IN_PROGRESS = "in_progress"
 COMPLETED = "completed"
 PERMANENTLY_FAILED = "permanently_failed"
+
+# How often a worker stamps `heartbeat_at` on the jobs it holds, and how long a
+# job may go unstamped before another poll reaps it. The heartbeat runs on the
+# event loop while handlers do their blocking work in threads, so a long step is
+# still a live heartbeat — staleness means the process is gone, not slow. Six
+# missed beats keeps a briefly-stalled loop from reaping its own live work.
+HEARTBEAT_INTERVAL_SECONDS = 15.0
+LEASE_SECONDS = 90.0
+
+INTERRUPTED_REASON = (
+    "Interrupted: the worker stopped without reporting a result (restart, deploy, or out-of-memory kill)."
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +47,15 @@ class ClaimedJob:
     task: str
     payload: Mapping[str, Any]
     concurrency_key: str | None
+
+
+@dataclass(frozen=True)
+class ReapedJob:
+    """A job failed by the reaper after its lease expired."""
+
+    job_id: uuid.UUID
+    task: str
+    payload: Mapping[str, Any]
 
 
 class JobStore(Protocol):
@@ -47,38 +73,21 @@ class JobStore(Protocol):
 
     async def fail_job(self, *, job_id: uuid.UUID, failure_reason: str) -> None: ...
 
+    async def heartbeat(self, *, worker_id: str, job_ids: Iterable[uuid.UUID]) -> None: ...
+
+    async def reap_expired_jobs(self, *, lease_seconds: float) -> list[ReapedJob]: ...
+
     async def write_message(self, *, job_id: uuid.UUID, payload: Mapping[str, Any]) -> None: ...
 
 
 @dataclass(frozen=True)
 class RegisteredJob:
-    """A decorated job function and the model used to validate its payload."""
+    """A job function and the model used to validate its payload. Built by the
+    `job` decorator and handed to `JobManager(jobs=...)`."""
 
     task: str
     func: JobFunc
     payload_model: PayloadModel
-
-
-class JobRegistry:
-    """Registry populated by the `job` decorator."""
-
-    def __init__(self) -> None:
-        self._jobs: dict[str, RegisteredJob] = {}
-
-    def register(self, registered_job: RegisteredJob) -> None:
-        self._jobs[registered_job.task] = registered_job
-
-    def get(self, task: str) -> RegisteredJob | None:
-        return self._jobs.get(task)
-
-    def tasks(self) -> list[str]:
-        return sorted(self._jobs)
-
-    def clear(self) -> None:
-        self._jobs.clear()
-
-
-DEFAULT_REGISTRY = JobRegistry()
 
 
 class JobContext:
@@ -105,35 +114,36 @@ class JobContext:
 
 
 @overload
-def job[TJobFunc: JobFunc](func: TJobFunc, /) -> TJobFunc: ...
+def job(func: JobFunc, /) -> RegisteredJob: ...
 
 
 @overload
-def job[TJobFunc: JobFunc](
+def job(
     func: None = None,
     /,
     *,
     task: str | None = None,
     payload_model: PayloadModel | None = None,
-    registry: JobRegistry = DEFAULT_REGISTRY,
-) -> Callable[[TJobFunc], TJobFunc]: ...
+) -> Callable[[JobFunc], RegisteredJob]: ...
 
 
-def job[TJobFunc: JobFunc](
-    func: TJobFunc | None = None,
+def job(
+    func: JobFunc | None = None,
     /,
     *,
     task: str | None = None,
     payload_model: PayloadModel | None = None,
-    registry: JobRegistry = DEFAULT_REGISTRY,
-) -> TJobFunc | Callable[[TJobFunc], TJobFunc]:
-    """Register a function as a runnable job."""
+) -> RegisteredJob | Callable[[JobFunc], RegisteredJob]:
+    """Package a function as a runnable job. Nothing registers globally — a job
+    runs only if the returned `RegisteredJob` is handed to `JobManager(jobs=...)`,
+    so the wiring in `main.py` is the complete list of what the worker runs."""
 
-    def decorator(inner: TJobFunc) -> TJobFunc:
-        registered_task = task or inner.__name__
-        registered_model = payload_model or _infer_payload_model(inner)
-        registry.register(RegisteredJob(task=registered_task, func=inner, payload_model=registered_model))
-        return inner
+    def decorator(inner: JobFunc) -> RegisteredJob:
+        return RegisteredJob(
+            task=task or inner.__name__,
+            func=inner,
+            payload_model=payload_model or _infer_payload_model(inner),
+        )
 
     if func is None:
         return decorator
@@ -147,23 +157,30 @@ class JobManager:
     def __init__(
         self,
         *,
-        registry: JobRegistry = DEFAULT_REGISTRY,
+        jobs: Iterable[RegisteredJob] = (),
         store: JobStore | None = None,
         worker_id: str | None = None,
         max_concurrent_jobs: int = 1,
         poll_interval_seconds: float = 1.0,
+        heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
+        lease_seconds: float = LEASE_SECONDS,
+        sweeps: Iterable[Sweep] = (),
     ) -> None:
         if max_concurrent_jobs < 1:
             raise ValueError("max_concurrent_jobs must be at least 1")
 
-        self.registry = registry
+        self._jobs = {registered_job.task: registered_job for registered_job in jobs}
         self.store = store or PostgresJobStore()
         self.worker_id = worker_id or f"data-job-runner-{uuid.uuid4()}"
         self.max_concurrent_jobs = max_concurrent_jobs
         self.poll_interval_seconds = poll_interval_seconds
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.lease_seconds = lease_seconds
+        self.sweeps = tuple(sweeps)
+        self._in_flight: set[uuid.UUID] = set()
 
     async def run_once(self) -> int:
-        tasks = self.registry.tasks()
+        tasks = sorted(self._jobs)
         if not tasks:
             return 0
 
@@ -186,24 +203,75 @@ class JobManager:
         logging the first of each consecutive run so a persistent outage doesn't
         flood the log at the poll interval.
         """
-        consecutive_failures = 0
+        # Separate task: `run_once` awaits its handlers, so the poll loop is
+        # blocked for the whole of a long import and can't beat or reap from here.
+        maintenance = asyncio.create_task(self.maintain_forever(), name="job-maintenance")
+        try:
+            consecutive_failures = 0
+            while True:
+                try:
+                    handled = await self.run_once()
+                    consecutive_failures = 0
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — any failure is retryable
+                    if consecutive_failures == 0:
+                        print(f"WARNING: job poll failed, retrying: {exc}", flush=True)
+                    consecutive_failures += 1
+                    await asyncio.sleep(min(self.poll_interval_seconds * consecutive_failures, 30.0))
+                    continue
+                if handled == 0:
+                    await asyncio.sleep(self.poll_interval_seconds)
+        finally:
+            maintenance.cancel()
+
+    async def maintain_forever(self) -> None:
+        """Stamp this worker's live jobs, fail everyone's expired ones, and run
+        the sweeps.
+
+        Every worker reaps, not just the one that owned the job — the owner of an
+        expired lease is by definition not around to do it.
+        """
         while True:
+            await asyncio.sleep(self.heartbeat_interval_seconds)
             try:
-                handled = await self.run_once()
-                consecutive_failures = 0
+                await self.maintain_once()
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 — any failure is retryable
-                if consecutive_failures == 0:
-                    print(f"WARNING: job poll failed, retrying: {exc}", flush=True)
-                consecutive_failures += 1
-                await asyncio.sleep(min(self.poll_interval_seconds * consecutive_failures, 30.0))
-                continue
-            if handled == 0:
-                await asyncio.sleep(self.poll_interval_seconds)
+            except Exception as exc:  # noqa: BLE001 — a bad tick must not end the loop
+                print(f"WARNING: job maintenance failed, retrying: {exc}", flush=True)
+
+    async def maintain_once(self) -> list[ReapedJob]:
+        if self._in_flight:
+            # Beat before reaping: on recovery from a shared Postgres outage this
+            # refreshes the worker's own lease before the reap query can see it
+            # as expired. Reordering these reintroduces self-reaping.
+            await self.store.heartbeat(worker_id=self.worker_id, job_ids=tuple(self._in_flight))
+
+        reaped_jobs = await self.store.reap_expired_jobs(lease_seconds=self.lease_seconds)
+        for reaped_job in reaped_jobs:
+            print(f"WARNING: reaped interrupted job {reaped_job.job_id} ({reaped_job.task})", flush=True)
+
+        # After reaping, so a just-reaped job's leftovers are cleaned this tick.
+        # A failed pass just waits for the next tick, but must not block the rest.
+        for sweep in self.sweeps:
+            try:
+                await sweep()
+            except Exception as exc:  # noqa: BLE001 — retried next tick
+                print(f"WARNING: maintenance sweep failed, will retry: {exc}", flush=True)
+
+        return reaped_jobs
 
     async def _run_claimed_job(self, claimed_job: ClaimedJob) -> None:
-        registered_job = self.registry.get(claimed_job.task)
+        # Held for the duration so the maintenance loop keeps its lease alive.
+        self._in_flight.add(claimed_job.job_id)
+        try:
+            await self._execute_claimed_job(claimed_job)
+        finally:
+            self._in_flight.discard(claimed_job.job_id)
+
+    async def _execute_claimed_job(self, claimed_job: ClaimedJob) -> None:
+        registered_job = self._jobs.get(claimed_job.task)
         if registered_job is None:
             await self.store.fail_job(
                 job_id=claimed_job.job_id,
@@ -301,7 +369,7 @@ class PostgresJobStore:
                 LIMIT $5
             )
             UPDATE app.jobs
-            SET status = $6, locked_by_worker_id = $7
+            SET status = $6, locked_by_worker_id = $7, heartbeat_at = now()
             WHERE job_id IN (SELECT job_id FROM eligible)
             RETURNING job_id, task, payload, concurrency_key
             """,
@@ -351,6 +419,57 @@ class PostgresJobStore:
             failure_reason,
             job_id,
         )
+
+    async def heartbeat(self, *, worker_id: str, job_ids: Iterable[uuid.UUID]) -> None:
+        from src.postgres import execute
+
+        ids = list(job_ids)
+        if not ids:
+            return
+
+        # Scoped to this worker so a job already reaped and re-claimed elsewhere
+        # can't have its lease revived by the process that lost it.
+        await execute(
+            """
+            UPDATE app.jobs
+            SET heartbeat_at = now()
+            WHERE job_id = ANY($1::uuid[])
+              AND status = $2
+              AND locked_by_worker_id = $3
+            """,
+            ids,
+            IN_PROGRESS,
+            worker_id,
+        )
+
+    async def reap_expired_jobs(self, *, lease_seconds: float) -> list[ReapedJob]:
+        from src.postgres import fetch
+
+        # `created_at` covers rows claimed before heartbeats existed, and any
+        # claimed by a worker too old to stamp them — both are stranded by
+        # definition, so an immediate reap is the right answer.
+        rows = await fetch(
+            """
+            UPDATE app.jobs
+            SET status = $1, failure_reason = $2, locked_by_worker_id = NULL
+            WHERE status = $3
+              AND coalesce(heartbeat_at, created_at) < now() - make_interval(secs => $4)
+            RETURNING job_id, task, payload
+            """,
+            PERMANENTLY_FAILED,
+            INTERRUPTED_REASON,
+            IN_PROGRESS,
+            lease_seconds,
+        )
+
+        return [
+            ReapedJob(
+                job_id=row["job_id"],
+                task=row["task"],
+                payload=_payload_from_db(row["payload"]),
+            )
+            for row in rows
+        ]
 
     async def write_message(self, *, job_id: uuid.UUID, payload: Mapping[str, Any]) -> None:
         from src.postgres import execute
@@ -429,8 +548,3 @@ def _truncate(value: str, *, max_length: int = 4000) -> str:
     if len(value) <= max_length:
         return value
     return f"{value[: max_length - 3]}..."
-
-
-def run() -> None:
-    """Run the default job manager forever."""
-    asyncio.run(JobManager().run_forever())

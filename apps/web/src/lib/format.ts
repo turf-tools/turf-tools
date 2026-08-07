@@ -37,13 +37,14 @@ export function formatMonthDay(value: Date | string | null | undefined, timezone
   });
 }
 
-// Compact intra-day time (h:mm AM/PM) — launch-day walk activity is
-// same-day, so the clock matters more than the calendar.
+// Compact intra-day time (hh:mm AM/PM, zero-padded hour so times align
+// in columns) — launch-day walk activity is same-day, so the clock
+// matters more than the calendar.
 export function formatTime(value: Date | string | null | undefined, timezone: string) {
   if (!value) return "—";
   const d = value instanceof Date ? value : new Date(value);
   return d.toLocaleTimeString("en-US", {
-    hour: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
     timeZone: timezone,
   });

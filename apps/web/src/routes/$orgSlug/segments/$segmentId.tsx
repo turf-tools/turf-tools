@@ -60,7 +60,7 @@ import {
   type VotingHistoryDetailFilter,
   VERB_META,
 } from "~/lib/filters";
-import { rememberSelection } from "~/lib/last-selected";
+import { useRememberSelection } from "~/lib/last-selected";
 import {
   segmentCascadeQuery,
   segmentCountsQuery,
@@ -97,12 +97,10 @@ export const Route = createFileRoute("/$orgSlug/segments/$segmentId")({
 function SegmentEditor() {
   const queryClient = useQueryClient();
   const { orgSlug, segmentId } = Route.useParams();
-  const { sections } = useFilterCatalog();
+  const { sections, isLoading: catalogLoading } = useFilterCatalog();
 
   // The segments index redirects back here next visit.
-  useEffect(() => {
-    rememberSelection(orgSlug, "segments", segmentId);
-  }, [orgSlug, segmentId]);
+  useRememberSelection(orgSlug, "segments", segmentId);
 
   // Loader prefetched, so this is a cache hit.
   const { data: activeSegmentDetail } = useQuery({
@@ -282,7 +280,16 @@ function SegmentEditor() {
 
   return (
     <div className="flex gap-4 h-full">
-      <div ref={stepsContainerRef} className="w-86 shrink-0 flex flex-col gap-3 overflow-y-auto">
+      <div
+        ref={stepsContainerRef}
+        className={cn(
+          "w-86 shrink-0 flex flex-col gap-3 overflow-y-auto",
+          // Catalog still in flight (hydration beat the streamed defs on a
+          // slow-SSR refresh): hold the panel invisible so def-less cards
+          // never paint, then fade the completed panel in.
+          catalogLoading ? "opacity-0" : "opacity-100 transition-opacity duration-100",
+        )}
+      >
         {activeSegmentDetail ? (
           <>
             <div
@@ -294,29 +301,35 @@ function SegmentEditor() {
             >
               <AddStepMenu sections={sections} isFirstStep={steps.length === 0} onAdd={addStep} />
             </div>
-            <Reorder.Group
-              axis="y"
-              values={displaySteps}
-              onReorder={setDraft}
-              as="div"
-              className="flex flex-col gap-3"
-            >
-              {displaySteps.map((step, idx) => {
-                const serverIdx = steps.findIndex((s) => s.id === step.id);
-                return (
-                  <ReorderStepRow
-                    key={step.id}
-                    number={idx + 1}
-                    step={step}
-                    onChange={(next) => updateStep(serverIdx, { ...step, filter: next })}
-                    onRemove={() => removeStep(serverIdx)}
-                    onDragEnd={handleDragEnd}
-                    currentSegmentId={segmentId}
-                    allSegments={allSegments ?? []}
-                  />
-                );
-              })}
-            </Reorder.Group>
+            {/* Mount the cards only once the catalog is resolved: cards that
+                mount def-less and then grow give motion a stale position
+                measurement to tween from — an animated reflow the fade can't
+                hide. A fresh mount of the completed cards animates nothing. */}
+            {!catalogLoading && (
+              <Reorder.Group
+                axis="y"
+                values={displaySteps}
+                onReorder={setDraft}
+                as="div"
+                className="flex flex-col gap-3"
+              >
+                {displaySteps.map((step, idx) => {
+                  const serverIdx = steps.findIndex((s) => s.id === step.id);
+                  return (
+                    <ReorderStepRow
+                      key={step.id}
+                      number={idx + 1}
+                      step={step}
+                      onChange={(next) => updateStep(serverIdx, { ...step, filter: next })}
+                      onRemove={() => removeStep(serverIdx)}
+                      onDragEnd={handleDragEnd}
+                      currentSegmentId={segmentId}
+                      allSegments={allSegments ?? []}
+                    />
+                  );
+                })}
+              </Reorder.Group>
+            )}
           </>
         ) : null}
       </div>

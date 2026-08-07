@@ -26,6 +26,7 @@ export const listForOrg = pub
         walkId: walks.walkId,
         turfId: walks.turfId,
         canvasserName: walks.canvasserName,
+        canvasserPhone: walks.canvasserPhone,
         openedAt: walks.openedAt,
         closedAt: walks.closedAt,
       })

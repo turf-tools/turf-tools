@@ -3,9 +3,11 @@ import { canvassEvents } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { nativeMut as mut, nativePub as pub } from "../context";
 
-// All ids passed in (doorId, buildingId, personId, questionId, responseOptionId)
-// are the global UUIDs assigned by the DuckLake import pipeline. They flow
-// through the turf data blob to the native app and back here unchanged.
+// All entity ids (personId, doorId, buildingId) are the import pipeline's
+// stable identifiers as carried in the turf data blob — external_id for
+// persons, lake address-string ids for doors/buildings (never uuids). They
+// flow through the blob to the native app and back here unchanged.
+// questionId/responseOptionId are app-side uuids.
 //
 // Every event is an immutable append to canvass_events. There are two kinds:
 //   - "result": the entity's complete current disposition (outcome +
@@ -43,13 +45,11 @@ export const appendResult = mut
     z.object({
       turfId: z.string().uuid(),
       personId: z.string().optional(),
-      doorId: z.string().uuid().optional(),
-      buildingId: z.string().uuid().optional(),
+      doorId: z.string().optional(),
+      buildingId: z.string().optional(),
       payload: resultPayload,
       createdAt: z.string(),
       canvasserId: z.string().optional(),
-      // Client-claimed attribution — stored verbatim; verification is a
-      // read-time join on the phone.
       canvasserName: z.string().optional(),
       canvasserPhone: z.string().optional(),
       inputType: z.string().optional(),
@@ -83,13 +83,11 @@ export const appendNote = mut
     z.object({
       turfId: z.string().uuid(),
       personId: z.string().optional(),
-      doorId: z.string().uuid().optional(),
-      buildingId: z.string().uuid().optional(),
+      doorId: z.string().optional(),
+      buildingId: z.string().optional(),
       text: z.string().min(1),
       createdAt: z.string(),
       canvasserId: z.string().optional(),
-      // Client-claimed attribution — stored verbatim; verification is a
-      // read-time join on the phone.
       canvasserName: z.string().optional(),
       canvasserPhone: z.string().optional(),
       inputType: z.string().optional(),

@@ -38,6 +38,7 @@ import {
   questionsListQuery,
 } from "~/lib/queries/questions";
 import { GRAY } from "~/lib/palette";
+import { useRememberSelection } from "~/lib/last-selected";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -76,7 +77,9 @@ export const Route = createFileRoute("/$orgSlug/scripts/$scriptId")({
 
 function ScriptEditor() {
   const queryClient = useQueryClient();
-  const { scriptId } = Route.useParams();
+  const { orgSlug, scriptId } = Route.useParams();
+  // The scripts index redirects back here next visit.
+  useRememberSelection(orgSlug, "scripts", scriptId);
   const { data: script } = useQuery(scriptDetailQuery(scriptId));
 
   const steps: ScriptStepRow[] = script?.steps ?? [];

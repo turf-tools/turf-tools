@@ -13,6 +13,7 @@ import {
   questions,
   responseOptions,
   turfs,
+  walks,
   zoneGroups,
 } from "@turf-tools/db/schema";
 import { createLogger } from "./_logging";
@@ -148,6 +149,8 @@ await db.transaction(async (tx) => {
   // before questions. Tables with onDelete: "cascade" (script_steps,
   // zones, turf_data, turf_drafts) come down with their parents.
   await tx.delete(canvassEvents).where(inArray(canvassEvents.turfId, turfIdsQuery));
+  // walks has no cascade from turfs — must go before them.
+  await tx.delete(walks).where(inArray(walks.turfId, turfIdsQuery));
   await tx.delete(turfs).where(inArray(turfs.campaignId, campaignIdsQuery));
   await tx.delete(campaigns).where(eq(campaigns.organizationId, orgId));
   await tx.delete(scripts).where(eq(scripts.organizationId, orgId));

@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { InteractionManager, Linking, Pressable, Text, View } from "react-native";
+import { InteractionManager, Linking, Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { scannedEntryAtom } from "@/lib/atoms/scan";
@@ -65,7 +65,9 @@ export default function ScanScreen() {
         hitSlop={4}
         className="absolute z-10 items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={{
-          top: insets.top - 35,
+          // iOS's deep top inset lets the control tuck up beside the notch;
+          // Android's slim status bar needs it pushed below instead.
+          top: Platform.OS === "android" ? insets.top + 12 : insets.top - 35,
           right: 20,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
@@ -80,7 +82,9 @@ export default function ScanScreen() {
       <View className="flex-1 px-4 pb-6" style={{ paddingBottom: insets.bottom + 16 }}>
         <Text
           className="mt-9 mb-9 self-center text-3xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
-          style={{ fontFamily: "Geist_700Bold" }}
+          style={{
+            fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
+          }}
         >
           Scan a code
         </Text>

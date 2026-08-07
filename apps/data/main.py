@@ -4,22 +4,24 @@ import json
 import logging
 import os
 import tempfile
+import time
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
-import src.import_job  # noqa: F401 — registers the `import_dataset_version` job with the worker
+from src import timing
 from src.custom_fields import (
     append_custom_fields,
-    catalog_for,
     custom_fields_fqn,
     custom_fields_table_for,
     load_upload_table,
+    query_context,
     sync_registry,
 )
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
@@ -32,6 +34,7 @@ from src.duckdb import (
     refresh_s3_secret_on_shared_connection,
     s3_secret_expires,
 )
+from src.import_job import fail_interrupted_versions, import_dataset_version
 from src.job_runner import JobManager
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
@@ -45,6 +48,7 @@ from src.tables import (
     resolve_version,
     table_fqn,
 )
+from src.timing import timed
 
 logger = logging.getLogger("uvicorn")
 
@@ -127,7 +131,10 @@ async def lifespan(app: FastAPI):
 
     await get_pool()
 
-    job_manager_task = asyncio.create_task(JobManager().run_forever(), name="job-manager")
+    job_manager_task = asyncio.create_task(
+        JobManager(jobs=(import_dataset_version,), sweeps=(fail_interrupted_versions,)).run_forever(),
+        name="job-manager",
+    )
     job_manager_task.add_done_callback(_log_background_task_failure)
 
     # Only the AWS credential chain expires; static keys need no timer.
@@ -156,6 +163,18 @@ async def lifespan(app: FastAPI):
 # loading, geocoding, Quickwit indexing — runs as Hamilton DAGs via CLI
 # jobs. This service exposes health and endpoints for data queries.
 app = FastAPI(title="Data Service", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def server_timing(request: Request, call_next):
+    # Phase timings for the browser's Network panel and the bench harness;
+    # phases register via `src.timing.timed` anywhere on the call path.
+    timing.start_request()
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    response.headers["Server-Timing"] = timing.header_value((time.perf_counter() - t0) * 1000)
+    return response
+
 
 # Permissive CORS for dev. Lock down via a
 # settings-driven allow list before deploying.
@@ -386,9 +405,8 @@ async def persons_count(req: _PersonsCountRequest):
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -396,14 +414,15 @@ async def persons_count(req: _PersonsCountRequest):
         f"""
         SELECT
             count(*) AS "personCount",
-            count(DISTINCT door_id) AS "doorCount",
-            count(DISTINCT building_id) AS "buildingCount"
+            count(DISTINCT door_i) AS "doorCount",
+            count(DISTINCT building_i) AS "buildingCount"
         FROM {{persons_geocoded}}
         {where}
         """,
         schema,
     )
-    row = conn.execute(sql, params).fetchone()
+    with timed("query"):
+        row = conn.execute(sql, params).fetchone()
     if row is None:
         raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
     return {
@@ -428,13 +447,13 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     modifies the running set.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
-    catalog = catalog_for(conn, version)
+    version, catalog = query_context(conn, req.org_slug)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     persons_table = resolve("{persons_geocoded}", version.schema)
     params: list = []
     sql = cascade_sql(catalog, criteria, persons_table, params)
-    row = conn.execute(sql, params).fetchone()
+    with timed("query"):
+        row = conn.execute(sql, params).fetchone()
     counts = list(row)
     steps_result = []
     prev = counts[0]
@@ -462,9 +481,8 @@ async def persons_sample(req: _PersonsSampleRequest):
     """
     limit = max(1, min(req.limit, 500))
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -479,7 +497,8 @@ async def persons_sample(req: _PersonsSampleRequest):
         """,
         schema,
     )
-    rows = conn.execute(sql, params).fetchall()
+    with timed("query"):
+        rows = conn.execute(sql, params).fetchall()
     return {
         "persons": [
             {
@@ -563,7 +582,7 @@ async def person_detail(req: _PersonDetailRequest):
     # always exist on persons_geocoded, so EXCLUDE is safe.
     sql = resolve(
         "SELECT * EXCLUDE ("
-        "voting_history, building_id, door_id, blockface_id, "
+        "voting_history, building_id, door_id, building_i, door_i, blockface_id, "
         "match_score, position_source, latitude, longitude"
         "), to_json(voting_history) AS voting_history "
         "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",
@@ -595,9 +614,8 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     group_expr = boundary_key_expr_for(catalog, req.key_group)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
@@ -606,8 +624,8 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         f"""
         SELECT
             {group_expr} AS key,
-            count(DISTINCT building_id) AS buildings,
-            count(DISTINCT door_id) AS doors,
+            count(DISTINCT building_i) AS buildings,
+            count(DISTINCT door_i) AS doors,
             count(*) AS people
         FROM {{persons_geocoded}}
         {where}
@@ -615,7 +633,8 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
         """,
         schema,
     )
-    rows = conn.execute(sql, params).fetchall()
+    with timed("query"):
+        rows = conn.execute(sql, params).fetchall()
     counts: dict[str, dict[str, int]] = {}
     for key, buildings, doors, people in rows:
         if key is None:
@@ -671,9 +690,8 @@ async def segments_export(req: _SegmentExportRequest):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
 
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, None, params)
@@ -724,9 +742,8 @@ async def buildings_list(req: _BuildingsListRequest):
     polygon" client-side.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -736,19 +753,20 @@ async def buildings_list(req: _BuildingsListRequest):
             b.building_id              AS "buildingId",
             b.longitude,
             b.latitude,
-            count(DISTINCT fp.door_id) AS "doorCount",
+            count(DISTINCT fp.door_i)  AS "doorCount",
             count(*)                   AS "personCount"
         FROM {{buildings_geocoded}} b
         JOIN (
-            SELECT building_id, door_id FROM {{persons_geocoded}} {where}
+            SELECT building_id, door_i FROM {{persons_geocoded}} {where}
         ) fp ON fp.building_id = b.building_id
         GROUP BY b.building_id, b.longitude, b.latitude
         """,
         schema,
     )
-    cursor = conn.execute(sql, params)
-    cols = [d[0] for d in cursor.description]
-    rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
+    with timed("query"):
+        cursor = conn.execute(sql, params)
+        cols = [d[0] for d in cursor.description]
+        rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
     return {"buildings": rows}
 
 
@@ -774,9 +792,8 @@ async def buildings_points(req: _BuildingsPointsRequest):
     instead of meter-scale.
     """
     conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version, catalog = query_context(conn, req.org_slug)
     schema = version.schema
-    catalog = catalog_for(conn, version)
     criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
     params: list = []
     where = criteria_to_where(catalog, criteria, req.key_filter, params)
@@ -787,26 +804,31 @@ async def buildings_points(req: _BuildingsPointsRequest):
                 (b.longitude + 180.0) / 360.0 AS mx,
                 0.5 - ln(tan(pi()/4 + radians(b.latitude)/2)) / (2*pi()) AS my
             FROM {{buildings_geocoded}} b
-            WHERE b.building_id IN (
-                SELECT DISTINCT building_id FROM {{persons_geocoded}} {where}
+            WHERE b.building_i IN (
+                SELECT DISTINCT building_i FROM {{persons_geocoded}} {where}
             )
         ),
         o AS (SELECT avg(mx) AS ox, avg(my) AS oy FROM pts)
-        SELECT pts.mx - o.ox, pts.my - o.oy, o.ox, o.oy
+        SELECT pts.mx - o.ox AS dx, pts.my - o.oy AS dy, o.ox AS ox, o.oy AS oy
         FROM pts, o
         """,
         schema,
     )
-    cursor = conn.execute(sql, params)
-    rows = cursor.fetchall()
-    header = array.array("d", [0.0, 0.0])
-    deltas = array.array("f")
-    if rows:
-        header[0] = rows[0][2]
-        header[1] = rows[0][3]
-        for dx, dy, _, _ in rows:
-            deltas.append(dx)
-            deltas.append(dy)
+    # fetchnumpy + vectorized repack: materializing hundreds of thousands of
+    # rows as Python tuples costs several times the query itself.
+    with timed("query"):
+        cursor = conn.execute(sql, params)
+        cols = cursor.fetchnumpy()
+    dx, dy = cols["dx"], cols["dy"]
+    if len(dx) == 0:
+        return Response(
+            content=array.array("d", [0.0, 0.0]).tobytes(),
+            media_type="application/octet-stream",
+        )
+    header = np.array([cols["ox"][0], cols["oy"][0]], dtype=np.float64)
+    deltas = np.empty((len(dx), 2), dtype=np.float32)
+    deltas[:, 0] = dx
+    deltas[:, 1] = dy
     return Response(
         content=header.tobytes() + deltas.tobytes(),
         media_type="application/octet-stream",
