@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, Copy, Eraser, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Eraser, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -12,6 +12,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
+import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
@@ -150,20 +151,16 @@ function ZonesLayout() {
     onError: (e) => toast.error(e.message),
   });
 
-  // Archive flow: unarchive is immediate (and stays put); archive checks
-  // for active campaigns first and confirms through the dialog when any
-  // reference this group, then exits to a neighboring active group (or
-  // the index when none remain). Snapshotted at click time so the
-  // dialog body keeps its content during the close animation.
+  // Archive flow: archive checks for active campaigns first and confirms
+  // through the dialog when any reference this group, then exits to a
+  // neighboring active group (or the index when none remain).
+  // Snapshotted at click time so the dialog body keeps its content
+  // during the close animation.
   const [archiveSnapshot, setArchiveSnapshot] = useState({ name: "", campaignCount: 0 });
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   const archiveActiveGroup = async () => {
-    if (!activeGroup) return;
-    if (activeGroup.isArchived) {
-      setGroupArchived.mutate({ zoneGroupId: activeGroup.zoneGroupId, archived: false });
-      return;
-    }
+    if (!activeGroup || activeGroup.isArchived) return;
     const { count } = await queryClient.fetchQuery({
       queryKey: ["zone-groups", "count-campaigns", activeGroup.zoneGroupId],
       queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroup.zoneGroupId }),
@@ -182,13 +179,78 @@ function ZonesLayout() {
     setGroupArchived.mutate({ zoneGroupId: activeGroupId, archived: true });
   };
 
+  // Delete flow (archived groups only): fetch what still references the
+  // group, then confirm through the dialog — referenced groups get an
+  // explanation instead of a destructive action. Zones cascade.
+  const [removeSnapshot, setRemoveSnapshot] = useState<{
+    name: string;
+    blockers: DeleteBlocker[];
+  }>({ name: "", blockers: [] });
+  const [removeOpen, setRemoveOpen] = useState(false);
+
+  const removeGroup = useMutation({
+    mutationFn: (input: { zoneGroupId: string }) => client.zoneGroups.remove(input),
+    onSuccess: async (_data, input) => {
+      setRemoveOpen(false);
+      await queryClient.cancelQueries({ queryKey: ["zone-groups"] });
+      // Exit to a neighbor in the visible rail (archived rows are shown
+      // while one is selected), patch the row out, then let the redirect
+      // land — same ordering rationale as the archive flow above.
+      const visible = sortedZoneGroups.filter((g) => g.zoneGroupId !== input.zoneGroupId);
+      const idx = sortedZoneGroups.findIndex((g) => g.zoneGroupId === input.zoneGroupId);
+      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+      const patch = () =>
+        queryClient.setQueryData<typeof zoneGroups>(
+          ["zone-groups"],
+          (old) => old?.filter((g) => g.zoneGroupId !== input.zoneGroupId) ?? old,
+        );
+      if (fallback) {
+        await goToGroup(fallback.zoneGroupId);
+        patch();
+      } else {
+        patch();
+        await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteActiveGroup = async () => {
+    if (!activeGroup?.isArchived) return;
+    try {
+      const { blockers } = await client.zoneGroups.removeCheck({
+        zoneGroupId: activeGroup.zoneGroupId,
+      });
+      setRemoveSnapshot({ name: activeGroup.name, blockers });
+      setRemoveOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't check references.");
+    }
+  };
+
+  const onConfirmRemove = () => {
+    if (!activeGroupId) return;
+    removeGroup.mutate({ zoneGroupId: activeGroupId });
+  };
+
   // Mod-Delete / Mod-Backspace escalates from "delete one zone" (the inner
-  // editor's plain-Delete handler) to "archive the whole zone group".
+  // editor's plain-Delete handler) to "archive the whole zone group" —
+  // and on an already-archived group, to delete (behind the confirm).
+  // Command-U is the way back.
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
-    enabled: !!activeGroupId,
-    onMatch: () => void archiveActiveGroup(),
+    enabled: !!activeGroup,
+    onMatch: () => void (activeGroup?.isArchived ? deleteActiveGroup() : archiveActiveGroup()),
+  });
+  useHotkey({
+    key: "u",
+    mod: true,
+    enabled: !!activeGroup?.isArchived,
+    onMatch: () => {
+      if (activeGroupId) setGroupArchived.mutate({ zoneGroupId: activeGroupId, archived: false });
+    },
   });
 
   // No active dataset → nothing to build against; block the editor behind a
@@ -251,12 +313,25 @@ function ZonesLayout() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => void archiveActiveGroup()}
+              onClick={() =>
+                activeGroup?.isArchived
+                  ? setGroupArchived.mutate({
+                      zoneGroupId: activeGroup.zoneGroupId,
+                      archived: false,
+                    })
+                  : void archiveActiveGroup()
+              }
               disabled={!activeGroup}
             >
               {activeGroup?.isArchived ? <ArchiveRestore /> : <Archive />}
               {activeGroup?.isArchived ? "Unarchive" : "Archive"}
             </Button>
+            {activeGroup?.isArchived ? (
+              <Button variant="outline" onClick={() => void deleteActiveGroup()}>
+                <Trash2 />
+                Delete
+              </Button>
+            ) : null}
           </EditorHeader>
           <div className="min-h-0 flex-1">
             <Outlet />
@@ -322,6 +397,19 @@ function ZonesLayout() {
         campaignCount={archiveSnapshot.campaignCount}
         pending={setGroupArchived.isPending}
         onConfirm={onConfirmArchive}
+      />
+
+      <DeleteDialog
+        open={removeOpen}
+        onOpenChange={(next) => {
+          if (removeGroup.isPending) return;
+          setRemoveOpen(next);
+        }}
+        entity="zone group"
+        name={removeSnapshot.name}
+        blockers={removeSnapshot.blockers}
+        pending={removeGroup.isPending}
+        onConfirm={onConfirmRemove}
       />
     </>
   );

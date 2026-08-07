@@ -1,6 +1,12 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, isNull, sql } from "@turf-tools/db";
-import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@turf-tools/db/schema";
+import { and, asc, eq, isNull, sql, type Db } from "@turf-tools/db";
+import {
+  campaigns,
+  segments as segmentsTable,
+  turfs,
+  zoneGroups,
+  zones,
+} from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
@@ -57,6 +63,70 @@ export const countCampaigns = pub
       .from(campaigns)
       .where(and(eq(campaigns.zoneGroupId, input.zoneGroupId), isNull(campaigns.archivedAt)));
     return { count: refs.length };
+  });
+
+// Everything holding a reference to a zone group, regardless of status —
+// permanent deletion must respect archived referencers too, unlike the
+// archive warning above. Zones are the group's own children and cascade
+// on delete.
+async function removalBlockers(
+  db: Db,
+  zoneGroupId: string,
+): Promise<Array<{ label: string; count: number }>> {
+  const [campaignRefs, turfRefs] = await Promise.all([
+    db
+      .select({ campaignId: campaigns.campaignId })
+      .from(campaigns)
+      .where(eq(campaigns.zoneGroupId, zoneGroupId)),
+    db.select({ turfId: turfs.turfId }).from(turfs).where(eq(turfs.zoneGroupId, zoneGroupId)),
+  ]);
+  return [
+    { label: "campaign", count: campaignRefs.length },
+    { label: "turf", count: turfRefs.length },
+  ].filter((b) => b.count > 0);
+}
+
+// What blocks permanent deletion, for the delete dialog. Empty = deletable.
+export const removeCheck = pub
+  .input(z.object({ zoneGroupId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ zoneGroupId: zoneGroups.zoneGroupId })
+      .from(zoneGroups)
+      .where(
+        and(
+          eq(zoneGroups.zoneGroupId, input.zoneGroupId),
+          eq(zoneGroups.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
+    return { blockers: await removalBlockers(context.db, input.zoneGroupId) };
+  });
+
+// Permanently delete an archived, unreferenced zone group (zones cascade).
+// The blocker check re-runs here and the FKs backstop any race.
+export const remove = pub
+  .input(z.object({ zoneGroupId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const rows = await context.db
+      .select({ archivedAt: zoneGroups.archivedAt })
+      .from(zoneGroups)
+      .where(
+        and(
+          eq(zoneGroups.zoneGroupId, input.zoneGroupId),
+          eq(zoneGroups.organizationId, context.organizationId),
+        ),
+      );
+    if (rows.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
+    if (!rows[0]!.archivedAt)
+      throw new ORPCError("BAD_REQUEST", { message: "Only archived zone groups can be deleted" });
+    const blockers = await removalBlockers(context.db, input.zoneGroupId);
+    if (blockers.length > 0)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "This zone group is still referenced and can't be deleted",
+      });
+    await context.db.delete(zoneGroups).where(eq(zoneGroups.zoneGroupId, input.zoneGroupId));
+    return { ok: true as const };
   });
 
 // Fetch one zone group by id, scoped to the user's organization.

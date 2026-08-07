@@ -1,6 +1,13 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, inArray, isNull, sql } from "@turf-tools/db";
-import { campaigns, responseOptions, scripts, scriptSteps, questions } from "@turf-tools/db/schema";
+import { and, asc, eq, inArray, isNull, sql, type Db } from "@turf-tools/db";
+import {
+  campaigns,
+  responseOptions,
+  scripts,
+  scriptSteps,
+  questions,
+  turfs,
+} from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
 
@@ -136,8 +143,8 @@ export const clone = pub
   });
 
 // Soft-retire a script: it leaves the rail and pickers but stays
-// resolvable for the campaigns and turfs that reference it. There is no
-// delete — turfs reference scripts forever.
+// resolvable for the campaigns and turfs that reference it. Referenced
+// scripts live forever; only archived, unreferenced ones can be deleted.
 export const archive = pub
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -169,6 +176,70 @@ export const unarchive = pub
       )
       .returning({ scriptId: scripts.scriptId });
     if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    return { ok: true as const };
+  });
+
+// Everything holding a reference to a script, regardless of status —
+// permanent deletion must respect archived referencers too, unlike the
+// archive warning below. Step rows are the script's own children and
+// cascade on delete.
+async function removalBlockers(
+  db: Db,
+  scriptId: string,
+): Promise<Array<{ label: string; count: number }>> {
+  const [campaignRefs, turfRefs] = await Promise.all([
+    db
+      .select({ campaignId: campaigns.campaignId })
+      .from(campaigns)
+      .where(eq(campaigns.scriptId, scriptId)),
+    db.select({ turfId: turfs.turfId }).from(turfs).where(eq(turfs.scriptId, scriptId)),
+  ]);
+  return [
+    { label: "campaign", count: campaignRefs.length },
+    { label: "turf", count: turfRefs.length },
+  ].filter((b) => b.count > 0);
+}
+
+// What blocks permanent deletion, for the delete dialog. Empty = deletable.
+export const removeCheck = pub
+  .input(z.object({ scriptId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ scriptId: scripts.scriptId })
+      .from(scripts)
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    return { blockers: await removalBlockers(context.db, input.scriptId) };
+  });
+
+// Permanently delete an archived, unreferenced script (steps cascade).
+// The blocker check re-runs here and the FKs backstop any race.
+export const remove = pub
+  .input(z.object({ scriptId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const rows = await context.db
+      .select({ archivedAt: scripts.archivedAt })
+      .from(scripts)
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      );
+    if (rows.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    if (!rows[0]!.archivedAt)
+      throw new ORPCError("BAD_REQUEST", { message: "Only archived scripts can be deleted" });
+    const blockers = await removalBlockers(context.db, input.scriptId);
+    if (blockers.length > 0)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "This script is still referenced and can't be deleted",
+      });
+    await context.db.delete(scripts).where(eq(scripts.scriptId, input.scriptId));
     return { ok: true as const };
   });
 

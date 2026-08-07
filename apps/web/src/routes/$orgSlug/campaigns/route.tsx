@@ -7,7 +7,15 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, ChevronDown, Copy, Pencil, Settings2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  Copy,
+  Pencil,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -26,6 +34,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
+import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
@@ -327,21 +336,84 @@ function CampaignsLayout() {
   // exits to a neighboring active campaign, or the index when none
   // remain. Unarchive stays put.
   const archiveActiveCampaign = () => {
-    if (!activeCampaign) return;
-    if (activeCampaign.isArchived) {
-      setCampaignArchived.mutate({ campaignId: activeCampaign.campaignId, archived: false });
-      return;
-    }
+    if (!activeCampaign || activeCampaign.isArchived) return;
     setCampaignArchived.mutate({ campaignId: activeCampaign.campaignId, archived: true });
+  };
+
+  // Delete flow (archived campaigns only): fetch what still references
+  // the campaign, then confirm through the dialog — campaigns with turfs
+  // get an explanation instead of a destructive action.
+  const [removeSnapshot, setRemoveSnapshot] = useState<{
+    name: string;
+    blockers: DeleteBlocker[];
+  }>({ name: "", blockers: [] });
+  const [removeOpen, setRemoveOpen] = useState(false);
+
+  const removeCampaign = useMutation({
+    mutationFn: (input: { campaignId: string }) => client.campaigns.remove(input),
+    onSuccess: async (_data, input) => {
+      setRemoveOpen(false);
+      await queryClient.cancelQueries({ queryKey: ["campaigns"] });
+      // Exit to a neighbor in the visible rail (archived rows are shown
+      // while one is selected), patch the row out, then let the redirect
+      // land — same ordering rationale as the archive flow above.
+      const visible = sortedCampaigns.filter((c) => c.campaignId !== input.campaignId);
+      const idx = sortedCampaigns.findIndex((c) => c.campaignId === input.campaignId);
+      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+      const patch = () =>
+        queryClient.setQueryData<typeof campaigns>(
+          ["campaigns"],
+          (old) => old?.filter((c) => c.campaignId !== input.campaignId) ?? old,
+        );
+      if (fallback) {
+        await goToCampaign(fallback.campaignId);
+        patch();
+      } else {
+        patch();
+        await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteActiveCampaign = async () => {
+    if (!activeCampaign?.isArchived) return;
+    try {
+      const { blockers } = await client.campaigns.removeCheck({
+        campaignId: activeCampaign.campaignId,
+      });
+      setRemoveSnapshot({ name: activeCampaign.name, blockers });
+      setRemoveOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't check references.");
+    }
+  };
+
+  const onConfirmRemove = () => {
+    if (!activeCampaignId) return;
+    removeCampaign.mutate({ campaignId: activeCampaignId });
   };
 
   // Disabled in the cutter so Mod-Delete there isn't claimed by the
   // campaign-archive shortcut (the cutter has its own Delete behavior).
+  // Command-Delete escalates: archive an active campaign, delete an
+  // archived one (behind the confirm). Command-U is the way back.
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
-    enabled: !!activeCampaignId && !isCut,
-    onMatch: () => archiveActiveCampaign(),
+    enabled: !!activeCampaign && !isCut,
+    onMatch: () =>
+      void (activeCampaign?.isArchived ? deleteActiveCampaign() : archiveActiveCampaign()),
+  });
+  useHotkey({
+    key: "u",
+    mod: true,
+    enabled: !!activeCampaign?.isArchived && !isCut,
+    onMatch: () => {
+      if (activeCampaignId)
+        setCampaignArchived.mutate({ campaignId: activeCampaignId, archived: false });
+    },
   });
 
   // Actual save path — clears drafts when the zone group changed, then
@@ -479,12 +551,25 @@ function CampaignsLayout() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => archiveActiveCampaign()}
+                onClick={() =>
+                  activeCampaign?.isArchived
+                    ? setCampaignArchived.mutate({
+                        campaignId: activeCampaign.campaignId,
+                        archived: false,
+                      })
+                    : archiveActiveCampaign()
+                }
                 disabled={!activeCampaign}
               >
                 {activeCampaign?.isArchived ? <ArchiveRestore /> : <Archive />}
                 {activeCampaign?.isArchived ? "Unarchive" : "Archive"}
               </Button>
+              {activeCampaign?.isArchived ? (
+                <Button variant="outline" onClick={() => void deleteActiveCampaign()}>
+                  <Trash2 />
+                  Delete
+                </Button>
+              ) : null}
             </EditorHeader>
           ) : null}
           <div className="min-h-0 flex-1">
@@ -560,6 +645,19 @@ function CampaignsLayout() {
           if (!pendingZoneChange) return;
           void commitConfigure(pendingZoneChange.patch, { clearDrafts: true });
         }}
+      />
+
+      <DeleteDialog
+        open={removeOpen}
+        onOpenChange={(next) => {
+          if (removeCampaign.isPending) return;
+          setRemoveOpen(next);
+        }}
+        entity="campaign"
+        name={removeSnapshot.name}
+        blockers={removeSnapshot.blockers}
+        pending={removeCampaign.isPending}
+        onConfirm={onConfirmRemove}
       />
     </>
   );

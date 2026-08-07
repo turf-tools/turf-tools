@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, Copy, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -12,6 +12,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
+import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
@@ -135,20 +136,16 @@ function ScriptsLayout() {
     onError: (e) => toast.error(e.message),
   });
 
-  // Archive flow: unarchive is immediate (and stays put); archive checks
-  // for active campaigns first and confirms through the dialog when any
-  // reference this script, then exits to a neighboring active script (or
-  // the index when none remain). Snapshotted at click time so the
-  // dialog body keeps its content during the close animation.
+  // Archive flow: archive checks for active campaigns first and confirms
+  // through the dialog when any reference this script, then exits to a
+  // neighboring active script (or the index when none remain).
+  // Snapshotted at click time so the dialog body keeps its content
+  // during the close animation.
   const [archiveSnapshot, setArchiveSnapshot] = useState({ name: "", campaignCount: 0 });
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   const archiveActiveScript = async () => {
-    if (!activeScript) return;
-    if (activeScript.isArchived) {
-      setScriptArchived.mutate({ scriptId: activeScript.scriptId, archived: false });
-      return;
-    }
+    if (!activeScript || activeScript.isArchived) return;
     const { count } = await queryClient.fetchQuery({
       queryKey: ["scripts", "count-campaigns", activeScript.scriptId],
       queryFn: () => client.scripts.countCampaigns({ scriptId: activeScript.scriptId }),
@@ -167,11 +164,74 @@ function ScriptsLayout() {
     setScriptArchived.mutate({ scriptId: activeScriptId, archived: true });
   };
 
+  // Delete flow (archived scripts only): fetch what still references the
+  // script, then confirm through the dialog — referenced scripts get an
+  // explanation instead of a destructive action.
+  const [removeSnapshot, setRemoveSnapshot] = useState<{
+    name: string;
+    blockers: DeleteBlocker[];
+  }>({ name: "", blockers: [] });
+  const [removeOpen, setRemoveOpen] = useState(false);
+
+  const removeScript = useMutation({
+    mutationFn: (input: { scriptId: string }) => client.scripts.remove(input),
+    onSuccess: async (_data, input) => {
+      setRemoveOpen(false);
+      await queryClient.cancelQueries({ queryKey: ["scripts"] });
+      // Exit to a neighbor in the visible rail (archived rows are shown
+      // while one is selected), patch the row out, then let the redirect
+      // land — same ordering rationale as the archive flow above.
+      const visible = sortedScripts.filter((s) => s.scriptId !== input.scriptId);
+      const idx = sortedScripts.findIndex((s) => s.scriptId === input.scriptId);
+      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+      const patch = () =>
+        queryClient.setQueryData<typeof scripts>(
+          ["scripts"],
+          (old) => old?.filter((s) => s.scriptId !== input.scriptId) ?? old,
+        );
+      if (fallback) {
+        await goToScript(fallback.scriptId);
+        patch();
+      } else {
+        patch();
+        await navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteActiveScript = async () => {
+    if (!activeScript?.isArchived) return;
+    try {
+      const { blockers } = await client.scripts.removeCheck({ scriptId: activeScript.scriptId });
+      setRemoveSnapshot({ name: activeScript.name, blockers });
+      setRemoveOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't check references.");
+    }
+  };
+
+  const onConfirmRemove = () => {
+    if (!activeScriptId) return;
+    removeScript.mutate({ scriptId: activeScriptId });
+  };
+
+  // Command-Delete escalates: archive an active script, delete an
+  // archived one (behind the confirm). Command-U is the way back.
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
-    enabled: !!activeScriptId,
-    onMatch: () => void archiveActiveScript(),
+    enabled: !!activeScript,
+    onMatch: () => void (activeScript?.isArchived ? deleteActiveScript() : archiveActiveScript()),
+  });
+  useHotkey({
+    key: "u",
+    mod: true,
+    enabled: !!activeScript?.isArchived,
+    onMatch: () => {
+      if (activeScriptId) setScriptArchived.mutate({ scriptId: activeScriptId, archived: false });
+    },
   });
 
   return (
@@ -223,12 +283,22 @@ function ScriptsLayout() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => void archiveActiveScript()}
+              onClick={() =>
+                activeScript?.isArchived
+                  ? setScriptArchived.mutate({ scriptId: activeScript.scriptId, archived: false })
+                  : void archiveActiveScript()
+              }
               disabled={!activeScript}
             >
               {activeScript?.isArchived ? <ArchiveRestore /> : <Archive />}
               {activeScript?.isArchived ? "Unarchive" : "Archive"}
             </Button>
+            {activeScript?.isArchived ? (
+              <Button variant="outline" onClick={() => void deleteActiveScript()}>
+                <Trash2 />
+                Delete
+              </Button>
+            ) : null}
           </EditorHeader>
           <div className="min-h-0 flex-1">
             <Outlet />
@@ -274,6 +344,19 @@ function ScriptsLayout() {
         campaignCount={archiveSnapshot.campaignCount}
         pending={setScriptArchived.isPending}
         onConfirm={onConfirmArchive}
+      />
+
+      <DeleteDialog
+        open={removeOpen}
+        onOpenChange={(next) => {
+          if (removeScript.isPending) return;
+          setRemoveOpen(next);
+        }}
+        entity="script"
+        name={removeSnapshot.name}
+        blockers={removeSnapshot.blockers}
+        pending={removeScript.isPending}
+        onConfirm={onConfirmRemove}
       />
     </>
   );

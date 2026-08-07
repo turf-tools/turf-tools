@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, isNull, ne, sql } from "@turf-tools/db";
-import { campaigns, segments } from "@turf-tools/db/schema";
+import { and, asc, eq, isNull, ne, sql, type Db } from "@turf-tools/db";
+import { campaigns, segments, turfDrafts, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
 import type { Criteria } from "~/lib/filters";
 import { detectSegmentCycles, SegmentRefError, type SegmentLike } from "~/lib/segment-refs";
@@ -176,8 +176,8 @@ export const clone = pub
   });
 
 // Soft-retire a segment: it leaves the rail and pickers but stays
-// resolvable for the campaigns and turfs that reference it. There is
-// no delete — turfs and campaigns reference segments forever.
+// resolvable for the campaigns and turfs that reference it. Referenced
+// segments live forever; only archived, unreferenced ones can be deleted.
 export const archive = pub
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -209,6 +209,89 @@ export const unarchive = pub
       )
       .returning({ segmentId: segments.segmentId });
     if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
+    return { ok: true as const };
+  });
+
+// Everything holding a reference to a segment, regardless of status —
+// permanent deletion must respect archived referencers too, unlike the
+// archive warning below. Campaigns and turfs are FK edges; turf drafts
+// and segment-ref criteria are soft edges that would dangle.
+async function removalBlockers(
+  db: Db,
+  organizationId: string,
+  segmentId: string,
+): Promise<Array<{ label: string; count: number }>> {
+  const [campaignRefs, turfRefs, draftRefs, orgSegments] = await Promise.all([
+    db
+      .select({ campaignId: campaigns.campaignId })
+      .from(campaigns)
+      .where(eq(campaigns.segmentId, segmentId)),
+    db.select({ turfId: turfs.turfId }).from(turfs).where(eq(turfs.segmentId, segmentId)),
+    db
+      .select({ turfDraftId: turfDrafts.turfDraftId })
+      .from(turfDrafts)
+      .where(eq(turfDrafts.segmentId, segmentId)),
+    db
+      .select({ segmentId: segments.segmentId, criteria: segments.criteria })
+      .from(segments)
+      .where(and(eq(segments.organizationId, organizationId), ne(segments.segmentId, segmentId))),
+  ]);
+  const segmentRefs = orgSegments.filter((s) =>
+    (s.criteria as Criteria).steps.some(
+      (step) => step.filter.kind === "segment" && step.filter.segmentId === segmentId,
+    ),
+  );
+  return [
+    { label: "campaign", count: campaignRefs.length },
+    { label: "turf", count: turfRefs.length },
+    { label: "segment", count: segmentRefs.length },
+    { label: "turf draft", count: draftRefs.length },
+  ].filter((b) => b.count > 0);
+}
+
+// What blocks permanent deletion, for the delete dialog. Empty = deletable.
+export const removeCheck = pub
+  .input(z.object({ segmentId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ segmentId: segments.segmentId })
+      .from(segments)
+      .where(
+        and(
+          eq(segments.segmentId, input.segmentId),
+          eq(segments.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
+    return { blockers: await removalBlockers(context.db, context.organizationId, input.segmentId) };
+  });
+
+// Permanently delete an archived, unreferenced segment. The archive-only
+// rule exists so referenced things stay resolvable forever; an entity
+// nothing has ever referenced carries no history, so deleting it loses
+// nothing. Archived-only keeps the destructive action off live working
+// state. The blocker check re-runs here and the FKs backstop any race.
+export const remove = pub
+  .input(z.object({ segmentId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const rows = await context.db
+      .select({ archivedAt: segments.archivedAt })
+      .from(segments)
+      .where(
+        and(
+          eq(segments.segmentId, input.segmentId),
+          eq(segments.organizationId, context.organizationId),
+        ),
+      );
+    if (rows.length === 0) throw new ORPCError("NOT_FOUND", { message: "Segment not found" });
+    if (!rows[0]!.archivedAt)
+      throw new ORPCError("BAD_REQUEST", { message: "Only archived segments can be deleted" });
+    const blockers = await removalBlockers(context.db, context.organizationId, input.segmentId);
+    if (blockers.length > 0)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "This segment is still referenced and can't be deleted",
+      });
+    await context.db.delete(segments).where(eq(segments.segmentId, input.segmentId));
     return { ok: true as const };
   });
 

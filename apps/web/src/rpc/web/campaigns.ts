@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, sql } from "@turf-tools/db";
-import { campaigns } from "@turf-tools/db/schema";
+import { and, asc, eq, sql, type Db } from "@turf-tools/db";
+import { campaigns, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
 import { activeDatasetId } from "./active-dataset";
@@ -181,7 +181,8 @@ export const clone = pub
 
 // Soft-retire a campaign: it leaves active lists and its turfs drop out
 // of the turfs view, but turf codes keep working and nothing is deleted.
-// There is no delete — campaigns are the anchor of turf history.
+// Campaigns with turfs are the anchor of turf history and live forever;
+// only archived, turf-less ones can be deleted.
 export const archive = pub
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -213,5 +214,63 @@ export const unarchive = pub
       )
       .returning({ campaignId: campaigns.campaignId });
     if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+    return { ok: true as const };
+  });
+
+// Everything holding a reference to a campaign, regardless of status —
+// permanent deletion must respect archived referencers too. Turfs are
+// the only hard edge; turf drafts are working state and cascade.
+async function removalBlockers(
+  db: Db,
+  campaignId: string,
+): Promise<Array<{ label: string; count: number }>> {
+  const turfRefs = await db
+    .select({ turfId: turfs.turfId })
+    .from(turfs)
+    .where(eq(turfs.campaignId, campaignId));
+  return [{ label: "turf", count: turfRefs.length }].filter((b) => b.count > 0);
+}
+
+// What blocks permanent deletion, for the delete dialog. Empty = deletable.
+export const removeCheck = pub
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ campaignId: campaigns.campaignId })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+    return { blockers: await removalBlockers(context.db, input.campaignId) };
+  });
+
+// Permanently delete an archived campaign that never published a turf
+// (drafts cascade). The blocker check re-runs here and the FKs backstop
+// any race.
+export const remove = pub
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const rows = await context.db
+      .select({ archivedAt: campaigns.archivedAt })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      );
+    if (rows.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+    if (!rows[0]!.archivedAt)
+      throw new ORPCError("BAD_REQUEST", { message: "Only archived campaigns can be deleted" });
+    const blockers = await removalBlockers(context.db, input.campaignId);
+    if (blockers.length > 0)
+      throw new ORPCError("BAD_REQUEST", {
+        message: "This campaign is still referenced and can't be deleted",
+      });
+    await context.db.delete(campaigns).where(eq(campaigns.campaignId, input.campaignId));
     return { ok: true as const };
   });

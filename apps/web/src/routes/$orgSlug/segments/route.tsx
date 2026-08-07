@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, ChevronDown, Copy, Download, Pencil } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Copy, Download, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
+import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
@@ -213,20 +214,16 @@ function SegmentsLayout() {
     onError: (e) => toast.error(e.message),
   });
 
-  // Archive flow: unarchive is immediate (and stays put); archive checks
-  // for active campaigns first and confirms through the dialog when any
-  // reference this segment, then exits to a neighboring active segment (or
-  // the index when none remain). Snapshotted at click time so the
-  // dialog body keeps its content during the close animation.
+  // Archive flow: archive checks for active campaigns first and confirms
+  // through the dialog when any reference this segment, then exits to a
+  // neighboring active segment (or the index when none remain).
+  // Snapshotted at click time so the dialog body keeps its content
+  // during the close animation.
   const [archiveSnapshot, setArchiveSnapshot] = useState({ name: "", campaignCount: 0 });
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   const archiveActiveSegment = async () => {
-    if (!activeSegment) return;
-    if (activeSegment.isArchived) {
-      setSegmentArchived.mutate({ segmentId: activeSegment.segmentId, archived: false });
-      return;
-    }
+    if (!activeSegment || activeSegment.isArchived) return;
     const { count } = await queryClient.fetchQuery({
       queryKey: ["segments", "count-campaigns", activeSegment.segmentId],
       queryFn: () => client.segments.countCampaigns({ segmentId: activeSegment.segmentId }),
@@ -245,11 +242,78 @@ function SegmentsLayout() {
     setSegmentArchived.mutate({ segmentId: activeSegmentId, archived: true });
   };
 
+  // Delete flow (archived segments only): fetch what still references the
+  // segment, then confirm through the dialog — referenced segments get an
+  // explanation instead of a destructive action.
+  const [removeSnapshot, setRemoveSnapshot] = useState<{
+    name: string;
+    blockers: DeleteBlocker[];
+  }>({ name: "", blockers: [] });
+  const [removeOpen, setRemoveOpen] = useState(false);
+
+  const removeSegment = useMutation({
+    mutationFn: (input: { segmentId: string }) => client.segments.remove(input),
+    onSuccess: async (_data, input) => {
+      setRemoveOpen(false);
+      await queryClient.cancelQueries({ queryKey: ["segments"] });
+      // Exit to a neighbor in the visible rail (archived rows are shown
+      // while one is selected), patch the row out, then let the redirect
+      // land — same ordering rationale as the archive flow above.
+      const visible = sortedSegments.filter((s) => s.segmentId !== input.segmentId);
+      const idx = sortedSegments.findIndex((s) => s.segmentId === input.segmentId);
+      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+      const patch = () =>
+        queryClient.setQueryData<typeof segments>(
+          ["segments"],
+          (old) => old?.filter((s) => s.segmentId !== input.segmentId) ?? old,
+        );
+      if (fallback) {
+        await goToSegment(fallback.segmentId);
+        patch();
+      } else {
+        patch();
+        await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["segments"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const deleteActiveSegment = async () => {
+    if (!activeSegment?.isArchived) return;
+    try {
+      const { blockers } = await client.segments.removeCheck({
+        segmentId: activeSegment.segmentId,
+      });
+      setRemoveSnapshot({ name: activeSegment.name, blockers });
+      setRemoveOpen(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't check references.");
+    }
+  };
+
+  const onConfirmRemove = () => {
+    if (!activeSegmentId) return;
+    removeSegment.mutate({ segmentId: activeSegmentId });
+  };
+
+  // Command-Delete escalates: archive an active segment, delete an
+  // archived one (behind the confirm). Command-U is the way back.
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
-    enabled: !!activeSegmentId,
-    onMatch: () => void archiveActiveSegment(),
+    enabled: !!activeSegment,
+    onMatch: () =>
+      void (activeSegment?.isArchived ? deleteActiveSegment() : archiveActiveSegment()),
+  });
+  useHotkey({
+    key: "u",
+    mod: true,
+    enabled: !!activeSegment?.isArchived,
+    onMatch: () => {
+      if (activeSegmentId)
+        setSegmentArchived.mutate({ segmentId: activeSegmentId, archived: false });
+    },
   });
 
   // No active dataset → nothing to build against; block the editor behind a
@@ -324,12 +388,25 @@ function SegmentsLayout() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => void archiveActiveSegment()}
+              onClick={() =>
+                activeSegment?.isArchived
+                  ? setSegmentArchived.mutate({
+                      segmentId: activeSegment.segmentId,
+                      archived: false,
+                    })
+                  : void archiveActiveSegment()
+              }
               disabled={!activeSegment}
             >
               {activeSegment?.isArchived ? <ArchiveRestore /> : <Archive />}
               {activeSegment?.isArchived ? "Unarchive" : "Archive"}
             </Button>
+            {activeSegment?.isArchived ? (
+              <Button variant="outline" onClick={() => void deleteActiveSegment()}>
+                <Trash2 />
+                Delete
+              </Button>
+            ) : null}
           </EditorHeader>
           <div className="min-h-0 flex-1">
             <Outlet />
@@ -405,6 +482,19 @@ function SegmentsLayout() {
         campaignCount={archiveSnapshot.campaignCount}
         pending={setSegmentArchived.isPending}
         onConfirm={onConfirmArchive}
+      />
+
+      <DeleteDialog
+        open={removeOpen}
+        onOpenChange={(next) => {
+          if (removeSegment.isPending) return;
+          setRemoveOpen(next);
+        }}
+        entity="segment"
+        name={removeSnapshot.name}
+        blockers={removeSnapshot.blockers}
+        pending={removeSegment.isPending}
+        onConfirm={onConfirmRemove}
       />
     </>
   );
