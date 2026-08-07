@@ -831,8 +831,7 @@ function OpenEndedInput({
       placeholderTextColor={isDark ? "#666" : "#999"}
       multiline
       // Done key dismisses (blur commits the draft; nothing submits).
-      // Costs newline entry — fine for doorstep answers, and deliberately
-      // NOT applied to the note composer, which keeps its newlines.
+      // Costs newline entry — fine for doorstep answers.
       returnKeyType="done"
       submitBehavior="blurAndSubmit"
       className={`font-sans text-lg text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border rounded-lg p-4 min-h-[80px] ${
@@ -891,6 +890,10 @@ function NoteContent({
         placeholder="Type a note..."
         placeholderTextColor={isDark ? "#666" : "#999"}
         multiline
+        // Done dismisses here too — costs newlines, but a stuck keyboard
+        // over the Submit button (large-font devices) is the worse trade.
+        returnKeyType="done"
+        submitBehavior="blurAndSubmit"
         className={`font-sans text-lg text-foreground dark:text-foreground-dark bg-surface dark:bg-surface-dark border rounded-lg p-4 min-h-[120px] ${
           focused
             ? "border-foreground dark:border-foreground-dark"
