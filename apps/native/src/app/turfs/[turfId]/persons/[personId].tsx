@@ -653,13 +653,13 @@ function ScriptContent({
       </Text>
       {script.steps.map((step) => {
         if (step.stepType === "text") {
+          // Real italic face, not the skew transform — skewX staircases
+          // multi-line text (each line shifts further than the last).
           return (
             <Text
               key={step.scriptStepId}
-              className="font-sans text-lg transform -skew-x-12 leading-6"
-              style={
-                Platform.OS === "android" ? { fontFamily: "Geist_400Regular_Italic" } : undefined
-              }
+              className="font-sans text-lg leading-6"
+              style={{ fontFamily: "Geist_400Regular_Italic" }}
             >
               {step.text}
             </Text>
