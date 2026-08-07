@@ -7,7 +7,7 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import { ChevronDown, Copy, Pencil, Settings2, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Copy, Pencil, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -30,7 +30,7 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
-import { Rail } from "~/components/rail";
+import { Rail, useShowArchived } from "~/components/rail";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignKeyCountsQuery,
@@ -106,8 +106,26 @@ function CampaignsLayout() {
   const { role } = Route.useRouteContext();
 
   const sortedCampaigns = sortByName(campaigns);
+  const activeCampaigns = sortedCampaigns.filter((c) => !c.isArchived);
+  const archivedCampaigns = sortedCampaigns.filter((c) => c.isArchived);
+  const [showArchived, setShowArchived] = useShowArchived(archivedCampaigns.length);
   const activeCampaign = campaigns.find((c) => c.campaignId === activeCampaignId) ?? null;
-  // Configure / rename / duplicate / delete need the bound segment + zone group
+
+  // Picker options exclude archived rows, except the one a campaign is
+  // already bound to — hiding that would blank the trigger label.
+  const segmentOptions = (boundId?: string | null) =>
+    segments
+      .filter((s) => !s.isArchived || s.segmentId === boundId)
+      .map((s) => ({ value: s.segmentId, label: s.name, archived: s.isArchived }));
+  const zoneGroupOptions = (boundId?: string | null) =>
+    zoneGroups
+      .filter((g) => !g.isArchived || g.zoneGroupId === boundId)
+      .map((g) => ({ value: g.zoneGroupId, label: g.name, archived: g.isArchived }));
+  const scriptOptions = (boundId?: string | null) =>
+    scripts
+      .filter((s) => !s.isArchived || s.scriptId === boundId)
+      .map((s) => ({ value: s.scriptId, label: s.name, archived: s.isArchived }));
+  // Configure / rename / duplicate need the bound segment + zone group
   // ids, which only live on the detail row. Fall back to the list row for the
   // pre-detail case (e.g., empty state).
   const campaignDetail = activeCampaignId
@@ -210,11 +228,47 @@ function CampaignsLayout() {
     },
   });
 
-  const deleteCampaign = useDialogMutation({
-    mutationFn: (campaignId: string) => client.campaigns.remove({ campaignId }),
-    onSuccess: () => {
+  const setCampaignArchived = useMutation({
+    mutationFn: (input: { campaignId: string; archived: boolean }) =>
+      input.archived
+        ? client.campaigns.archive({ campaignId: input.campaignId })
+        : client.campaigns.unarchive({ campaignId: input.campaignId }),
+    onSuccess: async (_data, input) => {
+      // Cancel in-flight list fetches so a pre-mutation response can't
+      // land after the patch and clobber it.
+      await queryClient.cancelQueries({ queryKey: ["campaigns"] });
+      const patch = () =>
+        queryClient.setQueryData<typeof campaigns>(
+          ["campaigns"],
+          (old) =>
+            old?.map((c) =>
+              c.campaignId === input.campaignId ? { ...c, isArchived: input.archived } : c,
+            ) ?? old,
+        );
+      if (input.archived) {
+        // Leave before the cache says "archived" — a patched cache under
+        // a still-selected item renders a one-frame "Unarchive" flash.
+        // With a fallback, move first and patch after. On the last
+        // active item the index redirect needs the patched list (else it
+        // bounces back here), so patch and navigate in one synchronous
+        // block — batched into a single render, like the create flows.
+        const idx = activeCampaigns.findIndex((c) => c.campaignId === input.campaignId);
+        const fallback = activeCampaigns[idx - 1] ?? activeCampaigns[idx + 1] ?? null;
+        if (fallback) {
+          await goToCampaign(fallback.campaignId);
+          patch();
+        } else {
+          patch();
+          await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
+        }
+      } else {
+        patch();
+      }
       void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      // Archived state changes which turfs the board shows.
+      void queryClient.invalidateQueries({ queryKey: ["turfs"] });
     },
+    onError: (e) => toast.error(e.message),
   });
 
   const updateCampaignMutation = useMutation({
@@ -257,8 +311,8 @@ function CampaignsLayout() {
 
   // A campaign can't exist without a segment and a script — gate the create
   // dialog behind both so it never opens in a state where it can't succeed.
-  const needSegment = segments.length === 0;
-  const needScript = scripts.length === 0;
+  const needSegment = segments.every((s) => s.isArchived);
+  const needScript = scripts.every((s) => s.isArchived);
   const [prereqsOpen, setPrereqsOpen] = useState(false);
 
   const [configOpen, setConfigOpen] = useState(false);
@@ -269,44 +323,25 @@ function CampaignsLayout() {
     patch: { segmentId: string | null; zoneGroupId: string | null; scriptId: string | null };
     draftCount: number;
   } | null>(null);
-  // Snapshotted at click time so the dialog body keeps showing the
-  // just-deleted name during its close animation, even after the URL
-  // has reactively swapped to the fallback campaign.
-  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", turfCount: 0 });
-
-  const onConfirmDelete = () => {
-    if (!activeCampaignId) return;
-    const idx = sortedCampaigns.findIndex((c) => c.campaignId === activeCampaignId);
-    const fallback = sortedCampaigns[idx - 1] ?? sortedCampaigns[idx + 1] ?? null;
-    deleteCampaign.mutate(activeCampaignId, {
-      onSuccess: async () => {
-        if (fallback) {
-          await goToCampaign(fallback.campaignId);
-        } else {
-          await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
-        }
-      },
-    });
+  // Archiving is the terminal act for a campaign (no warning dialog) —
+  // exits to a neighboring active campaign, or the index when none
+  // remain. Unarchive stays put.
+  const archiveActiveCampaign = () => {
+    if (!activeCampaign) return;
+    if (activeCampaign.isArchived) {
+      setCampaignArchived.mutate({ campaignId: activeCampaign.campaignId, archived: false });
+      return;
+    }
+    setCampaignArchived.mutate({ campaignId: activeCampaign.campaignId, archived: true });
   };
 
   // Disabled in the cutter so Mod-Delete there isn't claimed by the
-  // campaign-delete shortcut (the cutter has its own Delete behavior).
+  // campaign-archive shortcut (the cutter has its own Delete behavior).
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
     enabled: !!activeCampaignId && !isCut,
-    onMatch: () => {
-      if (!activeCampaignId) return;
-      void (async () => {
-        const { count } = await queryClient.fetchQuery({
-          queryKey: ["campaigns", "count-turfs", activeCampaignId],
-          queryFn: () => client.turfs.countForCampaign({ campaignId: activeCampaignId }),
-          staleTime: 0,
-        });
-        setDeleteSnapshot({ name: activeCampaign?.name ?? "", turfCount: count });
-        deleteCampaign.open();
-      })();
-    },
+    onMatch: () => archiveActiveCampaign(),
   });
 
   // Actual save path — clears drafts when the zone group changed, then
@@ -391,12 +426,28 @@ function CampaignsLayout() {
   return (
     <>
       <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
-        <Rail>
-          {sortedCampaigns.map((c) => (
+        <Rail
+          footer={
+            archivedCampaigns.length > 0 ? (
+              <Rail.ShowArchived
+                show={showArchived}
+                onToggle={(next) => {
+                  setShowArchived(next);
+                  // Hiding archived while one is selected would leave the
+                  // editor on a row absent from the rail — exit to the index.
+                  if (!next && activeCampaign?.isArchived)
+                    void navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
+                }}
+              />
+            ) : null
+          }
+        >
+          {(showArchived ? sortedCampaigns : activeCampaigns).map((c) => (
             <Rail.Item
               key={c.campaignId}
               label={c.name}
               active={c.campaignId === activeCampaignId}
+              trailing={c.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
               onSelect={() => void goToCampaign(c.campaignId)}
               onRename={renameCampaign.open}
             />
@@ -428,20 +479,11 @@ function CampaignsLayout() {
               </Button>
               <Button
                 variant="outline"
-                onClick={async () => {
-                  if (!activeCampaignId) return;
-                  const { count } = await queryClient.fetchQuery({
-                    queryKey: ["campaigns", "count-turfs", activeCampaignId],
-                    queryFn: () => client.turfs.countForCampaign({ campaignId: activeCampaignId }),
-                    staleTime: 0,
-                  });
-                  setDeleteSnapshot({ name: activeCampaign?.name ?? "", turfCount: count });
-                  deleteCampaign.open();
-                }}
+                onClick={() => archiveActiveCampaign()}
                 disabled={!activeCampaign}
               >
-                <Trash2 />
-                Delete
+                {activeCampaign?.isArchived ? <ArchiveRestore /> : <Archive />}
+                {activeCampaign?.isArchived ? "Unarchive" : "Archive"}
               </Button>
             </EditorHeader>
           ) : null}
@@ -464,9 +506,9 @@ function CampaignsLayout() {
         onOpenChange={createCampaign.onOpenChange}
         pending={createCampaign.isPending}
         error={createCampaign.error}
-        segmentOptions={segments.map((s) => ({ value: s.segmentId, label: s.name }))}
-        zoneGroupOptions={zoneGroups.map((g) => ({ value: g.zoneGroupId, label: g.name }))}
-        scriptOptions={scripts.map((s) => ({ value: s.scriptId, label: s.name }))}
+        segmentOptions={segmentOptions()}
+        zoneGroupOptions={zoneGroupOptions()}
+        scriptOptions={scriptOptions()}
         onSubmit={(values) => createCampaign.mutate(values)}
       />
 
@@ -494,25 +536,15 @@ function CampaignsLayout() {
         }}
       />
 
-      <DeleteDialog
-        open={deleteCampaign.isOpen}
-        onOpenChange={deleteCampaign.onOpenChange}
-        campaignName={deleteSnapshot.name}
-        turfCount={deleteSnapshot.turfCount}
-        pending={deleteCampaign.isPending}
-        error={deleteCampaign.error}
-        onConfirm={onConfirmDelete}
-      />
-
       <ConfigureDialog
         open={configOpen}
         onOpenChange={setConfigOpen}
         currentSegmentId={campaign?.segmentId ?? null}
         currentZoneGroupId={campaign?.zoneGroupId ?? null}
         currentScriptId={campaign?.scriptId ?? null}
-        segmentOptions={segments.map((s) => ({ value: s.segmentId, label: s.name }))}
-        zoneGroupOptions={zoneGroups.map((g) => ({ value: g.zoneGroupId, label: g.name }))}
-        scriptOptions={scripts.map((s) => ({ value: s.scriptId, label: s.name }))}
+        segmentOptions={segmentOptions(campaign?.segmentId)}
+        zoneGroupOptions={zoneGroupOptions(campaign?.zoneGroupId)}
+        scriptOptions={scriptOptions(campaign?.scriptId)}
         pending={configSaving}
         onSubmit={(patch) => void saveConfigure(patch)}
       />
@@ -537,7 +569,10 @@ function CampaignsLayout() {
 // Dialog components
 // ---------------------------------------------------------------------------
 
-type SelectOption = { value: string; label: string };
+// `archived` marks the one archived entity a campaign is already bound
+// to (archived entities are otherwise excluded from options) — rendered
+// as a muted suffix, never folded into the name itself.
+type SelectOption = { value: string; label: string; archived?: boolean };
 
 // Shown in place of the create dialog when the org has no segments and/or no
 // scripts — a campaign requires one of each, so the form couldn't succeed.
@@ -806,63 +841,6 @@ function RenameDialog({
   );
 }
 
-function DeleteDialog({
-  open,
-  onOpenChange,
-  campaignName,
-  turfCount,
-  pending,
-  error,
-  onConfirm,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  campaignName: string;
-  turfCount: number;
-  pending: boolean;
-  error: string | null;
-  onConfirm: () => void;
-}) {
-  const inUse = turfCount > 0;
-  useConfirmHotkey({ open: open && !inUse, disabled: pending, onConfirm });
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        {!inUse && <DialogTitle>Delete campaign?</DialogTitle>}
-        <DialogDescription>
-          {inUse ? (
-            <>
-              Can't delete <span className="font-medium text-foreground">{campaignName}</span>{" "}
-              because it has <span className="font-bold text-foreground">{turfCount}</span>{" "}
-              published turf{turfCount === 1 ? "" : "s"}. Turfs can't be removed yet — clearing them
-              is a follow-up.
-            </>
-          ) : (
-            <>
-              Permanently deletes{" "}
-              <span className="font-medium text-foreground">{campaignName}</span>. This can't be
-              undone.
-            </>
-          )}
-        </DialogDescription>
-        <DialogError error={error} />
-        <div className="mt-2 flex justify-end gap-2">
-          {inUse ? (
-            <DialogClose render={<Button variant="outline" />}>Ok</DialogClose>
-          ) : (
-            <>
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <Button variant="destructive" onClick={onConfirm} loading={pending}>
-                Delete campaign
-              </Button>
-            </>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function ConfirmZoneChangeDialog({
   open,
   onOpenChange,
@@ -1014,7 +992,11 @@ function ConfigField({
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v || null) });
   const current = options.find((o) => o.value === value);
-  const triggerLabel = current?.label ?? (value === null && noneLabel ? noneLabel : placeholder);
+  const triggerLabel = current
+    ? `${current.label}${current.archived ? " (Archived)" : ""}`
+    : value === null && noneLabel
+      ? noneLabel
+      : placeholder;
   return (
     <div className="flex flex-col gap-1.5">
       {label ? <label className="text-sm text-muted-foreground">{label}</label> : null}
@@ -1034,6 +1016,7 @@ function ConfigField({
             {options.map((o) => (
               <DropdownMenuRadioItem key={o.value} value={o.value}>
                 {o.label}
+                {o.archived ? " (Archived)" : null}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>

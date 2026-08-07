@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, sql } from "@turf-tools/db";
-import { campaigns, segments, turfDrafts, turfs, zones } from "@turf-tools/db/schema";
+import { and, asc, eq, isNull, sql } from "@turf-tools/db";
+import { campaigns, segments, turfDrafts, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
 import { activeDatasetId } from "./active-dataset";
@@ -10,10 +10,9 @@ import { webMut as mut, webPub as pub } from "../context";
 // belongs to the active dataset (matching campaigns.list, so the board's
 // campaign filter can always name every row — dataset-level, not exact
 // version, so activating a newer version of the same dataset keeps
-// mid-campaign turfs visible). Optionally filtered by campaign. The
-// `segments` and `zones` joins are LEFT joins because a turf can outlive its
-// source segment or zone (forever-snapshot policy); the row stays in the
-// list with the name missing rather than disappearing.
+// mid-campaign turfs visible). Optionally filtered by campaign. Zone
+// identity comes from the publish-time stamp, not a live join — labels
+// always describe the zone as it was cut.
 export const listForOrg = pub
   .input(z.object({ campaignId: z.string().uuid().optional() }).optional())
   .handler(async ({ context, input }) => {
@@ -22,6 +21,9 @@ export const listForOrg = pub
     const scope = and(
       eq(campaigns.organizationId, context.organizationId),
       eq(campaigns.datasetId, datasetId),
+      // Archived campaigns take their turfs off the board (the turfs and
+      // their codes live on; unarchiving brings them back).
+      isNull(campaigns.archivedAt),
     );
     const where = input?.campaignId ? and(scope, eq(turfs.campaignId, input.campaignId)) : scope;
     const rows = await context.db
@@ -37,34 +39,17 @@ export const listForOrg = pub
         segmentId: turfs.segmentId,
         segmentName: segments.name,
         zoneId: turfs.zoneId,
-        zoneName: zones.name,
+        // Stamped at publish — deliberately not the zone's current name,
+        // so labels always describe the zone as it was cut.
+        zoneName: turfs.zoneName,
         createdAt: turfs.createdAt,
       })
       .from(turfs)
       .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
       .leftJoin(segments, eq(turfs.segmentId, segments.segmentId))
-      .leftJoin(zones, eq(turfs.zoneId, zones.zoneId))
       .where(where)
       .orderBy(asc(turfs.createdAt));
     return rows;
-  });
-
-// Total published-turf count for a campaign. Used by the campaign delete
-// dialog to refuse deletion when turfs exist.
-export const countForCampaign = pub
-  .input(z.object({ campaignId: z.string().uuid() }))
-  .handler(async ({ context, input }) => {
-    const rows = await context.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(turfs)
-      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
-      .where(
-        and(
-          eq(turfs.campaignId, input.campaignId),
-          eq(campaigns.organizationId, context.organizationId),
-        ),
-      );
-    return { count: rows[0]?.count ?? 0 };
   });
 
 // Per-zone turf counts for a campaign — drafts (work-in-progress in the

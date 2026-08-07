@@ -1,7 +1,8 @@
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Eraser, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Eraser, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
 import {
@@ -15,7 +16,7 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
-import { Rail } from "~/components/rail";
+import { Rail, useShowArchived } from "~/components/rail";
 import { useFilterCatalog } from "~/lib/manifest";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
@@ -52,6 +53,9 @@ function ZonesLayout() {
   const { data: manifest } = useSuspenseQuery(manifestQuery());
   const { role } = Route.useRouteContext();
   const sortedZoneGroups = sortByName(zoneGroups);
+  const activeZoneGroups = sortedZoneGroups.filter((g) => !g.isArchived);
+  const archivedZoneGroups = sortedZoneGroups.filter((g) => g.isArchived);
+  const [showArchived, setShowArchived] = useShowArchived(archivedZoneGroups.length);
   const activeGroup = zoneGroups.find((g) => g.zoneGroupId === activeGroupId) ?? null;
 
   const goToGroup = (id: string) =>
@@ -104,53 +108,87 @@ function ZonesLayout() {
     },
   });
 
-  const deleteGroup = useDialogMutation({
-    mutationFn: (zoneGroupId: string) => client.zoneGroups.remove({ zoneGroupId }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-    },
-  });
-
-  // Snapshotted at click time so the dialog body keeps showing the
-  // just-deleted name during its close animation, even after the URL
-  // has reactively swapped to the fallback zone group.
-  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", campaignCount: 0 });
-
-  const onConfirmDelete = () => {
-    if (!activeGroupId) return;
-    const idx = sortedZoneGroups.findIndex((g) => g.zoneGroupId === activeGroupId);
-    // Previous neighbor; fall back to next if active is first; null if it
-    // was the only group.
-    const fallback = sortedZoneGroups[idx - 1] ?? sortedZoneGroups[idx + 1] ?? null;
-    deleteGroup.mutate(activeGroupId, {
-      onSuccess: async () => {
+  const setGroupArchived = useMutation({
+    mutationFn: (input: { zoneGroupId: string; archived: boolean }) =>
+      input.archived
+        ? client.zoneGroups.archive({ zoneGroupId: input.zoneGroupId })
+        : client.zoneGroups.unarchive({ zoneGroupId: input.zoneGroupId }),
+    onSuccess: async (_data, input) => {
+      // Cancel in-flight list fetches so a pre-mutation response can't
+      // land after the patch and clobber it.
+      await queryClient.cancelQueries({ queryKey: ["zone-groups"] });
+      const patch = () =>
+        queryClient.setQueryData<typeof zoneGroups>(
+          ["zone-groups"],
+          (old) =>
+            old?.map((g) =>
+              g.zoneGroupId === input.zoneGroupId ? { ...g, isArchived: input.archived } : g,
+            ) ?? old,
+        );
+      if (input.archived) {
+        // Leave before the cache says "archived" — a patched cache under
+        // a still-selected item renders a one-frame "Unarchive" flash.
+        // With a fallback, move first and patch after. On the last
+        // active item the index redirect needs the patched list (else it
+        // bounces back here), so patch and navigate in one synchronous
+        // block — batched into a single render, like the create flows.
+        setArchiveOpen(false);
+        const idx = activeZoneGroups.findIndex((g) => g.zoneGroupId === input.zoneGroupId);
+        const fallback = activeZoneGroups[idx - 1] ?? activeZoneGroups[idx + 1] ?? null;
         if (fallback) {
           await goToGroup(fallback.zoneGroupId);
+          patch();
         } else {
+          patch();
           await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
         }
-      },
+      } else {
+        patch();
+      }
+      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Archive flow: unarchive is immediate (and stays put); archive checks
+  // for active campaigns first and confirms through the dialog when any
+  // reference this group, then exits to a neighboring active group (or
+  // the index when none remain). Snapshotted at click time so the
+  // dialog body keeps its content during the close animation.
+  const [archiveSnapshot, setArchiveSnapshot] = useState({ name: "", campaignCount: 0 });
+  const [archiveOpen, setArchiveOpen] = useState(false);
+
+  const archiveActiveGroup = async () => {
+    if (!activeGroup) return;
+    if (activeGroup.isArchived) {
+      setGroupArchived.mutate({ zoneGroupId: activeGroup.zoneGroupId, archived: false });
+      return;
+    }
+    const { count } = await queryClient.fetchQuery({
+      queryKey: ["zone-groups", "count-campaigns", activeGroup.zoneGroupId],
+      queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroup.zoneGroupId }),
+      staleTime: 0,
     });
+    if (count > 0) {
+      setArchiveSnapshot({ name: activeGroup.name, campaignCount: count });
+      setArchiveOpen(true);
+    } else {
+      setGroupArchived.mutate({ zoneGroupId: activeGroup.zoneGroupId, archived: true });
+    }
+  };
+
+  const onConfirmArchive = () => {
+    if (!activeGroupId) return;
+    setGroupArchived.mutate({ zoneGroupId: activeGroupId, archived: true });
   };
 
   // Mod-Delete / Mod-Backspace escalates from "delete one zone" (the inner
-  // editor's plain-Delete handler) to "delete the whole zone group".
+  // editor's plain-Delete handler) to "archive the whole zone group".
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
     enabled: !!activeGroupId,
-    onMatch: () => {
-      if (!activeGroupId) return;
-      void (async () => {
-        const { count } = await queryClient.fetchQuery({
-          queryKey: ["zone-groups", "count-campaigns", activeGroupId],
-          queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
-          staleTime: 0,
-        });
-        setDeleteSnapshot({ name: activeGroup?.name ?? "", campaignCount: count });
-        deleteGroup.open();
-      })();
-    },
+    onMatch: () => void archiveActiveGroup(),
   });
 
   // No active dataset → nothing to build against; block the editor behind a
@@ -168,12 +206,28 @@ function ZonesLayout() {
   return (
     <>
       <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
-        <Rail>
-          {sortedZoneGroups.map((g) => (
+        <Rail
+          footer={
+            archivedZoneGroups.length > 0 ? (
+              <Rail.ShowArchived
+                show={showArchived}
+                onToggle={(next) => {
+                  setShowArchived(next);
+                  // Hiding archived while one is selected would leave the
+                  // editor on a row absent from the rail — exit to the index.
+                  if (!next && activeGroup?.isArchived)
+                    void navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
+                }}
+              />
+            ) : null
+          }
+        >
+          {(showArchived ? sortedZoneGroups : activeZoneGroups).map((g) => (
             <Rail.Item
               key={g.zoneGroupId}
               label={g.name}
               active={g.zoneGroupId === activeGroupId}
+              trailing={g.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
               onSelect={() => void goToGroup(g.zoneGroupId)}
               onRename={renameGroup.open}
             />
@@ -197,20 +251,11 @@ function ZonesLayout() {
             </Button>
             <Button
               variant="outline"
-              onClick={async () => {
-                if (!activeGroupId) return;
-                const { count } = await queryClient.fetchQuery({
-                  queryKey: ["zone-groups", "count-campaigns", activeGroupId],
-                  queryFn: () => client.zoneGroups.countCampaigns({ zoneGroupId: activeGroupId }),
-                  staleTime: 0,
-                });
-                setDeleteSnapshot({ name: activeGroup?.name ?? "", campaignCount: count });
-                deleteGroup.open();
-              }}
+              onClick={() => void archiveActiveGroup()}
               disabled={!activeGroup}
             >
-              <Trash2 />
-              Delete
+              {activeGroup?.isArchived ? <ArchiveRestore /> : <Archive />}
+              {activeGroup?.isArchived ? "Unarchive" : "Archive"}
             </Button>
           </EditorHeader>
           <div className="min-h-0 flex-1">
@@ -267,14 +312,16 @@ function ZonesLayout() {
         }}
       />
 
-      <DeleteDialog
-        open={deleteGroup.isOpen}
-        onOpenChange={deleteGroup.onOpenChange}
-        groupName={deleteSnapshot.name}
-        campaignCount={deleteSnapshot.campaignCount}
-        pending={deleteGroup.isPending}
-        error={deleteGroup.error}
-        onConfirm={onConfirmDelete}
+      <ArchiveDialog
+        open={archiveOpen}
+        onOpenChange={(next) => {
+          if (setGroupArchived.isPending) return;
+          setArchiveOpen(next);
+        }}
+        groupName={archiveSnapshot.name}
+        campaignCount={archiveSnapshot.campaignCount}
+        pending={setGroupArchived.isPending}
+        onConfirm={onConfirmArchive}
       />
     </>
   );
@@ -483,13 +530,14 @@ function SaveAsDialog({
   );
 }
 
-function DeleteDialog({
+// Confirm gate shown only when active campaigns reference the group —
+// an unreferenced group archives without ceremony.
+function ArchiveDialog({
   open,
   onOpenChange,
   groupName,
   campaignCount,
   pending,
-  error,
   onConfirm,
 }: {
   open: boolean;
@@ -497,41 +545,25 @@ function DeleteDialog({
   groupName: string;
   campaignCount: number;
   pending: boolean;
-  error: string | null;
   onConfirm: () => void;
 }) {
-  const inUse = campaignCount > 0;
-  useConfirmHotkey({ open: open && !inUse, disabled: pending, onConfirm });
+  useConfirmHotkey({ open, disabled: pending, onConfirm });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        {!inUse && <DialogTitle>Delete zone group?</DialogTitle>}
+        <DialogTitle>Archive zone group?</DialogTitle>
         <DialogDescription>
-          {inUse ? (
-            <>
-              Can't delete <span className="font-medium text-foreground">{groupName}</span> because
-              it is used by {campaignCount} campaign{campaignCount === 1 ? "" : "s"}. Detach or
-              delete those campaigns first, then try again.
-            </>
-          ) : (
-            <>
-              Permanently deletes <span className="font-medium text-foreground">{groupName}</span>{" "}
-              and every zone inside it. This can't be undone.
-            </>
-          )}
+          <span className="font-medium text-foreground">{groupName}</span> is used by{" "}
+          <span className="font-bold text-foreground">{campaignCount}</span> active campaign
+          {campaignCount === 1 ? "" : "s"}. The campaigns keep working but the zone group will be
+          hidden. You can unarchive it anytime.
         </DialogDescription>
-        <DialogError error={error} />
         <div className="mt-2 flex justify-end gap-2">
-          {inUse ? (
-            <DialogClose render={<Button variant="outline" />}>Ok</DialogClose>
-          ) : (
-            <>
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <Button variant="destructive" onClick={onConfirm} loading={pending}>
-                Delete group
-              </Button>
-            </>
-          )}
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button onClick={onConfirm} loading={pending}>
+            <Archive />
+            Archive group
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

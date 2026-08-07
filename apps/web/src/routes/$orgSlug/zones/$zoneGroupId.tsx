@@ -486,11 +486,13 @@ function ZoneGroupEditor() {
                 {...overlaySegmentDropdown.radio}
                 value={overlaySegmentId ?? ""}
               >
-                {segments?.map((s) => (
-                  <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
-                    {s.name}
-                  </DropdownMenuRadioItem>
-                ))}
+                {segments
+                  ?.filter((s) => !s.isArchived || s.segmentId === overlaySegmentId)
+                  .map((s) => (
+                    <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
+                      {s.name}
+                    </DropdownMenuRadioItem>
+                  ))}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>

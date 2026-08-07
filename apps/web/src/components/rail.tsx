@@ -1,11 +1,25 @@
 import { Plus } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { Switch } from "~/components/switch";
 import { cn } from "~/lib/utils";
 
-function RailRoot({ children }: { children: ReactNode }) {
+// Show-archived toggle state for a rail. Resets itself when the last
+// archived item disappears (e.g. everything got unarchived) so the
+// toggle doesn't come back pre-enabled the next time something is
+// archived — while any archived items remain, the choice sticks.
+export function useShowArchived(archivedCount: number) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (archivedCount === 0) setShow(false);
+  }, [archivedCount]);
+  return [show, setShow] as const;
+}
+
+function RailRoot({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
   return (
     <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border">
       <div className="flex-1 overflow-y-auto pt-4 pb-2">{children}</div>
+      {footer}
     </aside>
   );
 }
@@ -58,6 +72,24 @@ function RailItem({
   );
 }
 
+// Pinned rail-bottom toggle revealing archived items. Render (via the
+// Rail `footer` prop) only when archived items exist — an org that
+// never archived anything shouldn't see the control.
+function RailShowArchived({
+  show,
+  onToggle,
+}: {
+  show: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between border-t border-border px-3 py-2.5 select-none">
+      <span className="text-sm text-muted-foreground">Show archived</span>
+      <Switch checked={show} onCheckedChange={onToggle} />
+    </label>
+  );
+}
+
 function RailNew({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <div className="px-2 pb-1">
@@ -79,4 +111,5 @@ function RailNew({ label, onClick }: { label: string; onClick: () => void }) {
 export const Rail = Object.assign(RailRoot, {
   Item: RailItem,
   New: RailNew,
+  ShowArchived: RailShowArchived,
 });

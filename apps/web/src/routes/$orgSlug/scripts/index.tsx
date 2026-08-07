@@ -8,7 +8,10 @@ export const Route = createFileRoute("/$orgSlug/scripts/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    const fallback = recallOrFirst(orgSlug, "scripts", scripts, (s) => s.scriptId);
+    // Archived scripts stay reachable from the rail but never win the
+    // index redirect.
+    const active = scripts.filter((s) => !s.isArchived);
+    const fallback = recallOrFirst(orgSlug, "scripts", active, (s) => s.scriptId);
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/scripts/$scriptId",
@@ -22,7 +25,7 @@ export const Route = createFileRoute("/$orgSlug/scripts/")({
 function ScriptsEmpty() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      No scripts yet — create one to get started.
+      No active scripts yet, create one to get started.
     </div>
   );
 }

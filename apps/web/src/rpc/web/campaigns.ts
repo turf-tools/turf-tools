@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq } from "@turf-tools/db";
+import { and, asc, eq, sql } from "@turf-tools/db";
 import { campaigns } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
@@ -14,6 +14,7 @@ const campaignSelect = {
   zoneGroupId: campaigns.zoneGroupId,
   scriptId: campaigns.scriptId,
   createdAt: campaigns.createdAt,
+  isArchived: sql<boolean>`(${campaigns.archivedAt} IS NOT NULL)`,
 };
 
 // List campaigns in the current user's organization, oldest first.
@@ -178,22 +179,39 @@ export const clone = pub
     return inserted[0]!;
   });
 
-// Delete a campaign. (No turf-reference check yet — turfs.create
-// hasn't shipped. When it does, mirror the segments/zone-groups
-// pattern of blocking on dependent rows.)
-export const remove = pub
+// Soft-retire a campaign: it leaves active lists and its turfs drop out
+// of the turfs view, but turf codes keep working and nothing is deleted.
+// There is no delete — campaigns are the anchor of turf history.
+export const archive = pub
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ campaignId: campaigns.campaignId })
-      .from(campaigns)
+    const updated = await context.db
+      .update(campaigns)
+      .set({ archivedAt: new Date() })
       .where(
         and(
           eq(campaigns.campaignId, input.campaignId),
           eq(campaigns.organizationId, context.organizationId),
         ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
-    await context.db.delete(campaigns).where(eq(campaigns.campaignId, input.campaignId));
+      )
+      .returning({ campaignId: campaigns.campaignId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+    return { ok: true as const };
+  });
+
+export const unarchive = pub
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const updated = await context.db
+      .update(campaigns)
+      .set({ archivedAt: null })
+      .where(
+        and(
+          eq(campaigns.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      )
+      .returning({ campaignId: campaigns.campaignId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
     return { ok: true as const };
   });

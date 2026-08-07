@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { ChevronDown, Copy, Download, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronDown, Copy, Download, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -22,7 +22,7 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
-import { Rail } from "~/components/rail";
+import { Rail, useShowArchived } from "~/components/rail";
 import type { Criteria } from "~/lib/filters";
 import { customFieldsQuery } from "~/lib/queries/custom-fields";
 import { electionsQuery } from "~/lib/queries/elections";
@@ -73,6 +73,9 @@ function SegmentsLayout() {
 
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
   const sortedSegments = sortByName(segments);
+  const activeSegments = sortedSegments.filter((s) => !s.isArchived);
+  const archivedSegments = sortedSegments.filter((s) => s.isArchived);
+  const [showArchived, setShowArchived] = useShowArchived(archivedSegments.length);
   const { data: manifest } = useSuspenseQuery(manifestQuery());
   const { role } = Route.useRouteContext();
   const activeSegment = segments.find((s) => s.segmentId === activeSegmentId) ?? null;
@@ -168,49 +171,85 @@ function SegmentsLayout() {
     },
   });
 
-  const deleteSegment = useDialogMutation({
-    mutationFn: (segmentId: string) => client.segments.remove({ segmentId }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["segments"] });
-    },
-  });
-
-  // Snapshotted at click time so the dialog body keeps showing the
-  // just-deleted name during its close animation, even after the URL
-  // has reactively swapped to the fallback segment.
-  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", campaignCount: 0 });
-
-  const onConfirmDelete = () => {
-    if (!activeSegmentId) return;
-    const idx = sortedSegments.findIndex((s) => s.segmentId === activeSegmentId);
-    const fallback = sortedSegments[idx - 1] ?? sortedSegments[idx + 1] ?? null;
-    deleteSegment.mutate(activeSegmentId, {
-      onSuccess: async () => {
+  const setSegmentArchived = useMutation({
+    mutationFn: (input: { segmentId: string; archived: boolean }) =>
+      input.archived
+        ? client.segments.archive({ segmentId: input.segmentId })
+        : client.segments.unarchive({ segmentId: input.segmentId }),
+    onSuccess: async (_data, input) => {
+      // Cancel in-flight list fetches so a pre-mutation response can't
+      // land after the patch and clobber it.
+      await queryClient.cancelQueries({ queryKey: ["segments"] });
+      const patch = () =>
+        queryClient.setQueryData<typeof segments>(
+          ["segments"],
+          (old) =>
+            old?.map((s) =>
+              s.segmentId === input.segmentId ? { ...s, isArchived: input.archived } : s,
+            ) ?? old,
+        );
+      if (input.archived) {
+        // Leave before the cache says "archived" — a patched cache under
+        // a still-selected item renders a one-frame "Unarchive" flash.
+        // With a fallback, move first and patch after. On the last
+        // active item the index redirect needs the patched list (else it
+        // bounces back here), so patch and navigate in one synchronous
+        // block — batched into a single render, like the create flows.
+        setArchiveOpen(false);
+        const idx = activeSegments.findIndex((s) => s.segmentId === input.segmentId);
+        const fallback = activeSegments[idx - 1] ?? activeSegments[idx + 1] ?? null;
         if (fallback) {
           await goToSegment(fallback.segmentId);
+          patch();
         } else {
+          patch();
           await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
         }
-      },
+      } else {
+        patch();
+      }
+      void queryClient.invalidateQueries({ queryKey: ["segments"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Archive flow: unarchive is immediate (and stays put); archive checks
+  // for active campaigns first and confirms through the dialog when any
+  // reference this segment, then exits to a neighboring active segment (or
+  // the index when none remain). Snapshotted at click time so the
+  // dialog body keeps its content during the close animation.
+  const [archiveSnapshot, setArchiveSnapshot] = useState({ name: "", campaignCount: 0 });
+  const [archiveOpen, setArchiveOpen] = useState(false);
+
+  const archiveActiveSegment = async () => {
+    if (!activeSegment) return;
+    if (activeSegment.isArchived) {
+      setSegmentArchived.mutate({ segmentId: activeSegment.segmentId, archived: false });
+      return;
+    }
+    const { count } = await queryClient.fetchQuery({
+      queryKey: ["segments", "count-campaigns", activeSegment.segmentId],
+      queryFn: () => client.segments.countCampaigns({ segmentId: activeSegment.segmentId }),
+      staleTime: 0,
     });
+    if (count > 0) {
+      setArchiveSnapshot({ name: activeSegment.name, campaignCount: count });
+      setArchiveOpen(true);
+    } else {
+      setSegmentArchived.mutate({ segmentId: activeSegment.segmentId, archived: true });
+    }
+  };
+
+  const onConfirmArchive = () => {
+    if (!activeSegmentId) return;
+    setSegmentArchived.mutate({ segmentId: activeSegmentId, archived: true });
   };
 
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
     enabled: !!activeSegmentId,
-    onMatch: () => {
-      if (!activeSegmentId) return;
-      void (async () => {
-        const { count } = await queryClient.fetchQuery({
-          queryKey: ["segments", "count-campaigns", activeSegmentId],
-          queryFn: () => client.segments.countCampaigns({ segmentId: activeSegmentId }),
-          staleTime: 0,
-        });
-        setDeleteSnapshot({ name: activeSegment?.name ?? "", campaignCount: count });
-        deleteSegment.open();
-      })();
-    },
+    onMatch: () => void archiveActiveSegment(),
   });
 
   // No active dataset → nothing to build against; block the editor behind a
@@ -228,12 +267,28 @@ function SegmentsLayout() {
   return (
     <>
       <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
-        <Rail>
-          {sortedSegments.map((s) => (
+        <Rail
+          footer={
+            archivedSegments.length > 0 ? (
+              <Rail.ShowArchived
+                show={showArchived}
+                onToggle={(next) => {
+                  setShowArchived(next);
+                  // Hiding archived while one is selected would leave the
+                  // editor on a row absent from the rail — exit to the index.
+                  if (!next && activeSegment?.isArchived)
+                    void navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
+                }}
+              />
+            ) : null
+          }
+        >
+          {(showArchived ? sortedSegments : activeSegments).map((s) => (
             <Rail.Item
               key={s.segmentId}
               label={s.name}
               active={s.segmentId === activeSegmentId}
+              trailing={s.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
               onSelect={() => void goToSegment(s.segmentId)}
               onRename={renameSegment.open}
             />
@@ -269,20 +324,11 @@ function SegmentsLayout() {
             </Button>
             <Button
               variant="outline"
-              onClick={async () => {
-                if (!activeSegmentId) return;
-                const { count } = await queryClient.fetchQuery({
-                  queryKey: ["segments", "count-campaigns", activeSegmentId],
-                  queryFn: () => client.segments.countCampaigns({ segmentId: activeSegmentId }),
-                  staleTime: 0,
-                });
-                setDeleteSnapshot({ name: activeSegment?.name ?? "", campaignCount: count });
-                deleteSegment.open();
-              }}
+              onClick={() => void archiveActiveSegment()}
               disabled={!activeSegment}
             >
-              <Trash2 />
-              Delete
+              {activeSegment?.isArchived ? <ArchiveRestore /> : <Archive />}
+              {activeSegment?.isArchived ? "Unarchive" : "Archive"}
             </Button>
           </EditorHeader>
           <div className="min-h-0 flex-1">
@@ -349,14 +395,16 @@ function SegmentsLayout() {
         }}
       />
 
-      <DeleteDialog
-        open={deleteSegment.isOpen}
-        onOpenChange={deleteSegment.onOpenChange}
-        segmentName={deleteSnapshot.name}
-        campaignCount={deleteSnapshot.campaignCount}
-        pending={deleteSegment.isPending}
-        error={deleteSegment.error}
-        onConfirm={onConfirmDelete}
+      <ArchiveDialog
+        open={archiveOpen}
+        onOpenChange={(next) => {
+          if (setSegmentArchived.isPending) return;
+          setArchiveOpen(next);
+        }}
+        segmentName={archiveSnapshot.name}
+        campaignCount={archiveSnapshot.campaignCount}
+        pending={setSegmentArchived.isPending}
+        onConfirm={onConfirmArchive}
       />
     </>
   );
@@ -473,13 +521,14 @@ function RenameDialog({
   );
 }
 
-function DeleteDialog({
+// Confirm gate shown only when active campaigns reference the segment —
+// an unreferenced segment archives without ceremony.
+function ArchiveDialog({
   open,
   onOpenChange,
   segmentName,
   campaignCount,
   pending,
-  error,
   onConfirm,
 }: {
   open: boolean;
@@ -487,43 +536,25 @@ function DeleteDialog({
   segmentName: string;
   campaignCount: number;
   pending: boolean;
-  error: string | null;
   onConfirm: () => void;
 }) {
-  const inUse = campaignCount > 0;
-  useConfirmHotkey({ open: open && !inUse, disabled: pending, onConfirm });
+  useConfirmHotkey({ open, disabled: pending, onConfirm });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        {!inUse && <DialogTitle>Delete segment?</DialogTitle>}
+        <DialogTitle>Archive segment?</DialogTitle>
         <DialogDescription>
-          {inUse ? (
-            <>
-              Can't delete <span className="font-medium text-foreground">{segmentName}</span>{" "}
-              because it is used by{" "}
-              <span className="font-bold text-foreground">{campaignCount}</span> campaign
-              {campaignCount === 1 ? "" : "s"}. Detach or delete those campaigns first, then try
-              again.
-            </>
-          ) : (
-            <>
-              Permanently deletes <span className="font-medium text-foreground">{segmentName}</span>
-              . This can't be undone.
-            </>
-          )}
+          <span className="font-medium text-foreground">{segmentName}</span> is used by{" "}
+          <span className="font-bold text-foreground">{campaignCount}</span> active campaign
+          {campaignCount === 1 ? "" : "s"}. The campaigns keep working but the segment will be
+          hidden. You can unarchive it anytime.
         </DialogDescription>
-        <DialogError error={error} />
         <div className="mt-2 flex justify-end gap-2">
-          {inUse ? (
-            <DialogClose render={<Button variant="outline" />}>OK</DialogClose>
-          ) : (
-            <>
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <Button variant="destructive" onClick={onConfirm} loading={pending}>
-                Delete segment
-              </Button>
-            </>
-          )}
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button onClick={onConfirm} loading={pending}>
+            <Archive />
+            Archive segment
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

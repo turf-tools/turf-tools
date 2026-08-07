@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq } from "@turf-tools/db";
+import { and, asc, eq, isNull, sql } from "@turf-tools/db";
 import { campaigns, segments as segmentsTable, zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
@@ -12,6 +12,7 @@ const zoneGroupSelect = {
   keyGroup: zoneGroups.keyGroup,
   createdAt: zoneGroups.createdAt,
   updatedAt: zoneGroups.updatedAt,
+  isArchived: sql<boolean>`(${zoneGroups.archivedAt} IS NOT NULL)`,
 };
 
 // List zone groups in the current user's organization, oldest first.
@@ -32,10 +33,11 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
   return rows;
 });
 
-// Count how many campaigns currently reference a given zone group. The
-// editor calls this on demand (e.g. when opening the delete dialog) so
-// the answer is fresh — caching the count in `list` would go stale the
-// moment a campaign elsewhere is created or detached.
+// Count the active campaigns referencing a given zone group. The editor
+// calls this on demand (when archiving) so the answer is fresh — caching
+// the count in `list` would go stale the moment a campaign elsewhere is
+// created or detached. References from archived campaigns are expected
+// history and aren't counted.
 export const countCampaigns = pub
   .input(z.object({ zoneGroupId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -53,7 +55,7 @@ export const countCampaigns = pub
     const refs = await context.db
       .select({ campaignId: campaigns.campaignId })
       .from(campaigns)
-      .where(eq(campaigns.zoneGroupId, input.zoneGroupId));
+      .where(and(eq(campaigns.zoneGroupId, input.zoneGroupId), isNull(campaigns.archivedAt)));
     return { count: refs.length };
   });
 
@@ -122,36 +124,40 @@ export const rename = pub
     return { ok: true as const };
   });
 
-// Delete a zone group and every zone inside it (zones cascade via FK).
-// Blocks deletion if any campaign still references this group, since
-// orphaning a campaign's zoneGroupId silently is worse than a clear error.
-export const remove = pub
+// Soft-retire a zone group: it leaves the rail and pickers but stays
+// resolvable for the campaigns and turfs that reference it. There is
+// no delete — turfs and campaigns reference zone groups forever.
+export const archive = pub
   .input(z.object({ zoneGroupId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ zoneGroupId: zoneGroups.zoneGroupId })
-      .from(zoneGroups)
+    const updated = await context.db
+      .update(zoneGroups)
+      .set({ archivedAt: new Date() })
       .where(
         and(
           eq(zoneGroups.zoneGroupId, input.zoneGroupId),
           eq(zoneGroups.organizationId, context.organizationId),
         ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
+      )
+      .returning({ zoneGroupId: zoneGroups.zoneGroupId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
+    return { ok: true as const };
+  });
 
-    const inUse = await context.db
-      .select({ campaignId: campaigns.campaignId })
-      .from(campaigns)
-      .where(eq(campaigns.zoneGroupId, input.zoneGroupId));
-    if (inUse.length > 0) {
-      throw new ORPCError("CONFLICT", {
-        message:
-          `Zone group is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
-          "Detach or delete those campaigns first.",
-      });
-    }
-
-    await context.db.delete(zoneGroups).where(eq(zoneGroups.zoneGroupId, input.zoneGroupId));
+export const unarchive = pub
+  .input(z.object({ zoneGroupId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const updated = await context.db
+      .update(zoneGroups)
+      .set({ archivedAt: null })
+      .where(
+        and(
+          eq(zoneGroups.zoneGroupId, input.zoneGroupId),
+          eq(zoneGroups.organizationId, context.organizationId),
+        ),
+      )
+      .returning({ zoneGroupId: zoneGroups.zoneGroupId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
     return { ok: true as const };
   });
 

@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, inArray } from "@turf-tools/db";
+import { and, asc, eq, inArray, isNull, sql } from "@turf-tools/db";
 import { campaigns, responseOptions, scripts, scriptSteps, questions } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
@@ -8,6 +8,7 @@ const scriptSelect = {
   scriptId: scripts.scriptId,
   name: scripts.name,
   createdAt: scripts.createdAt,
+  isArchived: sql<boolean>`(${scripts.archivedAt} IS NOT NULL)`,
 };
 
 // List scripts in the current user's organization, oldest first.
@@ -134,37 +135,45 @@ export const clone = pub
     return newScript;
   });
 
-// Delete a script. Blocks if any campaign still references it.
-export const remove = pub
+// Soft-retire a script: it leaves the rail and pickers but stays
+// resolvable for the campaigns and turfs that reference it. There is no
+// delete — turfs reference scripts forever.
+export const archive = pub
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ scriptId: scripts.scriptId })
-      .from(scripts)
+    const updated = await context.db
+      .update(scripts)
+      .set({ archivedAt: new Date() })
       .where(
         and(
           eq(scripts.scriptId, input.scriptId),
           eq(scripts.organizationId, context.organizationId),
         ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
-
-    const inUse = await context.db
-      .select({ campaignId: campaigns.campaignId })
-      .from(campaigns)
-      .where(eq(campaigns.scriptId, input.scriptId));
-    if (inUse.length > 0) {
-      throw new ORPCError("CONFLICT", {
-        message:
-          `Script is used by ${inUse.length} campaign${inUse.length === 1 ? "" : "s"}. ` +
-          "Detach or delete those campaigns first.",
-      });
-    }
-
-    await context.db.delete(scripts).where(eq(scripts.scriptId, input.scriptId));
+      )
+      .returning({ scriptId: scripts.scriptId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
     return { ok: true as const };
   });
 
+export const unarchive = pub
+  .input(z.object({ scriptId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const updated = await context.db
+      .update(scripts)
+      .set({ archivedAt: null })
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      )
+      .returning({ scriptId: scripts.scriptId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    return { ok: true as const };
+  });
+
+// Active campaigns only — a reference from an archived campaign is
+// expected history, not something the archive warning should count.
 export const countCampaigns = pub
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -182,7 +191,7 @@ export const countCampaigns = pub
     const refs = await context.db
       .select({ campaignId: campaigns.campaignId })
       .from(campaigns)
-      .where(eq(campaigns.scriptId, input.scriptId));
+      .where(and(eq(campaigns.scriptId, input.scriptId), isNull(campaigns.archivedAt)));
     return { count: refs.length };
   });
 

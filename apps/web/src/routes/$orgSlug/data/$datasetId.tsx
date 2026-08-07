@@ -19,6 +19,7 @@ import {
   Columns2,
   FileText,
   MoreHorizontal,
+  Pencil,
   Upload,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -60,6 +61,7 @@ import { datasetsListQuery } from "~/lib/queries/datasets";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
+import { RenameDatasetDialog, useDatasetRename } from "./route";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   importing: { label: "Importing", color: YELLOW },
@@ -175,11 +177,52 @@ function DatasetEditor({
   const [updateOpen, setUpdateOpen] = useState(false);
   const [appendOpen, setAppendOpen] = useState(false);
 
+  const goToIndex = () => navigate({ to: "/$orgSlug/data", params: { orgSlug } });
+
+  // Bulk equivalent of archiving each version row. A fully-archived
+  // dataset leaves the rail, so exit to the index like the editors do.
+  const archiveAll = useMutation({
+    mutationFn: () => client.datasets.archiveAll({ datasetId: dataset.datasetId }),
+    // Patch and navigate in one synchronous block: the /data index
+    // redirect reads the list cache (an unpatched list bounces straight
+    // back here), and batching the patch with the exit into a single
+    // render avoids a "Unarchive all" flash.
+    onSuccess: async () => {
+      await queryClient.cancelQueries({ queryKey: ["datasets"] });
+      queryClient.setQueryData<VersionRow[]>(
+        ["datasets"],
+        (old) =>
+          old?.map((r) => (r.datasetId === dataset.datasetId ? { ...r, isArchived: true } : r)) ??
+          old,
+      );
+      await goToIndex();
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const renameDataset = useDatasetRename();
+
+  // Round-trip partner: revives the whole dataset. Stays put, like the
+  // editors' unarchive.
+  const unarchiveAll = useMutation({
+    mutationFn: () => client.datasets.unarchiveAll({ datasetId: dataset.datasetId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   // null in URL = "current" (the default). The Filter helper maps null →
   // its allLabel option; we translate between that and the search param.
   const { status } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  const filterValue = status === "current" ? null : status;
+  // A fully-archived dataset has an empty "Current" view — open on
+  // Archived (accurately labeled) instead of a blank table. An explicit
+  // filter pick still writes the URL and wins.
+  const allVersionsArchived = dataset.versions.every((v) => v.isArchived);
+  const effectiveStatus = status === "current" && allVersionsArchived ? "archived" : status;
+  const filterValue = effectiveStatus === "current" ? null : effectiveStatus;
   const onStatusChange = (next: string | null) =>
     void navigate({
       search: (prev) => ({ ...prev, status: (next ?? "current") as DataSearch["status"] }),
@@ -203,6 +246,21 @@ function DatasetEditor({
   return (
     <EditorPage>
       <EditorHeader title={dataset.name} subtitle={importerLabel(dataset.importer)}>
+        {allVersionsArchived ? (
+          <Button variant="outline" onClick={() => unarchiveAll.mutate()}>
+            <ArchiveRestore className="size-4" />
+            Unarchive all
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            onClick={() => archiveAll.mutate()}
+            disabled={importing || dataset.versions.some((v) => v.isActive)}
+          >
+            <Archive className="size-4" />
+            Archive all
+          </Button>
+        )}
         <Filter
           icon={<Activity className="size-3.5" />}
           label={statusLabel}
@@ -215,6 +273,10 @@ function DatasetEditor({
           <Columns2 className="size-4" />
           Append
         </Button>
+        <Button variant="outline" onClick={renameDataset.open}>
+          <Pencil className="size-4" />
+          Rename
+        </Button>
         {/* Until an import has actually landed you're still importing, not
             updating — a failed or in-flight first attempt isn't a version. */}
         <Button onClick={() => setUpdateOpen(true)} disabled={importing}>
@@ -223,6 +285,20 @@ function DatasetEditor({
         </Button>
       </EditorHeader>
 
+      <RenameDatasetDialog
+        open={renameDataset.isOpen}
+        onOpenChange={renameDataset.onOpenChange}
+        currentName={dataset.name}
+        pending={renameDataset.isPending}
+        error={renameDataset.error}
+        onSubmit={(name) => {
+          if (name === dataset.name) {
+            renameDataset.close();
+            return;
+          }
+          renameDataset.mutate({ datasetId: dataset.datasetId, name });
+        }}
+      />
       <UpdateDialog
         open={updateOpen}
         onOpenChange={setUpdateOpen}
@@ -246,7 +322,12 @@ function DatasetEditor({
       />
 
       <div className="flex min-h-0 flex-1 gap-6">
-        <VersionsCard versions={dataset.versions} timezone={timezone} status={status} />
+        <VersionsCard
+          versions={dataset.versions}
+          timezone={timezone}
+          status={effectiveStatus}
+          onAllArchived={goToIndex}
+        />
         <FieldsCard
           fields={fields}
           baseFields={baseFields}
@@ -269,10 +350,15 @@ function VersionsCard({
   versions,
   timezone,
   status,
+  onAllArchived,
 }: {
   versions: VersionRow[];
   timezone: string;
   status: DataSearch["status"];
+  // Fired when archiving a row leaves no unarchived versions — the
+  // dataset has left the rail, so the parent exits to the index.
+  // Returns the navigation promise so the caller can leave-then-refresh.
+  onAllArchived: () => void | Promise<void>;
 }) {
   const queryClient = useQueryClient();
 
@@ -292,7 +378,19 @@ function VersionsCard({
   });
   const archive = useMutation({
     mutationFn: (versionId: string) => client.datasets.archive({ versionId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
+    // Patch the row, then exit if it was the last unarchived version —
+    // in the same synchronous block, so the /data index redirect sees
+    // the patched list and the header swap never renders mid-exit.
+    onSuccess: async (_data, versionId) => {
+      await queryClient.cancelQueries({ queryKey: ["datasets"] });
+      queryClient.setQueryData<VersionRow[]>(
+        ["datasets"],
+        (old) =>
+          old?.map((r) => (r.versionId === versionId ? { ...r, isArchived: true } : r)) ?? old,
+      );
+      if (versions.every((v) => v.isArchived || v.versionId === versionId)) await onAllArchived();
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    },
     onError: (e) => toast.error(e.message),
   });
   const unarchive = useMutation({

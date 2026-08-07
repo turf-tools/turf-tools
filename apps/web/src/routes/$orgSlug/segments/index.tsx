@@ -8,7 +8,10 @@ export const Route = createFileRoute("/$orgSlug/segments/")({
     // Redirect only on real navigations — a redirect thrown during a hover
     // preload gets committed and auto-navigates.
     if (preload) return;
-    const fallback = recallOrFirst(orgSlug, "segments", segments, (s) => s.segmentId);
+    // Archived segments stay reachable from the rail but never win the
+    // index redirect.
+    const active = segments.filter((s) => !s.isArchived);
+    const fallback = recallOrFirst(orgSlug, "segments", active, (s) => s.segmentId);
     if (fallback) {
       throw redirect({
         to: "/$orgSlug/segments/$segmentId",
@@ -22,7 +25,7 @@ export const Route = createFileRoute("/$orgSlug/segments/")({
 function SegmentsEmpty() {
   return (
     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      No segments yet — create one to get started.
+      No active segments yet, create one to get started.
     </div>
   );
 }

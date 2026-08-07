@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Copy, Pencil, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/button";
@@ -15,7 +15,7 @@ import {
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
-import { Rail } from "~/components/rail";
+import { Rail, useShowArchived } from "~/components/rail";
 import { scriptsListQuery } from "~/lib/queries/scripts";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -43,6 +43,9 @@ function ScriptsLayout() {
 
   const { data: scripts } = useSuspenseQuery(scriptsListQuery());
   const sortedScripts = sortByName(scripts);
+  const activeScripts = sortedScripts.filter((s) => !s.isArchived);
+  const archivedScripts = sortedScripts.filter((s) => s.isArchived);
+  const [showArchived, setShowArchived] = useShowArchived(archivedScripts.length);
   const activeScript = scripts.find((s) => s.scriptId === activeScriptId) ?? null;
 
   const goToScript = (id: string) =>
@@ -90,57 +93,112 @@ function ScriptsLayout() {
     },
   });
 
-  const deleteScript = useDialogMutation({
-    mutationFn: (scriptId: string) => client.scripts.remove({ scriptId }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
-    },
-  });
-
-  const [deleteSnapshot, setDeleteSnapshot] = useState({ name: "", campaignCount: 0 });
-
-  const onConfirmDelete = () => {
-    if (!activeScriptId) return;
-    const idx = sortedScripts.findIndex((s) => s.scriptId === activeScriptId);
-    const fallback = sortedScripts[idx - 1] ?? sortedScripts[idx + 1] ?? null;
-    deleteScript.mutate(activeScriptId, {
-      onSuccess: async () => {
+  const setScriptArchived = useMutation({
+    mutationFn: (input: { scriptId: string; archived: boolean }) =>
+      input.archived
+        ? client.scripts.archive({ scriptId: input.scriptId })
+        : client.scripts.unarchive({ scriptId: input.scriptId }),
+    onSuccess: async (_data, input) => {
+      // Cancel in-flight list fetches so a pre-mutation response can't
+      // land after the patch and clobber it.
+      await queryClient.cancelQueries({ queryKey: ["scripts"] });
+      const patch = () =>
+        queryClient.setQueryData<typeof scripts>(
+          ["scripts"],
+          (old) =>
+            old?.map((s) =>
+              s.scriptId === input.scriptId ? { ...s, isArchived: input.archived } : s,
+            ) ?? old,
+        );
+      if (input.archived) {
+        // Leave before the cache says "archived" — a patched cache under
+        // a still-selected item renders a one-frame "Unarchive" flash.
+        // With a fallback, move first and patch after. On the last
+        // active item the index redirect needs the patched list (else it
+        // bounces back here), so patch and navigate in one synchronous
+        // block — batched into a single render, like the create flows.
+        setArchiveOpen(false);
+        const idx = activeScripts.findIndex((s) => s.scriptId === input.scriptId);
+        const fallback = activeScripts[idx - 1] ?? activeScripts[idx + 1] ?? null;
         if (fallback) {
           await goToScript(fallback.scriptId);
+          patch();
         } else {
+          patch();
           await navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
         }
-      },
+      } else {
+        patch();
+      }
+      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Archive flow: unarchive is immediate (and stays put); archive checks
+  // for active campaigns first and confirms through the dialog when any
+  // reference this script, then exits to a neighboring active script (or
+  // the index when none remain). Snapshotted at click time so the
+  // dialog body keeps its content during the close animation.
+  const [archiveSnapshot, setArchiveSnapshot] = useState({ name: "", campaignCount: 0 });
+  const [archiveOpen, setArchiveOpen] = useState(false);
+
+  const archiveActiveScript = async () => {
+    if (!activeScript) return;
+    if (activeScript.isArchived) {
+      setScriptArchived.mutate({ scriptId: activeScript.scriptId, archived: false });
+      return;
+    }
+    const { count } = await queryClient.fetchQuery({
+      queryKey: ["scripts", "count-campaigns", activeScript.scriptId],
+      queryFn: () => client.scripts.countCampaigns({ scriptId: activeScript.scriptId }),
+      staleTime: 0,
     });
+    if (count > 0) {
+      setArchiveSnapshot({ name: activeScript.name, campaignCount: count });
+      setArchiveOpen(true);
+    } else {
+      setScriptArchived.mutate({ scriptId: activeScript.scriptId, archived: true });
+    }
+  };
+
+  const onConfirmArchive = () => {
+    if (!activeScriptId) return;
+    setScriptArchived.mutate({ scriptId: activeScriptId, archived: true });
   };
 
   useHotkey({
     key: ["Delete", "Backspace"],
     mod: true,
     enabled: !!activeScriptId,
-    onMatch: () => {
-      if (!activeScriptId) return;
-      void (async () => {
-        const { count } = await queryClient.fetchQuery({
-          queryKey: ["scripts", "count-campaigns", activeScriptId],
-          queryFn: () => client.scripts.countCampaigns({ scriptId: activeScriptId }),
-          staleTime: 0,
-        });
-        setDeleteSnapshot({ name: activeScript?.name ?? "", campaignCount: count });
-        deleteScript.open();
-      })();
-    },
+    onMatch: () => void archiveActiveScript(),
   });
 
   return (
     <>
       <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
-        <Rail>
-          {sortedScripts.map((s) => (
+        <Rail
+          footer={
+            archivedScripts.length > 0 ? (
+              <Rail.ShowArchived
+                show={showArchived}
+                onToggle={(next) => {
+                  setShowArchived(next);
+                  // Hiding archived while one is selected would leave the
+                  // editor on a row absent from the rail — exit to the index.
+                  if (!next && activeScript?.isArchived)
+                    void navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
+                }}
+              />
+            ) : null
+          }
+        >
+          {(showArchived ? sortedScripts : activeScripts).map((s) => (
             <Rail.Item
               key={s.scriptId}
               label={s.name}
               active={s.scriptId === activeScriptId}
+              trailing={s.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
               onSelect={() => void goToScript(s.scriptId)}
               onRename={renameScript.open}
             />
@@ -165,20 +223,11 @@ function ScriptsLayout() {
             </Button>
             <Button
               variant="outline"
-              onClick={async () => {
-                if (!activeScriptId) return;
-                const { count } = await queryClient.fetchQuery({
-                  queryKey: ["scripts", "count-campaigns", activeScriptId],
-                  queryFn: () => client.scripts.countCampaigns({ scriptId: activeScriptId }),
-                  staleTime: 0,
-                });
-                setDeleteSnapshot({ name: activeScript?.name ?? "", campaignCount: count });
-                deleteScript.open();
-              }}
+              onClick={() => void archiveActiveScript()}
               disabled={!activeScript}
             >
-              <Trash2 />
-              Delete
+              {activeScript?.isArchived ? <ArchiveRestore /> : <Archive />}
+              {activeScript?.isArchived ? "Unarchive" : "Archive"}
             </Button>
           </EditorHeader>
           <div className="min-h-0 flex-1">
@@ -215,14 +264,16 @@ function ScriptsLayout() {
         }}
       />
 
-      <DeleteDialog
-        open={deleteScript.isOpen}
-        onOpenChange={deleteScript.onOpenChange}
-        scriptName={deleteSnapshot.name}
-        campaignCount={deleteSnapshot.campaignCount}
-        pending={deleteScript.isPending}
-        error={deleteScript.error}
-        onConfirm={onConfirmDelete}
+      <ArchiveDialog
+        open={archiveOpen}
+        onOpenChange={(next) => {
+          if (setScriptArchived.isPending) return;
+          setArchiveOpen(next);
+        }}
+        scriptName={archiveSnapshot.name}
+        campaignCount={archiveSnapshot.campaignCount}
+        pending={setScriptArchived.isPending}
+        onConfirm={onConfirmArchive}
       />
     </>
   );
@@ -339,13 +390,14 @@ function RenameDialog({
   );
 }
 
-function DeleteDialog({
+// Confirm gate shown only when active campaigns reference the script —
+// an unreferenced script archives without ceremony.
+function ArchiveDialog({
   open,
   onOpenChange,
   scriptName,
   campaignCount,
   pending,
-  error,
   onConfirm,
 }: {
   open: boolean;
@@ -353,43 +405,25 @@ function DeleteDialog({
   scriptName: string;
   campaignCount: number;
   pending: boolean;
-  error: string | null;
   onConfirm: () => void;
 }) {
-  const inUse = campaignCount > 0;
-  useConfirmHotkey({ open: open && !inUse, disabled: pending, onConfirm });
+  useConfirmHotkey({ open, disabled: pending, onConfirm });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>{inUse ? "Can't delete script" : "Delete script?"}</DialogTitle>
+        <DialogTitle>Archive script?</DialogTitle>
         <DialogDescription>
-          {inUse ? (
-            <>
-              Can't delete <span className="font-medium text-foreground">{scriptName}</span> because
-              it is used by <span className="font-bold text-foreground">{campaignCount}</span>{" "}
-              campaign
-              {campaignCount === 1 ? "" : "s"}. Detach or delete those campaigns first, then try
-              again.
-            </>
-          ) : (
-            <>
-              Permanently deletes <span className="font-medium text-foreground">{scriptName}</span>.
-              This can't be undone.
-            </>
-          )}
+          <span className="font-medium text-foreground">{scriptName}</span> is used by{" "}
+          <span className="font-bold text-foreground">{campaignCount}</span> active campaign
+          {campaignCount === 1 ? "" : "s"}. The campaigns keep working but the script will be
+          hidden. You can unarchive it anytime.
         </DialogDescription>
-        <DialogError error={error} />
         <div className="mt-2 flex justify-end gap-2">
-          {inUse ? (
-            <DialogClose render={<Button variant="outline" />}>OK</DialogClose>
-          ) : (
-            <>
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <Button variant="destructive" onClick={onConfirm} loading={pending}>
-                Delete script
-              </Button>
-            </>
-          )}
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button onClick={onConfirm} loading={pending}>
+            <Archive />
+            Archive script
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
