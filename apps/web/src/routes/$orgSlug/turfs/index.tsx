@@ -677,7 +677,7 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
       </thead>
       <tbody>
         {[...walks].reverse().map((w) => (
-          <tr key={w.walkId} className="border-t border-border">
+          <tr key={w.walkId} className="border-t border-border/60">
             <td className="h-9 font-mono tabular-nums">
               {formatMonthDay(w.openedAt, tz)}
               <span className="hidden md:inline"> {formatTime(w.openedAt, tz)}</span>
@@ -688,9 +688,12 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
                   variant="ghost"
                   size="sm"
                   nativeButton={false}
-                  // -ml matches the ghost padding so the name stays flush
-                  // with the column (and with phone-less rows).
-                  className="-ml-2.5 max-w-full min-w-0 font-normal"
+                  // px tightens the hover wash; -ml matches it so the name
+                  // stays flush with the column (and with phone-less rows).
+                  // max-w gives back the shift + trailing pad so a truncated
+                  // name + icon reaches the column edge instead of stopping
+                  // a padding's-width short.
+                  className="-ml-1.5 px-1.5 max-w-[calc(100%+0.75rem)] min-w-0 font-normal"
                   render={<a href={`sms:${w.canvasserPhone}`} />}
                 >
                   <span className="truncate">{w.canvasserName}</span>
@@ -934,7 +937,7 @@ function CompactList({
                 <span
                   className={cn(
                     cell,
-                    "w-12 justify-start px-2 font-mono tabular-nums",
+                    "w-14 justify-start px-2 font-mono tabular-nums",
                     pct !== null && pct > 0 ? "badge-tint" : "bg-muted",
                   )}
                   style={pct !== null && pct > 0 ? tintStyle(progressColor(pct)) : undefined}
