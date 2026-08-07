@@ -723,7 +723,7 @@ function ScriptContent({
   const script = scriptQuery.data;
 
   return (
-    <View className="gap-4 mb-6">
+    <View className="gap-6 mb-6">
       <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark leading-6">
         {script.name}
       </Text>
@@ -745,7 +745,7 @@ function ScriptContent({
         if (step.responseType === "open_ended") {
           return (
             <View key={step.scriptStepId} className="gap-2">
-              <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
+              <Text className="font-sans text-lg leading-6 mb-0.5 text-foreground dark:text-foreground-dark">
                 {step.text}
               </Text>
               <OpenEndedInput
@@ -761,7 +761,7 @@ function ScriptContent({
         const multi = step.responseType === "multi_select";
         return (
           <View key={step.scriptStepId} className="gap-2">
-            <Text className="font-sans text-lg text-foreground dark:text-foreground-dark">
+            <Text className="font-sans text-lg leading-6 mb-0.5 text-foreground dark:text-foreground-dark">
               {step.text}
             </Text>
             {step.options.map((opt) => (
