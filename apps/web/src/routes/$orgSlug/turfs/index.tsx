@@ -172,10 +172,13 @@ function TurfsIndex() {
     zoneId === null ? "All zones" : (regionOptions.find((z) => z.value === zoneId)?.label ?? null);
 
   // Same filters on every viewport, "All" available and default — no
-  // per-viewport conditioning. Selecting a specific campaign resets the
-  // zone (zones are campaign-scoped; a held-over zone would be a broken
-  // label on an empty list), but All-campaigns keeps it: the zone is
-  // still valid across the wider scope.
+  // per-viewport conditioning. Changing the campaign resets the zone,
+  // full stop — one predictable rule in every direction. Anything
+  // cleverer breaks: a held-over zone can be invalid for the new
+  // campaign (different zone group, or a same-named zone under a
+  // different id), and zone validity is only provable from the All
+  // view's rows, so a conditional hold acts differently depending on
+  // where you came from.
   const campaignFilter = (
     <Filter
       icon={<Megaphone className="size-3.5" />}
@@ -183,9 +186,7 @@ function TurfsIndex() {
       value={campaignId}
       options={campaignOptions}
       allLabel="All campaigns"
-      onChange={(next) =>
-        onSearchChange(next === null ? { campaignId: next } : { campaignId: next, zoneId: null })
-      }
+      onChange={(next) => onSearchChange({ campaignId: next, zoneId: null })}
     />
   );
   const zoneFilter = (
