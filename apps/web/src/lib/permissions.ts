@@ -55,6 +55,8 @@ export function hasPermission(role: string, permission: Permission): boolean {
 const LEAD_RPC_ALLOWLIST = new Set([
   "healthcheck",
   "turfs.listForOrg",
+  "turfs.turfMapData",
+  "turfs.zoneMapData",
   "walks.listForOrg",
   "progress.forOrg",
   "campaigns.list",

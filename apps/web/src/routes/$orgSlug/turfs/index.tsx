@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import type { Feature, FeatureCollection } from "geojson";
 import {
   Check,
   CheckCheck,
@@ -8,6 +9,7 @@ import {
   DoorClosed,
   LayoutGrid,
   LoaderCircle,
+  Map as MapIcon,
   Megaphone,
   Phone,
   QrCode,
@@ -17,12 +19,14 @@ import {
   UsersRound,
   Waypoints,
 } from "lucide-react";
+import { useAtomValue } from "jotai";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { Dialog, DialogClose, DialogCloseX, DialogContent, DialogTitle } from "~/components/dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
+import { Map as MapView } from "~/components/map";
 import { Page } from "~/components/page";
 import { tintStyle } from "~/components/badge";
 import { BLUE, GREEN, RED, YELLOW } from "~/lib/palette";
@@ -32,10 +36,12 @@ import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import { formatMonthDay, formatTime } from "~/lib/format";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { progressQuery } from "~/lib/queries/progress";
-import { turfsListQuery } from "~/lib/queries/turfs";
+import { turfMapDataQuery, turfsListQuery, zoneMapDataQuery } from "~/lib/queries/turfs";
 import { walksListQuery } from "~/lib/queries/walks";
+import { darkAtom } from "~/lib/atoms/theme";
+import { colorFor } from "~/lib/zone-colors";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
-import { cn } from "~/lib/utils";
+import { cn, parseHexRgb } from "~/lib/utils";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { client } from "~/rpc/client";
 
@@ -124,6 +130,32 @@ function TurfsIndex() {
   const showWalks = (turf: TurfRow) => {
     setWalksTurf(turf);
     setWalksOpen(true);
+  };
+  // Map-of-a-group dialog: the group is every turf sharing the clicked
+  // row's (campaign, region) — resolved against the zone-unfiltered rows
+  // so the map always shows the whole zone, whatever the filter.
+  const allRows = useTurfRows(campaignId, null);
+  const [zoneMapGroup, setZoneMapGroup] = useState<ZoneMapGroup | null>(null);
+  const [zoneMapOpen, setZoneMapOpen] = useState(false);
+  const showZoneMap = (turf: TurfRow) => {
+    const region = regionName(turf);
+    setZoneMapGroup({
+      campaignId: turf.campaignId,
+      zoneId: turf.zoneId,
+      name: region ? `${turf.campaignName} / ${region}` : turf.campaignName,
+      turfs: allRows.filter(
+        (r) => r.campaignId === turf.campaignId && regionId(r) === regionId(turf),
+      ),
+    });
+    setZoneMapOpen(true);
+  };
+  // Single-turf map dialog — the hand-off view: just this turf's
+  // boundary and building dots.
+  const [turfMapTurf, setTurfMapTurf] = useState<TurfRow | null>(null);
+  const [turfMapOpen, setTurfMapOpen] = useState(false);
+  const showTurfMap = (turf: TurfRow) => {
+    setTurfMapTurf(turf);
+    setTurfMapOpen(true);
   };
 
   // Back/Next page the QR dialog through the current filter's rows in
@@ -237,13 +269,21 @@ function TurfsIndex() {
       </div>
       <div className="md:hidden">
         {view === "cards" ? (
-          <TurfCards campaignId={campaignId} zoneId={zoneId} onShowQr={showQr} />
+          <TurfCards
+            campaignId={campaignId}
+            zoneId={zoneId}
+            onShowQr={showQr}
+            onShowZoneMap={showZoneMap}
+            onShowTurfMap={showTurfMap}
+          />
         ) : (
           <CompactList
             campaignId={campaignId}
             zoneId={zoneId}
             onShowQr={showQr}
             onShowWalks={showWalks}
+            onShowZoneMap={showZoneMap}
+            onShowTurfMap={showTurfMap}
           />
         )}
       </div>
@@ -253,6 +293,8 @@ function TurfsIndex() {
           zoneId={zoneId}
           onShowQr={showQr}
           onShowWalks={showWalks}
+          onShowZoneMap={showZoneMap}
+          onShowTurfMap={showTurfMap}
         />
       </div>
       <QrDialog
@@ -269,6 +311,8 @@ function TurfsIndex() {
         open={walksOpen}
         onOpenChange={setWalksOpen}
       />
+      <ZoneMapDialog group={zoneMapGroup} open={zoneMapOpen} onOpenChange={setZoneMapOpen} />
+      <TurfMapDialog turf={turfMapTurf} open={turfMapOpen} onOpenChange={setTurfMapOpen} />
     </Page>
   );
 }
@@ -387,15 +431,84 @@ function groupRows(rows: TurfRow[]) {
   return groups;
 }
 
+// Mobile group heading — "Campaign / Zone" label with a right-aligned
+// "View map" text action (baseline-aligned with the label, no button
+// chrome) that opens the whole zone, no turf highlighted. The label
+// gets the remaining width and wraps rather than pushing the action off.
+function GroupHeader({
+  group,
+  onShowZoneMap,
+  className,
+}: {
+  group: { name: string | null; rows: TurfRow[] };
+  onShowZoneMap: (turf: TurfRow) => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex items-baseline gap-3", className)}>
+      <p className="min-w-0 flex-1 text-muted-foreground leading-5">{group.name}</p>
+      <button
+        type="button"
+        className="flex shrink-0 items-center gap-1.5 text-muted-foreground leading-5"
+        onClick={() => onShowZoneMap(group.rows[0]!)}
+      >
+        View map
+        <MapIcon className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
 // "01" — the label is the number; the word is the column header's job.
 function turfLabel(name: string) {
   const label = name.replace(/^turf\s+/i, "");
   return /^\d+$/.test(label) ? label.padStart(2, "0") : label;
 }
 
+// Door counts get three characters: past 999 the exact number stops
+// mattering on the board, and "1k+" keeps the cell width fixed.
+function doorLabel(count: number | null) {
+  if (count == null) return "—";
+  return count > 999 ? "1k+" : String(count);
+}
+
 function progressPct(attempted: number | undefined, personCount: number | null) {
   if (!personCount) return null;
   return Math.round(((attempted ?? 0) / personCount) * 100);
+}
+
+function bboxOfFeatures(features: Feature[]): [number, number, number, number] | null {
+  let minLng = Infinity;
+  let minLat = Infinity;
+  let maxLng = -Infinity;
+  let maxLat = -Infinity;
+  const visit = (coords: unknown) => {
+    if (!Array.isArray(coords)) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      minLng = Math.min(minLng, coords[0]);
+      maxLng = Math.max(maxLng, coords[0]);
+      minLat = Math.min(minLat, coords[1]);
+      maxLat = Math.max(maxLat, coords[1]);
+      return;
+    }
+    for (const c of coords) visit(c);
+  };
+  for (const f of features) {
+    if ("coordinates" in f.geometry) visit(f.geometry.coordinates);
+  }
+  return minLng === Infinity ? null : [minLng, minLat, maxLng, maxLat];
+}
+
+// Bbox center — good enough placement for mostly-convex turf shapes,
+// without pulling in a pole-of-inaccessibility dependency. `badge`
+// requests the map's plate treatment for the numeric label.
+function labelPoint(f: Feature, label: string): Feature {
+  const b = bboxOfFeatures([f]);
+  return {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0] },
+    properties: { label, badge: true },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -563,6 +676,213 @@ function QrDialog({
   );
 }
 
+type ZoneMapGroup = {
+  campaignId: string;
+  zoneId: string | null;
+  name: string;
+  turfs: TurfRow[];
+};
+
+// A group's turfs on a map — geometry, number badges, and building
+// dots, colored by the app palette in row order. Scoped to one
+// (campaign, region) by construction, so overlapping campaigns can't
+// collide here the way they can in the full map view.
+function ZoneMapDialog({
+  group,
+  open,
+  onOpenChange,
+}: {
+  group: ZoneMapGroup | null;
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+}) {
+  const isDark = useAtomValue(darkAtom);
+  const { data: zoneData } = useQuery({
+    ...zoneMapDataQuery(group?.campaignId ?? "", group?.zoneId ?? null),
+    enabled: group !== null,
+  });
+
+  const { shapes, labels, bounds, points, pointColors } = useMemo(() => {
+    const turfs = group?.turfs ?? [];
+    const geometryByTurf = new Map((zoneData ?? []).map((g) => [g.turfId, g.geometry]));
+    const shapeFeatures: Feature[] = [];
+    const labelFeatures: Feature[] = [];
+    turfs.forEach((t, i) => {
+      const geometry = geometryByTurf.get(t.turfId);
+      if (!geometry) return;
+      // Index-based palette assignment, so a turf keeps the color the
+      // cutter's point clouds gave it while it was drawn.
+      const feature: Feature = {
+        type: "Feature",
+        geometry,
+        properties: {
+          zoneId: t.turfId,
+          color: colorFor(i),
+          // Solid same-hue outline; the fill stays light enough that
+          // the dots read on top of it — the dots carry the density
+          // now, the fill just claims area.
+          lineColor: colorFor(i),
+          opacity: 0.4,
+        },
+      };
+      shapeFeatures.push(feature);
+      labelFeatures.push(labelPoint(feature, turfLabel(t.name)));
+    });
+    const bounds = bboxOfFeatures(shapeFeatures);
+
+    // Building dots: the turf's hue mixed toward a theme-contrast
+    // base. Dots this small are mostly anti-aliased rim, so pure
+    // palette colors read inconsistently (light hues wash out against
+    // the basemap); the base anchor keeps contrast even across turfs.
+    // One merged buffer for the whole zone.
+    const HUE_SHARE = 0.7;
+    const base = isDark ? 229 : 26; // matches the points layer's theme default
+    let points: { deltas: Float32Array; origin: [number, number] } | null = null;
+    let pointColors: Uint8Array | null = null;
+    if (zoneData && bounds) {
+      const coordsByTurf = new Map(zoneData.map((r) => [r.turfId, r.buildingCoords ?? []]));
+      let total = 0;
+      for (const t of turfs) total += (coordsByTurf.get(t.turfId) ?? []).length;
+      const origin: [number, number] = [
+        mercatorX((bounds[0] + bounds[2]) / 2),
+        mercatorY((bounds[1] + bounds[3]) / 2),
+      ];
+      const deltas = new Float32Array(total * 2);
+      const colors = new Uint8Array(total * 3);
+      let k = 0;
+      turfs.forEach((t, i) => {
+        const [r, g, b] = parseHexRgb(colorFor(i)).map((c) =>
+          Math.round(base + (c - base) * HUE_SHARE),
+        ) as [number, number, number];
+        for (const [lng, lat] of coordsByTurf.get(t.turfId) ?? []) {
+          deltas[k * 2] = mercatorX(lng) - origin[0];
+          deltas[k * 2 + 1] = mercatorY(lat) - origin[1];
+          colors[k * 3] = r;
+          colors[k * 3 + 1] = g;
+          colors[k * 3 + 2] = b;
+          k += 1;
+        }
+      });
+      points = { deltas, origin };
+      pointColors = colors;
+    }
+
+    return {
+      shapes: { type: "FeatureCollection", features: shapeFeatures } as FeatureCollection,
+      labels: { type: "FeatureCollection", features: labelFeatures } as FeatureCollection,
+      bounds,
+      points,
+      pointColors,
+    };
+  }, [group, zoneData, isDark]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] md:w-[720px] md:max-w-[720px]">
+        {group ? (
+          <>
+            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic">
+              {group.name}
+            </DialogTitle>
+            <DialogCloseX />
+            <MapView
+              className="h-[65dvh] md:h-[60vh]"
+              zonePerimeters={shapes}
+              shapeLabels={labels}
+              points={points}
+              pointColors={pointColors}
+              fitBounds={bounds}
+              loading={!zoneData}
+            />
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// One turf on its own — boundary plus building dots, the view a lead
+// wants at hand-off ("this is what you're walking"). Buildings come
+// from the slim coordinates-only projection on the turf row and ride
+// the shared WebGL points channel.
+function TurfMapDialog({
+  turf,
+  open,
+  onOpenChange,
+}: {
+  turf: TurfRow | null;
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+}) {
+  const { data } = useQuery({
+    ...turfMapDataQuery(turf?.turfId ?? ""),
+    enabled: turf !== null,
+  });
+
+  const { shapes, points, bounds } = useMemo(() => {
+    if (!turf || !data?.geometry) {
+      return { shapes: undefined, points: null, bounds: null };
+    }
+    // Neutral fill (no `color` property falls through to the layer's
+    // theme gray), heavier outline via the selected-zone state.
+    const feature: Feature = {
+      type: "Feature",
+      geometry: data.geometry,
+      properties: { zoneId: turf.turfId, opacity: 0.2 },
+    };
+    const b = bboxOfFeatures([feature]);
+    // fp64 origin at the bbox center + fp32 deltas — the same split the
+    // segment/campaign point buffers use, computed client-side since a
+    // single turf is at most a few hundred buildings.
+    const origin: [number, number] = b
+      ? [mercatorX((b[0] + b[2]) / 2), mercatorY((b[1] + b[3]) / 2)]
+      : [0, 0];
+    const coords = data.buildingCoords ?? [];
+    const deltas = new Float32Array(coords.length * 2);
+    coords.forEach(([lng, lat], i) => {
+      deltas[i * 2] = mercatorX(lng) - origin[0];
+      deltas[i * 2 + 1] = mercatorY(lat) - origin[1];
+    });
+    return {
+      shapes: { type: "FeatureCollection", features: [feature] } as FeatureCollection,
+      points: { deltas, origin },
+      bounds: b,
+    };
+  }, [data, turf]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] md:w-[720px] md:max-w-[720px]">
+        {turf ? (
+          <>
+            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
+              Turf {turfLabel(turf.name)}
+              {regionName(turf) ? ` — ${regionName(turf)}` : ""}
+            </DialogTitle>
+            <DialogCloseX />
+            <MapView
+              className="h-[65dvh] md:h-[60vh]"
+              zonePerimeters={shapes}
+              points={points}
+              fitBounds={bounds}
+              loading={!data}
+              selectedZoneId={turf.turfId}
+            />
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Web Mercator lng/lat → [0,1]² — must match PointsLayer's transform.
+function mercatorX(lng: number) {
+  return (lng + 180) / 360;
+}
+function mercatorY(lat: number) {
+  return 0.5 - Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) / (2 * Math.PI);
+}
+
 function WalksDialog({
   turf,
   campaignId,
@@ -721,10 +1041,14 @@ function TurfCards({
   campaignId,
   zoneId,
   onShowQr,
+  onShowZoneMap,
+  onShowTurfMap,
 }: {
   campaignId: string | null;
   zoneId: string | null;
   onShowQr: (turf: TurfRow) => void;
+  onShowZoneMap: (turf: TurfRow) => void;
+  onShowTurfMap: (turf: TurfRow) => void;
 }) {
   const { session } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
@@ -743,7 +1067,7 @@ function TurfCards({
     <div className="flex flex-col gap-6 pb-8">
       {groupRows(rows).map((group) => (
         <div key={group.key} className="flex flex-col gap-3">
-          {group.name ? <p className="text-muted-foreground leading-5">{group.name}</p> : null}
+          {group.name ? <GroupHeader group={group} onShowZoneMap={onShowZoneMap} /> : null}
           {group.rows.map((t) => (
             <TurfCard
               key={t.turfId}
@@ -752,6 +1076,7 @@ function TurfCards({
               pct={progressPct(progressByTurf.get(t.turfId), t.personCount)}
               tz={tz}
               onShowQr={onShowQr}
+              onShowTurfMap={onShowTurfMap}
             />
           ))}
         </div>
@@ -769,12 +1094,14 @@ function TurfCard({
   pct,
   tz,
   onShowQr,
+  onShowTurfMap,
 }: {
   turf: TurfRow;
   summary: WalkSummary;
   pct: number | null;
   tz: string;
   onShowQr: (turf: TurfRow) => void;
+  onShowTurfMap: (turf: TurfRow) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { pending } = summary;
@@ -814,7 +1141,7 @@ function TurfCard({
           </span>
           <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
             <DoorClosed className="size-3.5" />
-            {turf.doorCount != null ? turf.doorCount.toLocaleString() : "—"}
+            {doorLabel(turf.doorCount)}
           </span>
           {pct !== null ? (
             <span
@@ -848,6 +1175,19 @@ function TurfCard({
           {turf.turfCode ?? "—"}
         </span>
         <span className="flex-1" />
+        {/* Row-level map: just this turf — boundary + building dots —
+            so a lead deep in the list can see the turf they're about
+            to hand out. The zone-level map lives on the group header. */}
+        <Button
+          variant="outline"
+          onClick={(e) => {
+            e.stopPropagation();
+            onShowTurfMap(turf);
+          }}
+        >
+          <MapIcon className="size-3.5" />
+          Map
+        </Button>
         <Button
           variant="outline"
           disabled={!turf.turfCode || turf.status !== "active"}
@@ -880,11 +1220,15 @@ function CompactList({
   zoneId,
   onShowQr,
   onShowWalks,
+  onShowZoneMap,
+  onShowTurfMap,
 }: {
   campaignId: string | null;
   zoneId: string | null;
   onShowQr: (turf: TurfRow) => void;
   onShowWalks: (turf: TurfRow) => void;
+  onShowZoneMap: (turf: TurfRow) => void;
+  onShowTurfMap: (turf: TurfRow) => void;
 }) {
   const rows = useTurfRows(campaignId, zoneId);
   const summaries = useWalkSummaries(campaignId);
@@ -902,7 +1246,9 @@ function CompactList({
     <div className="flex flex-col gap-5 pb-8">
       {groupRows(rows).map((group) => (
         <div key={group.key} className="flex flex-col gap-1">
-          {group.name ? <p className="mb-2 text-muted-foreground leading-5">{group.name}</p> : null}
+          {group.name ? (
+            <GroupHeader group={group} onShowZoneMap={onShowZoneMap} className="mb-2" />
+          ) : null}
           {group.rows.map((t) => {
             const summary = summaries(t.turfId);
             const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
@@ -911,10 +1257,22 @@ function CompactList({
                 <span className={cn(cell, "w-9 bg-muted font-mono font-semibold tabular-nums")}>
                   {turfLabel(t.name)}
                 </span>
+                {/* px-0 on the icon-only flex buttons: the padding is
+                    invisible under justify-center but sets each
+                    button's shrink floor — with three of them, default
+                    padding overflows 360–375px viewports. */}
+                <Button
+                  variant="outline"
+                  aria-label="Map"
+                  className="min-w-0 flex-1 px-0"
+                  onClick={() => onShowTurfMap(t)}
+                >
+                  <MapIcon className="size-3.5" />
+                </Button>
                 <Button
                   variant="outline"
                   aria-label="Scan"
-                  className="min-w-0 flex-1"
+                  className="min-w-0 flex-1 px-0"
                   disabled={!t.turfCode || t.status !== "active"}
                   onClick={() => onShowQr(t)}
                 >
@@ -935,7 +1293,7 @@ function CompactList({
                   )}
                 >
                   <DoorClosed className="size-3.5 shrink-0" />
-                  {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
+                  {doorLabel(t.doorCount)}
                 </span>
                 <span
                   className={cn(
@@ -950,7 +1308,7 @@ function CompactList({
                 <Button
                   variant="outline"
                   aria-label="Canvassers"
-                  className="min-w-0 flex-1"
+                  className="min-w-0 flex-1 px-0"
                   disabled={summary.walks.length === 0}
                   onClick={() => onShowWalks(t)}
                 >
@@ -991,11 +1349,15 @@ function TurfsTable({
   zoneId,
   onShowQr,
   onShowWalks,
+  onShowZoneMap,
+  onShowTurfMap,
 }: {
   campaignId: string | null;
   zoneId: string | null;
   onShowQr: (turf: TurfRow) => void;
   onShowWalks: (turf: TurfRow) => void;
+  onShowZoneMap: (turf: TurfRow) => void;
+  onShowTurfMap: (turf: TurfRow) => void;
 }) {
   const { session } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
@@ -1007,7 +1369,7 @@ function TurfsTable({
     <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
-          <TableHead className="w-14">Turf</TableHead>
+          <TableHead className="w-20">Turf</TableHead>
           <TableHead className="w-30">Code</TableHead>
           <TableHead className="w-24">Walked</TableHead>
           <TableHead className="w-16">Status</TableHead>
@@ -1035,9 +1397,16 @@ function TurfsTable({
           return (
             <TableRow key={t.turfId}>
               <TableCell>
-                <Pill variant="number" className="font-semibold">
-                  {turfLabel(t.name)}
-                </Pill>
+                {/* Single-turf map (boundary + building dots); the Zone
+                    cell covers the zone-in-context view. */}
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => onShowTurfMap(t)}
+                >
+                  <MapIcon className="size-3.5 shrink-0" />
+                  <span className="font-mono tabular-nums">{turfLabel(t.name)}</span>
+                </Button>
               </TableCell>
               <TableCell>
                 <Button
@@ -1065,7 +1434,7 @@ function TurfsTable({
               <TableCell>
                 <Pill variant="number" className="gap-1.5">
                   <DoorClosed className="size-3.5 shrink-0 text-foreground" />
-                  {t.doorCount != null ? t.doorCount.toLocaleString() : "—"}
+                  {doorLabel(t.doorCount)}
                 </Pill>
               </TableCell>
               <TableCell>
@@ -1083,9 +1452,20 @@ function TurfsTable({
                 </Button>
               </TableCell>
               <TableCell>
-                <Pill className="min-w-0">
-                  <span className="truncate">{regionName(t) ?? "—"}</span>
-                </Pill>
+                {regionName(t) ? (
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={() => onShowZoneMap(t)}
+                  >
+                    <MapIcon className="size-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">{regionName(t)}</span>
+                  </Button>
+                ) : (
+                  <Pill className="min-w-0">
+                    <span className="truncate">—</span>
+                  </Pill>
+                )}
               </TableCell>
               <TableCell>
                 <Pill className="min-w-0">
