@@ -75,6 +75,9 @@ export const turfs = app.table(
     criteria: jsonb(),
     status: text().$type<TurfStatus>().notNull().default("active"),
     geometry: jsonb().$type<GeoJsonPolygon>(),
+    // [lng, lat] per building — slim publish-time projection so map
+    // reads never detoast the full turf_data payload.
+    buildingCoords: jsonb().$type<[number, number][]>(),
     doorCount: integer(),
     personCount: integer(),
     createdBy: uuid()

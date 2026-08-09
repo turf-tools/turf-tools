@@ -446,6 +446,15 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
         FROM building_payloads
         GROUP BY polygon_idx
     ),
+    turf_coords AS (
+        -- Slim [lng, lat] projection stored on the turf row so map
+        -- reads never have to open the full turf_data payload.
+        SELECT
+            polygon_idx,
+            json_group_array(json_array(longitude, latitude)) AS building_coords
+        FROM building_payloads
+        GROUP BY polygon_idx
+    ),
     counts AS (
         SELECT
             polygon_idx,
@@ -487,16 +496,18 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
             ?::UUID AS created_by,
             -- Record the dataset version this turf was published against.
             ?::UUID AS dataset_version_id,
-            coalesce(tb.buildings, json('[]')) AS buildings
+            coalesce(tb.buildings, json('[]')) AS buildings,
+            coalesce(tc.building_coords, json('[]')) AS building_coords
         FROM drafts d
         LEFT JOIN counts c ON c.polygon_idx = d.idx
         LEFT JOIN turf_buildings tb ON tb.polygon_idx = d.idx
+        LEFT JOIN turf_coords tc ON tc.polygon_idx = d.idx
     )
     SELECT
         turf_id, turf_code,
         campaign_id, segment_id, zone_id, zone_name, zone_keys_json,
         zone_group_id, script_id,
-        criteria_json, name, geometry_json,
+        criteria_json, name, geometry_json, building_coords,
         door_count, person_count,
         created_by, dataset_version_id,
         json_object(
@@ -515,12 +526,12 @@ def _insert_turfs_sql() -> str:
     INSERT INTO {OPERATIONAL_PG_ALIAS}.app.turfs (
         turf_id, campaign_id, segment_id, zone_id, zone_name, zone_keys,
         zone_group_id, script_id, name, turf_code, criteria, geometry,
-        door_count, person_count, created_by, dataset_version_id
+        building_coords, door_count, person_count, created_by, dataset_version_id
     )
     SELECT
         turf_id, campaign_id, segment_id, zone_id, zone_name, json(zone_keys_json),
         zone_group_id, script_id, name, turf_code, json(criteria_json), json(geometry_json),
-        door_count, person_count, created_by, dataset_version_id
+        json(building_coords), door_count, person_count, created_by, dataset_version_id
     FROM published_turf_rows;
     """
 

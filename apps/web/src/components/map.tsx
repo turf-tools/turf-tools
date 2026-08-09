@@ -56,6 +56,14 @@ type MapProps = {
   // turf-cutter.
   zonePerimeters?: GeoJSON.FeatureCollection;
   onZoneClick?: (zoneId: string) => void;
+  // Optional label points — point features with `properties.label`,
+  // drawn as text above the perimeter fills. Callers compute placement
+  // (e.g. bbox centers): letting MapLibre self-label polygons
+  // duplicates text across tile splits. Features with
+  // `properties.badge` get a theme-aware translucent plate behind mono
+  // text — sized for short numeric labels, not names — and collision-
+  // hide (with a fade) when the map gets crowded.
+  shapeLabels?: GeoJSON.FeatureCollection;
   // The currently-selected zone's id. Its perimeter line renders
   // with a heavier stroke + full opacity; the rest stay thin and
   // faded so the selection reads at a glance.
@@ -148,6 +156,45 @@ const ZONE_PERIMETERS_SOURCE_ID = "zone-perimeters";
 const ZONE_PERIMETERS_FILL_LAYER = "zone-perimeters-fill";
 const ZONE_PERIMETERS_LINE_LAYER = "zone-perimeters-line";
 const BOUNDARIES_LINE_LAYER = "boundaries-line";
+const SHAPE_LABELS_SOURCE_ID = "shape-labels";
+// The two shape-label layers, in stacking order. The points layer is
+// kept immediately below these (badges stay readable over the dots) —
+// shared with PointsLayer via its `keepBelow` option.
+const SHAPE_LABEL_LAYER_IDS = ["shape-labels-badged", "shape-labels"];
+const LABEL_BADGE_IMAGES = {
+  light: "shape-label-plate-light",
+  dark: "shape-label-plate-dark",
+} as const;
+
+// The label plate: a translucent rounded rectangle drawn once at 2x,
+// with stretch zones between the corners so icon-text-fit can size it
+// to any label width without distorting the radius. Coordinates in the
+// metadata below are image pixels (36px image = 18 CSS px, radius 12 =
+// rounded-md's 6). Both theme variants are registered; the layer picks
+// per theme.
+function badgePlateImage(variant: keyof typeof LABEL_BADGE_IMAGES): ImageData {
+  const size = 36;
+  const radius = 12;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.beginPath();
+  ctx.roundRect(1, 1, size - 2, size - 2, radius);
+  ctx.fillStyle = variant === "dark" ? "rgba(20, 20, 20, 0.85)" : "rgba(255, 255, 255, 0.82)";
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = variant === "dark" ? "rgba(255, 255, 255, 0.28)" : "rgba(0, 0, 0, 0.25)";
+  ctx.stroke();
+  return ctx.getImageData(0, 0, size, size);
+}
+
+const LABEL_BADGE_METADATA = {
+  pixelRatio: 2,
+  stretchX: [[14, 22]] as [number, number][],
+  stretchY: [[14, 22]] as [number, number][],
+  content: [12, 12, 24, 24] as [number, number, number, number],
+};
 
 export function Map({
   initialViewState,
@@ -158,6 +205,7 @@ export function Map({
   activeKeys,
   zonePerimeters,
   onZoneClick,
+  shapeLabels,
   selectedZoneId,
   fitBounds,
   onPolygonClick,
@@ -413,6 +461,31 @@ export function Map({
     }
   };
 
+  // Register the label plate images. `setStyle` (theme toggle) wipes
+  // images, so `styleimagemissing` is the durable re-add hook — it
+  // fires whenever a layer wants an image that isn't there.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const ensure = (variant: keyof typeof LABEL_BADGE_IMAGES) => {
+      const id = LABEL_BADGE_IMAGES[variant];
+      if (!map.hasImage(id)) {
+        map.addImage(id, badgePlateImage(variant), LABEL_BADGE_METADATA);
+      }
+    };
+    ensure("light");
+    ensure("dark");
+    const onMissing = (e: { id: string }) => {
+      if (e.id === LABEL_BADGE_IMAGES.light) ensure("light");
+      if (e.id === LABEL_BADGE_IMAGES.dark) ensure("dark");
+    };
+    map.on("styleimagemissing", onMissing);
+    return () => {
+      map.off("styleimagemissing", onMissing);
+    };
+  }, [mapReady]);
+
   // Add the WebGL points layer once the map is up. We add even when
   // `points` is undefined so a later prop change doesn't cost a layer
   // re-create — `setPoints` just toggles the visible point count.
@@ -420,7 +493,7 @@ export function Map({
     if (!mapReady) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
-    const layer = new PointsLayer({ id: "segment-points" });
+    const layer = new PointsLayer({ id: "segment-points", keepBelow: SHAPE_LABEL_LAYER_IDS });
     pointsLayerRef.current = layer;
     if (!map.getLayer(layer.id)) map.addLayer(layer);
     return () => {
@@ -429,29 +502,54 @@ export function Map({
     };
   }, [mapReady]);
 
-  // Keep the points layer on top of every other layer, whenever the
-  // style changes. The JSX-driven Source/Layer components
-  // (boundaries, zone perimeters) add their layers via react-map-
-  // gl's own internal effects, which we don't directly observe and
-  // which run on a different schedule from our imperative addLayer
-  // for points. Result: any time someone else adds a layer (style
-  // load, source mount, dynamic toggle), points can end up beneath
-  // it and stay there.
+  // Keep the points layer stacked correctly, whenever the style
+  // changes: above every other layer EXCEPT the shape labels, whose
+  // badges must stay readable over the dots. The JSX-driven
+  // Source/Layer components (boundaries, zone perimeters, labels) add
+  // their layers via react-map-gl's own internal effects, which we
+  // don't directly observe and which run on a different schedule from
+  // our imperative addLayer for points. Result: any time someone else
+  // adds a layer (style load, source mount, dynamic toggle), points
+  // can end up mis-stacked and stay there.
   //
   // `styledata` fires after every style mutation, so we just listen
-  // and re-stack whenever points isn't already the topmost layer.
-  // moveLayer itself fires `styledata` again, but the next check
-  // sees points at the top and exits — no loop.
+  // and re-stack whenever points isn't already in position. moveLayer
+  // itself fires `styledata` again, but the next check sees points in
+  // place and exits — no loop. This logic MUST stay in lockstep with
+  // PointsLayer.nudgeOnTop (which gets the same target via the
+  // `keepBelow` option) — if the two disagree, they re-stack against
+  // each other on every styledata: a permanent repaint loop.
+  //
+  // IMPORTANT: the order check must use `getLayersOrder()`, never
+  // `getStyle().layers` — the latter is a serialization that omits
+  // custom layers, so points could never satisfy the position check
+  // and every styledata triggered a moveLayer, which fired styledata
+  // again: a permanent 60fps repaint loop that kept the map from ever
+  // going idle (and disabled symbol fades, which are gated behind the
+  // first `idle`).
   useEffect(() => {
     if (!mapReady) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
     const ensure = () => {
       if (!map.getLayer("segment-points")) return;
-      const layers = map.getStyle().layers;
-      if (!layers || layers.length === 0) return;
-      if (layers[layers.length - 1]?.id === "segment-points") return;
-      map.moveLayer("segment-points");
+      const order = map.getLayersOrder();
+      const idx = order.indexOf("segment-points");
+      if (idx < 0) return;
+      // In position iff everything above the dots is a shape-label
+      // layer and no shape-label layer sits below them.
+      const above = order.slice(idx + 1);
+      const labelsPresent = order.filter((id) => SHAPE_LABEL_LAYER_IDS.includes(id));
+      if (
+        above.length === labelsPresent.length &&
+        above.every((id) => SHAPE_LABEL_LAYER_IDS.includes(id))
+      ) {
+        return;
+      }
+      map.moveLayer(
+        "segment-points",
+        order.find((id) => SHAPE_LABEL_LAYER_IDS.includes(id)),
+      );
     };
     // `styledata` covers most reorder triggers; `idle` is the
     // belt-and-suspenders hook — fires when the map has fully
@@ -522,12 +620,17 @@ export function Map({
     const map = mapRef.current?.getMap();
     if (!map) return;
     const fit = () => {
+      // Padding scales with the container: a flat 40px reads right on
+      // desktop editors but eats over a quarter of a phone-width
+      // dialog, leaving the shape floating under-zoomed.
+      const el = map.getContainer();
+      const padding = Math.min(40, Math.round(Math.min(el.clientWidth, el.clientHeight) * 0.08));
       map.fitBounds(
         [
           [fitBounds[0], fitBounds[1]],
           [fitBounds[2], fitBounds[3]],
         ],
-        { padding: 40, duration: 0 },
+        { padding, duration: 0 },
       );
       lastFitBoundsRef.current = fitBounds;
       setPendingFit(false);
@@ -600,7 +703,14 @@ export function Map({
         mapStyle={getMaptilerStyleUrl(isDark)}
         attributionControl={false}
         style={{ width: "100%", height: "100%" }}
-        onLoad={() => setMapReady(true)}
+        onLoad={() => {
+          setMapReady(true);
+          // Dev-only console handle for render-loop / placement
+          // diagnostics (label-fade gate, idle behavior).
+          if (import.meta.env.DEV) {
+            (window as { __map?: unknown }).__map = mapRef.current?.getMap();
+          }
+        }}
         // Disabled: MapLibre's box-zoom handler intercepts
         // shift+drag (and effectively shift+click) to draw a zoom
         // rectangle. The zone editor uses shift+click to toggle
@@ -707,29 +817,93 @@ export function Map({
                   ["get", "color"],
                   isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
                 ],
-                "fill-opacity": 0.65,
+                // Per-feature `opacity` override for callers that encode
+                // state in fill strength (the turfs board's walk states).
+                "fill-opacity": ["coalesce", ["get", "opacity"], 0.65],
               }}
             />
             <Layer
               id={ZONE_PERIMETERS_LINE_LAYER}
               type="line"
               paint={{
-                "line-color": isDark ? "hsl(0, 0%, 95%)" : "hsl(0, 0%, 5%)",
+                // Per-feature `lineColor` override (drawn solid); the
+                // theme-neutral stroke is the fallback. The turf maps
+                // use it to match each outline to its fill color.
+                "line-color": [
+                  "coalesce",
+                  ["get", "lineColor"],
+                  isDark ? "hsl(0, 0%, 95%)" : "hsl(0, 0%, 5%)",
+                ],
                 // Thin and faded by default; the selected zone gets
                 // the heavier stroke at full opacity so it reads as
                 // the active one without disrupting the others.
                 "line-width": ["case", ["==", ["feature-state", "selected"], true], 1.5, 0.75],
-                "line-opacity": ["case", ["==", ["feature-state", "selected"], true], 1, 0.5],
+                "line-opacity": [
+                  "case",
+                  ["==", ["feature-state", "selected"], true],
+                  1,
+                  ["!=", ["get", "lineColor"], null],
+                  1,
+                  0.5,
+                ],
               }}
             />
           </Source>
         ) : null}
 
+        {shapeLabels ? (
+          <Source id={SHAPE_LABELS_SOURCE_ID} type="geojson" data={shapeLabels}>
+            {/* Badged labels ride a stretchable rounded-rect plate
+                (icon-text-fit sizes it to the text); plate and text
+                colors flip with the theme. */}
+            <Layer
+              id="shape-labels-badged"
+              type="symbol"
+              filter={["==", ["get", "badge"], true]}
+              layout={{
+                "text-field": ["get", "label"],
+                "text-size": 15,
+                // Served by MapTiler's glyph endpoint (verified) — the
+                // style's default stack isn't mono, and mono digits keep
+                // plate widths steady across equal-length labels.
+                "text-font": ["Roboto Mono Regular"],
+                "text-allow-overlap": false,
+                "icon-image": isDark ? LABEL_BADGE_IMAGES.dark : LABEL_BADGE_IMAGES.light,
+                "icon-text-fit": "both",
+                "icon-text-fit-padding": [0, 0, 0, 0],
+                "icon-allow-overlap": false,
+              }}
+              paint={{ "text-color": isDark ? "hsl(0, 0%, 92%)" : "hsl(0, 0%, 10%)" }}
+            />
+            <Layer
+              id="shape-labels"
+              type="symbol"
+              filter={["!=", ["get", "badge"], true]}
+              layout={{
+                "text-field": ["get", "label"],
+                "text-size": 13,
+                // Counts are small and every label sits inside its own
+                // shape — collision-hiding tiny turfs' numbers would
+                // defeat the layer's purpose.
+                "text-allow-overlap": true,
+              }}
+              paint={LABEL_PAINT(isDark)}
+            />
+          </Source>
+        ) : null}
+
+        {/* Street labels sit BELOW the shape labels when both exist —
+            symbol placement runs top-down, so whichever layer is higher
+            claims collision space first. Badges above streets = badges
+            always place, street names flow around the plates. (MapLibre
+            has no per-layer collision groups; layer order is the only
+            priority mechanism.) */}
         {showLabels ? (
           <Source id={LABELS_SOURCE_ID} type="vector" url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
             {/* Cities (zoom 4–14) */}
             <Layer
               id="labels-city"
+              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
               type="symbol"
               source-layer="place"
               minzoom={4}
@@ -745,6 +919,7 @@ export function Map({
             {/* Towns (zoom 6+) */}
             <Layer
               id="labels-town"
+              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
               type="symbol"
               source-layer="place"
               minzoom={6}
@@ -759,6 +934,7 @@ export function Map({
             {/* Neighborhoods, hamlets, etc. (zoom 8+) */}
             <Layer
               id="labels-other"
+              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
               type="symbol"
               source-layer="place"
               minzoom={8}
@@ -776,6 +952,7 @@ export function Map({
             {/* Roads (zoom 9+) */}
             <Layer
               id="labels-road"
+              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
               type="symbol"
               source-layer="transportation_name"
               minzoom={9}
@@ -792,6 +969,7 @@ export function Map({
             {/* House numbers (zoom 17+) */}
             <Layer
               id="labels-housenumber"
+              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
               type="symbol"
               source-layer="housenumber"
               minzoom={17}

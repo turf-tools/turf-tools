@@ -65,16 +65,20 @@ uniform mat4 u_matrix;
 uniform vec2 u_shiftHi;
 uniform vec2 u_shiftLo;
 uniform float u_zoom;
+// devicePixelRatio — gl_PointSize is in physical framebuffer pixels,
+// so without this scale dots render visibly smaller on high-DPR
+// phones than on desktop.
+uniform float u_pixelRatio;
 
 out vec3 v_color;
 
-// Zoom range and pixel-size endpoints for the dot. Each zoom level
+// Zoom range and CSS-pixel size endpoints for the dot. Each zoom level
 // scales the dot by the same factor (geometric ramp), matching the
 // way map scale doubles per zoom level.
 const float Z_MIN = 9.0;
 const float Z_MAX = 18.0;
-const float PX_MIN = 2.0;
-const float PX_MAX = 14.0;
+const float PX_MIN = 1.0;
+const float PX_MAX = 7.0;
 
 void main() {
   // (merc - cameraMerc) = (merc - storedOrigin) - (cameraMerc - storedOrigin).
@@ -87,7 +91,7 @@ void main() {
 
   float t = clamp((u_zoom - Z_MIN) / (Z_MAX - Z_MIN), 0.0, 1.0);
   float baseSize = PX_MIN * pow(PX_MAX / PX_MIN, t);
-  gl_PointSize = baseSize * a_size;
+  gl_PointSize = baseSize * a_size * u_pixelRatio;
 }
 `;
 
@@ -143,6 +147,7 @@ export class PointsLayer implements CustomLayerInterface {
   private locU_matrix: WebGLUniformLocation | null = null;
   private locU_shiftHi: WebGLUniformLocation | null = null;
   private locU_shiftLo: WebGLUniformLocation | null = null;
+  private locU_pixelRatio: WebGLUniformLocation | null = null;
   private locU_zoom: WebGLUniformLocation | null = null;
 
   // Reusable scratch buffer for the shifted matrix; one allocation
@@ -166,8 +171,14 @@ export class PointsLayer implements CustomLayerInterface {
 
   private style: PointsLayerStyle = DEFAULT_STYLE;
 
-  constructor(opts: { id?: string } = {}) {
+  // Layer ids allowed to sit above the dots (e.g. label badges); the
+  // re-stacking keeps this layer immediately below them, topmost
+  // otherwise.
+  private readonly keepBelow: string[];
+
+  constructor(opts: { id?: string; keepBelow?: string[] } = {}) {
     this.id = opts.id ?? "points-layer";
+    this.keepBelow = opts.keepBelow ?? [];
   }
 
   onAdd(map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
@@ -288,6 +299,8 @@ export class PointsLayer implements CustomLayerInterface {
     gl2.uniform2f(this.locU_shiftHi, sxHi, syHi);
     gl2.uniform2f(this.locU_shiftLo, sxLo, syLo);
     gl2.uniform1f(this.locU_zoom, this.map.getZoom());
+    // Per frame: DPR changes with browser zoom and cross-screen moves.
+    gl2.uniform1f(this.locU_pixelRatio, window.devicePixelRatio || 1);
 
     gl2.drawArrays(gl2.POINTS, 0, this.pointCount);
   }
@@ -373,19 +386,36 @@ export class PointsLayer implements CustomLayerInterface {
     gl.bufferData(gl.ARRAY_BUFFER, this.userSizes, gl.DYNAMIC_DRAW);
   }
 
-  // Re-stack the layer to the top of the style if it isn't already.
-  // The Map component has its own listener that does this on
-  // `styledata` / `idle`, but those events don't fire reliably for
-  // every reorder trigger — calling here on every data upload is a
-  // cheap belt-and-suspenders so a buried-points race never
-  // outlives the next prop change. No-op when already on top.
+  // Re-stack the layer to its position (top, except `keepBelow`
+  // layers) if it isn't there already. The Map component has its own
+  // listener that does this on `styledata` / `idle`, but those events
+  // don't fire reliably for every reorder trigger — calling here on
+  // every data upload is a cheap belt-and-suspenders so a buried-
+  // points race never outlives the next prop change. MUST match the
+  // Map component's ensure() logic exactly — two re-stackers with
+  // different targets would fight on every styledata (repaint loop).
   private nudgeOnTop(): void {
     if (!this.map) return;
     if (!this.map.getLayer(this.id)) return;
-    const layers = this.map.getStyle().layers;
-    if (!layers || layers.length === 0) return;
-    if (layers[layers.length - 1]?.id === this.id) return;
-    this.map.moveLayer(this.id);
+    // `getLayersOrder()`, never `getStyle().layers` — the serialized
+    // list omits custom layers, so this layer would never test as
+    // topmost and every call would moveLayer (see the repaint-loop
+    // note in map.tsx).
+    const order = this.map.getLayersOrder();
+    const idx = order.indexOf(this.id);
+    if (idx < 0) return;
+    const above = order.slice(idx + 1);
+    const keepBelowPresent = order.filter((id) => this.keepBelow.includes(id));
+    if (
+      above.length === keepBelowPresent.length &&
+      above.every((id) => this.keepBelow.includes(id))
+    ) {
+      return;
+    }
+    this.map.moveLayer(
+      this.id,
+      order.find((id) => this.keepBelow.includes(id)),
+    );
   }
 
   private compileProgram(): void {
@@ -410,6 +440,7 @@ export class PointsLayer implements CustomLayerInterface {
     this.locU_shiftHi = gl.getUniformLocation(program, "u_shiftHi");
     this.locU_shiftLo = gl.getUniformLocation(program, "u_shiftLo");
     this.locU_zoom = gl.getUniformLocation(program, "u_zoom");
+    this.locU_pixelRatio = gl.getUniformLocation(program, "u_pixelRatio");
   }
 }
 
