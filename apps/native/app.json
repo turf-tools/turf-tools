@@ -15,8 +15,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./design/arrow-icon-1024x1024.png",
-        "monochromeImage": "./design/arrow-icon-1024x1024.png",
+        "foregroundImage": "./design/arrow-icon-foreground.png",
+        "monochromeImage": "./design/arrow-icon-foreground.png",
         "backgroundColor": "#FFFFFF"
       },
       "permissions": [
