@@ -64,6 +64,9 @@ type MapProps = {
   // text — sized for short numeric labels, not names — and collision-
   // hide (with a fade) when the map gets crowded.
   shapeLabels?: GeoJSON.FeatureCollection;
+  // Fired with a badged label's `zoneId` on tap of the plate itself —
+  // polygon-sized targets misfire on dense maps.
+  onBadgeClick?: (id: string) => void;
   // The currently-selected zone's id. Its perimeter line renders
   // with a heavier stroke + full opacity; the rest stay thin and
   // faded so the selection reads at a glance.
@@ -120,6 +123,9 @@ type MapProps = {
   // unused by the points layer (which loads everything once); kept
   // around for callers that still want viewport awareness.
   onViewportChange?: (viewport: Viewport) => void;
+  // Force the street-label overlay on and drop its toggle; omit to
+  // keep the toggle.
+  streetsAlwaysOn?: boolean;
   // Content for the bottom-right inset, rendered below the built-in
   // "Show streets" toggle in the same card. Lets routes drop in extra
   // rows without re-inventing an absolute-positioned inset.
@@ -206,6 +212,7 @@ export function Map({
   zonePerimeters,
   onZoneClick,
   shapeLabels,
+  onBadgeClick,
   selectedZoneId,
   fitBounds,
   onPolygonClick,
@@ -216,11 +223,22 @@ export function Map({
   pointColors,
   pointSizes,
   onViewportChange,
+  streetsAlwaysOn,
   cornerLowerRight,
   cornerUpperRight,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
-  const [showLabels, setShowLabels] = useState(false);
+  const [streetsToggled, setStreetsToggled] = useState(false);
+  const showLabels = streetsAlwaysOn || streetsToggled;
+  // Street labels sit beneath every overlay layer this map renders —
+  // insert them before whichever of ours is lowest in the stack.
+  const streetLabelsBeforeId = boundariesUrl
+    ? BOUNDARIES_FILL_LAYER
+    : zonePerimeters
+      ? ZONE_PERIMETERS_FILL_LAYER
+      : shapeLabels
+        ? "shape-labels-badged"
+        : undefined;
   const [hoveringPolygon, setHoveringPolygon] = useState(false);
   // The underlying MapLibre instance isn't available on first render —
   // react-map-gl populates the ref but doesn't trigger a re-render
@@ -375,6 +393,7 @@ export function Map({
     const layers: string[] = [];
     if (onPolygonClick) layers.push(BOUNDARIES_FILL_LAYER);
     if (onZoneClick) layers.push(ZONE_PERIMETERS_FILL_LAYER);
+    if (onBadgeClick) layers.push("shape-labels-badged");
     if (layers.length === 0) {
       setHoveringPolygon(false);
       return;
@@ -445,9 +464,18 @@ export function Map({
   }, [onPolygonHover, mapReady]);
 
   const handleClick = (e: MapMouseEvent) => {
+    const feature = e.features?.[0];
+    // Badge plates first — their features also carry `zoneId`, so
+    // they must dispatch before the generic zoneId branch below.
+    if (feature?.layer?.id === "shape-labels-badged") {
+      const id = feature.properties?.zoneId;
+      if (typeof id === "string") {
+        onBadgeClick?.(id);
+        return;
+      }
+    }
     // Zone perimeters take priority — they sit on top of boundary
     // fills, so a click on one is a zone click, not a key click.
-    const feature = e.features?.[0];
     const zoneId = feature?.properties?.zoneId;
     if (typeof zoneId === "string") {
       onZoneClick?.(zoneId);
@@ -725,9 +753,16 @@ export function Map({
         interactiveLayerIds={[
           ...(onPolygonClick ? [BOUNDARIES_FILL_LAYER] : []),
           ...(onZoneClick ? [ZONE_PERIMETERS_FILL_LAYER] : []),
+          ...(onBadgeClick ? ["shape-labels-badged"] : []),
         ]}
-        onClick={onPolygonClick || onZoneClick || onBackgroundClick ? handleClick : undefined}
-        cursor={(onPolygonClick || onZoneClick) && hoveringPolygon ? "pointer" : "grab"}
+        onClick={
+          onPolygonClick || onZoneClick || onBadgeClick || onBackgroundClick
+            ? handleClick
+            : undefined
+        }
+        cursor={
+          (onPolygonClick || onZoneClick || onBadgeClick) && hoveringPolygon ? "pointer" : "grab"
+        }
       >
         {boundariesUrl ? (
           <Source
@@ -892,18 +927,15 @@ export function Map({
           </Source>
         ) : null}
 
-        {/* Street labels sit BELOW the shape labels when both exist —
-            symbol placement runs top-down, so whichever layer is higher
-            claims collision space first. Badges above streets = badges
-            always place, street names flow around the plates. (MapLibre
-            has no per-layer collision groups; layer order is the only
-            priority mechanism.) */}
+        {/* Symbol placement runs top-down, so badges claim collision
+            space first and street names flow around the plates — layer
+            order is MapLibre's only collision-priority mechanism. */}
         {showLabels ? (
           <Source id={LABELS_SOURCE_ID} type="vector" url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
             {/* Cities (zoom 4–14) */}
             <Layer
               id="labels-city"
-              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
+              beforeId={streetLabelsBeforeId}
               type="symbol"
               source-layer="place"
               minzoom={4}
@@ -919,7 +951,7 @@ export function Map({
             {/* Towns (zoom 6+) */}
             <Layer
               id="labels-town"
-              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
+              beforeId={streetLabelsBeforeId}
               type="symbol"
               source-layer="place"
               minzoom={6}
@@ -934,7 +966,7 @@ export function Map({
             {/* Neighborhoods, hamlets, etc. (zoom 8+) */}
             <Layer
               id="labels-other"
-              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
+              beforeId={streetLabelsBeforeId}
               type="symbol"
               source-layer="place"
               minzoom={8}
@@ -952,7 +984,7 @@ export function Map({
             {/* Roads (zoom 9+) */}
             <Layer
               id="labels-road"
-              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
+              beforeId={streetLabelsBeforeId}
               type="symbol"
               source-layer="transportation_name"
               minzoom={9}
@@ -969,7 +1001,7 @@ export function Map({
             {/* House numbers (zoom 17+) */}
             <Layer
               id="labels-housenumber"
-              beforeId={shapeLabels ? "shape-labels-badged" : undefined}
+              beforeId={streetLabelsBeforeId}
               type="symbol"
               source-layer="housenumber"
               minzoom={17}
@@ -989,18 +1021,22 @@ export function Map({
           `divide-y` puts a separator between rows, so the
           cornerLowerRight labels just need padding/gap, not their
           own border or background. */}
-      <div
-        className={
-          "absolute right-3 bottom-3 z-20 flex flex-col items-stretch " +
-          "rounded-md border border-border bg-background text-sm"
-        }
-      >
-        <label className="flex items-center gap-3 px-3 py-3">
-          <Switch checked={showLabels} onCheckedChange={setShowLabels} />
-          <span>Show streets</span>
-        </label>
-        {cornerLowerRight}
-      </div>
+      {!streetsAlwaysOn || cornerLowerRight ? (
+        <div
+          className={
+            "absolute right-3 bottom-3 z-20 flex flex-col items-stretch " +
+            "rounded-md border border-border bg-background text-sm"
+          }
+        >
+          {!streetsAlwaysOn ? (
+            <label className="flex items-center gap-3 px-3 py-3">
+              <Switch checked={streetsToggled} onCheckedChange={setStreetsToggled} />
+              <span>Show streets</span>
+            </label>
+          ) : null}
+          {cornerLowerRight}
+        </div>
+      ) : null}
 
       {/* Upper-right inset — same card + edge offsets as the lower slots;
           positional, content supplied by the route. */}

@@ -20,6 +20,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { useAtomValue } from "jotai";
+import polylabel from "polylabel";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
@@ -156,6 +157,17 @@ function TurfsIndex() {
   const showTurfMap = (turf: TurfRow) => {
     setTurfMapTurf(turf);
     setTurfMapOpen(true);
+  };
+  // Both viewport trees stay mounted (CSS-gated), so match by data
+  // attribute and take the visible element.
+  const scrollToTurf = (turfId: string) => {
+    setZoneMapOpen(false);
+    requestAnimationFrame(() => {
+      const el = Array.from(document.querySelectorAll(`[data-turf-row="${turfId}"]`)).find(
+        (node): node is HTMLElement => node instanceof HTMLElement && node.offsetParent !== null,
+      );
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
   };
 
   // Back/Next page the QR dialog through the current filter's rows in
@@ -311,7 +323,12 @@ function TurfsIndex() {
         open={walksOpen}
         onOpenChange={setWalksOpen}
       />
-      <ZoneMapDialog group={zoneMapGroup} open={zoneMapOpen} onOpenChange={setZoneMapOpen} />
+      <ZoneMapDialog
+        group={zoneMapGroup}
+        open={zoneMapOpen}
+        onOpenChange={setZoneMapOpen}
+        onSelectTurf={scrollToTurf}
+      />
       <TurfMapDialog turf={turfMapTurf} open={turfMapOpen} onOpenChange={setTurfMapOpen} />
     </Page>
   );
@@ -499,15 +516,23 @@ function bboxOfFeatures(features: Feature[]): [number, number, number, number] |
   return minLng === Infinity ? null : [minLng, minLat, maxLng, maxLat];
 }
 
-// Bbox center — good enough placement for mostly-convex turf shapes,
-// without pulling in a pole-of-inaccessibility dependency. `badge`
-// requests the map's plate treatment for the numeric label.
+// Pole of inaccessibility — guaranteed interior, unlike a centroid on
+// L-shaped turfs. `badge` requests the map's plate treatment.
 function labelPoint(f: Feature, label: string): Feature {
-  const b = bboxOfFeatures([f]);
+  let coordinates: [number, number];
+  if (f.geometry.type === "Polygon") {
+    // GeoJSON Position is number[]; polylabel's types want strict pairs.
+    const p = polylabel(f.geometry.coordinates as [number, number][][], 0.00001);
+    coordinates = [p[0]!, p[1]!];
+  } else {
+    const b = bboxOfFeatures([f]);
+    coordinates = b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0];
+  }
   return {
     type: "Feature",
-    geometry: { type: "Point", coordinates: b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0] },
-    properties: { label, badge: true },
+    geometry: { type: "Point", coordinates },
+    // Carries the shape's id so badge taps can resolve back to a turf.
+    properties: { label, badge: true, zoneId: f.properties?.zoneId },
   };
 }
 
@@ -691,10 +716,12 @@ function ZoneMapDialog({
   group,
   open,
   onOpenChange,
+  onSelectTurf,
 }: {
   group: ZoneMapGroup | null;
   open: boolean;
   onOpenChange: (next: boolean) => void;
+  onSelectTurf: (turfId: string) => void;
 }) {
   const isDark = useAtomValue(darkAtom);
   const { data: zoneData } = useQuery({
@@ -793,6 +820,8 @@ function ZoneMapDialog({
               pointColors={pointColors}
               fitBounds={bounds}
               loading={!zoneData}
+              streetsAlwaysOn
+              onBadgeClick={onSelectTurf}
             />
           </>
         ) : null}
@@ -867,6 +896,7 @@ function TurfMapDialog({
               fitBounds={bounds}
               loading={!data}
               selectedZoneId={turf.turfId}
+              streetsAlwaysOn
             />
           </>
         ) : null}
@@ -1111,6 +1141,7 @@ function TurfCard({
   // (Scan, the walk table's actions) stop propagation.
   return (
     <div
+      data-turf-row={turf.turfId}
       className="rounded-lg border border-border bg-white dark:bg-transparent"
       onClick={() => setExpanded((prev) => !prev)}
     >
@@ -1253,7 +1284,7 @@ function CompactList({
             const summary = summaries(t.turfId);
             const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
             return (
-              <div key={t.turfId} className="flex items-center gap-1">
+              <div key={t.turfId} data-turf-row={t.turfId} className="flex items-center gap-1">
                 <span className={cn(cell, "w-9 bg-muted font-mono font-semibold tabular-nums")}>
                   {turfLabel(t.name)}
                 </span>
@@ -1395,7 +1426,7 @@ function TurfsTable({
           const summary = summaries(t.turfId);
           const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
           return (
-            <TableRow key={t.turfId}>
+            <TableRow key={t.turfId} data-turf-row={t.turfId}>
               <TableCell>
                 {/* Single-turf map (boundary + building dots); the Zone
                     cell covers the zone-in-context view. */}

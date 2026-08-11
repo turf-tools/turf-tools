@@ -271,6 +271,9 @@ importers:
       nodemailer:
         specifier: ^7.0.0
         version: 7.0.13
+      polylabel:
+        specifier: ^2.1.0
+        version: 2.1.0
       qrcode.react:
         specifier: ^4.2.0
         version: 4.2.0(react@19.2.0)
@@ -320,6 +323,9 @@ importers:
       '@types/nodemailer':
         specifier: ^7.0.0
         version: 7.0.12
+      '@types/polylabel':
+        specifier: ^2.0.0
+        version: 2.0.0
       '@types/react':
         specifier: ^19
         version: 19.2.14
@@ -3181,6 +3187,9 @@ packages:
 
   '@types/nodemailer@7.0.12':
     resolution: {integrity: sha512-80vKwiIsVSyFA1rRovH59jNPLBOuc6dRZIHEu40gXTkBkZnQv8vog1xSGEb9j5q/tdMAs5ivvDR2pLTU0hGHXA==}
+
+  '@types/polylabel@2.0.0':
+    resolution: {integrity: sha512-di+2+kta2AQu9/SPkDuPZi23sWucX9QpchPIv9ZgTU215piNWODbFeuFF7k6NtUlYVtz+d6QB9pMHohASuD9Mg==}
 
   '@types/react-dom@19.2.3':
     resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
@@ -6110,6 +6119,9 @@ packages:
 
   polyclip-ts@0.16.8:
     resolution: {integrity: sha512-JPtKbDRuPEuAjuTdhR62Gph7Is2BS1Szx69CFOO3g71lpJDFo78k4tFyi+qFOMVPePEzdSKkpGU3NBXPHHjvKQ==}
+
+  polylabel@2.1.0:
+    resolution: {integrity: sha512-ZCL9pc/BpnyBB1Es5Eh6baziBhZFS0fTlEXGarLMqbMYbAyawqGAjyo2+MfignMggSubmllMgRGcR0L0liOugg==}
 
   postcss-import@15.1.0:
     resolution: {integrity: sha512-hpr+J05B2FVYUAXHeK1YyI267J/dDDhMU6B6civm8hSY1jYJnBXxzKDKDswzJmtLHryrjhnDjqqp/49t8FALew==}
@@ -10475,6 +10487,8 @@ snapshots:
     dependencies:
       '@types/node': 25.7.0
 
+  '@types/polylabel@2.0.0': {}
+
   '@types/react-dom@19.2.3(@types/react@19.2.14)':
     dependencies:
       '@types/react': 19.2.14
@@ -13435,6 +13449,10 @@ snapshots:
     dependencies:
       bignumber.js: 9.3.1
       splaytree-ts: 1.0.2
+
+  polylabel@2.1.0:
+    dependencies:
+      tinyqueue: 3.0.0
 
   postcss-import@15.1.0(postcss@8.5.14):
     dependencies:
