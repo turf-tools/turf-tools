@@ -497,7 +497,10 @@ export default function PersonScreen() {
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           keyboardDismissMode="interactive"
-          contentContainerStyle={{ paddingBottom: 8 }}
+          // flexGrow floors content at viewport height: a stale keyboard inset
+          // on short content (e.g. unavailable mode) can otherwise scroll
+          // everything off-screen irrecoverably.
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: 8 }}
           onScroll={(e) => {
             scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
           }}
