@@ -36,6 +36,19 @@ export function LabelLayers({ isDark = false }: { isDark?: boolean }) {
             textHaloWidth: 1,
           }}
         />
+        <SymbolLayer
+          id="labels-housenumber"
+          sourceLayerID="housenumber"
+          minZoomLevel={17}
+          maxZoomLevel={22}
+          style={{
+            textField: ["get", "housenumber"],
+            textSize: ["interpolate", ["linear"], ["zoom"], 17, 9, 22, 11],
+            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+            textHaloColor: isDark ? "hsla(0, 0%, 0%, 0.8)" : "hsla(0, 0%, 100%, 0.97)",
+            textHaloWidth: 1,
+          }}
+        />
       </VectorSource>
     </>
   );
