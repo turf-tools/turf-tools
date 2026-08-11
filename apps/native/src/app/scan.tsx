@@ -4,6 +4,12 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { InteractionManager, Linking, Platform, Pressable, Text, View } from "react-native";
+import Animated, {
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { scannedEntryAtom } from "@/lib/atoms/scan";
@@ -13,7 +19,8 @@ import { parseTurfQr } from "@/lib/turf-qr";
 // Modal camera for scanning a turf QR (`https://<host>/t/<code>`). A valid
 // scan writes the handoff atom and dismisses — the landing screen fills its
 // fields and the user reviews + hits Open; nothing opens automatically.
-// Non-matching QR codes are ignored silently (the camera just keeps looking).
+// Non-matching QR codes show a quiet warning pill over the camera while one
+// is in frame (the camera just keeps looking).
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const isDark = useAtomValue(themeAtom) === "dark";
@@ -46,12 +53,37 @@ export default function ScanScreen() {
   }, []);
 
   // The scanner fires repeatedly while a code is in frame — latch on the
-  // first valid parse so we hand off exactly once.
+  // first valid parse so we hand off exactly once. Non-turf codes show the
+  // warning hint, kept alive while frames keep arriving and cleared 1.5s
+  // after the last one.
   const handledRef = useRef(false);
+  const [showInvalid, setShowInvalid] = useState(false);
+  const invalidTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (invalidTimerRef.current) clearTimeout(invalidTimerRef.current);
+    };
+  }, []);
+  // The pill stays mounted and fades via opacity. ReduceMotion.Never: with
+  // system Reduce Motion on, Reanimated skips animations entirely — but a
+  // pure crossfade is the reduced-motion-safe form, so keep it.
+  const invalidOpacity = useSharedValue(0);
+  useEffect(() => {
+    invalidOpacity.value = withTiming(showInvalid ? 1 : 0, {
+      duration: showInvalid ? 150 : 300,
+      reduceMotion: ReduceMotion.Never,
+    });
+  }, [showInvalid, invalidOpacity]);
+  const invalidStyle = useAnimatedStyle(() => ({ opacity: invalidOpacity.value }));
   const handleData = (data: string) => {
     if (handledRef.current) return;
     const entry = parseTurfQr(data);
-    if (!entry) return;
+    if (!entry) {
+      setShowInvalid(true);
+      if (invalidTimerRef.current) clearTimeout(invalidTimerRef.current);
+      invalidTimerRef.current = setTimeout(() => setShowInvalid(false), 1250);
+      return;
+    }
     handledRef.current = true;
     setScanned(entry);
     router.back();
@@ -101,6 +133,19 @@ export default function ScanScreen() {
                   onCameraReady={() => setTimeout(() => setCameraReady(true), REVEAL_DELAY_MS)}
                 />
               ) : null}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  { position: "absolute", left: 0, right: 0, bottom: 36, alignItems: "center" },
+                  invalidStyle,
+                ]}
+              >
+                <View className="rounded-2xl bg-black/60 px-5 py-2.5">
+                  <Text className="text-xl text-white" style={{ fontFamily: "Geist_400Regular" }}>
+                    That's not a turf code
+                  </Text>
+                </View>
+              </Animated.View>
             </View>
             <Text
               className="mt-9 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
