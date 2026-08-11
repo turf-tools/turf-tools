@@ -18,7 +18,11 @@ import { Toaster } from "~/components/sonner";
 import { getSession } from "~/lib/server/session";
 import { detectDisplayTimezone } from "~/lib/timezones";
 import { client } from "~/rpc/client";
-import appCss from "~/styles.css?url";
+// Side-effect import (not ?url): keeps the stylesheet in Vite's client
+// module graph so CSS edits hot-inject instead of forcing a full reload
+// (which re-runs SSR and a complete Tailwind scan). Start collects it
+// into the SSR head in dev and emits the hashed asset link in prod.
+import "~/styles.css";
 
 // Cross-tab "logged-in" dedup — see the poster effect in RootComponent.
 let lastPostedUserId: string | null = null;
@@ -31,7 +35,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Turf Tools" },
     ],
     links: [
-      { rel: "stylesheet", href: appCss },
       { rel: "icon", type: "image/png", href: "/favicon/arrow.png" },
       {
         rel: "icon",
