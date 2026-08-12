@@ -1,7 +1,7 @@
-import { MarkerView, PointAnnotation } from "@maplibre/maplibre-react-native";
+import { PointAnnotation } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
-import { AppState, Platform, View } from "react-native";
+import { AppState, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -11,19 +11,43 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
+import Svg, { Defs, Path, RadialGradient, Stop } from "react-native-svg";
 
-// Minimal "you are here" marker: a dot with a contrasting outline and a
-// subtle expanding halo (the Google Maps idiom). Location is watched only
-// while the map is mounted, and every failure mode — permission denied,
-// services off, watch error — resolves to "no dot": never a prompt, alert,
-// or placeholder.
+// iOS-only "you are here" marker: a dot with a contrasting outline, a
+// subtle expanding halo, and a heading cone (the Google Maps idiom).
+// Android renders the SDK-native puck instead (see turf-map): this
+// component would need MarkerView there, which fritzes the status bar
+// and can crash. Location and heading are watched only while the map is
+// mounted, and every failure mode — permission denied, services off, no
+// compass — resolves to "no dot" / "no cone": never an alert or
+// placeholder.
 
 // The three size knobs. Everything else derives from these: the halo starts
 // at the dot's outer edge and expands to HALO_SCALE× it, and the container
-// is sized to the halo's max so nothing clips.
+// is sized so nothing clips.
 const DOT_SIZE = 19; // dot diameter, border included
 const OUTLINE_WIDTH = 3;
 const HALO_SCALE = 2.25; // halo max diameter as a multiple of the dot
+
+// Cone: an SVG beam under the dot, rotated by compass heading on the UI
+// thread via a shared value — no React re-render and no map repaint per
+// heading event. Width follows reported compass accuracy (0–3): the worse
+// the calibration, the wider the beam — and at 0 the cone hides
+// entirely, leaving the dot.
+const CONE_RADIUS = 62;
+const CONE_OPACITY = 0.45; // at the apex; fades radially to 0 at the rim
+const CONE_ANGLE_BY_ACCURACY: Record<number, number> = { 3: 55, 2: 75, 1: 100 };
+
+// Sweeps the cone and forces it visible so shape and opacity are
+// judgeable in the simulator, which has no compass. The __DEV__ guard
+// keeps published bundles unaffected even when left true.
+const PREVIEW_CONE_SWEEP = __DEV__ && true;
+
+// Heading smoothing: low-pass on sin/cos components (never the raw angle —
+// averaging across the 359°→0° wrap poisons the mean), then write only on
+// >EMIT_DEGREES of filtered movement so a still phone stays quiet.
+const HEADING_ALPHA = 0.8; // weight of the previous filtered value
+const EMIT_DEGREES = 1.5;
 
 // Below this, a new fix keeps the previous drawn position: with no
 // distance filter, stationary GPS jitter (~1m) would make the dot wander
@@ -41,31 +65,49 @@ const GLIDE_MS = 800;
 // a glitch, not motion.
 const SNAP_METERS = 50;
 
+const DEG = Math.PI / 180;
+
 // Equirectangular approximation — meters between two [lng, lat] points.
 // Fine at walking scale; avoids pulling in a geo library for one check.
 function metersBetween(a: [number, number], b: [number, number]) {
-  const dLng = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * (Math.PI / 180));
+  const dLng = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * DEG);
   const dLat = b[1] - a[1];
   return Math.hypot(dLng, dLat) * 111_320;
 }
 
+// Beam path, pointing north: the base spans the dot's full width (the
+// Google Maps geometry — the beam emerges from the dot's edges, not its
+// center), the sides spread to `angle` degrees, and an arc at
+// CONE_RADIUS caps it. The base chord is hidden under the opaque dot.
+function conePath(angle: number) {
+  const half = (angle / 2) * DEG;
+  const c = CONE_RADIUS;
+  const rd = DOT_SIZE / 2;
+  const ox = c * Math.sin(half);
+  const oy = c - c * Math.cos(half);
+  return `M${c - rd},${c} L${c - ox},${oy} A${c},${c} 0 0 1 ${c + ox},${oy} L${c + rd},${c} Z`;
+}
+
 export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
   const [coord, setCoord] = useState<[number, number] | null>(null);
+  const [coneAngle, setConeAngle] = useState<number | null>(null);
+  const headingDeg = useSharedValue(0);
 
   useEffect(() => {
-    let sub: Location.LocationSubscription | null = null;
+    let posSub: Location.LocationSubscription | null = null;
+    let headSub: Location.LocationSubscription | null = null;
     let cancelled = false;
     // Generation counter drops stale async starts: a restart that begins
     // while a previous one is still awaiting would otherwise leak the
-    // earlier watcher.
+    // earlier watchers.
     let generation = 0;
 
     // Glide state. `drawn` is where the dot visually is right now (it
     // trails `target` mid-animation); `target` is the last accepted fix,
     // which the jitter gate compares against. Plain rAF interpolation,
     // not RN Animated — see the reanimated note below for why Animated
-    // loops are avoided in this file, and a MarkerView coordinate needs
-    // a re-render per frame either way.
+    // loops are avoided in this file, and a PointAnnotation coordinate
+    // needs a re-render per frame either way.
     let drawn: [number, number] | null = null;
     let target: [number, number] | null = null;
     let raf = 0;
@@ -90,6 +132,39 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
       raf = requestAnimationFrame(step);
     };
 
+    // Heading filter state, per watcher lifetime.
+    let sinSum = 0;
+    let cosSum = 0;
+    let hasSample = false;
+    let emitted: number | null = null;
+    let tier = 0;
+
+    const onHeading = (h: Location.LocationHeadingObject) => {
+      if (PREVIEW_CONE_SWEEP) return;
+      // trueHeading is -1 until a position fix seeds declination; fall
+      // back to magnetic rather than showing nothing.
+      const raw = h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
+      if (raw < 0) return;
+      if (h.accuracy !== tier) {
+        tier = h.accuracy;
+        setConeAngle(CONE_ANGLE_BY_ACCURACY[tier] ?? null);
+      }
+      if (!hasSample) {
+        sinSum = Math.sin(raw * DEG);
+        cosSum = Math.cos(raw * DEG);
+        hasSample = true;
+      } else {
+        sinSum = HEADING_ALPHA * sinSum + (1 - HEADING_ALPHA) * Math.sin(raw * DEG);
+        cosSum = HEADING_ALPHA * cosSum + (1 - HEADING_ALPHA) * Math.cos(raw * DEG);
+      }
+      const filtered = (Math.atan2(sinSum, cosSum) / DEG + 360) % 360;
+      const delta = emitted == null ? Infinity : Math.abs(((filtered - emitted + 540) % 360) - 180);
+      if (delta > EMIT_DEGREES) {
+        emitted = filtered;
+        headingDeg.value = filtered;
+      }
+    };
+
     // Accuracy.High (GPS, ~10m), not Balanced: Balanced maps to
     // kCLLocationAccuracyHundredMeters on iOS, whose wifi-derived fixes
     // can sit still while the user walks a whole turf — the 5m distance
@@ -103,7 +178,7 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
         // distanceInterval 0 streams ~1Hz fixes: a 5m filter delivered
         // movement in visible hops at walking speed. The radio runs
         // either way — the filter only gated delivery, not power.
-        const next = await Location.watchPositionAsync(
+        const nextPos = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.High, distanceInterval: 0 },
           (pos) => {
             const fix: [number, number] = [pos.coords.longitude, pos.coords.latitude];
@@ -113,11 +188,25 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
           },
         );
         if (cancelled || gen !== generation) {
-          next.remove();
+          nextPos.remove();
           return;
         }
-        sub?.remove();
-        sub = next;
+        posSub?.remove();
+        posSub = nextPos;
+        // Compass failure only costs the cone, never the dot.
+        if (!PREVIEW_CONE_SWEEP) {
+          try {
+            const nextHead = await Location.watchHeadingAsync(onHeading);
+            if (cancelled || gen !== generation) {
+              nextHead.remove();
+              return;
+            }
+            headSub?.remove();
+            headSub = nextHead;
+          } catch {
+            // No compass, no cone — silent by design.
+          }
+        }
       } catch {
         // No location, no dot — silent by design.
       }
@@ -136,9 +225,10 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
       cancelled = true;
       cancelAnimationFrame(raf);
       appState.remove();
-      sub?.remove();
+      posSub?.remove();
+      headSub?.remove();
     };
-  }, []);
+  }, [headingDeg]);
 
   // Reanimated, not the legacy Animated API: native-driver Animated loops
   // attach to a node graph that dies when re-renders/Fast Refresh recreate
@@ -176,11 +266,31 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
     transform: [{ scale: 1 + (HALO_SCALE - 1) * progress.value }],
   }));
 
+  const coneStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${headingDeg.value}deg` }],
+  }));
+
+  // Drives PREVIEW_CONE_SWEEP: forces best-accuracy width and spins the
+  // beam once per 6s, entirely on the UI thread.
+  useEffect(() => {
+    if (!PREVIEW_CONE_SWEEP) return;
+    setConeAngle(CONE_ANGLE_BY_ACCURACY[3]);
+    headingDeg.value = 0;
+    headingDeg.value = withRepeat(
+      withTiming(360, { duration: 6000, easing: Easing.linear, reduceMotion: ReduceMotion.Never }),
+      -1,
+      false,
+      undefined,
+      ReduceMotion.Never,
+    );
+    return () => cancelAnimation(headingDeg);
+  }, [headingDeg]);
+
   if (coord == null) return null;
 
   const dotColor = isDark ? "#ffffff" : "#000000";
   const ringColor = isDark ? "#000000" : "#ffffff";
-  const containerSize = Math.ceil(DOT_SIZE * HALO_SCALE);
+  const containerSize = Math.max(Math.ceil(DOT_SIZE * HALO_SCALE), CONE_RADIUS * 2);
 
   const marker = (
     <View
@@ -188,6 +298,33 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
       className="items-center justify-center"
       style={{ width: containerSize, height: containerSize }}
     >
+      {coneAngle != null && (
+        <Animated.View
+          style={[
+            { position: "absolute", width: CONE_RADIUS * 2, height: CONE_RADIUS * 2 },
+            coneStyle,
+          ]}
+        >
+          <Svg width={CONE_RADIUS * 2} height={CONE_RADIUS * 2}>
+            <Defs>
+              {/* userSpaceOnUse: the default units are relative to the
+                beam's own bounding box, which put the gradient center in
+                the middle of the cone instead of on the dot. */}
+              <RadialGradient
+                id="user-location-cone"
+                gradientUnits="userSpaceOnUse"
+                cx={CONE_RADIUS}
+                cy={CONE_RADIUS}
+                r={CONE_RADIUS}
+              >
+                <Stop offset="0" stopColor={dotColor} stopOpacity={CONE_OPACITY} />
+                <Stop offset="1" stopColor={dotColor} stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            <Path d={conePath(coneAngle)} fill="url(#user-location-cone)" />
+          </Svg>
+        </Animated.View>
+      )}
       <Animated.View
         style={[
           {
@@ -213,26 +350,14 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
     </View>
   );
 
-  // iOS: PointAnnotation directly (it's what MarkerView renders on iOS
-  // anyway) with `enabled: false` — the map's annotation hit-test skips
-  // disabled views, so a tap on the dot falls through to whatever map
-  // layer is underneath (e.g. the building being stood at). The prop is
-  // exposed by our patch to @maplibre/maplibre-react-native (see
+  // PointAnnotation with `enabled: false` — the map's annotation hit-test
+  // skips disabled views, so a tap on the dot falls through to whatever
+  // map layer is underneath (e.g. the building being stood at). The prop
+  // is exposed by our patch to @maplibre/maplibre-react-native (see
   // patches/); MapLibre itself honors it in annotationTagAtPoint.
-  if (Platform.OS === "ios") {
-    return (
-      <PointAnnotation id="user-location-dot" coordinate={coord} enabled={false}>
-        {marker}
-      </PointAnnotation>
-    );
-  }
-
-  // Android: MarkerView is a live view (PointAnnotation would rasterize
-  // the children and freeze the halo). Tap pass-through unverified there —
-  // check when Android ships.
   return (
-    <MarkerView coordinate={coord} allowOverlap>
+    <PointAnnotation id="user-location-dot" coordinate={coord} enabled={false}>
       {marker}
-    </MarkerView>
+    </PointAnnotation>
   );
 }

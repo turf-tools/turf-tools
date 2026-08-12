@@ -6,8 +6,10 @@ import {
   ShapeSource,
   type ShapeSourceRef,
   SymbolLayer,
+  UserLocation,
 } from "@maplibre/maplibre-react-native";
-import { useCallback, useMemo, useRef, useState } from "react";
+import * as Location from "expo-location";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View, Platform } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
@@ -57,6 +59,32 @@ export function TurfMap({
   // fix). Cover with a theme-colored pane until the map reports ready;
   // iOS doesn't flash, so it keeps its untouched path.
   const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
+  // Unlike mapFullyRendered this starts false on iOS too: a PointAnnotation
+  // mounted before the map's first fully-rendered frame (warm location →
+  // instant first fix) ends up attached but never claimed by the map when
+  // its coordinate is off-viewport, showing as a ghost dot pinned near the
+  // top-left corner at its raw layout frame. Mounted after, an off-viewport
+  // annotation stays invisible until panned into view.
+  const [mapReady, setMapReady] = useState(false);
+  // Android only (iOS's custom dot requests permission itself). The
+  // native Android puck never prompts — it checks permission once at
+  // style load, silently bails, and never retries — so request via the
+  // OS dialog and mount only after the grant. Deferred until the map's
+  // first full frame: the dialog over the initializing GL surface leaves
+  // it mis-sized (stretched map, offset taps). Denied → no dot, silently.
+  const [locationGranted, setLocationGranted] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "android" || !mapFullyRendered) return;
+    let cancelled = false;
+    Location.requestForegroundPermissionsAsync()
+      .then(({ status }) => {
+        if (!cancelled && status === "granted") setLocationGranted(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [mapFullyRendered]);
   const featureCollection = useMemo(
     () => buildFeatureCollection(turf.buildings, buildingRoles),
     [turf.buildings, buildingRoles],
@@ -135,7 +163,13 @@ export function TurfMap({
         logoEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
-        onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
+        // Tints the SDK-native user-location dot (attribution and compass
+        // are disabled, so nothing else picks it up).
+        tintColor={isDark ? "#ffffff" : "#000000"}
+        onDidFinishRenderingMapFully={() => {
+          setMapFullyRendered(true);
+          setMapReady(true);
+        }}
         onRegionIsChanging={handleRegionEvent}
         onRegionDidChange={handleRegionEvent}
       >
@@ -299,11 +333,20 @@ export function TurfMap({
           />
         </ShapeSource>
 
-        {/* Android: the dot's location watch + MarkerView path fritzes the
-          status bar on first load and can crash — disabled pending a
-          proper Android implementation (likely MLRN's built-in
-          UserLocation layer). */}
-        {Platform.OS === "ios" && <UserLocationDot isDark={isDark} />}
+        {/* Forked per platform. iOS: the custom dot + heading cone — the
+          SDK-native iOS puck can only show a tiny heading arrow outside
+          camera-follow mode. Android: the SDK-native puck (tinted via the
+          map tintColor) — the custom dot would need MarkerView there,
+          which fritzes the status bar and can crash. */}
+        {Platform.OS === "ios"
+          ? mapReady && <UserLocationDot isDark={isDark} />
+          : locationGranted && (
+              <UserLocation
+                renderMode="native"
+                androidRenderMode="compass"
+                androidPreferredFramesPerSecond={30}
+              />
+            )}
       </MapView>
       {!mapFullyRendered && (
         <View
