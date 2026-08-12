@@ -6,8 +6,10 @@ import {
   ShapeSource,
   type ShapeSourceRef,
   SymbolLayer,
+  UserLocation,
 } from "@maplibre/maplibre-react-native";
-import { useCallback, useMemo, useRef, useState } from "react";
+import * as Location from "expo-location";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View, Platform } from "react-native";
 import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
@@ -57,6 +59,25 @@ export function TurfMap({
   // fix). Cover with a theme-colored pane until the map reports ready;
   // iOS doesn't flash, so it keeps its untouched path.
   const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
+  // Android only (iOS's custom dot requests permission itself). The
+  // native Android puck never prompts — it checks permission once at
+  // style load, silently bails, and never retries — so request via the
+  // OS dialog and mount only after the grant. Deferred until the map's
+  // first full frame: the dialog over the initializing GL surface leaves
+  // it mis-sized (stretched map, offset taps). Denied → no dot, silently.
+  const [locationGranted, setLocationGranted] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "android" || !mapFullyRendered) return;
+    let cancelled = false;
+    Location.requestForegroundPermissionsAsync()
+      .then(({ status }) => {
+        if (!cancelled && status === "granted") setLocationGranted(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [mapFullyRendered]);
   const featureCollection = useMemo(
     () => buildFeatureCollection(turf.buildings, buildingRoles),
     [turf.buildings, buildingRoles],
@@ -135,6 +156,10 @@ export function TurfMap({
         logoEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
+        // Tints the Android native user-location puck — its only consumer,
+        // so scoped to Android (on iOS, UIKit tintColor cascades into the
+        // map's subviews).
+        tintColor={Platform.OS === "android" ? (isDark ? "#ffffff" : "#000000") : undefined}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
         onRegionDidChange={handleRegionEvent}
@@ -299,11 +324,23 @@ export function TurfMap({
           />
         </ShapeSource>
 
-        {/* Android: the dot's location watch + MarkerView path fritzes the
-          status bar on first load and can crash — disabled pending a
-          proper Android implementation (likely MLRN's built-in
-          UserLocation layer). */}
-        {Platform.OS === "ios" && <UserLocationDot isDark={isDark} />}
+        {/* Forked per platform. iOS: the custom dot + heading cone — the
+          SDK-native iOS puck is a view that swallows taps on whatever is
+          under it (no pass-through), and can only show a tiny heading
+          arrow outside camera-follow mode. Android: the SDK-native puck,
+          GL-rendered so taps pass through — the custom dot would need
+          MarkerView there, which fritzes the status bar and can crash. */}
+        {Platform.OS === "ios" ? (
+          <UserLocationDot isDark={isDark} />
+        ) : (
+          locationGranted && (
+            <UserLocation
+              renderMode="native"
+              androidRenderMode="compass"
+              androidPreferredFramesPerSecond={30}
+            />
+          )
+        )}
       </MapView>
       {!mapFullyRendered && (
         <View
