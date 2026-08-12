@@ -59,13 +59,6 @@ export function TurfMap({
   // fix). Cover with a theme-colored pane until the map reports ready;
   // iOS doesn't flash, so it keeps its untouched path.
   const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
-  // Unlike mapFullyRendered this starts false on iOS too: a PointAnnotation
-  // mounted before the map's first fully-rendered frame (warm location →
-  // instant first fix) ends up attached but never claimed by the map when
-  // its coordinate is off-viewport, showing as a ghost dot pinned near the
-  // top-left corner at its raw layout frame. Mounted after, an off-viewport
-  // annotation stays invisible until panned into view.
-  const [mapReady, setMapReady] = useState(false);
   // Android only (iOS's custom dot requests permission itself). The
   // native Android puck never prompts — it checks permission once at
   // style load, silently bails, and never retries — so request via the
@@ -163,13 +156,10 @@ export function TurfMap({
         logoEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
-        // Tints the SDK-native user-location dot (attribution and compass
-        // are disabled, so nothing else picks it up).
+        // Tints the Android native user-location puck (attribution and
+        // compass are disabled, so nothing else picks it up).
         tintColor={isDark ? "#ffffff" : "#000000"}
-        onDidFinishRenderingMapFully={() => {
-          setMapFullyRendered(true);
-          setMapReady(true);
-        }}
+        onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
         onRegionDidChange={handleRegionEvent}
       >
@@ -334,19 +324,22 @@ export function TurfMap({
         </ShapeSource>
 
         {/* Forked per platform. iOS: the custom dot + heading cone — the
-          SDK-native iOS puck can only show a tiny heading arrow outside
-          camera-follow mode. Android: the SDK-native puck (tinted via the
-          map tintColor) — the custom dot would need MarkerView there,
-          which fritzes the status bar and can crash. */}
-        {Platform.OS === "ios"
-          ? mapReady && <UserLocationDot isDark={isDark} />
-          : locationGranted && (
-              <UserLocation
-                renderMode="native"
-                androidRenderMode="compass"
-                androidPreferredFramesPerSecond={30}
-              />
-            )}
+          SDK-native iOS puck is a view that swallows taps on whatever is
+          under it (no pass-through), and can only show a tiny heading
+          arrow outside camera-follow mode. Android: the SDK-native puck,
+          GL-rendered so taps pass through — the custom dot would need
+          MarkerView there, which fritzes the status bar and can crash. */}
+        {Platform.OS === "ios" ? (
+          <UserLocationDot isDark={isDark} />
+        ) : (
+          locationGranted && (
+            <UserLocation
+              renderMode="native"
+              androidRenderMode="compass"
+              androidPreferredFramesPerSecond={30}
+            />
+          )
+        )}
       </MapView>
       {!mapFullyRendered && (
         <View

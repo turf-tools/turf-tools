@@ -1,7 +1,7 @@
 import { PointAnnotation } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
-import { AppState, View } from "react-native";
+import { AppState, Image, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -11,7 +11,6 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import Svg, { Defs, Path, RadialGradient, Stop } from "react-native-svg";
 
 // iOS-only "you are here" marker: a dot with a contrasting outline, a
 // subtle expanding halo, and a heading cone (the Google Maps idiom).
@@ -21,6 +20,13 @@ import Svg, { Defs, Path, RadialGradient, Stop } from "react-native-svg";
 // mounted, and every failure mode — permission denied, services off, no
 // compass — resolves to "no dot" / "no cone": never an alert or
 // placeholder.
+//
+// The rotating cone depends on our patch to @maplibre/maplibre-react-native
+// (see patches/): React re-asserts this annotation's layout frame whenever
+// its subtree updates, clobbering the map-managed position — without the
+// patch the marker ghosts near the map's top-left whenever its coordinate
+// is off-screen. Verify against that repro (open a turf far from the
+// device) before touching the MLRNPointAnnotation patch hunks.
 
 // The three size knobs. Everything else derives from these: the halo starts
 // at the dot's outer edge and expands to HALO_SCALE× it, and the container
@@ -29,19 +35,19 @@ const DOT_SIZE = 19; // dot diameter, border included
 const OUTLINE_WIDTH = 3;
 const HALO_SCALE = 2.25; // halo max diameter as a multiple of the dot
 
-// Cone: an SVG beam under the dot, rotated by compass heading on the UI
-// thread via a shared value — no React re-render and no map repaint per
-// heading event. Width follows reported compass accuracy (0–3): the worse
-// the calibration, the wider the beam — and at 0 the cone hides
-// entirely, leaving the dot.
+// Cone: a pre-rendered beam sprite under the dot (white-on-alpha, tinted
+// per theme; regenerate with scripts/generate-cone-sprites.py — the
+// geometry and opacity knobs live there). Width follows reported compass
+// accuracy (0–3): the worse the calibration, the wider the beam — and at
+// 0 the cone hides entirely, leaving the dot. Rotation is a shared value
+// written on the >EMIT_DEGREES cadence, applied on the UI thread.
 const CONE_RADIUS = 62;
-const CONE_OPACITY = 0.45; // at the apex; fades radially to 0 at the rim
 const CONE_ANGLE_BY_ACCURACY: Record<number, number> = { 3: 55, 2: 75, 1: 100 };
-
-// Sweeps the cone and forces it visible so shape and opacity are
-// judgeable in the simulator, which has no compass. The __DEV__ guard
-// keeps published bundles unaffected even when left true.
-const PREVIEW_CONE_SWEEP = __DEV__ && true;
+const CONE_SPRITES: Record<number, number> = {
+  55: require("../../../assets/map/cone-55.png"),
+  75: require("../../../assets/map/cone-75.png"),
+  100: require("../../../assets/map/cone-100.png"),
+};
 
 // Heading smoothing: low-pass on sin/cos components (never the raw angle —
 // averaging across the 359°→0° wrap poisons the mean), then write only on
@@ -73,19 +79,6 @@ function metersBetween(a: [number, number], b: [number, number]) {
   const dLng = (b[0] - a[0]) * Math.cos(((a[1] + b[1]) / 2) * DEG);
   const dLat = b[1] - a[1];
   return Math.hypot(dLng, dLat) * 111_320;
-}
-
-// Beam path, pointing north: the base spans the dot's full width (the
-// Google Maps geometry — the beam emerges from the dot's edges, not its
-// center), the sides spread to `angle` degrees, and an arc at
-// CONE_RADIUS caps it. The base chord is hidden under the opaque dot.
-function conePath(angle: number) {
-  const half = (angle / 2) * DEG;
-  const c = CONE_RADIUS;
-  const rd = DOT_SIZE / 2;
-  const ox = c * Math.sin(half);
-  const oy = c - c * Math.cos(half);
-  return `M${c - rd},${c} L${c - ox},${oy} A${c},${c} 0 0 1 ${c + ox},${oy} L${c + rd},${c} Z`;
 }
 
 export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
@@ -140,15 +133,14 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
     let tier = 0;
 
     const onHeading = (h: Location.LocationHeadingObject) => {
-      if (PREVIEW_CONE_SWEEP) return;
-      // trueHeading is -1 until a position fix seeds declination; fall
-      // back to magnetic rather than showing nothing.
-      const raw = h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
-      if (raw < 0) return;
       if (h.accuracy !== tier) {
         tier = h.accuracy;
         setConeAngle(CONE_ANGLE_BY_ACCURACY[tier] ?? null);
       }
+      // trueHeading is -1 until a position fix seeds declination; fall
+      // back to magnetic rather than showing nothing.
+      const raw = h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
+      if (raw < 0) return;
       if (!hasSample) {
         sinSum = Math.sin(raw * DEG);
         cosSum = Math.cos(raw * DEG);
@@ -194,18 +186,16 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
         posSub?.remove();
         posSub = nextPos;
         // Compass failure only costs the cone, never the dot.
-        if (!PREVIEW_CONE_SWEEP) {
-          try {
-            const nextHead = await Location.watchHeadingAsync(onHeading);
-            if (cancelled || gen !== generation) {
-              nextHead.remove();
-              return;
-            }
-            headSub?.remove();
-            headSub = nextHead;
-          } catch {
-            // No compass, no cone — silent by design.
+        try {
+          const nextHead = await Location.watchHeadingAsync(onHeading);
+          if (cancelled || gen !== generation) {
+            nextHead.remove();
+            return;
           }
+          headSub?.remove();
+          headSub = nextHead;
+        } catch {
+          // No compass, no cone — silent by design.
         }
       } catch {
         // No location, no dot — silent by design.
@@ -270,22 +260,6 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
     transform: [{ rotate: `${headingDeg.value}deg` }],
   }));
 
-  // Drives PREVIEW_CONE_SWEEP: forces best-accuracy width and spins the
-  // beam once per 6s, entirely on the UI thread.
-  useEffect(() => {
-    if (!PREVIEW_CONE_SWEEP) return;
-    setConeAngle(CONE_ANGLE_BY_ACCURACY[3]);
-    headingDeg.value = 0;
-    headingDeg.value = withRepeat(
-      withTiming(360, { duration: 6000, easing: Easing.linear, reduceMotion: ReduceMotion.Never }),
-      -1,
-      false,
-      undefined,
-      ReduceMotion.Never,
-    );
-    return () => cancelAnimation(headingDeg);
-  }, [headingDeg]);
-
   if (coord == null) return null;
 
   const dotColor = isDark ? "#ffffff" : "#000000";
@@ -305,24 +279,10 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
             coneStyle,
           ]}
         >
-          <Svg width={CONE_RADIUS * 2} height={CONE_RADIUS * 2}>
-            <Defs>
-              {/* userSpaceOnUse: the default units are relative to the
-                beam's own bounding box, which put the gradient center in
-                the middle of the cone instead of on the dot. */}
-              <RadialGradient
-                id="user-location-cone"
-                gradientUnits="userSpaceOnUse"
-                cx={CONE_RADIUS}
-                cy={CONE_RADIUS}
-                r={CONE_RADIUS}
-              >
-                <Stop offset="0" stopColor={dotColor} stopOpacity={CONE_OPACITY} />
-                <Stop offset="1" stopColor={dotColor} stopOpacity={0} />
-              </RadialGradient>
-            </Defs>
-            <Path d={conePath(coneAngle)} fill="url(#user-location-cone)" />
-          </Svg>
+          <Image
+            source={CONE_SPRITES[coneAngle]}
+            style={{ width: CONE_RADIUS * 2, height: CONE_RADIUS * 2, tintColor: dotColor }}
+          />
         </Animated.View>
       )}
       <Animated.View

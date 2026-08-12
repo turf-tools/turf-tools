@@ -1,8 +1,47 @@
 diff --git a/ios/MLRN/MLRNPointAnnotation.m b/ios/MLRN/MLRNPointAnnotation.m
-index 7552a0743490017c0b897a0fa59bcc14e04d1851..93dde4a7886daf2e7d222111d999b3e651996af9 100644
+index 7552a0743490017c0b897a0fa59bcc14e04d1851..1267ebd26b1541d671a942cdac0fe38112f49f16 100644
 --- a/ios/MLRN/MLRNPointAnnotation.m
 +++ b/ios/MLRN/MLRNPointAnnotation.m
-@@ -110,7 +110,6 @@ - (MLNAnnotationView *)getAnnotationView {
+@@ -35,15 +35,37 @@ - (void)removeReactSubview:(UIView *)subview {
+   }
+ }
+ 
++// React mount batches re-assert the yoga layout frame (origin at the
++// map's top-left), clobbering the position the map manages via `center`.
++// An off-viewport annotation is never repositioned by the map, so a
++// clobbered view rests visible at the layout origin — a ghost marker.
++// Once the annotation is on the map, accept only the SIZE from React;
++// position belongs to the map alone.
+ - (void)reactSetFrame:(CGRect)frame {
+   if ([_map.annotations containsObject:self]) {
+-    [_map removeAnnotation:self];
++    CGRect bounds = self.bounds;
++    bounds.size = frame.size;
++    self.bounds = bounds;
++    [self _setCenterOffset:frame];
++    return;
+   }
+   [super reactSetFrame:frame];
+   [self _setCenterOffset:frame];
+   [self _addAnnotation];
+ }
+ 
++// Same protection for direct frame assignment (the Fabric interop layer
++// applies layout metrics through setFrame:, not reactSetFrame:).
++- (void)setFrame:(CGRect)frame {
++  if ([_map.annotations containsObject:self]) {
++    CGRect bounds = self.bounds;
++    bounds.size = frame.size;
++    self.bounds = bounds;
++    return;
++  }
++  [super setFrame:frame];
++}
++
+ - (void)setAnchor:(NSDictionary<NSString *, NSNumber *> *)anchor {
+   _anchor = anchor;
+   [self _setCenterOffset:self.frame];
+@@ -110,7 +132,6 @@ - (MLNAnnotationView *)getAnnotationView {
      return nil;
    } else {
      // custom view
@@ -10,7 +49,7 @@ index 7552a0743490017c0b897a0fa59bcc14e04d1851..93dde4a7886daf2e7d222111d999b3e6
      const CGFloat defaultZPosition = 0.0;
      if (self.layer.zPosition == defaultZPosition) {
        self.layer.zPosition = [self _getZPosition];
-@@ -125,6 +124,13 @@ - (CGFloat)_getZPosition {
+@@ -125,6 +146,13 @@ - (CGFloat)_getZPosition {
    return latitudeMax - self.coordinate.latitude;
  }
  
@@ -24,6 +63,20 @@ index 7552a0743490017c0b897a0fa59bcc14e04d1851..93dde4a7886daf2e7d222111d999b3e6
  - (void)_handleTap:(UITapGestureRecognizer *)recognizer {
    [_map selectAnnotation:self animated:NO completionHandler:nil];
  }
+@@ -178,6 +206,13 @@ - (void)_addAnnotation {
+   }
+ 
+   [_map addAnnotation:self];
++  // Park far offscreen until the map claims and positions the view — it
++  // must never rest visible at the React layout origin (see
++  // reactSetFrame:). The map overwrites `center` for any annotation
++  // whose coordinate is on-screen.
++  CGPoint parked = self.center;
++  parked.x = -100000;
++  self.center = parked;
+   if (_reactSelected) {
+     [_map selectAnnotation:self animated:NO completionHandler:nil];
+   }
 diff --git a/ios/MLRN/MLRNPointAnnotationManager.m b/ios/MLRN/MLRNPointAnnotationManager.m
 index 7f8721e7f9aa712b253c26e77879e81e6e548d83..098a90e89e4d8faa41d0c14348aa632e84c81d30 100644
 --- a/ios/MLRN/MLRNPointAnnotationManager.m
