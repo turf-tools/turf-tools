@@ -156,9 +156,10 @@ export function TurfMap({
         logoEnabled={false}
         rotateEnabled={false}
         pitchEnabled={false}
-        // Tints the Android native user-location puck (attribution and
-        // compass are disabled, so nothing else picks it up).
-        tintColor={isDark ? "#ffffff" : "#000000"}
+        // Tints the Android native user-location puck — its only consumer,
+        // so scoped to Android (on iOS, UIKit tintColor cascades into the
+        // map's subviews).
+        tintColor={Platform.OS === "android" ? (isDark ? "#ffffff" : "#000000") : undefined}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
         onRegionDidChange={handleRegionEvent}
