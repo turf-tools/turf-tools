@@ -49,9 +49,11 @@ const CONE_SPRITES: Record<number, number> = {
   100: require("../../../assets/map/cone-100.png"),
 };
 
-// Heading smoothing: low-pass on sin/cos components (never the raw angle —
-// averaging across the 359°→0° wrap poisons the mean), then write only on
-// >EMIT_DEGREES of filtered movement so a still phone stays quiet.
+// Heading conditioning, not computation — the OS supplies the heading.
+// Low-pass on sin/cos components (never the raw angle — averaging across
+// the 359°→0° wrap poisons the mean): in-hand jitter of a degree or two
+// reads as shimmer at the beam's rim. Then write only on >EMIT_DEGREES of
+// filtered movement so a still phone stays quiet.
 const HEADING_ALPHA = 0.8; // weight of the previous filtered value
 const EMIT_DEGREES = 1.5;
 
