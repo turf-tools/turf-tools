@@ -12,6 +12,7 @@ import { useColorScheme } from "nativewind";
 import { useEffect, useState } from "react";
 import { AppState, LogBox, Platform, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { activeTurfAtom, loadActiveTurf } from "@/lib/atoms/active-turf";
 import { canvasserAtom, loadCanvasser } from "@/lib/atoms/canvasser";
@@ -190,23 +191,25 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PersistQueryClientProvider
-        client={queryClient}
-        persistOptions={{
-          persister,
-          maxAge: 1000 * 60 * 60 * 24 * 7,
-          dehydrateOptions: {
-            shouldDehydrateQuery: (query) => {
-              if (query.queryKey[0] === "canvass-events") return false;
-              return query.state.status === "success";
+      <KeyboardProvider>
+        <PersistQueryClientProvider
+          client={queryClient}
+          persistOptions={{
+            persister,
+            maxAge: 1000 * 60 * 60 * 24 * 7,
+            dehydrateOptions: {
+              shouldDehydrateQuery: (query) => {
+                if (query.queryKey[0] === "canvass-events") return false;
+                return query.state.status === "success";
+              },
             },
-          },
-        }}
-      >
-        <BootGate>
-          <ThemedStack />
-        </BootGate>
-      </PersistQueryClientProvider>
+          }}
+        >
+          <BootGate>
+            <ThemedStack />
+          </BootGate>
+        </PersistQueryClientProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

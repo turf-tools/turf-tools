@@ -8,14 +8,13 @@ import {
   Alert,
   AppState,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { Pill } from "@/components/pill";
 import { useColors } from "@/lib/colors";
 import { useScreenNav } from "@/lib/nav-context";
@@ -248,36 +247,6 @@ export default function PersonScreen() {
     setMode("script");
   };
 
-  // Deterministic caret-reveal: the keyboard insets make room, but UIKit
-  // doesn't reliably scroll a focused multiline input into view — so when
-  // the keyboard announces itself, measure the focused input in window
-  // coordinates and scroll just enough to clear the keyboard top.
-  const scrollRef = useRef<ScrollView>(null);
-  const scrollOffsetRef = useRef(0);
-  const focusedInputRef = useRef<TextInput | null>(null);
-  const registerInput = (input: TextInput | null) => {
-    focusedInputRef.current = input;
-  };
-  useEffect(() => {
-    const sub = Keyboard.addListener(
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
-      (e) => {
-        const input = focusedInputRef.current;
-        if (!input) return;
-        input.measureInWindow((_x, y, _w, h) => {
-          const overlap = y + h + 16 - e.endCoordinates.screenY;
-          if (overlap > 0) {
-            scrollRef.current?.scrollTo({
-              y: scrollOffsetRef.current + overlap,
-              animated: true,
-            });
-          }
-        });
-      },
-    );
-    return () => sub.remove();
-  }, []);
-
   // Trailing debounce: reads state fresh (from refs) at fire time so
   // anything tapped or typed meanwhile rides along in the one snapshot.
   const scheduleEmit = () => {
@@ -482,168 +451,155 @@ export default function PersonScreen() {
 
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
-      {/* iOS keyboard avoidance lives on the ScrollView
-          (automaticallyAdjustKeyboardInsets) — UIKit computes the real
-          overlap in window coordinates, which the KAV can't do from in
-          here (its frame is offset by the nav chrome, so its padding
-          math under-shoots). The KAV stays for Android only. */}
-      <KeyboardAvoidingView
-        behavior="height"
-        enabled={Platform.OS === "android"}
-        className="flex-1"
+      {/* Keyboard avoidance + caret reveal are native
+          (react-native-keyboard-controller), one path for both platforms. */}
+      <KeyboardAwareScrollView
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        bottomOffset={16}
+        // flexGrow floors content at viewport height: a stale keyboard inset
+        // on short content (e.g. unavailable mode) can otherwise scroll
+        // everything off-screen irrecoverably.
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: 8 }}
       >
-        <ScrollView
-          ref={scrollRef}
-          keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          keyboardDismissMode="interactive"
-          // flexGrow floors content at viewport height: a stale keyboard inset
-          // on short content (e.g. unavailable mode) can otherwise scroll
-          // everything off-screen irrecoverably.
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: 8 }}
-          onScroll={(e) => {
-            scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
-          }}
-          scrollEventThrottle={16}
-        >
-          {/* Taps on blank space dismiss the keyboard (and blur-commit any
+        {/* Taps on blank space dismiss the keyboard (and blur-commit any
               open-ended draft) — RN doesn't do this for non-interactive
               views on its own. Child touchables still win the responder. */}
-          <Pressable onPress={Keyboard.dismiss} accessible={false}>
-            {/* Person header */}
-            <View className="px-5 pt-5 pb-3">
-              <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
-                {toTitleCase(fullName)}
-              </Text>
-              <View className="flex-row items-center gap-2">
-                {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
-                {person.gender !== undefined && <Pill>{formatGender(person)}</Pill>}
-                {person.enrollment !== undefined && <Pill>{formatEnrollment(person)}</Pill>}
-                <View className="flex-1" />
-                {(() => {
-                  const role = responsesExist ? "contacted" : "unavailable";
-                  return (
-                    <>
-                      {noteExists && (
-                        <Pill
-                          style={
-                            recorded ? { backgroundColor: colors[role].background } : undefined
-                          }
-                          icon={
-                            <Scroll
-                              size={18}
-                              color={recorded ? colors[role].foreground : iconColor}
-                            />
-                          }
-                        />
-                      )}
-                      {recorded && (
-                        <Pill
-                          style={{ backgroundColor: colors[role].background }}
-                          icon={
-                            <Check size={18} color={colors[role].foreground} strokeWidth={2.5} />
-                          }
-                        />
-                      )}
-                    </>
-                  );
-                })()}
-              </View>
+        <Pressable onPress={Keyboard.dismiss} accessible={false}>
+          {/* Person header */}
+          <View className="px-5 pt-5 pb-3">
+            <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
+              {toTitleCase(fullName)}
+            </Text>
+            <View className="flex-row items-center gap-2">
+              {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
+              {person.gender !== undefined && <Pill>{formatGender(person)}</Pill>}
+              {person.enrollment !== undefined && <Pill>{formatEnrollment(person)}</Pill>}
+              <View className="flex-1" />
+              {(() => {
+                const role = responsesExist ? "contacted" : "unavailable";
+                return (
+                  <>
+                    {noteExists && (
+                      <Pill
+                        style={recorded ? { backgroundColor: colors[role].background } : undefined}
+                        icon={
+                          <Scroll
+                            size={18}
+                            color={recorded ? colors[role].foreground : iconColor}
+                          />
+                        }
+                      />
+                    )}
+                    {recorded && (
+                      <Pill
+                        style={{ backgroundColor: colors[role].background }}
+                        icon={<Check size={18} color={colors[role].foreground} strokeWidth={2.5} />}
+                      />
+                    )}
+                  </>
+                );
+              })()}
             </View>
+          </View>
 
-            {/* Mode switch buttons */}
-            <View className="px-5 py-3 gap-2">
-              <WideButton
-                label="Could not reach person"
-                icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
-                selected={mode === "unavailable"}
-                onPress={() => {
-                  if (mode === "unavailable") {
-                    exitUnavailable();
-                  } else {
-                    setMode("unavailable");
+          {/* Mode switch buttons */}
+          <View className="px-5 py-3 gap-2">
+            <WideButton
+              label="Could not reach person"
+              icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
+              selected={mode === "unavailable"}
+              onPress={() => {
+                if (mode === "unavailable") {
+                  exitUnavailable();
+                } else {
+                  Keyboard.dismiss();
+                  setMode("unavailable");
+                }
+              }}
+            />
+            <View className="flex-row gap-2">
+              <View className="flex-1">
+                <WideButton
+                  label={mode === "note" ? "Close note" : "Add a note"}
+                  icon={
+                    mode === "note" ? (
+                      <X size={18} color={iconColor} />
+                    ) : (
+                      <Pencil size={18} color={mutedIconColor} />
+                    )
                   }
-                }}
-              />
-              <View className="flex-row gap-2">
-                <View className="flex-1">
-                  <WideButton
-                    label={mode === "note" ? "Close note" : "Add a note"}
-                    icon={
-                      mode === "note" ? (
-                        <X size={18} color={iconColor} />
-                      ) : (
-                        <Pencil size={18} color={mutedIconColor} />
-                      )
-                    }
-                    selected={mode === "note"}
-                    onPress={() => setMode(mode === "note" ? "script" : "note")}
-                  />
-                </View>
-                <View className="flex-1">
-                  <WideButton
-                    label={mode === "details" ? "Close details" : "View details"}
-                    icon={
-                      mode === "details" ? (
-                        <X size={18} color={iconColor} />
-                      ) : (
-                        <Scroll size={18} color={mutedIconColor} />
-                      )
-                    }
-                    selected={mode === "details"}
-                    onPress={() => setMode(mode === "details" ? "script" : "details")}
-                  />
-                </View>
+                  selected={mode === "note"}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setMode(mode === "note" ? "script" : "note");
+                  }}
+                />
+              </View>
+              <View className="flex-1">
+                <WideButton
+                  label={mode === "details" ? "Close details" : "View details"}
+                  icon={
+                    mode === "details" ? (
+                      <X size={18} color={iconColor} />
+                    ) : (
+                      <Scroll size={18} color={mutedIconColor} />
+                    )
+                  }
+                  selected={mode === "details"}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setMode(mode === "details" ? "script" : "details");
+                  }}
+                />
               </View>
             </View>
+          </View>
 
-            {/* Mode-specific content */}
-            <View className="px-5 pt-7">
-              {mode === "script" && (
-                <ScriptContent
-                  scriptQuery={scriptQuery}
-                  responses={responsesByQuestion}
-                  onToggleOption={toggleOption}
-                  onChangeText={changeText}
-                  onTextBlur={scheduleTextEmit}
-                  onSubmit={flushPending}
-                  onClear={clearResult}
-                  registerInput={registerInput}
-                />
-              )}
-              {mode === "unavailable" && (
-                <UnavailableContent
-                  selectedOutcome={unavailableOutcome ?? undefined}
-                  onSelectOption={(value) => {
-                    setOutcome(value);
-                    setResponsesByQuestion(new Map());
-                    responsesRef.current = new Map();
-                    scheduleEmit();
-                  }}
-                  onClear={clearResult}
-                  onCancel={exitUnavailable}
-                />
-              )}
-              {mode === "note" && (
-                <NoteContent
-                  registerInput={registerInput}
-                  notes={formattedNotes}
-                  onSubmitNote={(text) => {
-                    recordEvent({
-                      personId,
-                      kind: "note",
-                      payload: { kind: "note", text },
-                    });
-                    setMode("script");
-                  }}
-                  onCancel={() => setMode("script")}
-                />
-              )}
-              {mode === "details" && <DetailsContent person={person} notes={formattedNotes} />}
-            </View>
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          {/* Mode-specific content */}
+          <View className="px-5 pt-7">
+            {mode === "script" && (
+              <ScriptContent
+                scriptQuery={scriptQuery}
+                responses={responsesByQuestion}
+                onToggleOption={toggleOption}
+                onChangeText={changeText}
+                onTextBlur={scheduleTextEmit}
+                onSubmit={flushPending}
+                onClear={clearResult}
+              />
+            )}
+            {mode === "unavailable" && (
+              <UnavailableContent
+                selectedOutcome={unavailableOutcome ?? undefined}
+                onSelectOption={(value) => {
+                  setOutcome(value);
+                  setResponsesByQuestion(new Map());
+                  responsesRef.current = new Map();
+                  scheduleEmit();
+                }}
+                onClear={clearResult}
+                onCancel={exitUnavailable}
+              />
+            )}
+            {mode === "note" && (
+              <NoteContent
+                notes={formattedNotes}
+                onSubmitNote={(text) => {
+                  recordEvent({
+                    personId,
+                    kind: "note",
+                    payload: { kind: "note", text },
+                  });
+                  setMode("script");
+                }}
+                onCancel={() => setMode("script")}
+              />
+            )}
+            {mode === "details" && <DetailsContent person={person} notes={formattedNotes} />}
+          </View>
+        </Pressable>
+      </KeyboardAwareScrollView>
     </View>
   );
 }
@@ -702,7 +658,6 @@ function ScriptContent({
   onTextBlur,
   onSubmit,
   onClear,
-  registerInput,
 }: {
   scriptQuery: ReturnType<typeof useQuery<Awaited<ReturnType<typeof client.scripts.get>>>>;
   responses: Map<string, ResponseValue>;
@@ -711,7 +666,6 @@ function ScriptContent({
   onTextBlur: () => void;
   onSubmit: () => void;
   onClear: () => void;
-  registerInput: (input: TextInput | null) => void;
 }) {
   const colors = useColors();
   if (scriptQuery.isLoading) return <ActivityIndicator />;
@@ -755,7 +709,6 @@ function ScriptContent({
                 text={value && "text" in value ? value.text : ""}
                 onChangeText={(t) => onChangeText(step.questionId, t)}
                 onBlur={onTextBlur}
-                registerInput={registerInput}
               />
             </View>
           );
@@ -806,28 +759,20 @@ function OpenEndedInput({
   text,
   onChangeText,
   onBlur,
-  registerInput,
 }: {
   text: string;
   onChangeText: (text: string) => void;
   onBlur: () => void;
-  registerInput: (input: TextInput | null) => void;
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const [focused, setFocused] = useState(false);
-  const inputRef = useRef<TextInput>(null);
   return (
     <TextInput
-      ref={inputRef}
       value={text}
       onChangeText={onChangeText}
-      onFocus={() => {
-        setFocused(true);
-        registerInput(inputRef.current);
-      }}
+      onFocus={() => setFocused(true)}
       onBlur={() => {
         setFocused(false);
-        registerInput(null);
         onBlur();
       }}
       placeholder="Type an answer..."
@@ -857,17 +802,14 @@ function NoteContent({
   notes,
   onSubmitNote,
   onCancel,
-  registerInput,
 }: {
   notes: Array<{ text: string; createdAt: string }>;
   onSubmitNote: (text: string) => void;
   onCancel: () => void;
-  registerInput: (input: TextInput | null) => void;
 }) {
   const isDark = useAtomValue(themeAtom) === "dark";
   const [focused, setFocused] = useState(false);
   const [pendingText, setPendingText] = useState("");
-  const inputRef = useRef<TextInput>(null);
 
   const handleSubmit = () => {
     const trimmed = pendingText.trim();
@@ -879,17 +821,10 @@ function NoteContent({
   return (
     <View className="gap-4">
       <TextInput
-        ref={inputRef}
         value={pendingText}
         onChangeText={setPendingText}
-        onFocus={() => {
-          setFocused(true);
-          registerInput(inputRef.current);
-        }}
-        onBlur={() => {
-          setFocused(false);
-          registerInput(null);
-        }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         placeholder="Type a note..."
         placeholderTextColor={isDark ? "#666" : "#999"}
         multiline
