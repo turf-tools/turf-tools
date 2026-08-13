@@ -1,8 +1,9 @@
-import { and, eq, inArray, isNull, ne } from "@turf-tools/db";
+import { and, eq, gte, inArray, isNull } from "@turf-tools/db";
 import { campaigns, turfs, walks } from "@turf-tools/db/schema";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 import { publish } from "~/lib/server/live";
+import { WALK_LIVE_MS } from "~/lib/walks";
 import { nativeMut as mut } from "../context";
 
 // Record that a canvasser took a turf out. Called by the native app at
@@ -12,12 +13,17 @@ import { nativeMut as mut } from "../context";
 //
 // Two side effects keyed on the phone (skipped when the client sends
 // none):
-//   - rescan dedup: an active walk for the same (turf, phone) is
-//     returned as-is instead of opening a duplicate
-//   - implicit close: active walks for the same phone on *other* turfs
-//     close, mirroring the native app's one-active-turf-per-device
-//     invariant. Scoped to the turf's organization so a phone-number
-//     collision across orgs can't close a stranger's walk.
+//   - rescan dedup: an active walk for the same (turf, phone) opened
+//     within WALK_LIVE_MS is returned as-is instead of opening a
+//     duplicate. Recency-bounded to match the board's live horizon: an
+//     older open walk is a previous outing (the canvasser never closed
+//     it), and deduping into it would leave the board's pending spinner
+//     with no walk to clear it.
+//   - implicit close: the phone's other active walks close — any turf,
+//     including a stale one on this same turf, mirroring the native
+//     app's one-active-turf-per-device invariant. Scoped to the turf's
+//     organization so a phone-number collision across orgs can't close
+//     a stranger's walk.
 export const open = mut
   .input(
     z.object({
@@ -47,10 +53,16 @@ export const open = mut
               eq(walks.turfId, input.turfId),
               eq(walks.canvasserPhone, phone),
               isNull(walks.closedAt),
+              gte(walks.openedAt, new Date(Date.now() - WALK_LIVE_MS)),
             ),
           )
       )[0];
-      if (existing) return { walkId: existing.walkId };
+      if (existing) {
+        // Still publish: the board refetches even when nothing changed
+        // server-side (its scan signal may be waiting on this answer).
+        publish(turfRow.organizationId);
+        return { walkId: existing.walkId };
+      }
 
       const orgTurfIds = context.db
         .select({ turfId: turfs.turfId })
@@ -64,7 +76,6 @@ export const open = mut
           and(
             eq(walks.canvasserPhone, phone),
             isNull(walks.closedAt),
-            ne(walks.turfId, input.turfId),
             inArray(walks.turfId, orgTurfIds),
           ),
         );

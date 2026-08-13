@@ -11,9 +11,10 @@ import { turfs } from "./turfs";
 //
 // A walk is an interval, not an event: active = `closedAt IS NULL`. Turfs
 // can hold many active walks at once (pair canvassing); a rescan of the
-// same turf by the same phone dedupes into the existing active walk
-// instead of opening a new one. Walks that are never closed decay out of
-// the "live" display client-side rather than being mutated.
+// same turf by the same phone dedupes into the existing active walk only
+// while it's recent enough to be the same outing — older ones close and
+// a new walk opens. Walks that are never closed decay out of the "live"
+// display client-side rather than being mutated.
 //
 // Attribution is the client-claimed identity, same as `canvass_events` —
 // stored verbatim, no FK.

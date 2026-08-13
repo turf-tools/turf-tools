@@ -43,6 +43,7 @@ import { darkAtom } from "~/lib/atoms/theme";
 import { colorFor } from "~/lib/zone-colors";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { cn, parseHexRgb } from "~/lib/utils";
+import { WALK_LIVE_MS } from "~/lib/walks";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { client } from "~/rpc/client";
 
@@ -353,7 +354,7 @@ function regionName(t: TurfRow) {
 // landed yet (attestation typing, slow network — or a handoff that will
 // quietly fail and age out), `live` means a walk is open right now.
 // Both decay by display rule rather than mutation: a walk open past
-// LIVE_MS stops reading as live (the canvasser went home without
+// WALK_LIVE_MS stops reading as live (the canvasser went home without
 // closing), while its row stays honestly open in the data.
 type WalkSummary = {
   walks: WalkRow[];
@@ -365,14 +366,12 @@ type WalkSummary = {
   pending: boolean;
 };
 
-const LIVE_MS = 12 * 60 * 60_000;
-
 function summarize(walks: WalkRow[], scannedAt: Date | string | undefined): WalkSummary {
   const names: string[] = [];
   const activeNames: string[] = [];
   for (const w of walks) {
     if (!names.includes(w.canvasserName)) names.push(w.canvasserName);
-    const isActive = !w.closedAt && Date.now() - new Date(w.openedAt).getTime() < LIVE_MS;
+    const isActive = !w.closedAt && Date.now() - new Date(w.openedAt).getTime() < WALK_LIVE_MS;
     if (isActive && !activeNames.includes(w.canvasserName)) activeNames.push(w.canvasserName);
   }
   const live = activeNames.length > 0;
