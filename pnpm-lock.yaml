@@ -11,7 +11,7 @@ overrides:
 
 patchedDependencies:
   '@maplibre/maplibre-react-native':
-    hash: 585b1bdab3d400afb4a5dba39aefab30a6f07880a317a1500e8a112b6b7102b1
+    hash: 3d86a4b870a5075d9e8c0c408d47e4ca9e1901f4254b188a2283b468c87ac593
     path: patches/@maplibre__maplibre-react-native.patch
   react-native-css-interop@0.2.3:
     hash: c152ec3386c352935c7088dc6247dd081ebe6b5a866e96ea839a5289418f5eac
@@ -41,7 +41,7 @@ importers:
         version: 5.2.14(@types/react@19.2.14)(react-native-gesture-handler@2.30.1(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native-reanimated@4.2.1(react-native-worklets@0.7.2(@babel/core@7.29.0)(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       '@maplibre/maplibre-react-native':
         specifier: ^10.4.2
-        version: 10.4.2(patch_hash=585b1bdab3d400afb4a5dba39aefab30a6f07880a317a1500e8a112b6b7102b1)(@expo/config-plugins@55.0.9)(@types/geojson@7946.0.16)(@types/react@19.2.14)(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+        version: 10.4.2(patch_hash=3d86a4b870a5075d9e8c0c408d47e4ca9e1901f4254b188a2283b468c87ac593)(@expo/config-plugins@55.0.9)(@types/geojson@7946.0.16)(@types/react@19.2.14)(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       '@orpc/client':
         specifier: ^1.13.13
         version: 1.14.3
@@ -9057,7 +9057,7 @@ snapshots:
       quickselect: 3.0.0
       tinyqueue: 3.0.0
 
-  '@maplibre/maplibre-react-native@10.4.2(patch_hash=585b1bdab3d400afb4a5dba39aefab30a6f07880a317a1500e8a112b6b7102b1)(@expo/config-plugins@55.0.9)(@types/geojson@7946.0.16)(@types/react@19.2.14)(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)':
+  '@maplibre/maplibre-react-native@10.4.2(patch_hash=3d86a4b870a5075d9e8c0c408d47e4ca9e1901f4254b188a2283b468c87ac593)(@expo/config-plugins@55.0.9)(@types/geojson@7946.0.16)(@types/react@19.2.14)(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)':
     dependencies:
       '@turf/distance': 7.3.5
       '@turf/helpers': 7.3.5

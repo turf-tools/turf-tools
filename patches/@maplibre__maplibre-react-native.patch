@@ -1,3 +1,36 @@
+diff --git a/android/src/main/java/org/maplibre/reactnative/components/location/LocationComponentManager.java b/android/src/main/java/org/maplibre/reactnative/components/location/LocationComponentManager.java
+index 67b5a8850ff38991791693996a883f957d7251ee..e4830889312bb5bf767b330fb5989298283debba 100644
+--- a/android/src/main/java/org/maplibre/reactnative/components/location/LocationComponentManager.java
++++ b/android/src/main/java/org/maplibre/reactnative/components/location/LocationComponentManager.java
+@@ -103,6 +103,14 @@ public class LocationComponentManager {
+             }
+             mLocationComponent.onStart();
+         } else {
++            // Without camera-follow the render mode was never applied, so
++            // androidRenderMode="compass" silently fell back to the default.
++            // onStart() re-runs the component's readiness pass — compass
++            // listener registration is gated on it and silently skipped
++            // when setRenderMode lands mid style-load (the follow branch
++            // above has always paired the two).
++            mLocationComponent.setRenderMode(mRenderMode);
++            mLocationComponent.onStart();
+             mLocationComponent.setCameraMode(CameraMode.NONE);
+         }
+     }
+@@ -131,6 +139,13 @@ public class LocationComponentManager {
+         }
+ 
+         updateShowUserLocation(displayUserLocation);
++        // Re-activation (any update with a tint set) resets the component's
++        // render mode; re-assert it and re-run the readiness pass so the
++        // compass listener re-registers.
++        if (mShowingUserLocation) {
++            mLocationComponent.setRenderMode(mRenderMode);
++            mLocationComponent.onStart();
++        }
+     }
+ 
+     private void updateShowUserLocation(boolean displayUserLocation) {
 diff --git a/ios/MLRN/MLRNPointAnnotation.m b/ios/MLRN/MLRNPointAnnotation.m
 index 7552a0743490017c0b897a0fa59bcc14e04d1851..1267ebd26b1541d671a942cdac0fe38112f49f16 100644
 --- a/ios/MLRN/MLRNPointAnnotation.m
