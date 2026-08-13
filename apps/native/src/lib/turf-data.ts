@@ -45,7 +45,7 @@ export type TurfIndexes = {
 // Walk order within a building: highest floor first (canvassers ride up
 // and knock down; PH counts as the top), letters ascending within a
 // floor (5A, 5B, 5C), unit-less doors last. The publish pipeline emits
-// doors in hash-group order, so this is the only ordering anywhere.
+// doors in hash-group order, so all ordering happens client-side here.
 const UNIT_DESIGNATORS = /^(?:APT|APARTMENT|UNIT|STE|SUITE|FL|FLOOR|BLDG|BUILDING|#)\s*/i;
 
 function sortDoors(doors: TurfDataDoor[]): TurfDataDoor[] {
@@ -63,6 +63,42 @@ function sortDoors(doors: TurfDataDoor[]): TurfDataDoor[] {
   return keyed.map((k) => k.door);
 }
 
+// Order across buildings: street name alphabetically, then house number
+// ascending within a street. Numeric-aware compares keep hyphenated
+// house numbers sane ("84-3" before "84-12"). Addresses with no leading
+// number sort by the full line.
+function sortBuildings(buildings: TurfDataBuilding[]): TurfDataBuilding[] {
+  const keyed = buildings.map((building) => {
+    const line = (building.address.street ?? "").trim();
+    const match = line.match(/^(\d[\d-]*)\s+(.+)$/);
+    return {
+      building,
+      street: match ? match[2]! : line,
+      number: match ? match[1]! : "",
+    };
+  });
+  keyed.sort(
+    (a, b) =>
+      a.street.localeCompare(b.street, undefined, { numeric: true }) ||
+      a.number.localeCompare(b.number, undefined, { numeric: true }),
+  );
+  return keyed.map((k) => k.building);
+}
+
+// Next building in walk order after the current one, wrapping around —
+// stays sequential instead of jumping back to the first incomplete
+// building in the list.
+export function findNextBuilding(
+  buildingsInOrder: TurfDataBuilding[],
+  currentBuildingId: string,
+  hasWork: (building: TurfDataBuilding) => boolean,
+): TurfDataBuilding | undefined {
+  const currentIdx = buildingsInOrder.findIndex((b) => b.buildingId === currentBuildingId);
+  const after = buildingsInOrder.slice(currentIdx + 1);
+  const before = buildingsInOrder.slice(0, Math.max(currentIdx, 0));
+  return [...after, ...before].find(hasWork);
+}
+
 export function buildTurfIndexes(turf: TurfData): TurfIndexes {
   const buildingsById = new Map<string, TurfDataBuilding>();
   const doorsById = new Map<string, TurfDataDoor>();
@@ -73,7 +109,10 @@ export function buildTurfIndexes(turf: TurfData): TurfIndexes {
   const personsInOrder: TurfDataPerson[] = [];
 
   // Sorted shallow copies — the react-query cached blob stays untouched.
-  const buildings = turf.buildings.map((b) => ({ ...b, doors: sortDoors(b.doors) }));
+  const buildings = sortBuildings(turf.buildings).map((b) => ({
+    ...b,
+    doors: sortDoors(b.doors),
+  }));
 
   for (const building of buildings) {
     buildingsById.set(building.buildingId, building);

@@ -27,7 +27,7 @@ import {
   formatPersonName,
   formatUnitLabel,
 } from "@/lib/format";
-import { useTurf } from "@/lib/turf-data";
+import { findNextBuilding, useTurf } from "@/lib/turf-data";
 
 export default function BuildingScreen() {
   const { turfId, buildingId } = useLocalSearchParams<{
@@ -84,10 +84,9 @@ export default function BuildingScreen() {
       router.push(`/turfs/${turfId}/persons/${nextInBuilding.personId}`);
       return;
     }
-    const nextBuilding = indexes?.buildingsInOrder?.find((b) => {
-      if (b.buildingId === buildingId) return false;
-      return b.doors.some((d) => d.persons.some((p) => !isRecorded(allResults, p.personId)));
-    });
+    const nextBuilding = findNextBuilding(indexes?.buildingsInOrder ?? [], buildingId, (b) =>
+      b.doors.some((d) => d.persons.some((p) => !isRecorded(allResults, p.personId))),
+    );
     Alert.alert("Building complete", "Every person in this building has been recorded.", [
       {
         text: "Return to list",

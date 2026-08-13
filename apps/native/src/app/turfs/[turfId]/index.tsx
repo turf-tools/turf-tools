@@ -172,7 +172,7 @@ export default function TurfListScreen() {
       </View>
     );
   }
-  if (!turfData) {
+  if (!turfData || !indexes) {
     return (
       <View className="flex-1 items-center justify-center bg-background dark:bg-background-dark">
         <Text className="font-sans-bold text-destructive dark:text-destructive-dark text-center">
@@ -205,7 +205,7 @@ export default function TurfListScreen() {
         handleComponent={renderHandle}
       >
         <BottomSheetFlatList
-          data={turfData.buildings}
+          data={indexes.buildingsInOrder}
           keyExtractor={(b) => b.buildingId}
           contentContainerStyle={{ paddingBottom: 20 }}
           renderItem={({ item }) => (

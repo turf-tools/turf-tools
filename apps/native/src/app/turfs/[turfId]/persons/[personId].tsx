@@ -35,7 +35,7 @@ import {
   formatPersonName,
   formatUnitShort,
 } from "@/lib/format";
-import { useTurf } from "@/lib/turf-data";
+import { findNextBuilding, useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
 import type { CanvassEventPayload, ResponseValue, TurfDataPerson } from "@turf-tools/db/schema";
 
@@ -382,10 +382,9 @@ export default function PersonScreen() {
     // above can't land in this render's summaries, and waiting for it
     // dead-taps Next on the last person in a building.
     if (responsesRef.current.size === 0 && outcomeRef.current == null) return;
-    const nextBuilding = indexes.buildingsInOrder.find((b) => {
-      if (b.buildingId === building.buildingId) return false;
-      return b.doors.some((d) => d.persons.some((p) => !isRecorded(summaries, p.personId)));
-    });
+    const nextBuilding = findNextBuilding(indexes.buildingsInOrder, building.buildingId, (b) =>
+      b.doors.some((d) => d.persons.some((p) => !isRecorded(summaries, p.personId))),
+    );
     Alert.alert("Building complete", "Every person in this building has been recorded.", [
       {
         text: "Return to list",
