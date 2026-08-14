@@ -109,6 +109,7 @@ export default function TurfListScreen() {
   useScreenNav({
     title: turfTitle,
     showBack: false,
+    progressTurfId: turfId,
     bottomButtons: ["search", "list", "next", "mic"],
     onBottomPress: (action) => {
       if (action === "list") {

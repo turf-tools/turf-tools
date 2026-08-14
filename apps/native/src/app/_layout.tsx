@@ -48,7 +48,7 @@ function GlobalMenuButton() {
   // close controls (same spot) — yield to them there.
   if (
     Platform.OS === "android" &&
-    ["/settings", "/canvasser", "/scan", "/share"].includes(pathname)
+    ["/settings", "/canvasser", "/scan", "/share", "/progress"].includes(pathname)
   ) {
     return null;
   }
@@ -132,6 +132,14 @@ function ThemedStack() {
         />
         <Stack.Screen
           name="share"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            contentStyle: { backgroundColor: isDark ? "#0a0a0a" : "#fcfcfc" },
+          }}
+        />
+        <Stack.Screen
+          name="progress"
           options={{
             headerShown: false,
             presentation: "modal",
