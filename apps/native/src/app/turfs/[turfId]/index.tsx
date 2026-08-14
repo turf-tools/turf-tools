@@ -86,7 +86,7 @@ export default function TurfListScreen() {
       return !isRecorded(allResults, p.personId);
     });
     if (!nextPerson) {
-      Alert.alert("All recorded", "Every person in this turf has a result.");
+      Alert.alert("No one left", "You have completed the turf! There's no one left to canvass.");
       return;
     }
     router.push(`/turfs/${turfId}/persons/${nextPerson.personId}`);

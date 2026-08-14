@@ -377,31 +377,43 @@ export default function PersonScreen() {
       router.replace(`/turfs/${turfId}/persons/${nextInBuilding.personId}`);
       return;
     }
-    // If the current person isn't marked yet, there's nobody else — stay put.
-    // Judged from the optimistic refs, not derived summaries: the flush
-    // above can't land in this render's summaries, and waiting for it
-    // dead-taps Next on the last person in a building.
-    if (responsesRef.current.size === 0 && outcomeRef.current == null) return;
+    // Current person unmarked and nobody else here: Next is a skip, so
+    // carry on to the next unmarked person in turf order (crossing into
+    // the next building), matching the list screen's Next. Judged from the
+    // optimistic refs, not derived summaries: the flush above can't land
+    // in this render's summaries, and waiting for it dead-taps Next on the
+    // last person in a building.
+    if (responsesRef.current.size === 0 && outcomeRef.current == null) {
+      const all = indexes.personsInOrder;
+      const idx = all.findIndex((p) => p.personId === personId);
+      const nextInTurf = [...all.slice(idx + 1), ...all.slice(0, idx)].find(
+        (p) => !isRecorded(summaries, p.personId),
+      );
+      if (nextInTurf) router.replace(`/turfs/${turfId}/persons/${nextInTurf.personId}`);
+      return;
+    }
     const nextBuilding = findNextBuilding(indexes.buildingsInOrder, building.buildingId, (b) =>
       b.doors.some((d) => d.persons.some((p) => !isRecorded(summaries, p.personId))),
     );
-    Alert.alert("Building complete", "Every person in this building has been recorded.", [
-      {
-        text: "Return to list",
-        onPress: () => {
-          setOpenSheet(true);
-          router.dismissTo(`/turfs/${turfId}`);
-        },
+    const returnToList = {
+      text: "Return to list",
+      onPress: () => {
+        setOpenSheet(true);
+        router.dismissTo(`/turfs/${turfId}`);
       },
-      ...(nextBuilding
-        ? [
-            {
-              text: "Next building",
-              onPress: () =>
-                router.replace(`/turfs/${turfId}/buildings/${nextBuilding.buildingId}`),
-            },
-          ]
-        : []),
+    };
+    if (!nextBuilding) {
+      Alert.alert("No one left", "You have completed the turf! There's no one left to canvass.", [
+        returnToList,
+      ]);
+      return;
+    }
+    Alert.alert("Building complete", "Every person in this building has been recorded.", [
+      returnToList,
+      {
+        text: "Next building",
+        onPress: () => router.replace(`/turfs/${turfId}/buildings/${nextBuilding.buildingId}`),
+      },
     ]);
   };
   const handleStubPress = (action: string) => {
