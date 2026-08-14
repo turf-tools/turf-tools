@@ -91,6 +91,12 @@ export default function CanvasserScreen() {
     }
   };
 
+  // The X and the content column share this anchor so the title sits a
+  // fixed distance below the close button on every device. iOS's deep top
+  // inset lets the control tuck beside the notch; Android's slim status
+  // bar needs it pushed below.
+  const closeTop = Platform.OS === "android" ? insets.top + 12 : Math.max(insets.top - 41, 12);
+
   return (
     <Pressable className="flex-1 bg-background dark:bg-background-dark" onPress={Keyboard.dismiss}>
       {/* X close button (matches Settings) */}
@@ -99,10 +105,8 @@ export default function CanvasserScreen() {
         hitSlop={4}
         className="absolute z-10 items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={{
-          // iOS's deep top inset lets the control tuck up beside the notch;
-          // Android's slim status bar needs it pushed below instead.
-          top: Platform.OS === "android" ? insets.top + 12 : insets.top - 35,
-          right: 20,
+          top: closeTop,
+          right: 22,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.15,
@@ -115,9 +119,12 @@ export default function CanvasserScreen() {
 
       {/* Top-anchored (not centered): the content block must live in the
           upper third so the keypad can never cover the Save button. */}
-      <View className="flex-1 items-center px-6 pt-[160px]">
+      <View
+        className="flex-1 items-center px-6"
+        style={{ paddingTop: closeTop + 48 }} // start below the 48px X row
+      >
         <Text
-          className="mb-2 self-center text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
+          className="mt-20 mb-2 self-center text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
           style={{
             fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
           }}

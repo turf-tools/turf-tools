@@ -2,7 +2,15 @@ import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, Text, useWindowDimensions, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import type { TurfDataBuilding } from "@turf-tools/db/schema";
 import { Check, DoorClosed, UserRound } from "lucide-react-native";
 import { TurfMap } from "@/components/map/turf-map";
@@ -130,6 +138,14 @@ export default function TurfListScreen() {
           shadowOffset: { width: 0, height: -2 },
           shadowOpacity: 0.1,
           shadowRadius: 4,
+          // Android ignores shadow* props and elevation only casts downward,
+          // so the tray's top edge gets a hairline instead. Zero-width bottom
+          // keeps the side segments to just the corner arcs' run-out.
+          ...(Platform.OS === "android" && {
+            borderWidth: 1,
+            borderBottomWidth: 0,
+            borderColor: isDark ? "#333333" : "#e5e5e5",
+          }),
         }}
       >
         <View

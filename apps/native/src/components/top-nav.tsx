@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const ICON_SIZE = 20;
@@ -32,7 +32,15 @@ export function TopNav({ title, titleSuffix, showBack, variant = "default", isDa
       className={`bg-background dark:bg-background-dark ${isMinimal ? "" : "border-b border-border dark:border-border-dark"}`}
       style={{ paddingTop: insets.top }}
     >
-      <View className="flex-row items-center px-5" style={{ paddingTop: 12, paddingBottom: 18 }}>
+      <View
+        className="flex-row items-center"
+        // Matches the global menu button's top and side offsets per platform.
+        style={{
+          paddingTop: Platform.OS === "android" ? 12 : 6,
+          paddingBottom: 18,
+          paddingHorizontal: 22,
+        }}
+      >
         {/* Left: back button (h-11 always to keep consistent height) */}
         <View className="w-12 h-12">
           {showBack && (

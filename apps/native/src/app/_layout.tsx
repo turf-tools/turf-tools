@@ -46,7 +46,10 @@ function GlobalMenuButton() {
   // On Android the modal presentation doesn't cover root chrome the way
   // iOS's does, so this button would sit on top of those screens' own
   // close controls (same spot) — yield to them there.
-  if (Platform.OS === "android" && ["/settings", "/canvasser", "/scan"].includes(pathname)) {
+  if (
+    Platform.OS === "android" &&
+    ["/settings", "/canvasser", "/scan", "/share"].includes(pathname)
+  ) {
     return null;
   }
   return (
@@ -54,7 +57,10 @@ function GlobalMenuButton() {
       onPress={() => router.push("/settings")}
       hitSlop={4}
       className="absolute z-50 items-center justify-center w-12 h-12 rounded-full bg-white dark:bg-surface-dark active:opacity-60"
-      style={[MENU_SHADOW, { top: insets.top + 12, right: 20 }]}
+      style={[
+        MENU_SHADOW,
+        { top: Platform.OS === "android" ? insets.top + 12 : insets.top + 6, right: 22 },
+      ]}
     >
       <Menu size={20} color={iconColor} />
     </Pressable>

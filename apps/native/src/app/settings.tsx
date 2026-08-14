@@ -27,6 +27,7 @@ import {
 import { useMemo, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
+import { bottomClearance } from "@/components/bottom-nav";
 import { Button } from "@/components/button";
 import { WideButton } from "@/components/wide-button";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
@@ -201,6 +202,12 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const isDark = theme === "dark";
 
+  // The X and the content column share this anchor so the title sits a
+  // fixed distance below the close button on every device. iOS's deep top
+  // inset lets the control tuck beside the notch; Android's slim status
+  // bar needs it pushed below.
+  const closeTop = Platform.OS === "android" ? insets.top + 12 : Math.max(insets.top - 41, 12);
+
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
       {/* X close button */}
@@ -209,10 +216,8 @@ export default function SettingsScreen() {
         hitSlop={4}
         className="absolute z-10 items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={{
-          // iOS's deep top inset lets the control tuck up beside the notch;
-          // Android's slim status bar needs it pushed below instead.
-          top: Platform.OS === "android" ? insets.top + 12 : insets.top - 35,
-          right: 20,
+          top: closeTop,
+          right: 22,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.15,
@@ -223,9 +228,12 @@ export default function SettingsScreen() {
         <X size={20} color={isDark ? "#ededed" : "#1b1b1b"} strokeWidth={2} />
       </Pressable>
 
-      <View className="flex-1 items-center justify-center p-6">
+      <View
+        className="flex-1 items-center px-6"
+        style={{ paddingTop: closeTop + 48 }} // start below the 48px X row
+      >
         <Text
-          className="mb-8 text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
+          className="mt-20 mb-8 text-4xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
           style={{
             fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
           }}
@@ -296,7 +304,11 @@ export default function SettingsScreen() {
       {/* Absolute so the centered button stack keeps its position. */}
       <View
         className="absolute inset-x-0 flex-row justify-center gap-10"
-        style={{ bottom: insets.bottom + 12 }}
+        style={{
+          // Android matches the nav bar's clearance above its system bar;
+          // iOS has no bar to clear and keeps its own tuning.
+          bottom: Platform.OS === "android" ? bottomClearance(insets) : insets.bottom + 12,
+        }}
       >
         <FooterLink title="Privacy" url="https://turf.tools/privacy" />
         <FooterLink title="Support" url="https://turf.tools/support" />

@@ -11,12 +11,21 @@ type Props = {
 };
 
 const ICON_SIZE = 20;
+
+// Bottom clearance shared by the nav bar and Settings' footer row. iOS's
+// bottom inset already includes clearance above the home indicator;
+// Android's is just the bar region itself, so add breathing room there.
+export function bottomClearance(insets: { bottom: number }) {
+  return Platform.OS === "android" ? Math.max(insets.bottom, 8) + 24 : Math.max(insets.bottom, 8);
+}
 const SHADOW = {
   shadowColor: "#000",
   shadowOffset: { width: 0, height: 2 },
   shadowOpacity: 0.15,
   shadowRadius: 6,
-  elevation: 4,
+  // Android's light model casts heavier shadows near the screen bottom —
+  // 1 here matches the top controls' 4 visually.
+  elevation: 1,
 };
 
 // Floating bottom toolbar — white buttons with shadows, no separator line.
@@ -29,11 +38,10 @@ export function BottomNav({ buttons, onPress, isDark = false }: Props) {
     <View
       className="flex-row items-center gap-3 px-8 border-t border-border dark:border-border-dark bg-background dark:bg-background-dark"
       style={{
-        // Android's reported bottom inset can under-count the rendered
-        // system bar, clipping the buttons — cushion it there only.
-        paddingBottom:
-          Platform.OS === "android" ? Math.max(insets.bottom, 8) + 36 : Math.max(insets.bottom, 8),
-        paddingTop: 25,
+        paddingBottom: bottomClearance(insets),
+        // Android: match the visible air below the buttons (the +24 in
+        // bottomClearance) so the bar is symmetric on any screen.
+        paddingTop: Platform.OS === "android" ? 24 : 25,
       }}
     >
       {buttons.map((action, idx) => {

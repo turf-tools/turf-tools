@@ -89,6 +89,12 @@ export default function ScanScreen() {
     router.back();
   };
 
+  // The title row and the X share this offset so they stay vertically
+  // aligned regardless of device inset. iOS's deep top inset lets the
+  // control tuck up beside the notch; Android's slim status bar needs it
+  // pushed below instead.
+  const closeTop = Platform.OS === "android" ? insets.top + 12 : Math.max(insets.top - 41, 12);
+
   return (
     <View className="flex-1 bg-background dark:bg-background-dark">
       {/* X close button (matches Settings) */}
@@ -97,10 +103,8 @@ export default function ScanScreen() {
         hitSlop={4}
         className="absolute z-10 items-center justify-center w-12 h-12 rounded-full bg-surface dark:bg-surface-dark active:opacity-60"
         style={{
-          // iOS's deep top inset lets the control tuck up beside the notch;
-          // Android's slim status bar needs it pushed below instead.
-          top: Platform.OS === "android" ? insets.top + 12 : insets.top - 35,
-          right: 20,
+          top: closeTop,
+          right: 22,
           shadowColor: "#000",
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.15,
@@ -111,19 +115,25 @@ export default function ScanScreen() {
         <X size={20} color={isDark ? "#ededed" : "#1b1b1b"} strokeWidth={2} />
       </Pressable>
 
-      <View className="flex-1 px-4 pb-6" style={{ paddingBottom: insets.bottom + 16 }}>
-        <Text
-          className="mt-9 mb-9 self-center text-3xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
-          style={{
-            fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
-          }}
-        >
-          Scan a code
-        </Text>
+      <View
+        className="flex-1 px-4 pb-6"
+        style={{ paddingTop: closeTop, paddingBottom: insets.bottom + 16 }}
+      >
+        {/* Same height as the X so the title centers on it. */}
+        <View className="h-12 justify-center">
+          <Text
+            className="self-center text-3xl transform -skew-x-12 text-foreground dark:text-foreground-dark"
+            style={{
+              fontFamily: Platform.OS === "android" ? "Geist_700Bold_Italic" : "Geist_700Bold",
+            }}
+          >
+            Scan a code
+          </Text>
+        </View>
 
         {permission?.granted ? (
           <>
-            <View className="flex-1 overflow-hidden rounded-2xl bg-black">
+            <View className="mt-6 flex-1 overflow-hidden rounded-2xl bg-black">
               {cameraMounted ? (
                 <CameraView
                   style={{ flex: 1, opacity: cameraReady ? 1 : 0 }}
