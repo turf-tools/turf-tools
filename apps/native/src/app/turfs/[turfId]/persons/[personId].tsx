@@ -36,6 +36,7 @@ import {
   formatUnitShort,
 } from "@/lib/format";
 import { findNextBuilding, useTurf } from "@/lib/turf-data";
+import { useAlignedTurfStack } from "@/lib/turf-nav";
 import { client } from "@/rpc/client";
 import type { CanvassEventPayload, ResponseValue, TurfDataPerson } from "@turf-tools/db/schema";
 
@@ -122,6 +123,7 @@ export default function PersonScreen() {
   const person = indexes?.personsById.get(personId);
   const door = indexes?.doorByPersonId.get(personId);
   const building = indexes?.buildingByPersonId.get(personId);
+  useAlignedTurfStack(turfId, building?.buildingId);
 
   const events = useCanvassEvents(turfId);
   const summaries = useMemo(() => derivePersonSummaries(events), [events]);
@@ -377,19 +379,16 @@ export default function PersonScreen() {
       router.replace(`/turfs/${turfId}/persons/${nextInBuilding.personId}`);
       return;
     }
-    // Current person unmarked and nobody else here: Next is a skip, so
-    // carry on to the next unmarked person in turf order (crossing into
-    // the next building), matching the list screen's Next. Judged from the
-    // optimistic refs, not derived summaries: the flush above can't land
-    // in this render's summaries, and waiting for it dead-taps Next on the
-    // last person in a building.
+    // Current person unmarked and nobody else here: stay put — Next never
+    // skips past the person being canvassed. Judged from the optimistic
+    // refs, not derived summaries: the flush above can't land in this
+    // render's summaries, so a just-marked person would still read as
+    // unmarked there and get this alert instead of Building complete.
     if (responsesRef.current.size === 0 && outcomeRef.current == null) {
-      const all = indexes.personsInOrder;
-      const idx = all.findIndex((p) => p.personId === personId);
-      const nextInTurf = [...all.slice(idx + 1), ...all.slice(0, idx)].find(
-        (p) => !isRecorded(summaries, p.personId),
+      Alert.alert(
+        "Last person",
+        "Everyone else in this building has been attempted. Record something for this person to finish the building.",
       );
-      if (nextInTurf) router.replace(`/turfs/${turfId}/persons/${nextInTurf.personId}`);
       return;
     }
     const nextBuilding = findNextBuilding(indexes.buildingsInOrder, building.buildingId, (b) =>
@@ -408,7 +407,7 @@ export default function PersonScreen() {
       ]);
       return;
     }
-    Alert.alert("Building complete", "Every person in this building has been recorded.", [
+    Alert.alert("Building complete", "Every person in this building has been attempted.", [
       returnToList,
       {
         text: "Next building",

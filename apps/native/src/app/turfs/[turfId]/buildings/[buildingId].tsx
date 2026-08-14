@@ -28,6 +28,7 @@ import {
   formatUnitLabel,
 } from "@/lib/format";
 import { findNextBuilding, useTurf } from "@/lib/turf-data";
+import { useAlignedTurfStack } from "@/lib/turf-nav";
 
 export default function BuildingScreen() {
   const { turfId, buildingId } = useLocalSearchParams<{
@@ -36,6 +37,7 @@ export default function BuildingScreen() {
   }>();
 
   const { indexes, isLoading } = useTurf(turfId);
+  useAlignedTurfStack(turfId);
   const events = useCanvassEvents(turfId);
   const allResults = useMemo(() => derivePersonSummaries(events), [events]);
   const building = indexes?.buildingsById.get(buildingId);
@@ -87,7 +89,7 @@ export default function BuildingScreen() {
     const nextBuilding = findNextBuilding(indexes?.buildingsInOrder ?? [], buildingId, (b) =>
       b.doors.some((d) => d.persons.some((p) => !isRecorded(allResults, p.personId))),
     );
-    Alert.alert("Building complete", "Every person in this building has been recorded.", [
+    Alert.alert("Building complete", "Every person in this building has been attempted.", [
       {
         text: "Return to list",
         onPress: () => {
