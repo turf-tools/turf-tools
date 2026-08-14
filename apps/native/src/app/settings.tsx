@@ -454,7 +454,7 @@ function SyncStatusLine({
     pendingCount > 0
       ? `${pendingCount} ${pendingCount === 1 ? "result" : "results"} pending`
       : null,
-    progress != null ? `Turf progress ${progress}%` : null,
+    progress != null ? `Turf progress: ${progress}%` : null,
   ].filter((line): line is string => line != null);
   return (
     <View className="items-center gap-0.5" style={{ minHeight: 84 }}>

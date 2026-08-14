@@ -22,6 +22,8 @@ type TopNavConfig = {
   title: string;
   titleSuffix: string | null;
   showBack: boolean;
+  // Renders the turf progress button in the left slot (back must be off).
+  progressTurfId: string | null;
   variant: TopNavVariant;
 };
 
@@ -53,6 +55,7 @@ export function NavProvider({ children }: { children: ReactNode }) {
             title={topConfig.title}
             titleSuffix={topConfig.titleSuffix}
             showBack={topConfig.showBack}
+            progressTurfId={topConfig.progressTurfId}
             variant={topConfig.variant}
             isDark={isDark}
           />
@@ -75,6 +78,7 @@ export function useScreenNav(options: {
   title: string;
   titleSuffix?: string | null;
   showBack?: boolean;
+  progressTurfId?: string;
   topVariant?: TopNavVariant;
   bottomButtons: Array<ButtonAction | null>;
   onBottomPress: (action: ButtonAction) => void;
@@ -89,15 +93,22 @@ export function useScreenNav(options: {
   const titleKey = options.title;
   const titleSuffix = options.titleSuffix ?? null;
   const showBack = options.showBack ?? true;
+  const progressTurfId = options.progressTurfId ?? null;
   const variant = options.topVariant ?? "default";
 
   useFocusEffect(
     useCallback(() => {
-      ctxRef.current?.setTopConfig({ title: titleKey, titleSuffix, showBack, variant });
+      ctxRef.current?.setTopConfig({
+        title: titleKey,
+        titleSuffix,
+        showBack,
+        progressTurfId,
+        variant,
+      });
       ctxRef.current?.setBottomConfig({
         buttons: buttonsKey.split(",") as Array<ButtonAction>,
         onPress: (action) => optionsRef.current.onBottomPress(action),
       });
-    }, [buttonsKey, titleKey, titleSuffix, showBack, variant]),
+    }, [buttonsKey, titleKey, titleSuffix, showBack, progressTurfId, variant]),
   );
 }

@@ -2,6 +2,7 @@ import { router } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import { Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ProgressButton } from "@/components/progress";
 
 const ICON_SIZE = 20;
 const SHADOW = {
@@ -18,12 +19,21 @@ type Props = {
   // first, so a long street ellipsizes while the unit stays visible.
   titleSuffix?: string | null;
   showBack: boolean;
+  // Turf progress button in the left slot when back is off.
+  progressTurfId?: string | null;
   // "minimal" hides the title and border (used on the map/list screen).
   variant?: "default" | "minimal";
   isDark: boolean;
 };
 
-export function TopNav({ title, titleSuffix, showBack, variant = "default", isDark }: Props) {
+export function TopNav({
+  title,
+  titleSuffix,
+  showBack,
+  progressTurfId,
+  variant = "default",
+  isDark,
+}: Props) {
   const insets = useSafeAreaInsets();
   const isMinimal = variant === "minimal";
 
@@ -43,7 +53,7 @@ export function TopNav({ title, titleSuffix, showBack, variant = "default", isDa
       >
         {/* Left: back button (h-11 always to keep consistent height) */}
         <View className="w-12 h-12">
-          {showBack && (
+          {showBack ? (
             <Pressable
               onPress={() => router.back()}
               hitSlop={4}
@@ -56,7 +66,9 @@ export function TopNav({ title, titleSuffix, showBack, variant = "default", isDa
                 strokeWidth={2}
               />
             </Pressable>
-          )}
+          ) : progressTurfId ? (
+            <ProgressButton turfId={progressTurfId} />
+          ) : null}
         </View>
 
         {/* Center: title */}

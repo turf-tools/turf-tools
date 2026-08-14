@@ -5,12 +5,15 @@
 // Shades:
 //   background — fill color used for badge backgrounds and map dots.
 //   foreground — deep text/icon color paired with `background`.
+//   solid      — saturated mid-tone for standalone marks (thin strokes,
+//                progress ring segments) that must hold their hue at small
+//                sizes against the surface color.
 
 import { useAtomValue } from "jotai";
 import { themeAtom } from "@/lib/atoms/theme";
 
 type Role = "contacted" | "unavailable";
-type Variant = { background: string; foreground: string };
+type Variant = { background: string; foreground: string; solid: string };
 type Themed = { light: Variant; dark: Variant };
 
 export const colors: Record<Role, Themed> = {
@@ -18,20 +21,24 @@ export const colors: Record<Role, Themed> = {
     light: {
       background: "#f5d0fe", // fuscia 200
       foreground: "#86198f", // fuscia 800
+      solid: "#e879f9", // fuscia 400
     },
     dark: {
       background: "#5D0F61", // fuschia 925
       foreground: "#F2BEFD", // fuscia 250
+      solid: "#c026d3", // fuscia 600
     },
   },
   unavailable: {
     light: {
       background: "#fed7aa", // orange 200
       foreground: "#9a3412", // orange 800
+      solid: "#fb923c", // orange 400
     },
     dark: {
       background: "#5F2009", // orange 925
       foreground: "#FED4A4", // orange 250
+      solid: "#ea580c", // orange 600
     },
   },
 };
