@@ -1,5 +1,6 @@
-import { hashKey, QueryClient } from "@tanstack/react-query";
+import { hashKey, MutationCache, QueryClient } from "@tanstack/react-query";
 import { createRouter, defaultStringifySearch } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
 import { __registerRouter } from "./lib/current-route";
 import { routeTree } from "./routeTree.gen";
@@ -33,6 +34,15 @@ export function getRouter() {
   let routerRef: RouterLike | null = null;
 
   const queryClient: QueryClient = new QueryClient({
+    // Default error surface: a mutation without its own onError (and not
+    // flagged `meta.errorHandled`, e.g. dialogs showing inline errors) gets a
+    // toast — a failed write must never be silent.
+    mutationCache: new MutationCache({
+      onError: (error, _variables, _context, mutation) => {
+        if (mutation.options.onError || mutation.meta?.errorHandled) return;
+        toast.error(error.message);
+      },
+    }),
     defaultOptions: {
       // 15s default — long enough that "tab away and back" hits cache,
       // short enough that "data is roughly current." Per-query overrides

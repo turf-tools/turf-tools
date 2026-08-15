@@ -17,10 +17,9 @@ import { useCallback, useRef, useState } from "react";
 // Per-call `mutate(input, { onSuccess })` is awaited before the dialog
 // closes — that's how delete-with-fallback flows ensure their navigate(...)
 // settles before the modal disappears. The hook-level `opts.onSuccess`
-// runs fire-and-forget: its synchronous work (setQueryData, etc.) lands
-// before close, but any returned Promise (navigate, invalidate) is
-// dropped so async post-work overlaps with the close animation rather
-// than holding the dialog open through it.
+// runs fire-and-forget: its returned Promise (settleMutation, navigate) is
+// dropped so cache work overlaps with the close animation rather than
+// holding the dialog open through it.
 export function useDialogMutation<TInput, TOutput>(opts: {
   mutationFn: (input: TInput) => Promise<TOutput>;
   onSuccess?: (data: TOutput, input: TInput) => void | Promise<void>;
@@ -34,6 +33,8 @@ export function useDialogMutation<TInput, TOutput>(opts: {
   const mutation = useMutation({
     mutationFn: opts.mutationFn,
     onError: opts.onError,
+    // Errors render inline via `error` below; skip the global toast.
+    meta: { errorHandled: true },
   });
 
   type PerCallOptions = Parameters<typeof mutation.mutate>[1];
