@@ -72,6 +72,10 @@ export function getRouter() {
     // resolves; pending UI only shows past 300ms.
     defaultPendingMs: 300,
     defaultPendingMinMs: 300,
+    // Skip loader re-runs entirely while the route's data is inside the
+    // query-fresh window — a background reload that fetchQuery would
+    // satisfy from cache is pure overhead.
+    defaultStaleTime: 15_000,
     // No hover preload: our list queries are staleTime-0 so a preload never
     // saves the navigation fetch, and a preloaded index match commits before
     // its redirect — flashing the empty state.
