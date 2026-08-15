@@ -594,8 +594,6 @@ function FullSegmentRow({
   turfStats: { drafts: number; published: number; active: number } | null;
   onCut: () => void;
 }) {
-  const turfCount = turfStats?.drafts ?? 0;
-  const hasPublished = (turfStats?.published ?? 0) > 0;
   return (
     <div
       className={cn(
@@ -621,22 +619,26 @@ function FullSegmentRow({
             <DoorClosed className="size-3.5 text-foreground" />
             {counts.doors.toLocaleString()}
           </Pill>
-          {hasPublished ? (
-            <Pill
-              variant="number"
-              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
-            >
-              <Send className="size-3.5 text-foreground" />
-              {(turfStats?.published ?? 0).toLocaleString()}
-            </Pill>
+          {turfStats ? (
+            <>
+              {turfStats.published > 0 ? (
+                <Pill
+                  variant="number"
+                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
+                >
+                  <Send className="size-3.5 text-foreground" />
+                  {turfStats.published.toLocaleString()}
+                </Pill>
+              ) : null}
+              <Pill
+                variant="number"
+                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+              >
+                <CircleDotDashed className="size-3.5 text-foreground" />
+                {turfStats.drafts}
+              </Pill>
+            </>
           ) : null}
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <CircleDotDashed className="size-3.5 text-foreground" />
-            {turfCount}
-          </Pill>
         </Fragment>
       ) : null}
       <Button variant="outline" className="h-[31px]" onClick={onCut}>
@@ -666,8 +668,6 @@ function ZoneRow({
   onSelect: () => void;
   onCut: () => void;
 }) {
-  const turfCount = turfStats?.drafts ?? 0;
-  const hasPublished = (turfStats?.published ?? 0) > 0;
   return (
     <div
       role="button"
@@ -705,22 +705,26 @@ function ZoneRow({
             <DoorClosed className="size-3.5 text-foreground" />
             {counts.doors.toLocaleString()}
           </Pill>
-          {hasPublished ? (
-            <Pill
-              variant="number"
-              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
-            >
-              <Send className="size-3.5 text-foreground" />
-              {(turfStats?.published ?? 0).toLocaleString()}
-            </Pill>
+          {turfStats ? (
+            <>
+              {turfStats.published > 0 ? (
+                <Pill
+                  variant="number"
+                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
+                >
+                  <Send className="size-3.5 text-foreground" />
+                  {turfStats.published.toLocaleString()}
+                </Pill>
+              ) : null}
+              <Pill
+                variant="number"
+                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+              >
+                <CircleDotDashed className="size-3.5 text-foreground" />
+                {turfStats.drafts}
+              </Pill>
+            </>
           ) : null}
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <CircleDotDashed className="size-3.5 text-foreground" />
-            {turfCount}
-          </Pill>
         </Fragment>
       ) : null}
       <Button

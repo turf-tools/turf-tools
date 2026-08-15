@@ -86,6 +86,19 @@ function ScriptEditor() {
   const [draft, setDraft] = useState<ScriptStepRow[] | null>(null);
   const displaySteps = draft ?? steps;
 
+  // Step bodies and the preview render from per-question detail queries; on
+  // slow fetches a partial column (condition annotations without content)
+  // would render and then grow, yanking restored scroll around. Gate the
+  // first render until every detail is cached — a one-shot latch, so a step
+  // added later (detail still prefetching) falls back to its own inline
+  // placeholder instead of blanking the editor.
+  const detailQueries = useQueries({
+    queries: steps.filter((s) => s.questionId).map((s) => questionDetailQuery(s.questionId!)),
+  });
+  const detailsReady = detailQueries.every((d) => d.data !== undefined);
+  const readyOnceRef = useRef(false);
+  if (detailsReady) readyOnceRef.current = true;
+
   const setSteps = (updater: (prev: ScriptStepRow[]) => ScriptStepRow[]) => {
     const key = ["script", scriptId];
     const prev = queryClient.getQueryData<{ steps: ScriptStepRow[] } & object>(key);
@@ -259,7 +272,7 @@ function ScriptEditor() {
     prevStepsRef.current = { scriptId, length: steps.length };
   }, [scriptId, steps.length]);
 
-  if (!script) return null;
+  if (!script || !readyOnceRef.current) return null;
 
   return (
     <>

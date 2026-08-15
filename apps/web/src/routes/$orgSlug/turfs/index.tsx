@@ -416,9 +416,11 @@ function useWalkSummaries(campaignId: string | null) {
   }, [data]);
 }
 
+// Null until progress loads — a turf absent from a loaded result means
+// genuinely zero attempts; an absent result means "don't know yet".
 function useProgressByTurf(campaignId: string | null) {
   const { data } = useQuery(progressQuery(campaignId));
-  return useMemo(() => new Map((data ?? []).map((r) => [r.turfId, r.attempted])), [data]);
+  return useMemo(() => (data ? new Map(data.map((r) => [r.turfId, r.attempted])) : null), [data]);
 }
 
 // Region-grouped rendering for the mobile views: one group per
@@ -488,9 +490,9 @@ function doorLabel(count: number | null) {
   return count > 999 ? "1k+" : String(count);
 }
 
-function progressPct(attempted: number | undefined, personCount: number | null) {
+function progressPct(attempted: number, personCount: number | null) {
   if (!personCount) return null;
-  return Math.round(((attempted ?? 0) / personCount) * 100);
+  return Math.round((attempted / personCount) * 100);
 }
 
 function bboxOfFeatures(features: Feature[]): [number, number, number, number] | null {
@@ -1102,7 +1104,11 @@ function TurfCards({
               key={t.turfId}
               turf={t}
               summary={summaries(t.turfId)}
-              pct={progressPct(progressByTurf.get(t.turfId), t.personCount)}
+              pct={
+                progressByTurf
+                  ? progressPct(progressByTurf.get(t.turfId) ?? 0, t.personCount)
+                  : null
+              }
               tz={tz}
               onShowQr={onShowQr}
               onShowTurfMap={onShowTurfMap}
@@ -1281,7 +1287,9 @@ function CompactList({
           ) : null}
           {group.rows.map((t) => {
             const summary = summaries(t.turfId);
-            const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
+            const pct = progressByTurf
+              ? progressPct(progressByTurf.get(t.turfId) ?? 0, t.personCount)
+              : null;
             return (
               <div key={t.turfId} data-turf-row={t.turfId} className="flex items-center gap-1">
                 <span className={cn(cell, "w-9 bg-muted font-mono font-semibold tabular-nums")}>
@@ -1423,7 +1431,9 @@ function TurfsTable({
         ) : null}
         {rows.map((t) => {
           const summary = summaries(t.turfId);
-          const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
+          const pct = progressByTurf
+            ? progressPct(progressByTurf.get(t.turfId) ?? 0, t.personCount)
+            : null;
           return (
             <TableRow key={t.turfId} data-turf-row={t.turfId}>
               <TableCell>
