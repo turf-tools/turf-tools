@@ -6,6 +6,7 @@ import Animated, {
   cancelAnimation,
   Easing,
   ReduceMotion,
+  type SharedValue,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -83,7 +84,16 @@ function metersBetween(a: [number, number], b: [number, number]) {
   return Math.hypot(dLng, dLat) * 111_320;
 }
 
-export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
+// `mapBearing` is the live camera bearing: the cone is a screen-anchored
+// annotation view, so compass heading only points the right way once the
+// map's own rotation is subtracted out.
+export function UserLocationDot({
+  isDark = false,
+  mapBearing,
+}: {
+  isDark?: boolean;
+  mapBearing: SharedValue<number>;
+}) {
   const [coord, setCoord] = useState<[number, number] | null>(null);
   const [coneAngle, setConeAngle] = useState<number | null>(null);
   const headingDeg = useSharedValue(0);
@@ -259,7 +269,7 @@ export function UserLocationDot({ isDark = false }: { isDark?: boolean }) {
   }));
 
   const coneStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${headingDeg.value}deg` }],
+    transform: [{ rotate: `${headingDeg.value - mapBearing.value}deg` }],
   }));
 
   if (coord == null) return null;

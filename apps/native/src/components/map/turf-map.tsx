@@ -1,6 +1,7 @@
 import {
   Camera,
   type CameraRef,
+  type CameraStop,
   CircleLayer,
   MapView,
   ShapeSource,
@@ -11,9 +12,11 @@ import {
 import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Linking, Pressable, StyleSheet, Text, View, Platform } from "react-native";
+import { useSharedValue } from "react-native-reanimated";
 import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
+import { MapControls } from "./controls";
 import { LabelLayers } from "./labels";
 import { UserLocationDot } from "./user-location-dot";
 
@@ -87,12 +90,74 @@ export function TurfMap({
   const cameraRef = useRef<CameraRef>(null);
   const shapeSourceRef = useRef<ShapeSourceRef>(null);
 
-  // Track the actual camera zoom for tap zoom math.
+  // Track the actual camera zoom for tap zoom math, and the bearing for
+  // the compass needle (shared value — per-frame, no re-render) plus its
+  // visibility (state — changes only at the show/hide thresholds).
   const actualZoomRef = useRef(0);
-  const handleRegionEvent = useCallback((event: { properties?: { zoomLevel?: number } }) => {
-    const z = event?.properties?.zoomLevel;
-    if (typeof z === "number") actualZoomRef.current = z;
+  const mapBearing = useSharedValue(0);
+  const [rotated, setRotated] = useState(false);
+  // Both region events feed this handler: the IsChanging stream for live
+  // tracking, and the (undebounced — see the MapView prop) DidChange for
+  // the settle frame, which is the only carrier of an animation's final
+  // heading — without it a reset-north stops a hair short of 0 and the
+  // compass never hides.
+  const handleRegionEvent = useCallback(
+    (event: { properties?: { zoomLevel?: number; heading?: number } }) => {
+      const z = event?.properties?.zoomLevel;
+      if (typeof z === "number") actualZoomRef.current = z;
+      const h = event?.properties?.heading;
+      if (typeof h === "number") {
+        mapBearing.value = h;
+        // Visibility is purely bearing-derived: appear once clearly
+        // rotated, disappear once essentially at north — anything that
+        // lands the camera on 0 (the reset animation, iOS's release-snap
+        // to north) hides it through the same rule. The gap between the
+        // thresholds absorbs settle jitter.
+        const norm = ((h % 360) + 360) % 360;
+        const deviation = Math.min(norm, 360 - norm);
+        setRotated((prev) => (prev ? deviation > 0.5 : deviation >= 2));
+      }
+    },
+    [mapBearing],
+  );
+  // setCamera stops ride a diffed native prop, and gestures never touch
+  // it — so a stop identical to the previous one (tap locate twice from
+  // the same fix, tap the compass twice) is elided and the camera stays
+  // put. Flip-flop a millisecond of duration so every stop is unique.
+  // Callers that want motion must pass animationMode: a stop without one
+  // maps to CameraModes.None, which jumps regardless of duration.
+  const stopNonceRef = useRef(0);
+  const setCameraStop = useCallback((stop: CameraStop) => {
+    stopNonceRef.current = 1 - stopNonceRef.current;
+    cameraRef.current?.setCamera({
+      ...stop,
+      animationDuration: (stop.animationDuration ?? 0) + stopNonceRef.current,
+    });
   }, []);
+
+  const handleResetNorth = useCallback(() => {
+    setCameraStop({ heading: 0, animationDuration: 250, animationMode: "easeTo" });
+  }, [setCameraStop]);
+
+  // Center on the user at a working zoom. Cached fix first so the common
+  // case is instant; a fresh fix only when there's none. Any failure —
+  // permission denied, services off — moves nothing: never an alert.
+  const handleLocate = useCallback(async () => {
+    try {
+      const last = await Location.getLastKnownPositionAsync();
+      const pos =
+        last ?? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+      if (!pos) return;
+      setCameraStop({
+        centerCoordinate: [pos.coords.longitude, pos.coords.latitude],
+        zoomLevel: Math.max(actualZoomRef.current, 16),
+        animationDuration: 400,
+        animationMode: "easeTo",
+      });
+    } catch {
+      // No location, no movement — silent by design.
+    }
+  }, [setCameraStop]);
 
   const handlePress = useCallback(
     async (e: { features: GeoJSON.Feature[] }) => {
@@ -108,7 +173,7 @@ export function TurfMap({
             (expansionZoom ?? actualZoomRef.current) + 0.5,
             actualZoomRef.current + 1,
           );
-          cameraRef.current?.setCamera({
+          setCameraStop({
             centerCoordinate: feature.geometry.coordinates as [number, number],
             zoomLevel: targetZoom,
             padding: {
@@ -121,7 +186,7 @@ export function TurfMap({
           });
         } catch {
           // Fallback: just zoom in
-          cameraRef.current?.setCamera({
+          setCameraStop({
             centerCoordinate: feature.geometry.coordinates as [number, number],
             zoomLevel: actualZoomRef.current + 2,
             animationDuration: 350,
@@ -134,7 +199,7 @@ export function TurfMap({
       const id = feature.properties?.buildingId;
       if (typeof id === "string") onBuildingPress?.(id);
     },
-    [onBuildingPress, bottomInset],
+    [onBuildingPress, bottomInset, setCameraStop],
   );
 
   if (!isMaptilerKeyConfigured()) {
@@ -154,7 +219,8 @@ export function TurfMap({
         mapStyle={getMaptilerStyleUrl(isDark)}
         attributionEnabled={false}
         logoEnabled={false}
-        rotateEnabled={false}
+        compassEnabled={false}
+        rotateEnabled
         pitchEnabled={false}
         // Tints the Android native user-location puck. On iOS it's the
         // inherited fallback for the heading cone's template image — the
@@ -163,6 +229,12 @@ export function TurfMap({
         tintColor={isDark ? "#ffffff" : "#000000"}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
+        // Undebounced: the default 500ms debounce delivers payloads
+        // captured up to half a second earlier — stale headings corrupt
+        // the compass state. At 0 the settle event is a direct
+        // passthrough: fresh, and the only source of an animation's
+        // exact final heading.
+        regionDidChangeDebounceTime={0}
         onRegionDidChange={handleRegionEvent}
       >
         <Camera
@@ -332,7 +404,7 @@ export function TurfMap({
           GL-rendered so taps pass through — the custom dot would need
           MarkerView there, which fritzes the status bar and can crash. */}
         {Platform.OS === "ios" ? (
-          <UserLocationDot isDark={isDark} />
+          <UserLocationDot isDark={isDark} mapBearing={mapBearing} />
         ) : (
           locationGranted && (
             <UserLocation
@@ -353,6 +425,13 @@ export function TurfMap({
         />
       )}
       <AttributionBadge isDark={isDark} />
+      <MapControls
+        bearing={mapBearing}
+        rotated={rotated}
+        onResetNorth={handleResetNorth}
+        onLocate={handleLocate}
+        isDark={isDark}
+      />
     </View>
   );
 }
@@ -380,7 +459,7 @@ function AttributionBadge({ isDark }: { isDark: boolean }) {
       }
       style={{
         position: "absolute",
-        right: 6,
+        left: 6,
         // Sheet's collapsed snap is 40 — stay above it.
         bottom: 46,
         borderRadius: 4,
