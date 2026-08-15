@@ -95,7 +95,9 @@ function ScriptEditor() {
   const detailQueries = useQueries({
     queries: steps.filter((s) => s.questionId).map((s) => questionDetailQuery(s.questionId!)),
   });
-  const detailsReady = detailQueries.every((d) => d.data !== undefined);
+  // `!!script` guards the vacuous case: before the script loads, steps is []
+  // and every() over zero queries is true — the latch must not engage then.
+  const detailsReady = !!script && detailQueries.every((d) => d.data !== undefined);
   const readyOnceRef = useRef(false);
   if (detailsReady) readyOnceRef.current = true;
 
@@ -257,6 +259,9 @@ function ScriptEditor() {
   // Track per-script so tabbing between scripts doesn't read "count grew."
   const prevStepsRef = useRef<{ scriptId: string; length: number } | null>(null);
   useEffect(() => {
+    // While the script itself is loading, steps going 0→N is data arrival,
+    // not a user add — don't record a baseline or scroll.
+    if (!script) return;
     const prev = prevStepsRef.current;
     if (
       prev &&
@@ -270,7 +275,7 @@ function ScriptEditor() {
       });
     }
     prevStepsRef.current = { scriptId, length: steps.length };
-  }, [scriptId, steps.length]);
+  }, [script, scriptId, steps.length]);
 
   if (!script || !readyOnceRef.current) return null;
 
