@@ -22,7 +22,7 @@ import {
 import { useAtomValue } from "jotai";
 import polylabel from "polylabel";
 import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import { Dialog, DialogClose, DialogCloseX, DialogContent, DialogTitle } from "~/components/dialog";
 import { EditorHeader } from "~/components/editor-header";
@@ -80,13 +80,18 @@ export const Route = createFileRoute("/$orgSlug/turfs/")({
     zoneId: typeof search.zoneId === "string" ? search.zoneId : null,
   }),
   loaderDeps: ({ search }) => ({ campaignId: search.campaignId }),
-  loader: ({ context: { queryClient }, deps }) =>
-    Promise.all([
+  loader: async ({ context: { queryClient }, deps }) => {
+    // TEMP boot-audit logging (remove before merge)
+    console.log("[boot] turfs loader start", Math.round(performance.now()));
+    const result = await Promise.all([
       queryClient.fetchQuery(turfsListQuery(deps.campaignId)),
       queryClient.fetchQuery(walksListQuery(deps.campaignId)),
       queryClient.fetchQuery(progressQuery(deps.campaignId)),
       queryClient.fetchQuery(campaignsListQuery()),
-    ]),
+    ]);
+    console.log("[boot] turfs loader done", Math.round(performance.now()));
+    return result;
+  },
   component: TurfsIndex,
 });
 
@@ -112,9 +117,21 @@ function TurfsIndex() {
   const shouldFade = useFadeOnce("/turfs");
   useLiveRefresh();
 
-  const { data: campaigns } = useQuery(campaignsListQuery());
+  // Suspense (not useQuery): on prod cold boots the SPA shell hydration
+  // skips route loaders, so data arrives via component mount — a plain
+  // useQuery would paint the campaign filter label-less and widen later.
+  const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: turfs } = useSuspenseQuery(turfsListQuery(campaignId));
   const rows = useTurfRows(campaignId, zoneId);
+
+  // TEMP boot-audit logging (remove before merge)
+  const bootLoggedRef = useRef(false);
+  if (!bootLoggedRef.current) {
+    bootLoggedRef.current = true;
+    console.log("[boot] TurfsIndex first render", Math.round(performance.now()), {
+      campaignsPresent: campaigns !== undefined,
+    });
+  }
 
   // Mobile-only rendering choice; desktop is always the table.
   const [view, setView] = useState<"cards" | "table">("cards");
