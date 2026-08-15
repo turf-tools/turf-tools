@@ -19,20 +19,24 @@ export default function LandingScreen() {
   const [host, setHostInput] = useState("");
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  // True only while a submit is awaiting the network — the re-entry guard,
+  // and the focus reset's signal to leave an in-flight open alone.
+  const inFlightRef = useRef(false);
 
   const codeRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
   const [activeTurf, setActiveTurf] = useAtom(activeTurfAtom);
   const isDark = useAtomValue(themeAtom) === "dark";
 
-  // A successful scan fills the fields and stops — the user reviews the
-  // server + code and hits Open themselves.
+  // A successful scan opens the turf directly. The fields fill first so a
+  // failed open lands back here ready to retry or edit by hand.
   const [scanned, setScanned] = useAtom(scannedEntryAtom);
   useEffect(() => {
     if (!scanned) return;
     setHostInput(scanned.host);
     setCode(scanned.code);
     setScanned(null);
+    void submitRef.current(scanned.host, scanned.code);
   }, [scanned, setScanned]);
 
   // Clear inputs only when the binding transitions from bound → null (i.e.
@@ -80,20 +84,66 @@ export default function LandingScreen() {
   const setPendingOpen = useSetAtom(pendingOpenAtom);
   useFocusEffect(
     useCallback(() => {
-      // Regaining focus means no bind is in flight (a successful save
-      // lands on the turf screen, not here): drop any declined parked
+      // Regaining focus normally means no bind is in flight (a successful
+      // save lands on the turf screen, not here): drop any declined parked
       // open so a later Open starts clean, and reset the button label —
       // success paths keep `loading` true through their transition so
-      // "Loading..." never flashes back to "Open".
+      // "Loading..." never flashes back to "Open". The exception is a
+      // scan-initiated open, which starts before the camera modal finishes
+      // dismissing — skip the reset so it keeps its label and guard.
+      if (inFlightRef.current) return;
       setPendingOpen(null);
       setLoading(false);
     }, [setPendingOpen]),
   );
 
-  const handleSubmit = async () => {
+  // Takes explicit values rather than reading input state — the QR path
+  // submits in the same tick it fills the fields.
+  const submit = async (hostValue: string, codeValue: string) => {
     // Swallow taps while a previous submit is in flight. The button stays
     // visually active (no disabled dim) but extra presses are no-ops.
-    if (loading) return;
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setLoading(true);
+    try {
+      setHost(hostValue);
+      // `attributed` tells the server whether this bind will complete
+      // immediately (walk follows in ~a second) or park behind the
+      // identity sheet — only the latter records the board's "signing
+      // out…" pending signal.
+      const turf = await client.turfs.getByCode({
+        code: codeValue,
+        attributed: canvasser != null || !REQUIRE_ATTRIBUTION,
+      });
+      if (!turf) {
+        Alert.alert("Not found", `No turf found for code "${codeValue}".`);
+        inFlightRef.current = false;
+        setLoading(false);
+        return;
+      }
+      if (REQUIRE_ATTRIBUTION && !canvasser) {
+        setPendingOpen({ host: hostValue, turfId: turf.turfId });
+        // Parked — the identity sheet owns the flow now, and its decline
+        // path needs the focus reset to run.
+        inFlightRef.current = false;
+        router.push("/canvasser");
+        return;
+      }
+      await openWalk(turf.turfId);
+      setActiveTurf({ host: hostValue, turfId: turf.turfId });
+      goToTurf(turf.turfId);
+      // Navigated away — the label resets via the focus effect on return.
+      inFlightRef.current = false;
+    } catch (err) {
+      showBindError(err);
+      inFlightRef.current = false;
+      setLoading(false);
+    }
+  };
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+
+  const handleSubmit = async () => {
     const trimmedHost = host.trim();
     const trimmedCode = code.trim();
     if (!trimmedHost) {
@@ -104,34 +154,7 @@ export default function LandingScreen() {
       Alert.alert("Enter a code", "Please enter a turf code.");
       return;
     }
-    setLoading(true);
-    try {
-      setHost(trimmedHost);
-      // `attributed` tells the server whether this bind will complete
-      // immediately (walk follows in ~a second) or park behind the
-      // identity sheet — only the latter records the board's "signing
-      // out…" pending signal.
-      const turf = await client.turfs.getByCode({
-        code: trimmedCode,
-        attributed: canvasser != null || !REQUIRE_ATTRIBUTION,
-      });
-      if (!turf) {
-        Alert.alert("Not found", `No turf found for code "${trimmedCode}".`);
-        setLoading(false);
-        return;
-      }
-      if (REQUIRE_ATTRIBUTION && !canvasser) {
-        setPendingOpen({ host: trimmedHost, turfId: turf.turfId });
-        router.push("/canvasser");
-        return;
-      }
-      await openWalk(turf.turfId);
-      setActiveTurf({ host: trimmedHost, turfId: turf.turfId });
-      goToTurf(turf.turfId);
-    } catch (err) {
-      showBindError(err);
-      setLoading(false);
-    }
+    await submit(trimmedHost, trimmedCode);
   };
 
   return (

@@ -18,7 +18,7 @@ import { parseTurfQr } from "@/lib/turf-qr";
 
 // Modal camera for scanning a turf QR (`https://<host>/t/<code>`). A valid
 // scan writes the handoff atom and dismisses — the landing screen fills its
-// fields and the user reviews + hits Open; nothing opens automatically.
+// fields and opens the turf; failures land there with the fields filled.
 // Non-matching QR codes show a quiet warning pill over the camera while one
 // is in frame (the camera just keeps looking).
 export default function ScanScreen() {
