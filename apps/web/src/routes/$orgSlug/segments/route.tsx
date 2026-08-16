@@ -30,6 +30,7 @@ import { electionsQuery } from "~/lib/queries/elections";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
 import { segmentCountsQuery, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -122,54 +123,56 @@ function SegmentsLayout() {
 
   const renameSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; name: string }) => client.segments.rename(input),
-    onSuccess: async (_data, input) => {
-      // Cancel any in-flight list fetch before patching — a response that
-      // started pre-rename carries the old name and would land after the
-      // patch and clobber it (the invalidate below dedupes into an
-      // in-flight fetch instead of starting a fresh one).
-      await queryClient.cancelQueries({ queryKey: ["segments"] });
-      queryClient.setQueryData<typeof segments>(
-        ["segments"],
-        (old) =>
-          old?.map((s) => (s.segmentId === input.segmentId ? { ...s, name: input.name } : s)) ??
-          old,
-      );
-      queryClient.setQueryData(
-        ["segment", input.segmentId],
-        (old: Record<string, unknown> | null | undefined) =>
-          old ? { ...old, name: input.name } : old,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["segments"] });
-    },
+    onSuccess: (_data, input) =>
+      settleMutation(queryClient, {
+        keys: [["segments"], ["segment", input.segmentId]],
+        patch: () => {
+          queryClient.setQueryData<typeof segments>(
+            ["segments"],
+            (old) =>
+              old?.map((s) => (s.segmentId === input.segmentId ? { ...s, name: input.name } : s)) ??
+              old,
+          );
+          queryClient.setQueryData(
+            ["segment", input.segmentId],
+            (old: Record<string, unknown> | null | undefined) =>
+              old ? { ...old, name: input.name } : old,
+          );
+        },
+      }),
   });
 
   // New segments are created immediately as "Untitled segment" (no naming step).
   const createSegment = useMutation({
     mutationFn: (input: { name: string }) => client.segments.create(input),
-    onSuccess: (created) => {
-      // Inject and navigate synchronously so React batches both updates
-      // into one render — otherwise the new row appears unselected for a
-      // frame before the URL catches up.
-      queryClient.setQueryData<typeof segments>(["segments"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      queryClient.setQueryData(["segment", created.segmentId], created);
-      void queryClient.invalidateQueries({ queryKey: ["segments"] });
-      return goToSegment(created.segmentId);
-    },
-    onError: (e) => toast.error(e.message),
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["segments"], ["segment", created.segmentId]],
+        // Inject and navigate in one synchronous block so React batches both
+        // updates — otherwise the new row renders unselected for a frame.
+        patch: () => {
+          queryClient.setQueryData<typeof segments>(["segments"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          queryClient.setQueryData(["segment", created.segmentId], created);
+          return goToSegment(created.segmentId);
+        },
+      }),
   });
 
   const cloneSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; newName: string }) => client.segments.clone(input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<typeof segments>(["segments"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      queryClient.setQueryData(["segment", created.segmentId], created);
-      void queryClient.invalidateQueries({ queryKey: ["segments"] });
-      return goToSegment(created.segmentId);
-    },
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["segments"], ["segment", created.segmentId]],
+        patch: () => {
+          queryClient.setQueryData<typeof segments>(["segments"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          queryClient.setQueryData(["segment", created.segmentId], created);
+          return goToSegment(created.segmentId);
+        },
+      }),
   });
 
   const setSegmentArchived = useMutation({
@@ -177,41 +180,41 @@ function SegmentsLayout() {
       input.archived
         ? client.segments.archive({ segmentId: input.segmentId })
         : client.segments.unarchive({ segmentId: input.segmentId }),
-    onSuccess: async (_data, input) => {
-      // Cancel in-flight list fetches so a pre-mutation response can't
-      // land after the patch and clobber it.
-      await queryClient.cancelQueries({ queryKey: ["segments"] });
-      const patch = () =>
-        queryClient.setQueryData<typeof segments>(
-          ["segments"],
-          (old) =>
-            old?.map((s) =>
-              s.segmentId === input.segmentId ? { ...s, isArchived: input.archived } : s,
-            ) ?? old,
-        );
-      if (input.archived) {
-        // Leave before the cache says "archived" — a patched cache under
-        // a still-selected item renders a one-frame "Unarchive" flash.
-        // With a fallback, move first and patch after. On the last
-        // active item the index redirect needs the patched list (else it
-        // bounces back here), so patch and navigate in one synchronous
-        // block — batched into a single render, like the create flows.
-        setArchiveOpen(false);
-        const idx = activeSegments.findIndex((s) => s.segmentId === input.segmentId);
-        const fallback = activeSegments[idx - 1] ?? activeSegments[idx + 1] ?? null;
-        if (fallback) {
-          await goToSegment(fallback.segmentId);
-          patch();
-        } else {
-          patch();
-          await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
-        }
-      } else {
-        patch();
-      }
-      void queryClient.invalidateQueries({ queryKey: ["segments"] });
+    onSuccess: (_data, input) => {
+      setArchiveOpen(false);
+      return settleMutation(queryClient, {
+        keys: [["segments"]],
+        patch: async () => {
+          const patch = () =>
+            queryClient.setQueryData<typeof segments>(
+              ["segments"],
+              (old) =>
+                old?.map((s) =>
+                  s.segmentId === input.segmentId ? { ...s, isArchived: input.archived } : s,
+                ) ?? old,
+            );
+          if (input.archived) {
+            // Leave before the cache says "archived" — a patched cache under
+            // a still-selected item renders a one-frame "Unarchive" flash.
+            // With a fallback, move first and patch after. On the last
+            // active item the index redirect needs the patched list (else it
+            // bounces back here), so patch and navigate in one synchronous
+            // block — batched into a single render, like the create flows.
+            const idx = activeSegments.findIndex((s) => s.segmentId === input.segmentId);
+            const fallback = activeSegments[idx - 1] ?? activeSegments[idx + 1] ?? null;
+            if (fallback) {
+              await goToSegment(fallback.segmentId);
+              patch();
+            } else {
+              patch();
+              await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
+            }
+          } else {
+            patch();
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   // Archive flow: archive checks for active campaigns first and confirms
@@ -253,30 +256,33 @@ function SegmentsLayout() {
 
   const removeSegment = useMutation({
     mutationFn: (input: { segmentId: string }) => client.segments.remove(input),
-    onSuccess: async (_data, input) => {
+    onSuccess: (_data, input) => {
       setRemoveOpen(false);
-      await queryClient.cancelQueries({ queryKey: ["segments"] });
-      // Exit to a neighbor in the visible rail (archived rows are shown
-      // while one is selected), patch the row out, then let the redirect
-      // land — same ordering rationale as the archive flow above.
-      const visible = sortedSegments.filter((s) => s.segmentId !== input.segmentId);
-      const idx = sortedSegments.findIndex((s) => s.segmentId === input.segmentId);
-      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
-      const patch = () =>
-        queryClient.setQueryData<typeof segments>(
-          ["segments"],
-          (old) => old?.filter((s) => s.segmentId !== input.segmentId) ?? old,
-        );
-      if (fallback) {
-        await goToSegment(fallback.segmentId);
-        patch();
-      } else {
-        patch();
-        await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["segments"] });
+      return settleMutation(queryClient, {
+        keys: [["segments"]],
+        evict: [["segment", input.segmentId]],
+        patch: async () => {
+          // Exit to a neighbor in the visible rail (archived rows are shown
+          // while one is selected), patch the row out, then let the redirect
+          // land — same ordering rationale as the archive flow above.
+          const visible = sortedSegments.filter((s) => s.segmentId !== input.segmentId);
+          const idx = sortedSegments.findIndex((s) => s.segmentId === input.segmentId);
+          const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+          const patch = () =>
+            queryClient.setQueryData<typeof segments>(
+              ["segments"],
+              (old) => old?.filter((s) => s.segmentId !== input.segmentId) ?? old,
+            );
+          if (fallback) {
+            await goToSegment(fallback.segmentId);
+            patch();
+          } else {
+            patch();
+            await navigate({ to: "/$orgSlug/segments", params: { orgSlug } });
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   const deleteActiveSegment = async () => {

@@ -18,6 +18,7 @@ import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { Rail, useShowArchived } from "~/components/rail";
 import { scriptsListQuery } from "~/lib/queries/scripts";
+import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -54,44 +55,53 @@ function ScriptsLayout() {
 
   const renameScript = useDialogMutation({
     mutationFn: (input: { scriptId: string; name: string }) => client.scripts.rename(input),
-    onSuccess: (_data, input) => {
-      queryClient.setQueryData<typeof scripts>(
-        ["scripts"],
-        (old) =>
-          old?.map((s) => (s.scriptId === input.scriptId ? { ...s, name: input.name } : s)) ?? old,
-      );
-      queryClient.setQueryData<{ name: string } & object>(["script", input.scriptId], (old) =>
-        old ? { ...old, name: input.name } : old,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
-      void queryClient.invalidateQueries({ queryKey: ["script", input.scriptId] });
-    },
+    onSuccess: (_data, input) =>
+      settleMutation(queryClient, {
+        keys: [["scripts"], ["script", input.scriptId]],
+        patch: () => {
+          queryClient.setQueryData<typeof scripts>(
+            ["scripts"],
+            (old) =>
+              old?.map((s) => (s.scriptId === input.scriptId ? { ...s, name: input.name } : s)) ??
+              old,
+          );
+          queryClient.setQueryData<{ name: string } & object>(["script", input.scriptId], (old) =>
+            old ? { ...old, name: input.name } : old,
+          );
+        },
+      }),
   });
 
   // New scripts are created immediately as "Untitled script" (no naming step).
   const createScript = useMutation({
     mutationFn: (input: { name: string }) => client.scripts.create(input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<typeof scripts>(["scripts"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      queryClient.setQueryData(["script", created.scriptId], { ...created, steps: [] });
-      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
-      return goToScript(created.scriptId);
-    },
-    onError: (e) => toast.error(e.message),
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["scripts"], ["script", created.scriptId]],
+        // Inject and navigate in one synchronous block so React batches both
+        // updates — otherwise the new row renders unselected for a frame.
+        patch: () => {
+          queryClient.setQueryData<typeof scripts>(["scripts"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          queryClient.setQueryData(["script", created.scriptId], { ...created, steps: [] });
+          return goToScript(created.scriptId);
+        },
+      }),
   });
 
   const cloneScript = useDialogMutation({
     mutationFn: (input: { scriptId: string; newName: string }) => client.scripts.clone(input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<typeof scripts>(["scripts"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
-      void queryClient.invalidateQueries({ queryKey: ["script", created.scriptId] });
-      return goToScript(created.scriptId);
-    },
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["scripts"], ["script", created.scriptId]],
+        patch: () => {
+          queryClient.setQueryData<typeof scripts>(["scripts"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          return goToScript(created.scriptId);
+        },
+      }),
   });
 
   const setScriptArchived = useMutation({
@@ -99,41 +109,41 @@ function ScriptsLayout() {
       input.archived
         ? client.scripts.archive({ scriptId: input.scriptId })
         : client.scripts.unarchive({ scriptId: input.scriptId }),
-    onSuccess: async (_data, input) => {
-      // Cancel in-flight list fetches so a pre-mutation response can't
-      // land after the patch and clobber it.
-      await queryClient.cancelQueries({ queryKey: ["scripts"] });
-      const patch = () =>
-        queryClient.setQueryData<typeof scripts>(
-          ["scripts"],
-          (old) =>
-            old?.map((s) =>
-              s.scriptId === input.scriptId ? { ...s, isArchived: input.archived } : s,
-            ) ?? old,
-        );
-      if (input.archived) {
-        // Leave before the cache says "archived" — a patched cache under
-        // a still-selected item renders a one-frame "Unarchive" flash.
-        // With a fallback, move first and patch after. On the last
-        // active item the index redirect needs the patched list (else it
-        // bounces back here), so patch and navigate in one synchronous
-        // block — batched into a single render, like the create flows.
-        setArchiveOpen(false);
-        const idx = activeScripts.findIndex((s) => s.scriptId === input.scriptId);
-        const fallback = activeScripts[idx - 1] ?? activeScripts[idx + 1] ?? null;
-        if (fallback) {
-          await goToScript(fallback.scriptId);
-          patch();
-        } else {
-          patch();
-          await navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
-        }
-      } else {
-        patch();
-      }
-      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
+    onSuccess: (_data, input) => {
+      setArchiveOpen(false);
+      return settleMutation(queryClient, {
+        keys: [["scripts"]],
+        patch: async () => {
+          const patch = () =>
+            queryClient.setQueryData<typeof scripts>(
+              ["scripts"],
+              (old) =>
+                old?.map((s) =>
+                  s.scriptId === input.scriptId ? { ...s, isArchived: input.archived } : s,
+                ) ?? old,
+            );
+          if (input.archived) {
+            // Leave before the cache says "archived" — a patched cache under
+            // a still-selected item renders a one-frame "Unarchive" flash.
+            // With a fallback, move first and patch after. On the last
+            // active item the index redirect needs the patched list (else it
+            // bounces back here), so patch and navigate in one synchronous
+            // block — batched into a single render, like the create flows.
+            const idx = activeScripts.findIndex((s) => s.scriptId === input.scriptId);
+            const fallback = activeScripts[idx - 1] ?? activeScripts[idx + 1] ?? null;
+            if (fallback) {
+              await goToScript(fallback.scriptId);
+              patch();
+            } else {
+              patch();
+              await navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
+            }
+          } else {
+            patch();
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   // Archive flow: archive checks for active campaigns first and confirms
@@ -175,30 +185,33 @@ function ScriptsLayout() {
 
   const removeScript = useMutation({
     mutationFn: (input: { scriptId: string }) => client.scripts.remove(input),
-    onSuccess: async (_data, input) => {
+    onSuccess: (_data, input) => {
       setRemoveOpen(false);
-      await queryClient.cancelQueries({ queryKey: ["scripts"] });
-      // Exit to a neighbor in the visible rail (archived rows are shown
-      // while one is selected), patch the row out, then let the redirect
-      // land — same ordering rationale as the archive flow above.
-      const visible = sortedScripts.filter((s) => s.scriptId !== input.scriptId);
-      const idx = sortedScripts.findIndex((s) => s.scriptId === input.scriptId);
-      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
-      const patch = () =>
-        queryClient.setQueryData<typeof scripts>(
-          ["scripts"],
-          (old) => old?.filter((s) => s.scriptId !== input.scriptId) ?? old,
-        );
-      if (fallback) {
-        await goToScript(fallback.scriptId);
-        patch();
-      } else {
-        patch();
-        await navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["scripts"] });
+      return settleMutation(queryClient, {
+        keys: [["scripts"]],
+        evict: [["script", input.scriptId]],
+        patch: async () => {
+          // Exit to a neighbor in the visible rail (archived rows are shown
+          // while one is selected), patch the row out, then let the redirect
+          // land — same ordering rationale as the archive flow above.
+          const visible = sortedScripts.filter((s) => s.scriptId !== input.scriptId);
+          const idx = sortedScripts.findIndex((s) => s.scriptId === input.scriptId);
+          const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+          const patch = () =>
+            queryClient.setQueryData<typeof scripts>(
+              ["scripts"],
+              (old) => old?.filter((s) => s.scriptId !== input.scriptId) ?? old,
+            );
+          if (fallback) {
+            await goToScript(fallback.scriptId);
+            patch();
+          } else {
+            patch();
+            await navigate({ to: "/$orgSlug/scripts", params: { orgSlug } });
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   const deleteActiveScript = async () => {

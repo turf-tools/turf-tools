@@ -965,7 +965,7 @@ function CanvassResponseEditor({
           <ChevronDown className="text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="min-w-48 max-h-[291px] overflow-y-auto">
-          {!questions || questions.length === 0 ? (
+          {!questions ? null : questions.length === 0 ? (
             <DropdownMenuItem disabled>No questions available</DropdownMenuItem>
           ) : (
             <>

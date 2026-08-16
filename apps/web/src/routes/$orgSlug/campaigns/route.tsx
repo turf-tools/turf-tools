@@ -53,6 +53,7 @@ import { segmentsListQuery } from "~/lib/queries/segments";
 import { hasPermission } from "~/lib/permissions";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -188,15 +189,24 @@ function CampaignsLayout() {
 
   const renameCampaign = useDialogMutation({
     mutationFn: (input: { campaignId: string; name: string }) => client.campaigns.rename(input),
-    onSuccess: (_data, input) => {
-      queryClient.setQueryData<typeof campaigns>(
-        ["campaigns"],
-        (old) =>
-          old?.map((c) => (c.campaignId === input.campaignId ? { ...c, name: input.name } : c)) ??
-          old,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-    },
+    onSuccess: (_data, input) =>
+      settleMutation(queryClient, {
+        keys: [["campaigns"], ["campaign", input.campaignId]],
+        patch: () => {
+          queryClient.setQueryData<typeof campaigns>(
+            ["campaigns"],
+            (old) =>
+              old?.map((c) =>
+                c.campaignId === input.campaignId ? { ...c, name: input.name } : c,
+              ) ?? old,
+          );
+          queryClient.setQueryData(
+            ["campaign", input.campaignId],
+            (old: Record<string, unknown> | null | undefined) =>
+              old ? { ...old, name: input.name } : old,
+          );
+        },
+      }),
   });
 
   // Wrapping zoneGroups.createWithDefaultZone + campaigns.create in one
@@ -215,26 +225,34 @@ function CampaignsLayout() {
         zoneGroupId: input.zoneGroupId,
       });
     },
-    onSuccess: (created) => {
-      queryClient.setQueryData<typeof campaigns>(["campaigns"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      queryClient.setQueryData(["campaign", created.campaignId], created);
-      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      return goToCampaign(created.campaignId);
-    },
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["campaigns"], ["campaign", created.campaignId]],
+        // Inject and navigate in one synchronous block so React batches both
+        // updates — otherwise the new row renders unselected for a frame.
+        patch: () => {
+          queryClient.setQueryData<typeof campaigns>(["campaigns"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          queryClient.setQueryData(["campaign", created.campaignId], created);
+          return goToCampaign(created.campaignId);
+        },
+      }),
   });
 
   const cloneCampaign = useDialogMutation({
     mutationFn: (input: { campaignId: string; newName: string }) => client.campaigns.clone(input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<typeof campaigns>(["campaigns"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      queryClient.setQueryData(["campaign", created.campaignId], created);
-      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      return goToCampaign(created.campaignId);
-    },
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["campaigns"], ["campaign", created.campaignId]],
+        patch: () => {
+          queryClient.setQueryData<typeof campaigns>(["campaigns"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          queryClient.setQueryData(["campaign", created.campaignId], created);
+          return goToCampaign(created.campaignId);
+        },
+      }),
   });
 
   const setCampaignArchived = useMutation({
@@ -242,42 +260,40 @@ function CampaignsLayout() {
       input.archived
         ? client.campaigns.archive({ campaignId: input.campaignId })
         : client.campaigns.unarchive({ campaignId: input.campaignId }),
-    onSuccess: async (_data, input) => {
-      // Cancel in-flight list fetches so a pre-mutation response can't
-      // land after the patch and clobber it.
-      await queryClient.cancelQueries({ queryKey: ["campaigns"] });
-      const patch = () =>
-        queryClient.setQueryData<typeof campaigns>(
-          ["campaigns"],
-          (old) =>
-            old?.map((c) =>
-              c.campaignId === input.campaignId ? { ...c, isArchived: input.archived } : c,
-            ) ?? old,
-        );
-      if (input.archived) {
-        // Leave before the cache says "archived" — a patched cache under
-        // a still-selected item renders a one-frame "Unarchive" flash.
-        // With a fallback, move first and patch after. On the last
-        // active item the index redirect needs the patched list (else it
-        // bounces back here), so patch and navigate in one synchronous
-        // block — batched into a single render, like the create flows.
-        const idx = activeCampaigns.findIndex((c) => c.campaignId === input.campaignId);
-        const fallback = activeCampaigns[idx - 1] ?? activeCampaigns[idx + 1] ?? null;
-        if (fallback) {
-          await goToCampaign(fallback.campaignId);
-          patch();
-        } else {
-          patch();
-          await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
-        }
-      } else {
-        patch();
-      }
-      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      // Archived state changes which turfs the board shows.
-      void queryClient.invalidateQueries({ queryKey: ["turfs"] });
-    },
-    onError: (e) => toast.error(e.message),
+    onSuccess: (_data, input) =>
+      settleMutation(queryClient, {
+        // Archived state changes which turfs the board shows.
+        keys: [["campaigns"], ["turfs"]],
+        patch: async () => {
+          const patch = () =>
+            queryClient.setQueryData<typeof campaigns>(
+              ["campaigns"],
+              (old) =>
+                old?.map((c) =>
+                  c.campaignId === input.campaignId ? { ...c, isArchived: input.archived } : c,
+                ) ?? old,
+            );
+          if (input.archived) {
+            // Leave before the cache says "archived" — a patched cache under
+            // a still-selected item renders a one-frame "Unarchive" flash.
+            // With a fallback, move first and patch after. On the last
+            // active item the index redirect needs the patched list (else it
+            // bounces back here), so patch and navigate in one synchronous
+            // block — batched into a single render, like the create flows.
+            const idx = activeCampaigns.findIndex((c) => c.campaignId === input.campaignId);
+            const fallback = activeCampaigns[idx - 1] ?? activeCampaigns[idx + 1] ?? null;
+            if (fallback) {
+              await goToCampaign(fallback.campaignId);
+              patch();
+            } else {
+              patch();
+              await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
+            }
+          } else {
+            patch();
+          }
+        },
+      }),
   });
 
   const updateCampaignMutation = useMutation({
@@ -351,30 +367,37 @@ function CampaignsLayout() {
 
   const removeCampaign = useMutation({
     mutationFn: (input: { campaignId: string }) => client.campaigns.remove(input),
-    onSuccess: async (_data, input) => {
+    onSuccess: (_data, input) => {
       setRemoveOpen(false);
-      await queryClient.cancelQueries({ queryKey: ["campaigns"] });
-      // Exit to a neighbor in the visible rail (archived rows are shown
-      // while one is selected), patch the row out, then let the redirect
-      // land — same ordering rationale as the archive flow above.
-      const visible = sortedCampaigns.filter((c) => c.campaignId !== input.campaignId);
-      const idx = sortedCampaigns.findIndex((c) => c.campaignId === input.campaignId);
-      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
-      const patch = () =>
-        queryClient.setQueryData<typeof campaigns>(
-          ["campaigns"],
-          (old) => old?.filter((c) => c.campaignId !== input.campaignId) ?? old,
-        );
-      if (fallback) {
-        await goToCampaign(fallback.campaignId);
-        patch();
-      } else {
-        patch();
-        await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      return settleMutation(queryClient, {
+        keys: [["campaigns"]],
+        evict: [
+          ["campaign", input.campaignId],
+          ["turf-stats", input.campaignId],
+          ["turf-drafts", input.campaignId],
+        ],
+        patch: async () => {
+          // Exit to a neighbor in the visible rail (archived rows are shown
+          // while one is selected), patch the row out, then let the redirect
+          // land — same ordering rationale as the archive flow above.
+          const visible = sortedCampaigns.filter((c) => c.campaignId !== input.campaignId);
+          const idx = sortedCampaigns.findIndex((c) => c.campaignId === input.campaignId);
+          const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+          const patch = () =>
+            queryClient.setQueryData<typeof campaigns>(
+              ["campaigns"],
+              (old) => old?.filter((c) => c.campaignId !== input.campaignId) ?? old,
+            );
+          if (fallback) {
+            await goToCampaign(fallback.campaignId);
+            patch();
+          } else {
+            patch();
+            await navigate({ to: "/$orgSlug/campaigns", params: { orgSlug } });
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   const deleteActiveCampaign = async () => {

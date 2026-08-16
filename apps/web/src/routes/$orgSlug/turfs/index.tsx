@@ -112,7 +112,10 @@ function TurfsIndex() {
   const shouldFade = useFadeOnce("/turfs");
   useLiveRefresh();
 
-  const { data: campaigns } = useQuery(campaignsListQuery());
+  // Suspense (not useQuery): on prod cold boots the SPA shell hydration
+  // skips route loaders, so data arrives via component mount — a plain
+  // useQuery would paint the campaign filter label-less and widen later.
+  const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: turfs } = useSuspenseQuery(turfsListQuery(campaignId));
   const rows = useTurfRows(campaignId, zoneId);
 
@@ -416,9 +419,11 @@ function useWalkSummaries(campaignId: string | null) {
   }, [data]);
 }
 
+// Null until progress loads — a turf absent from a loaded result means
+// genuinely zero attempts; an absent result means "don't know yet".
 function useProgressByTurf(campaignId: string | null) {
   const { data } = useQuery(progressQuery(campaignId));
-  return useMemo(() => new Map((data ?? []).map((r) => [r.turfId, r.attempted])), [data]);
+  return useMemo(() => (data ? new Map(data.map((r) => [r.turfId, r.attempted])) : null), [data]);
 }
 
 // Region-grouped rendering for the mobile views: one group per
@@ -488,9 +493,9 @@ function doorLabel(count: number | null) {
   return count > 999 ? "1k+" : String(count);
 }
 
-function progressPct(attempted: number | undefined, personCount: number | null) {
+function progressPct(attempted: number, personCount: number | null) {
   if (!personCount) return null;
-  return Math.round(((attempted ?? 0) / personCount) * 100);
+  return Math.round((attempted / personCount) * 100);
 }
 
 function bboxOfFeatures(features: Feature[]): [number, number, number, number] | null {
@@ -966,8 +971,9 @@ function WalksDialog({
 function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
   if (summary.walks.length === 0) return <Pill />;
   const last = summary.walks[summary.walks.length - 1]!;
+  // Keyed so the blank→filled switch remounts and fade-in fires.
   return (
-    <Pill className="gap-1.5 font-mono tabular-nums">
+    <Pill key="filled" className="gap-1.5 font-mono tabular-nums animate-in fade-in duration-100">
       {summary.walks.length >= 2 ? <CheckCheck className="size-4" /> : <Check className="size-4" />}
       {formatMonthDay(last.openedAt, tz)}
     </Pill>
@@ -998,8 +1004,14 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
 
 function ProgressPill({ pct }: { pct: number | null }) {
   if (pct === null) return <Pill variant="number" />;
+  // Keyed so the blank→filled switch remounts and fade-in fires.
   return (
-    <Pill variant="number" color={pct > 0 ? progressColor(pct) : undefined}>
+    <Pill
+      key="filled"
+      variant="number"
+      className="animate-in fade-in duration-100"
+      color={pct > 0 ? progressColor(pct) : undefined}
+    >
       {pct}%
     </Pill>
   );
@@ -1102,7 +1114,11 @@ function TurfCards({
               key={t.turfId}
               turf={t}
               summary={summaries(t.turfId)}
-              pct={progressPct(progressByTurf.get(t.turfId), t.personCount)}
+              pct={
+                progressByTurf
+                  ? progressPct(progressByTurf.get(t.turfId) ?? 0, t.personCount)
+                  : null
+              }
               tz={tz}
               onShowQr={onShowQr}
               onShowTurfMap={onShowTurfMap}
@@ -1281,7 +1297,9 @@ function CompactList({
           ) : null}
           {group.rows.map((t) => {
             const summary = summaries(t.turfId);
-            const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
+            const pct = progressByTurf
+              ? progressPct(progressByTurf.get(t.turfId) ?? 0, t.personCount)
+              : null;
             return (
               <div key={t.turfId} data-turf-row={t.turfId} className="flex items-center gap-1">
                 <span className={cn(cell, "w-9 bg-muted font-mono font-semibold tabular-nums")}>
@@ -1423,7 +1441,9 @@ function TurfsTable({
         ) : null}
         {rows.map((t) => {
           const summary = summaries(t.turfId);
-          const pct = progressPct(progressByTurf.get(t.turfId), t.personCount);
+          const pct = progressByTurf
+            ? progressPct(progressByTurf.get(t.turfId) ?? 0, t.personCount)
+            : null;
           return (
             <TableRow key={t.turfId} data-turf-row={t.turfId}>
               <TableCell>

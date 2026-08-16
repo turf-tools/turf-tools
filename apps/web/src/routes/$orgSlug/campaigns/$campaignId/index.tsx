@@ -242,18 +242,17 @@ function CampaignEditor() {
     return out;
   }, [perKeyCounts, zones, countsStale]);
 
-  // Campaign-wide turf stats. Prefetched in the loader, so they arrive
-  // on first render and don't need fade-in handling.
+  // Campaign-wide turf stats. Null until the stats load — zeros are a fact
+  // of a loaded result, never a stand-in for one that hasn't arrived.
   const totals = useMemo(() => {
+    if (!turfStats) return null;
     let drafts = 0;
     let active = 0;
     let published = 0;
-    if (turfStats) {
-      for (const s of Object.values(turfStats)) {
-        drafts += s.drafts;
-        active += s.active;
-        published += s.published;
-      }
+    for (const s of Object.values(turfStats)) {
+      drafts += s.drafts;
+      active += s.active;
+      published += s.published;
     }
     return { drafts, active, published };
   }, [turfStats]);
@@ -494,7 +493,7 @@ function ZonesList({
     drafts: number;
     active: number;
     published: number;
-  };
+  } | null;
   fullSegmentCounts: { doors: number; people: number } | null;
   segmentName: string | null;
   scriptName: string | null;
@@ -550,7 +549,7 @@ function ConfigSummary({
     drafts: number;
     active: number;
     published: number;
-  };
+  } | null;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border bg-card px-3 py-2">
@@ -566,19 +565,28 @@ function ConfigSummary({
       </div>
       <hr className="my-1 border-t border-border" />
       <div className="grid grid-cols-3 gap-2">
-        <Stat label="Draft turfs" value={totals.drafts} />
-        <Stat label="Published turfs" value={totals.published} />
-        <Stat label="Active turfs" value={totals.active} />
+        <Stat label="Draft turfs" value={totals?.drafts ?? null} />
+        <Stat label="Published turfs" value={totals?.published ?? null} />
+        <Stat label="Active turfs" value={totals?.active ?? null} />
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="flex flex-col">
       <span className="text-muted-foreground">{label}</span>
-      <span className="tabular-nums">{value.toLocaleString()}</span>
+      {/* Non-breaking space holds the row height while the value resolves;
+          the value span mounts on arrival so fade-in fires, matching the
+          sibling pills. */}
+      <span className="tabular-nums">
+        {value === null ? (
+          " "
+        ) : (
+          <span className="animate-in fade-in duration-100">{value.toLocaleString()}</span>
+        )}
+      </span>
     </div>
   );
 }
@@ -594,8 +602,6 @@ function FullSegmentRow({
   turfStats: { drafts: number; published: number; active: number } | null;
   onCut: () => void;
 }) {
-  const turfCount = turfStats?.drafts ?? 0;
-  const hasPublished = (turfStats?.published ?? 0) > 0;
   return (
     <div
       className={cn(
@@ -621,22 +627,26 @@ function FullSegmentRow({
             <DoorClosed className="size-3.5 text-foreground" />
             {counts.doors.toLocaleString()}
           </Pill>
-          {hasPublished ? (
-            <Pill
-              variant="number"
-              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
-            >
-              <Send className="size-3.5 text-foreground" />
-              {(turfStats?.published ?? 0).toLocaleString()}
-            </Pill>
+          {turfStats ? (
+            <>
+              {turfStats.published > 0 ? (
+                <Pill
+                  variant="number"
+                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
+                >
+                  <Send className="size-3.5 text-foreground" />
+                  {turfStats.published.toLocaleString()}
+                </Pill>
+              ) : null}
+              <Pill
+                variant="number"
+                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+              >
+                <CircleDotDashed className="size-3.5 text-foreground" />
+                {turfStats.drafts}
+              </Pill>
+            </>
           ) : null}
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <CircleDotDashed className="size-3.5 text-foreground" />
-            {turfCount}
-          </Pill>
         </Fragment>
       ) : null}
       <Button variant="outline" className="h-[31px]" onClick={onCut}>
@@ -666,8 +676,6 @@ function ZoneRow({
   onSelect: () => void;
   onCut: () => void;
 }) {
-  const turfCount = turfStats?.drafts ?? 0;
-  const hasPublished = (turfStats?.published ?? 0) > 0;
   return (
     <div
       role="button"
@@ -705,22 +713,26 @@ function ZoneRow({
             <DoorClosed className="size-3.5 text-foreground" />
             {counts.doors.toLocaleString()}
           </Pill>
-          {hasPublished ? (
-            <Pill
-              variant="number"
-              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
-            >
-              <Send className="size-3.5 text-foreground" />
-              {(turfStats?.published ?? 0).toLocaleString()}
-            </Pill>
+          {turfStats ? (
+            <>
+              {turfStats.published > 0 ? (
+                <Pill
+                  variant="number"
+                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
+                >
+                  <Send className="size-3.5 text-foreground" />
+                  {turfStats.published.toLocaleString()}
+                </Pill>
+              ) : null}
+              <Pill
+                variant="number"
+                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+              >
+                <CircleDotDashed className="size-3.5 text-foreground" />
+                {turfStats.drafts}
+              </Pill>
+            </>
           ) : null}
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <CircleDotDashed className="size-3.5 text-foreground" />
-            {turfCount}
-          </Pill>
         </Fragment>
       ) : null}
       <Button

@@ -22,6 +22,7 @@ import { useFilterCatalog } from "~/lib/manifest";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
 import { zoneGroupsQuery } from "~/lib/queries/zones";
+import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -64,49 +65,55 @@ function ZonesLayout() {
 
   const renameGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
-    onSuccess: (_data, input) => {
-      queryClient.setQueryData<typeof zoneGroups>(
-        ["zone-groups"],
-        (old) =>
-          old?.map((g) => (g.zoneGroupId === input.zoneGroupId ? { ...g, name: input.name } : g)) ??
-          old,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-    },
+    onSuccess: (_data, input) =>
+      settleMutation(queryClient, {
+        keys: [["zone-groups"]],
+        patch: () => {
+          queryClient.setQueryData<typeof zoneGroups>(
+            ["zone-groups"],
+            (old) =>
+              old?.map((g) =>
+                g.zoneGroupId === input.zoneGroupId ? { ...g, name: input.name } : g,
+              ) ?? old,
+          );
+        },
+      }),
   });
 
   const createGroup = useDialogMutation({
     mutationFn: (input: { name: string; keyGroup: string }) => client.zoneGroups.create(input),
-    onSuccess: (created) => {
-      // Inject and navigate synchronously (no await between) so React
-      // batches both updates into one render — otherwise the new row
-      // appears in the list for a frame as unselected before the URL
-      // catches up. Loader sees the cache injection because it runs in
-      // the same microtask wave.
-      queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      return goToGroup(created.zoneGroupId);
-    },
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["zone-groups"]],
+        // Inject and navigate in one synchronous block so React batches both
+        // updates — otherwise the new row renders unselected for a frame.
+        patch: () => {
+          queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          return goToGroup(created.zoneGroupId);
+        },
+      }),
   });
 
   const cloneGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; newName: string }) => client.zoneGroups.clone(input),
-    onSuccess: (created) => {
-      queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
-        old ? [...old, created] : [created],
-      );
-      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
-      return goToGroup(created.zoneGroupId);
-    },
+    onSuccess: (created) =>
+      settleMutation(queryClient, {
+        keys: [["zone-groups"]],
+        patch: () => {
+          queryClient.setQueryData<typeof zoneGroups>(["zone-groups"], (old) =>
+            old ? [...old, created] : [created],
+          );
+          return goToGroup(created.zoneGroupId);
+        },
+      }),
   });
 
   const clearZones = useDialogMutation({
     mutationFn: (zoneGroupId: string) => client.zones.removeAllInGroup({ zoneGroupId }),
-    onSuccess: (_data, zoneGroupId) => {
-      void queryClient.invalidateQueries({ queryKey: ["zones", zoneGroupId] });
-    },
+    onSuccess: (_data, zoneGroupId) =>
+      settleMutation(queryClient, { keys: [["zones", zoneGroupId]] }),
   });
 
   const setGroupArchived = useMutation({
@@ -114,41 +121,41 @@ function ZonesLayout() {
       input.archived
         ? client.zoneGroups.archive({ zoneGroupId: input.zoneGroupId })
         : client.zoneGroups.unarchive({ zoneGroupId: input.zoneGroupId }),
-    onSuccess: async (_data, input) => {
-      // Cancel in-flight list fetches so a pre-mutation response can't
-      // land after the patch and clobber it.
-      await queryClient.cancelQueries({ queryKey: ["zone-groups"] });
-      const patch = () =>
-        queryClient.setQueryData<typeof zoneGroups>(
-          ["zone-groups"],
-          (old) =>
-            old?.map((g) =>
-              g.zoneGroupId === input.zoneGroupId ? { ...g, isArchived: input.archived } : g,
-            ) ?? old,
-        );
-      if (input.archived) {
-        // Leave before the cache says "archived" — a patched cache under
-        // a still-selected item renders a one-frame "Unarchive" flash.
-        // With a fallback, move first and patch after. On the last
-        // active item the index redirect needs the patched list (else it
-        // bounces back here), so patch and navigate in one synchronous
-        // block — batched into a single render, like the create flows.
-        setArchiveOpen(false);
-        const idx = activeZoneGroups.findIndex((g) => g.zoneGroupId === input.zoneGroupId);
-        const fallback = activeZoneGroups[idx - 1] ?? activeZoneGroups[idx + 1] ?? null;
-        if (fallback) {
-          await goToGroup(fallback.zoneGroupId);
-          patch();
-        } else {
-          patch();
-          await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
-        }
-      } else {
-        patch();
-      }
-      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
+    onSuccess: (_data, input) => {
+      setArchiveOpen(false);
+      return settleMutation(queryClient, {
+        keys: [["zone-groups"]],
+        patch: async () => {
+          const patch = () =>
+            queryClient.setQueryData<typeof zoneGroups>(
+              ["zone-groups"],
+              (old) =>
+                old?.map((g) =>
+                  g.zoneGroupId === input.zoneGroupId ? { ...g, isArchived: input.archived } : g,
+                ) ?? old,
+            );
+          if (input.archived) {
+            // Leave before the cache says "archived" — a patched cache under
+            // a still-selected item renders a one-frame "Unarchive" flash.
+            // With a fallback, move first and patch after. On the last
+            // active item the index redirect needs the patched list (else it
+            // bounces back here), so patch and navigate in one synchronous
+            // block — batched into a single render, like the create flows.
+            const idx = activeZoneGroups.findIndex((g) => g.zoneGroupId === input.zoneGroupId);
+            const fallback = activeZoneGroups[idx - 1] ?? activeZoneGroups[idx + 1] ?? null;
+            if (fallback) {
+              await goToGroup(fallback.zoneGroupId);
+              patch();
+            } else {
+              patch();
+              await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
+            }
+          } else {
+            patch();
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   // Archive flow: archive checks for active campaigns first and confirms
@@ -190,30 +197,34 @@ function ZonesLayout() {
 
   const removeGroup = useMutation({
     mutationFn: (input: { zoneGroupId: string }) => client.zoneGroups.remove(input),
-    onSuccess: async (_data, input) => {
+    onSuccess: (_data, input) => {
       setRemoveOpen(false);
-      await queryClient.cancelQueries({ queryKey: ["zone-groups"] });
-      // Exit to a neighbor in the visible rail (archived rows are shown
-      // while one is selected), patch the row out, then let the redirect
-      // land — same ordering rationale as the archive flow above.
-      const visible = sortedZoneGroups.filter((g) => g.zoneGroupId !== input.zoneGroupId);
-      const idx = sortedZoneGroups.findIndex((g) => g.zoneGroupId === input.zoneGroupId);
-      const fallback = visible[idx - 1] ?? visible[idx] ?? null;
-      const patch = () =>
-        queryClient.setQueryData<typeof zoneGroups>(
-          ["zone-groups"],
-          (old) => old?.filter((g) => g.zoneGroupId !== input.zoneGroupId) ?? old,
-        );
-      if (fallback) {
-        await goToGroup(fallback.zoneGroupId);
-        patch();
-      } else {
-        patch();
-        await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["zone-groups"] });
+      return settleMutation(queryClient, {
+        keys: [["zone-groups"]],
+        // Zones cascade server-side; drop their cache with the group.
+        evict: [["zones", input.zoneGroupId]],
+        patch: async () => {
+          // Exit to a neighbor in the visible rail (archived rows are shown
+          // while one is selected), patch the row out, then let the redirect
+          // land — same ordering rationale as the archive flow above.
+          const visible = sortedZoneGroups.filter((g) => g.zoneGroupId !== input.zoneGroupId);
+          const idx = sortedZoneGroups.findIndex((g) => g.zoneGroupId === input.zoneGroupId);
+          const fallback = visible[idx - 1] ?? visible[idx] ?? null;
+          const patch = () =>
+            queryClient.setQueryData<typeof zoneGroups>(
+              ["zone-groups"],
+              (old) => old?.filter((g) => g.zoneGroupId !== input.zoneGroupId) ?? old,
+            );
+          if (fallback) {
+            await goToGroup(fallback.zoneGroupId);
+            patch();
+          } else {
+            patch();
+            await navigate({ to: "/$orgSlug/zones", params: { orgSlug } });
+          }
+        },
+      });
     },
-    onError: (e) => toast.error(e.message),
   });
 
   const deleteActiveGroup = async () => {
