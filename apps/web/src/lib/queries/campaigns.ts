@@ -5,8 +5,8 @@ import { fetchSegmentPoints, liveAwareStaleTime, type SegmentCriteria } from "./
 export type KeyFilter = { keyGroup: string; keys: string[] };
 
 // gcTime: Infinity — a tiny list read by chrome (the turfs-page campaign
-// filter) on cached-match revisits, where eviction would render the control
-// label-less until the refetch lands. Stale names self-correct on refetch.
+// filter); keeping it resident means revisits paint the label without
+// waiting on a refetch. Stale names self-correct on the next refetch.
 export const campaignsListQuery = () =>
   queryOptions({
     queryKey: ["campaigns"] as const,
