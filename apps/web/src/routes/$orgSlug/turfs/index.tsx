@@ -969,13 +969,22 @@ function WalksDialog({
 // scanning the table), double check for two or more walks. Blank (not a
 // dash) when empty — the legacy card idiom.
 function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
-  if (summary.walks.length === 0) return <Pill />;
-  const last = summary.walks[summary.walks.length - 1]!;
-  // Keyed so the blank→filled switch remounts and fade-in fires.
+  const last = summary.walks[summary.walks.length - 1];
+  // The pill chrome renders immediately (blank when unwalked or loading —
+  // the legacy card idiom); only the content mounts with a fade. Never
+  // key/remount the pill itself — that blanks the background for a frame.
   return (
-    <Pill key="filled" className="gap-1.5 font-mono tabular-nums animate-in fade-in duration-100">
-      {summary.walks.length >= 2 ? <CheckCheck className="size-4" /> : <Check className="size-4" />}
-      {formatMonthDay(last.openedAt, tz)}
+    <Pill className="font-mono tabular-nums">
+      {last ? (
+        <span className="flex items-center gap-1.5 animate-in fade-in duration-100">
+          {summary.walks.length >= 2 ? (
+            <CheckCheck className="size-4" />
+          ) : (
+            <Check className="size-4" />
+          )}
+          {formatMonthDay(last.openedAt, tz)}
+        </span>
+      ) : null}
     </Pill>
   );
 }
@@ -1003,16 +1012,16 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
 }
 
 function ProgressPill({ pct }: { pct: number | null }) {
-  if (pct === null) return <Pill variant="number" />;
-  // Keyed so the blank→filled switch remounts and fade-in fires.
+  // Same chrome-first shape as WalkedBadge: the pill paints with the table,
+  // the value fades in on arrival, and the tint transitions rather than
+  // snapping when a colored percentage lands.
   return (
     <Pill
-      key="filled"
       variant="number"
-      className="animate-in fade-in duration-100"
-      color={pct > 0 ? progressColor(pct) : undefined}
+      className="transition-colors duration-100"
+      color={pct !== null && pct > 0 ? progressColor(pct) : undefined}
     >
-      {pct}%
+      {pct !== null ? <span className="animate-in fade-in duration-100">{pct}%</span> : null}
     </Pill>
   );
 }
