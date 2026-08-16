@@ -22,7 +22,7 @@ import {
 import { useAtomValue } from "jotai";
 import polylabel from "polylabel";
 import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { Dialog, DialogClose, DialogCloseX, DialogContent, DialogTitle } from "~/components/dialog";
 import { EditorHeader } from "~/components/editor-header";
@@ -80,18 +80,13 @@ export const Route = createFileRoute("/$orgSlug/turfs/")({
     zoneId: typeof search.zoneId === "string" ? search.zoneId : null,
   }),
   loaderDeps: ({ search }) => ({ campaignId: search.campaignId }),
-  loader: async ({ context: { queryClient }, deps }) => {
-    // TEMP boot-audit logging (remove before merge)
-    console.log("[boot] turfs loader start", Math.round(performance.now()));
-    const result = await Promise.all([
+  loader: ({ context: { queryClient }, deps }) =>
+    Promise.all([
       queryClient.fetchQuery(turfsListQuery(deps.campaignId)),
       queryClient.fetchQuery(walksListQuery(deps.campaignId)),
       queryClient.fetchQuery(progressQuery(deps.campaignId)),
       queryClient.fetchQuery(campaignsListQuery()),
-    ]);
-    console.log("[boot] turfs loader done", Math.round(performance.now()));
-    return result;
-  },
+    ]),
   component: TurfsIndex,
 });
 
@@ -123,15 +118,6 @@ function TurfsIndex() {
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: turfs } = useSuspenseQuery(turfsListQuery(campaignId));
   const rows = useTurfRows(campaignId, zoneId);
-
-  // TEMP boot-audit logging (remove before merge)
-  const bootLoggedRef = useRef(false);
-  if (!bootLoggedRef.current) {
-    bootLoggedRef.current = true;
-    console.log("[boot] TurfsIndex first render", Math.round(performance.now()), {
-      campaignsPresent: campaigns !== undefined,
-    });
-  }
 
   // Mobile-only rendering choice; desktop is always the table.
   const [view, setView] = useState<"cards" | "table">("cards");
@@ -985,8 +971,9 @@ function WalksDialog({
 function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
   if (summary.walks.length === 0) return <Pill />;
   const last = summary.walks[summary.walks.length - 1]!;
+  // Keyed so the blank→filled switch remounts and fade-in fires.
   return (
-    <Pill className="gap-1.5 font-mono tabular-nums">
+    <Pill key="filled" className="gap-1.5 font-mono tabular-nums animate-in fade-in duration-100">
       {summary.walks.length >= 2 ? <CheckCheck className="size-4" /> : <Check className="size-4" />}
       {formatMonthDay(last.openedAt, tz)}
     </Pill>
@@ -1017,8 +1004,14 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
 
 function ProgressPill({ pct }: { pct: number | null }) {
   if (pct === null) return <Pill variant="number" />;
+  // Keyed so the blank→filled switch remounts and fade-in fires.
   return (
-    <Pill variant="number" color={pct > 0 ? progressColor(pct) : undefined}>
+    <Pill
+      key="filled"
+      variant="number"
+      className="animate-in fade-in duration-100"
+      color={pct > 0 ? progressColor(pct) : undefined}
+    >
       {pct}%
     </Pill>
   );

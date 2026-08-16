@@ -577,8 +577,16 @@ function Stat({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="flex flex-col">
       <span className="text-muted-foreground">{label}</span>
-      {/* Non-breaking space holds the row height while the value resolves. */}
-      <span className="tabular-nums">{value === null ? " " : value.toLocaleString()}</span>
+      {/* Non-breaking space holds the row height while the value resolves;
+          the value span mounts on arrival so fade-in fires, matching the
+          sibling pills. */}
+      <span className="tabular-nums">
+        {value === null ? (
+          " "
+        ) : (
+          <span className="animate-in fade-in duration-100">{value.toLocaleString()}</span>
+        )}
+      </span>
     </div>
   );
 }

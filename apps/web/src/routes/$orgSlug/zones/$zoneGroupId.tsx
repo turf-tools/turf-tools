@@ -384,11 +384,17 @@ function ZoneGroupEditor() {
               )}
               {zoneOverlay ? (
                 <>
-                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                  <Pill
+                    variant="number"
+                    className="!w-fit shrink-0 justify-end gap-1.5 animate-in fade-in duration-100"
+                  >
                     <UserRound className="size-3.5 text-foreground" />
                     {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
                   </Pill>
-                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
+                  <Pill
+                    variant="number"
+                    className="!w-fit shrink-0 justify-end gap-1.5 animate-in fade-in duration-100"
+                  >
                     <DoorClosed className="size-3.5 text-foreground" />
                     {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
                   </Pill>
