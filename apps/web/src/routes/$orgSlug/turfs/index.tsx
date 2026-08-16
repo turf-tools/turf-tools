@@ -112,9 +112,8 @@ function TurfsIndex() {
   const shouldFade = useFadeOnce("/turfs");
   useLiveRefresh();
 
-  // Suspense (not useQuery): on prod cold boots the SPA shell hydration
-  // skips route loaders, so data arrives via component mount — a plain
-  // useQuery would paint the campaign filter label-less and widen later.
+  // SPA-shell cold boots skip route loaders, so data arrives via component
+  // mount; suspending keeps the campaign filter from painting label-less.
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const { data: turfs } = useSuspenseQuery(turfsListQuery(campaignId));
   const rows = useTurfRows(campaignId, zoneId);
@@ -970,9 +969,9 @@ function WalksDialog({
 // dash) when empty — the legacy card idiom.
 function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
   const last = summary.walks[summary.walks.length - 1];
-  // The pill chrome renders immediately (blank when unwalked or loading —
-  // the legacy card idiom); only the content mounts with a fade. Never
-  // key/remount the pill itself — that blanks the background for a frame.
+  // Chrome-first: the pill paints with the table (blank = unwalked or still
+  // loading, the legacy card idiom) and stays mounted so its background
+  // never blinks; only the content mounts, with a fade.
   return (
     <Pill className="font-mono tabular-nums">
       {last ? (
@@ -1012,15 +1011,11 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
 }
 
 function ProgressPill({ pct }: { pct: number | null }) {
-  // Same chrome-first shape as WalkedBadge: the pill paints with the table,
-  // the value fades in on arrival, and the tint transitions rather than
-  // snapping when a colored percentage lands.
+  // Chrome-first like WalkedBadge; the value fades in on arrival. No
+  // transition on the tint: its background is 25%-alpha, and interpolating
+  // from the opaque gray sags through a washed-out middle.
   return (
-    <Pill
-      variant="number"
-      className="transition-colors duration-100"
-      color={pct !== null && pct > 0 ? progressColor(pct) : undefined}
-    >
+    <Pill variant="number" color={pct !== null && pct > 0 ? progressColor(pct) : undefined}>
       {pct !== null ? <span className="animate-in fade-in duration-100">{pct}%</span> : null}
     </Pill>
   );
@@ -1198,14 +1193,18 @@ function TurfCard({
             <DoorClosed className="size-3.5" />
             {doorLabel(turf.doorCount)}
           </span>
-          {pct !== null ? (
-            <span
-              className={cn(badge, "font-mono tabular-nums", pct > 0 ? "badge-tint" : "bg-muted")}
-              style={pct > 0 ? tintStyle(progressColor(pct)) : undefined}
-            >
-              {pct}%
-            </span>
-          ) : null}
+          {/* Chrome always rendered with a stable width so sibling badges
+              don't shift when the value lands; the value fades in. */}
+          <span
+            className={cn(
+              badge,
+              "min-w-13 justify-center font-mono tabular-nums",
+              pct !== null && pct > 0 ? "badge-tint" : "bg-muted",
+            )}
+            style={pct !== null && pct > 0 ? tintStyle(progressColor(pct)) : undefined}
+          >
+            {pct !== null ? <span className="animate-in fade-in duration-100">{pct}%</span> : null}
+          </span>
         </span>
       </div>
       <div className="flex items-center gap-3 px-3 pt-1 pb-3">
@@ -1360,7 +1359,9 @@ function CompactList({
                   )}
                   style={pct !== null && pct > 0 ? tintStyle(progressColor(pct)) : undefined}
                 >
-                  {pct === null ? "" : `${pct}%`}
+                  {pct !== null ? (
+                    <span className="animate-in fade-in duration-100">{pct}%</span>
+                  ) : null}
                 </span>
                 <Button
                   variant="outline"
