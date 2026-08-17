@@ -39,7 +39,9 @@ export const Route = createFileRoute("/api/web/$orgSlug/boundaries/$keyGroup/geo
         const upstreamQuery = new URLSearchParams(url.search);
         upstreamQuery.set("org_slug", context.orgSlug);
         const upstreamPath = `/key-groups/${encodeURIComponent(keyGroup)}/geojson?${upstreamQuery.toString()}`;
-        const upstream = await dataFetch(upstreamPath);
+        // Forward the client's abort so the data service stops building a
+        // FeatureCollection nobody will read.
+        const upstream = await dataFetch(upstreamPath, { signal: request.signal });
         if (!upstream.ok) {
           return new Response(await upstream.text(), {
             status: upstream.status,

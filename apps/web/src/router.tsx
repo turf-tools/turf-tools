@@ -2,6 +2,7 @@ import { hashKey, MutationCache, QueryClient } from "@tanstack/react-query";
 import { createRouter, defaultStringifySearch } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
+import { ErrorPage } from "./components/error-page";
 import { __registerRouter } from "./lib/current-route";
 import { routeTree } from "./routeTree.gen";
 
@@ -50,6 +51,9 @@ export function getRouter() {
       // fresh) live next to those queries.
       queries: {
         staleTime: 15_000,
+        // Explicit so loaders get it too — `fetchQuery` disables retry
+        // unless one is configured.
+        retry: 2,
         // Ambient org scoping: prepend the current $orgSlug to every key
         // before hashing. Two orgs with the same logical key (e.g.
         // `["campaigns"]`) get different cache slots. `routerRef` is
@@ -72,6 +76,9 @@ export function getRouter() {
     // resolves; pending UI only shows past 300ms.
     defaultPendingMs: 300,
     defaultPendingMinMs: 300,
+    // Gives every route match a real error boundary — loader and render
+    // errors render in place, with the app shell around them intact.
+    defaultErrorComponent: ErrorPage,
     // Skip loader re-runs entirely while the route's data is inside the
     // query-fresh window — a background reload that fetchQuery would
     // satisfy from cache is pure overhead.

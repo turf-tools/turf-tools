@@ -229,33 +229,40 @@ async def key_group_geojson(key_group: str, org_slug: str):
     re-seeds them. When that happens, append a bumped `?v=` query param at
     the call site to bust browser caches.
     """
-    conn = get_connection(settings, read_only=True)
-    schema = resolve_version(conn, settings, org_slug).schema
-    # Validate the table exists before querying — keeps the error message
-    # friendlier than a generic SQL failure.
-    fqn = table_fqn(schema, key_group)
-    try:
-        conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
-    except Exception as e:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No boundary table for org_slug={org_slug}, key_group={key_group}. Run `uv run seed-boundaries`.",
-        ) from e
 
-    # Build the FeatureCollection in DuckDB to avoid pulling raw geometry
-    # into Python and re-serializing.
-    rows = conn.execute(f"""
-        SELECT json_object(
-            'type', 'FeatureCollection',
-            'features', json_group_array(json_object(
-                'type', 'Feature',
-                'properties', json_object('key', key, 'name', name),
-                'geometry', ST_AsGeoJSON(geom)::JSON
-            ))
-        )
-        FROM {fqn}
-    """).fetchone()
-    body = rows[0] if rows else '{"type":"FeatureCollection","features":[]}'
+    def build() -> str:
+        conn = get_connection(settings, read_only=True)
+        schema = resolve_version(conn, settings, org_slug).schema
+        # Validate the table exists before querying — keeps the error message
+        # friendlier than a generic SQL failure.
+        fqn = table_fqn(schema, key_group)
+        try:
+            conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
+        except Exception as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No boundary table for org_slug={org_slug}, "
+                f"key_group={key_group}. Run `uv run seed-boundaries`.",
+            ) from e
+
+        # Build the FeatureCollection in DuckDB to avoid pulling raw geometry
+        # into Python and re-serializing.
+        rows = conn.execute(f"""
+            SELECT json_object(
+                'type', 'FeatureCollection',
+                'features', json_group_array(json_object(
+                    'type', 'Feature',
+                    'properties', json_object('key', key, 'name', name),
+                    'geometry', ST_AsGeoJSON(geom)::JSON
+                ))
+            )
+            FROM {fqn}
+        """).fetchone()
+        return rows[0] if rows else '{"type":"FeatureCollection","features":[]}'
+
+    # Long synchronous DuckDB query — run off the event loop so other
+    # requests keep being served while it builds.
+    body = await asyncio.to_thread(build)
 
     return Response(
         content=body,

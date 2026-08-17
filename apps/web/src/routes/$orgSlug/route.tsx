@@ -20,8 +20,11 @@ export const Route = createFileRoute("/$orgSlug")({
     }
     // Fire-and-forget; powers the "/" landing redirect on next visit.
     // Always bumped (even for single-org users) so the value stays
-    // current if the user is later added to a second org.
-    void bumpOrgLastAccessed({ data: { orgSlug: params.orgSlug } });
+    // current if the user is later added to a second org. Best-effort —
+    // failures only log; an unhandled rejection during SSR kills Node.
+    bumpOrgLastAccessed({ data: { orgSlug: params.orgSlug } }).catch((e) =>
+      console.error("bumpOrgLastAccessed failed", e),
+    );
     return {
       organizationId: org.organizationId,
       orgSlug: org.orgSlug,
