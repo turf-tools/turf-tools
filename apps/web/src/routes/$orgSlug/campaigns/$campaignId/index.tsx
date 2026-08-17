@@ -18,6 +18,7 @@ import { Pill } from "~/components/pill";
 import { Swatch } from "~/components/swatch";
 import { useRememberSelection } from "~/lib/last-selected";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
+import { manifestQuery } from "~/lib/queries/manifest";
 import {
   campaignDetailQuery,
   campaignKeyCountsQuery,
@@ -163,6 +164,9 @@ function CampaignEditor() {
   // cache to keep in sync.
   const { data: scripts } = useSuspenseQuery(scriptsListQuery());
   const { data: segments } = useSuspenseQuery(segmentsListQuery());
+  // Prefetched by the campaigns layout loader — cache hit. Carries the
+  // active dataset versionId, the version stamp for boundary geometry.
+  const { data: manifestRow } = useSuspenseQuery(manifestQuery());
 
   const activeZoneGroup = zoneGroups.find((g) => g.zoneGroupId === campaign?.zoneGroupId) ?? null;
   const activeScript = scripts.find((s) => s.scriptId === campaign?.scriptId) ?? null;
@@ -179,7 +183,7 @@ function CampaignEditor() {
   });
 
   const { data: boundaryFC, isPlaceholderData: boundaryStale } = useQuery({
-    ...boundariesGeoJsonQuery(activeZoneGroup?.keyGroup ?? "", activeZoneGroup?.updatedAt ?? ""),
+    ...boundariesGeoJsonQuery(activeZoneGroup?.keyGroup ?? "", manifestRow?.versionId ?? ""),
     enabled: !!activeZoneGroup,
     placeholderData: keepPreviousData,
   });
@@ -195,7 +199,7 @@ function CampaignEditor() {
   // null the query asks the data server for *all* segment-matching points
   // (no zone-keyed narrowing), which is the right answer for zoneless.
   const { data: pointsBuffer, isPlaceholderData: pointsStale } = useQuery({
-    ...campaignPointsQuery(segmentCriteria ?? ({} as SegmentCriteria), keyFilter),
+    ...campaignPointsQuery(segmentCriteria ?? ({} as SegmentCriteria), keyFilter, segments),
     enabled: !!segmentCriteria,
     placeholderData: keepPreviousData,
   });
@@ -205,8 +209,8 @@ function CampaignEditor() {
   // segment-wide totals directly.
   const { data: keyCountsResult, isPlaceholderData: countsStale } = useQuery({
     ...(segmentCriteria && keyFilter
-      ? campaignKeyCountsQuery(segmentCriteria, keyFilter.keyGroup, keyFilter.keys)
-      : campaignKeyCountsQuery({} as SegmentCriteria, "", [])),
+      ? campaignKeyCountsQuery(segmentCriteria, keyFilter.keyGroup, keyFilter.keys, segments)
+      : campaignKeyCountsQuery({} as SegmentCriteria, "", [], segments)),
     enabled: !!segmentCriteria && !!keyFilter,
     placeholderData: keepPreviousData,
   });
@@ -215,7 +219,7 @@ function CampaignEditor() {
   // Segment-wide totals for zoneless campaigns — drives the header card's
   // Buildings/Doors/People numbers when there's no zone group to sum from.
   const { data: segmentTotals } = useQuery({
-    ...segmentCountsQuery(segmentCriteria ?? ({} as Criteria)),
+    ...segmentCountsQuery(segmentCriteria ?? ({} as Criteria), segments),
     enabled: !!segmentCriteria && !campaign?.zoneGroupId,
   });
 

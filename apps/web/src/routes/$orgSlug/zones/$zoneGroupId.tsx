@@ -18,8 +18,10 @@ import { Swatch } from "~/components/swatch";
 import { Switch } from "~/components/switch";
 import { darkAtom } from "~/lib/atoms/theme";
 import { useRememberSelection } from "~/lib/last-selected";
-import { segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
+import { manifestQuery } from "~/lib/queries/manifest";
+import { liveAwareStaleTime, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import { segmentRefsVersion } from "~/lib/segment-refs";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useHotkey } from "~/lib/use-hotkey";
 import { cn } from "~/lib/utils";
@@ -54,6 +56,9 @@ function ZoneGroupEditor() {
 
   const { data: zones } = useQuery(zonesQuery(zoneGroupId));
   const { data: segments } = useQuery(segmentsListQuery());
+  // Prefetched by the zones layout loader — cache hit. Carries the active
+  // dataset versionId, the version stamp for boundary geometry.
+  const { data: manifestRow } = useQuery(manifestQuery());
 
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
 
@@ -79,11 +84,17 @@ function ZoneGroupEditor() {
     enabled: !!overlaySegmentId,
   });
 
-  // Key-determined: same query + keyGroup always yields the same result.
+  // Keyed on the criteria hash plus the ref-closure version — the hash alone
+  // is byte-identical when only a *referenced* segment's contents change.
   const overlayCriteria = overlaySegmentDetail?.criteria ?? null;
   const overlayCriteriaKey = overlayCriteria ? JSON.stringify(overlayCriteria) : null;
   const { data: overlayCounts } = useQuery({
-    queryKey: ["counts-by-key", overlayCriteriaKey, activeGroup?.keyGroup],
+    queryKey: [
+      "counts-by-key",
+      overlayCriteriaKey,
+      activeGroup?.keyGroup,
+      segmentRefsVersion(overlayCriteria, segments),
+    ],
     queryFn: () =>
       client.segments.countByKey({
         criteria: overlayCriteria!,
@@ -94,7 +105,7 @@ function ZoneGroupEditor() {
       !!overlaySegmentDetail &&
       overlaySegmentDetail.segmentId === overlaySegmentId &&
       !!activeGroup,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: liveAwareStaleTime(overlayCriteria, segments),
   });
 
   const updateKeysMutation = useMutation({
@@ -442,7 +453,7 @@ function ZoneGroupEditor() {
           className="h-full"
           boundariesUrl={
             activeGroup
-              ? `/api/web/${orgSlug}/boundaries/${activeGroup.keyGroup}/geojson?v=${new Date(activeGroup.updatedAt).getTime()}`
+              ? `/api/web/${orgSlug}/boundaries/${activeGroup.keyGroup}/geojson?v=${manifestRow?.versionId ?? ""}`
               : undefined
           }
           coloringByKey={coloringByKey}

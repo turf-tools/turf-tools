@@ -77,6 +77,44 @@ export function findCyclicSegmentIds(
   return result;
 }
 
+export type SegmentRefRow = {
+  segmentId: string;
+  updatedAt: string | Date;
+  criteria: unknown;
+};
+
+// Version stamp for the segment refs reachable from `criteria`: the max
+// updatedAt over the transitive closure ("" when there are none). Derived
+// count queries fold this into their cache key — authored criteria is
+// byte-identical when only a *referenced* segment's contents change, so
+// the criteria hash alone under-keys the result.
+export function segmentRefsVersion(
+  criteria: unknown,
+  segments: ReadonlyArray<SegmentRefRow> | undefined,
+): string {
+  if (!segments?.length) return "";
+  const byId = new globalThis.Map(segments.map((s) => [s.segmentId, s]));
+  let max = 0;
+  const visited = new Set<string>();
+  const visit = (c: unknown) => {
+    for (const step of (c as Criteria | null | undefined)?.steps ?? []) {
+      const f = step.filter;
+      if (f.kind === "nested") {
+        visit(f.criteria);
+      } else if (f.kind === "segment" && f.segmentId != null && !visited.has(f.segmentId)) {
+        visited.add(f.segmentId);
+        const row = byId.get(f.segmentId);
+        // Missing rows are skipped, mirroring expansion's drop-on-missing.
+        if (!row) continue;
+        max = Math.max(max, new Date(row.updatedAt).getTime());
+        visit(row.criteria);
+      }
+    }
+  };
+  visit(criteria);
+  return max ? String(max) : "";
+}
+
 function referencesTransitively(
   fromId: string,
   toId: string,

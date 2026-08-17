@@ -157,7 +157,7 @@ function SegmentEditor() {
   // revisiting a view after a criteria change shows the last result while
   // the new fetch lands, and a previously-visited view is instant from cache.
   const { data: counts, isPlaceholderData: countsStale } = useQuery({
-    ...segmentCountsQuery(authoredCriteria),
+    ...segmentCountsQuery(authoredCriteria, allSegments),
     enabled: !!activeSegmentDetail,
     placeholderData: keepPreviousData,
   });
@@ -166,7 +166,7 @@ function SegmentEditor() {
     isPlaceholderData: pointsStale,
     isLoading: pointsLoading,
   } = useQuery({
-    ...segmentPointsQuery(authoredCriteria),
+    ...segmentPointsQuery(authoredCriteria, allSegments),
     enabled: !!activeSegmentDetail && view === "map",
     placeholderData: keepPreviousData,
   });
@@ -175,12 +175,12 @@ function SegmentEditor() {
     isPlaceholderData: sampleStale,
     isLoading: sampleLoading,
   } = useQuery({
-    ...segmentSampleQuery(authoredCriteria),
+    ...segmentSampleQuery(authoredCriteria, allSegments),
     enabled: !!activeSegmentDetail && view === "list",
     placeholderData: keepPreviousData,
   });
   const { data: cascade, isPlaceholderData: cascadeStale } = useQuery({
-    ...segmentCascadeQuery(authoredCriteria),
+    ...segmentCascadeQuery(authoredCriteria, allSegments),
     enabled: !!activeSegmentDetail && view === "waterfall",
     placeholderData: keepPreviousData,
   });
@@ -214,7 +214,10 @@ function SegmentEditor() {
   // segment-ref filter editor can resolve cross-references; without
   // syncing the list, edits to X show up in X's own queries but referrers
   // (Y → Segment: X) keep expanding against the stale list copy until a
-  // refetch lands.
+  // refetch lands. `updatedAt` is patched alongside criteria — referrers'
+  // derived-count keys hash it via `segmentRefsVersion`. The optimistic
+  // client-clock value is replaced by the server's on success, so a later
+  // list refetch leaves the version stable.
   const updateCriteriaMutation = useMutation({
     mutationFn: (input: { segmentId: string; criteria: Criteria }) =>
       client.segments.updateCriteria({ segmentId: input.segmentId, criteria: input.criteria }),
@@ -223,15 +226,11 @@ function SegmentEditor() {
       await queryClient.cancelQueries({ queryKey: ["segments"] });
       const previousDetail = queryClient.getQueryData(["segment", id]);
       const previousList = queryClient.getQueryData(["segments"]);
-      queryClient.setQueryData(["segment", id], (old: { criteria: unknown } | null | undefined) =>
-        old ? { ...old, criteria } : old,
-      );
-      queryClient.setQueryData(
-        ["segments"],
-        (old: ReadonlyArray<{ segmentId: string; criteria: unknown }> | undefined) =>
-          old?.map((s) => (s.segmentId === id ? { ...s, criteria } : s)),
-      );
+      patchSegmentCaches(id, { criteria, updatedAt: new Date() });
       return { previousDetail, previousList };
+    },
+    onSuccess: ({ updatedAt }, { segmentId: id }) => {
+      patchSegmentCaches(id, { updatedAt });
     },
     onError: (e, { segmentId: id }, ctx) => {
       console.error("segments.updateCriteria failed", e);
@@ -240,6 +239,17 @@ function SegmentEditor() {
       if (ctx?.previousList) queryClient.setQueryData(["segments"], ctx.previousList);
     },
   });
+
+  function patchSegmentCaches(id: string, patch: { criteria?: Criteria; updatedAt: Date }) {
+    queryClient.setQueryData(["segment", id], (old: { criteria: unknown } | null | undefined) =>
+      old ? { ...old, ...patch } : old,
+    );
+    queryClient.setQueryData(
+      ["segments"],
+      (old: ReadonlyArray<{ segmentId: string; criteria: unknown }> | undefined) =>
+        old?.map((s) => (s.segmentId === id ? { ...s, ...patch } : s)),
+    );
+  }
 
   const commit = (nextSteps: Step[]) => {
     updateCriteriaMutation.mutate({ segmentId, criteria: { steps: nextSteps } });

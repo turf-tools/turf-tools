@@ -108,7 +108,7 @@ function SegmentsLayout() {
     try {
       const detail = await queryClient.fetchQuery(segmentDetailQuery(activeSegmentId));
       const { personCount } = await queryClient.fetchQuery(
-        segmentCountsQuery((detail?.criteria ?? { steps: [] }) as Criteria),
+        segmentCountsQuery((detail?.criteria ?? { steps: [] }) as Criteria, segments),
       );
       if (personCount > EXPORT_CONFIRM_THRESHOLD) {
         setExportConfirm({ format, count: personCount });

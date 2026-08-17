@@ -58,6 +58,7 @@ const segmentSelect = {
   personCount: segments.personCount,
   datasetId: segments.datasetId,
   createdAt: segments.createdAt,
+  updatedAt: segments.updatedAt,
   isArchived: sql<boolean>`(${segments.archivedAt} IS NOT NULL)`,
 };
 
@@ -374,11 +375,12 @@ export const updateCriteria = pub
       throw err;
     }
 
-    await context.db
+    const [updated] = await context.db
       .update(segments)
       .set({ criteria: input.criteria as object, updatedAt: new Date() })
-      .where(eq(segments.segmentId, input.segmentId));
-    return { ok: true as const };
+      .where(eq(segments.segmentId, input.segmentId))
+      .returning({ updatedAt: segments.updatedAt });
+    return { ok: true as const, updatedAt: updated!.updatedAt };
   });
 
 // Counts + sample for the segment editor's preview pane.

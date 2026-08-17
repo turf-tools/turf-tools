@@ -173,15 +173,20 @@ function CampaignsLayout() {
       queryClient.prefetchQuery(turfStatsForCampaignQuery(target.campaignId)),
       nextZoneGroup
         ? queryClient.prefetchQuery(
-            boundariesGeoJsonQuery(nextZoneGroup.keyGroup, nextZoneGroup.updatedAt),
+            boundariesGeoJsonQuery(nextZoneGroup.keyGroup, manifest?.versionId ?? ""),
           )
         : Promise.resolve(),
       nextCriteria && nextKeyFilter
-        ? queryClient.prefetchQuery(campaignPointsQuery(nextCriteria, nextKeyFilter))
+        ? queryClient.prefetchQuery(campaignPointsQuery(nextCriteria, nextKeyFilter, segments))
         : Promise.resolve(),
       nextCriteria && nextKeyFilter
         ? queryClient.prefetchQuery(
-            campaignKeyCountsQuery(nextCriteria, nextKeyFilter.keyGroup, nextKeyFilter.keys),
+            campaignKeyCountsQuery(
+              nextCriteria,
+              nextKeyFilter.keyGroup,
+              nextKeyFilter.keys,
+              segments,
+            ),
           )
         : Promise.resolve(),
     ]);

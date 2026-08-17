@@ -30,7 +30,12 @@ import { TurfList } from "~/components/turf-list";
 import { pointInPolygon, polygonToVertices, verticesToPolygon } from "~/lib/geometry";
 import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import { campaignDetailQuery } from "~/lib/queries/campaigns";
-import { cutterBuildingsQuery, segmentDetailQuery } from "~/lib/queries/segments";
+import { manifestQuery } from "~/lib/queries/manifest";
+import {
+  cutterBuildingsQuery,
+  segmentDetailQuery,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
 import { turfDraftsQuery } from "~/lib/queries/turf-drafts";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
@@ -102,6 +107,9 @@ export function Cutter({
   const { data: campaign } = useSuspenseQuery(campaignDetailQuery(campaignId));
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
   const { data: drafts } = useSuspenseQuery(turfDraftsQuery(campaignId, zoneId));
+  // Both prefetched by the campaigns layout loader — cache hits.
+  const { data: allSegments } = useSuspenseQuery(segmentsListQuery());
+  const { data: manifestRow } = useSuspenseQuery(manifestQuery());
 
   const zoneGroup = zoneGroups.find((g) => g.zoneGroupId === campaign.zoneGroupId) ?? null;
 
@@ -117,7 +125,7 @@ export function Cutter({
   });
 
   const { data: boundaryFC } = useQuery({
-    ...boundariesGeoJsonQuery(zoneGroup?.keyGroup ?? "", zoneGroup?.updatedAt ?? ""),
+    ...boundariesGeoJsonQuery(zoneGroup?.keyGroup ?? "", manifestRow?.versionId ?? ""),
     enabled: !!zoneGroup,
   });
 
@@ -132,6 +140,7 @@ export function Cutter({
       zoneId,
       segmentCriteria,
       zoneGroup && zone ? { keyGroup: zoneGroup.keyGroup, keys: zone.keys } : undefined,
+      allSegments,
     ),
     enabled: !!segmentCriteria && (zoneId === null || !!zone),
   });

@@ -275,13 +275,24 @@ export function isActiveStep(s: Step): boolean {
 // drifts as canvassing happens. A versioned source (e.g. a future tag upload) is
 // different: bake a version into the query key instead, the way boundaries key
 // on `updatedAt`.
-export function criteriaTouchesLiveData(criteria: Criteria): boolean {
+export function criteriaTouchesLiveData(
+  criteria: Criteria,
+  segmentsById?: ReadonlyMap<string, { criteria: unknown }>,
+  visited: Set<string> = new Set(),
+): boolean {
   // Tolerate a steps-less object — callers (e.g. campaignKeyCountsQuery) pass a
   // `{} as SegmentCriteria` placeholder while the query is disabled.
   return (criteria.steps ?? []).some((step) => {
     const f = step.filter;
     if (f.kind === "canvass-outcome" || f.kind === "canvass-response") return true;
-    if (f.kind === "nested") return criteriaTouchesLiveData(f.criteria);
+    if (f.kind === "nested") return criteriaTouchesLiveData(f.criteria, segmentsById, visited);
+    // Follow segment refs when the caller supplies the lookup — a ref to a
+    // segment built on canvass leaves reads the same drifting source.
+    if (f.kind === "segment" && f.segmentId != null && segmentsById && !visited.has(f.segmentId)) {
+      visited.add(f.segmentId);
+      const ref = segmentsById.get(f.segmentId);
+      return ref ? criteriaTouchesLiveData(ref.criteria as Criteria, segmentsById, visited) : false;
+    }
     return false;
   });
 }

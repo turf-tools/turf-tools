@@ -1,6 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
+import { segmentRefsVersion } from "~/lib/segment-refs";
 import { client } from "~/rpc/client";
-import { fetchSegmentPoints, liveAwareStaleTime, type SegmentCriteria } from "./segments";
+import {
+  fetchSegmentPoints,
+  liveAwareStaleTime,
+  type SegmentCriteria,
+  type SegmentRows,
+} from "./segments";
 
 export type KeyFilter = { keyGroup: string; keys: string[] };
 
@@ -25,15 +31,17 @@ export const campaignDetailQuery = (campaignId: string) =>
 export const campaignPointsQuery = (
   segmentCriteria: SegmentCriteria,
   keyFilter: KeyFilter | null,
+  segments: SegmentRows,
 ) =>
   queryOptions({
     queryKey: [
       "campaign-points",
       JSON.stringify(segmentCriteria),
       keyFilter ? JSON.stringify(keyFilter) : null,
+      segmentRefsVersion(segmentCriteria, segments),
     ] as const,
     queryFn: () => fetchSegmentPoints({ criteria: segmentCriteria, keyFilter }),
-    staleTime: liveAwareStaleTime(segmentCriteria),
+    staleTime: liveAwareStaleTime(segmentCriteria, segments),
     // Releases the multi-MB Float32Array buffer the moment the query
     // goes inactive — accumulating multiple in cache triggers V8 GC
     // pauses on subsequent navigations.
@@ -44,14 +52,21 @@ export const campaignKeyCountsQuery = (
   segmentCriteria: SegmentCriteria,
   keyGroup: string,
   keys: string[],
+  segments: SegmentRows,
 ) =>
   queryOptions({
-    queryKey: ["campaign-key-counts", JSON.stringify(segmentCriteria), keyGroup, keys] as const,
+    queryKey: [
+      "campaign-key-counts",
+      JSON.stringify(segmentCriteria),
+      keyGroup,
+      keys,
+      segmentRefsVersion(segmentCriteria, segments),
+    ] as const,
     queryFn: () =>
       client.segments.countByKey({
         criteria: segmentCriteria,
         keyGroup,
         keyFilter: { keyGroup, keys },
       }),
-    staleTime: liveAwareStaleTime(segmentCriteria),
+    staleTime: liveAwareStaleTime(segmentCriteria, segments),
   });
