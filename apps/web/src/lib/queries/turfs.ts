@@ -7,6 +7,12 @@ export const turfsListQuery = (campaignId: string | null) =>
     queryFn: () => client.turfs.listForOrg(campaignId ? { campaignId } : undefined),
   });
 
+export const turfsCountQuery = () =>
+  queryOptions({
+    queryKey: ["turfs-count"] as const,
+    queryFn: () => client.turfs.countForOrg(),
+  });
+
 export const turfMapDataQuery = (turfId: string) =>
   queryOptions({
     queryKey: ["turf-map-data", turfId] as const,

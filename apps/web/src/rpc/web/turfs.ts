@@ -52,6 +52,25 @@ export const listForOrg = pub
     return rows;
   });
 
+// Bare turf total for the overview card — same scope as listForOrg
+// without paying for the rows.
+export const countForOrg = pub.handler(async ({ context }) => {
+  const datasetId = await activeDatasetId(context.db, context.organizationId);
+  if (!datasetId) return 0;
+  const rows = await context.db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(turfs)
+    .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
+    .where(
+      and(
+        eq(campaigns.organizationId, context.organizationId),
+        eq(campaigns.datasetId, datasetId),
+        isNull(campaigns.archivedAt),
+      ),
+    );
+  return rows[0]?.count ?? 0;
+});
+
 // One turf's map payload: polygon + building coordinates, straight off
 // the turf row's slim publish-time projection — the full turf_data
 // payload is never touched on this hot path.

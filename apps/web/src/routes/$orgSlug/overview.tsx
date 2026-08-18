@@ -6,7 +6,7 @@ import { cn } from "~/lib/utils";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { segmentsListQuery } from "~/lib/queries/segments";
 import { scriptsListQuery } from "~/lib/queries/scripts";
-import { turfsListQuery } from "~/lib/queries/turfs";
+import { turfsCountQuery } from "~/lib/queries/turfs";
 
 export const Route = createFileRoute("/$orgSlug/overview")({
   loader: async ({ context: { queryClient } }) => {
@@ -14,7 +14,7 @@ export const Route = createFileRoute("/$orgSlug/overview")({
       queryClient.fetchQuery(campaignsListQuery()),
       queryClient.fetchQuery(segmentsListQuery()),
       queryClient.fetchQuery(scriptsListQuery()),
-      queryClient.fetchQuery(turfsListQuery(null)),
+      queryClient.fetchQuery(turfsCountQuery()),
     ]);
   },
   component: Overview,
@@ -26,7 +26,7 @@ function Overview() {
   const { data: campaigns } = useQuery(campaignsListQuery());
   const { data: segments } = useQuery(segmentsListQuery());
   const { data: scripts } = useQuery(scriptsListQuery());
-  const { data: turfs } = useQuery(turfsListQuery(null));
+  const { data: turfCount } = useQuery(turfsCountQuery());
 
   return (
     <Page className={shouldFade}>
@@ -36,7 +36,7 @@ function Overview() {
       {/* Gate on data so the numbers fade in once with real values rather than
           flashing 0 first — notably on org switch, where the org-scoped query
           key resolves a frame late. Keyed on orgSlug so the fade re-fires per org. */}
-      {campaigns && segments && scripts && turfs ? (
+      {campaigns && segments && scripts && turfCount != null ? (
         <div
           key={orgSlug}
           className="grid grid-cols-2 gap-4 lg:grid-cols-4 animate-in fade-in duration-100"
@@ -44,7 +44,7 @@ function Overview() {
           {[
             { label: "Campaigns", count: campaigns.length, to: "/$orgSlug/campaigns" },
             { label: "Segments", count: segments.length, to: "/$orgSlug/segments" },
-            { label: "Turfs", count: turfs.length, to: "/$orgSlug/turfs" },
+            { label: "Turfs", count: turfCount, to: "/$orgSlug/turfs" },
             { label: "Scripts", count: scripts.length, to: "/$orgSlug/scripts" },
           ].map((card) => (
             <Link

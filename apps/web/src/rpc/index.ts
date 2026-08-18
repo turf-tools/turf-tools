@@ -96,6 +96,7 @@ export const webRouter = {
   },
   turfs: {
     listForOrg: webTurfs.listForOrg,
+    countForOrg: webTurfs.countForOrg,
     turfMapData: webTurfs.turfMapData,
     zoneMapData: webTurfs.zoneMapData,
     statsForCampaign: webTurfs.statsForCampaign,

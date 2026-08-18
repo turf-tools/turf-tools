@@ -122,8 +122,8 @@ function bboxOfPolys(fc: FeatureCollection): [number, number, number, number] | 
 export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
   loader: async ({ context: { queryClient }, params: { orgSlug, campaignId }, preload }) => {
     const campaigns = await queryClient.fetchQuery(campaignsListQuery());
-    const exists = campaigns.some((c) => c.campaignId === campaignId);
-    if (!exists) {
+    const listRow = campaigns.find((c) => c.campaignId === campaignId);
+    if (!listRow) {
       // Redirect only on real navigations — a redirect thrown during a
       // hover preload gets committed and auto-navigates.
       if (preload) return;
@@ -134,13 +134,14 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
     // new campaign immediately on navigation. Heavy map data
     // (boundary GeoJSON, points buffer, per-key counts) is fetched
     // in-component; the map's `loading` curtain hides the wait.
-    const [campaign] = await Promise.all([
+    // Zones key off the list row's zoneGroupId so all three load in one
+    // wave; if a fresher detail row disagrees, the component's own
+    // zonesQuery fetches the right group.
+    await Promise.all([
       queryClient.fetchQuery(campaignDetailQuery(campaignId)),
       queryClient.fetchQuery(turfStatsForCampaignQuery(campaignId)),
+      ...(listRow.zoneGroupId ? [queryClient.fetchQuery(zonesQuery(listRow.zoneGroupId))] : []),
     ]);
-    if (campaign.zoneGroupId) {
-      await queryClient.fetchQuery(zonesQuery(campaign.zoneGroupId));
-    }
     // segmentsListQuery is prefetched by the parent campaigns layout
     // loader, so we read segment name + criteria from there via find()
     // — matches how the script and zone-group lookups work and keeps

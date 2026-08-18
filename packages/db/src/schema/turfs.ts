@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { campaigns } from "./campaigns";
 import { datasetVersions } from "./datasets";
@@ -89,6 +89,7 @@ export const turfs = app.table(
     uniqueIndex("turfs_active_turf_code")
       .on(t.turfCode)
       .where(sql`${t.status} = 'active'`),
+    index("turfs_scope_idx").on(t.campaignId, t.zoneId),
   ],
 );
 

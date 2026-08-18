@@ -89,11 +89,13 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     inner projection; each prefix's predicate is then a verb-chained
     combination of those columns (narrow → AND, add → OR, remove → AND NOT),
     so a row evaluates k clauses instead of every prefix's restatement.
-    When no later step widens the set (no ``add`` past the first active
-    step), the first active clause also pushes into WHERE — every prefix
-    implies it — and the unfiltered ``step_0`` moves to a scalar subquery,
-    which DuckDB answers from table stats. Params bind in textual order:
-    the projection's clauses in step order, then the pushdown's copy.
+    The first active clause, OR-ed with every later ``add`` clause, also
+    pushes into WHERE — every prefix implies that disjunction, since
+    ``narrow``/``remove`` only shrink the running set and each ``add``
+    widens it by exactly its own clause — and the unfiltered ``step_0``
+    moves to a scalar subquery, which DuckDB answers from table stats.
+    Params bind in textual order: the projection's clauses in step order,
+    then the pushdown's copies in the same order.
     """
     # Universe-count prefixes (step_0, and any step before the first active
     # filter) come from a scalar subquery, which DuckDB answers from table
@@ -102,8 +104,10 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     steps_sql: list[str] = []
     cols: list[str] = []
     prefix: str | None = None  # predicate for the running set; None = everyone
-    first_active: tuple[str, str, list[Any]] | None = None
-    widened = False
+    # Pushdown disjuncts: the first active clause plus every later `add`
+    # clause. Every prefix implies their union, so filtering the source on
+    # it preserves every prefix count.
+    push: list[tuple[str, list[Any]]] = []
     for i, step in enumerate(criteria.steps, start=1):
         step_params: list[Any] = []
         clause = _filter_clause(catalog, step.filter, step_params)
@@ -111,25 +115,27 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
             cols.append(f"({clause}) AS c_{i}")
             params.extend(step_params)
             if prefix is None:
-                first_active = (step.verb, clause, step_params)
+                pred = f"({clause})" if step.verb in ("narrow", "add") else f"NOT ({clause})"
+                push.append((pred, step_params))
                 prefix = f"c_{i}" if step.verb in ("narrow", "add") else f"NOT c_{i}"
             else:
-                widened = widened or step.verb == "add"
+                if step.verb == "add":
+                    push.append((f"({clause})", step_params))
                 op = {"narrow": "AND", "add": "OR", "remove": "AND NOT"}[step.verb]
                 prefix = f"({prefix} {op} c_{i})"
         # An inactive filter leaves the prefix set unchanged.
         steps_sql.append(f"count(*) FILTER (WHERE {prefix}) AS step_{i}" if prefix else f"{universe} AS step_{i}")
-    if first_active is None:
+    if prefix is None:
         return f"SELECT {', '.join(['count(*) AS step_0', *steps_sql])} FROM {persons_table}"
 
-    # Pushdown duplicates the first clause's evaluation, paying off only when
-    # later clauses then run over fewer rows — skip it for a lone active step.
+    # Pushdown duplicates each disjunct's evaluation, paying off only when
+    # some clause outside the disjunction then runs over fewer rows — skip
+    # it when every clause is a disjunct.
     where = ""
-    if not widened and len(cols) >= 2:
-        verb, clause, push_params = first_active
-        predicate = f"({clause})" if verb in ("narrow", "add") else f"NOT ({clause})"
-        where = f" WHERE {predicate}"
-        params.extend(push_params)
+    if len(push) < len(cols):
+        where = f" WHERE {' OR '.join(pred for pred, _ in push)}"
+        for _, push_params in push:
+            params.extend(push_params)
     return (
         f"SELECT {', '.join([f'{universe} AS step_0', *steps_sql])} "
         f"FROM (SELECT {', '.join(cols)} FROM {persons_table}{where})"
@@ -453,6 +459,8 @@ def _key_filter_clause(catalog: FieldCatalog, kf: KeyFilter, params: list[Any]) 
     if not kf.keys:
         return "1=0"
     expr = boundary_key_expr_for(catalog, kf.key_group)
-    placeholders = ", ".join("?" for _ in kf.keys)
-    params.extend(kf.keys)
-    return f"{expr} IN ({placeholders})"
+    # One list bind, not one placeholder per key — campaign key filters can
+    # carry tens of thousands of keys, and an expanded IN list that long
+    # dominates parse/plan time.
+    params.append(list(kf.keys))
+    return f"{expr} IN (SELECT unnest(?))"

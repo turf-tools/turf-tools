@@ -593,8 +593,8 @@ def test_key_filter_alone() -> None:
         KeyFilter(key_group="nyc_zips", keys=["10001", "10002"]),
         params,
     )
-    assert where == "WHERE zip5 IN (?, ?)"
-    assert params == ["10001", "10002"]
+    assert where == "WHERE zip5 IN (SELECT unnest(?))"
+    assert params == [["10001", "10002"]]
 
 
 def test_key_filter_combines_with_criteria() -> None:
@@ -607,8 +607,8 @@ def test_key_filter_combines_with_criteria() -> None:
     )
     assert " AND " in where
     assert "enrollment IN (?)" in where
-    assert "precinct IN (?)" in where
-    assert params == ["democratic", "75-001"]
+    assert "precinct IN (SELECT unnest(?))" in where
+    assert params == ["democratic", ["75-001"]]
 
 
 def test_key_filter_clips_criteria_with_trailing_add() -> None:
@@ -626,8 +626,8 @@ def test_key_filter_clips_criteria_with_trailing_add() -> None:
         KeyFilter(key_group="nyc_zips", keys=["10001"]),
         params,
     )
-    assert where == "WHERE ((enrollment IN (?)) OR (enrollment IN (?))) AND (zip5 IN (?))"
-    assert params == ["democratic", "republican", "10001"]
+    assert where == "WHERE ((enrollment IN (?)) OR (enrollment IN (?))) AND (zip5 IN (SELECT unnest(?)))"
+    assert params == ["democratic", "republican", ["10001"]]
 
 
 def test_empty_key_set_short_circuits_to_match_nothing() -> None:
@@ -673,8 +673,9 @@ def test_cascade_emits_one_filter_per_step() -> None:
     assert "step_1" in sql
     assert "step_2" in sql
     assert sql.count("FILTER (WHERE") == 2
-    # Each step's filter compiles exactly once, in step order. The `add` verb
-    # widens the running set, so no pushdown copy is appended.
+    # Each step's filter compiles exactly once, in step order. Both clauses
+    # are pushdown disjuncts here, so pushdown would save nothing and no
+    # copies are appended.
     assert params == ["democratic", "republican"]
 
 
@@ -698,6 +699,26 @@ def test_cascade_pushdown_appends_first_clause_params() -> None:
     assert params == ["democratic", "F", "democratic"]
 
 
+def test_cascade_pushdown_survives_add_when_narrows_follow() -> None:
+    params: list = []
+    sql = cascade_sql(
+        CATALOG,
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+                Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
+            ]
+        ),
+        "persons",
+        params,
+    )
+    # The pushdown predicate is the first clause OR-ed with the add clause —
+    # implied by every prefix — with both copies' params binding last.
+    assert "WHERE (enrollment IN (?)) OR (enrollment IN (?))" in sql
+    assert params == ["democratic", "republican", "F", "democratic", "republican"]
+
+
 def _cascade_oracle(conn, criteria: Criteria) -> list[int]:
     """Per-prefix counts via the (verb-aware) WHERE compiler — the ground
     truth cascade_sql must reproduce in one scan."""
@@ -718,9 +739,25 @@ def _cascade_oracle(conn, criteria: Criteria) -> list[int]:
             Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
             Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
         ],
-        # A widening `add` — pushdown must not apply; counts can grow.
+        # A widening `add` — pushdown becomes first-clause OR add-clause;
+        # counts can grow across the add step.
         [
             Step(verb="narrow", filter=EnumFilter(kind="enum", key="gender", values=["F"])),
+            Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226"])),
+        ],
+        # Adds interleaved with narrows and a remove — the OR-of-disjuncts
+        # pushdown must stay implied by every prefix.
+        [
+            Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226", "10025"])),
+            Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
+            Step(verb="remove", filter=EnumFilter(kind="enum", key="gender", values=["M"])),
+            Step(verb="add", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["10314"])),
+            Step(verb="narrow", filter=EnumFilter(kind="enum", key="enrollment", values=["democratic"])),
+        ],
+        # `remove` first (a NOT disjunct) with a later add.
+        [
+            Step(verb="remove", filter=EnumFilter(kind="enum", key="gender", values=["M"])),
             Step(verb="add", filter=EnumFilter(kind="enum", key="enrollment", values=["republican"])),
             Step(verb="narrow", filter=TextMultiFilter(kind="text-multi", key="zip5", values=["11226"])),
         ],
