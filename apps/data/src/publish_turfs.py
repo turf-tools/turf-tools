@@ -24,7 +24,7 @@ from src.custom_fields import catalog_for
 from src.dsl.compile import criteria_to_where
 from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
-from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
+from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
 from src.settings import get_settings
 from src.tables import resolve, resolve_version
 
@@ -68,24 +68,22 @@ class _PublishScope:
 _MAX_PUBLISH_RETRIES = 5
 
 
-async def publish_turfs(req: PublishTurfsRequest) -> dict[str, Any]:
+def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> dict[str, Any]:
     """Run the full publish for one (campaign, zone) and return the summary.
 
     Replaces the older flow that round-tripped a giant JSON payload between
     data and web. With ATTACH, the spatial join's output is materialised in
     a temp table inside DuckDB and INSERTed directly into Postgres tables,
     avoiding the JSON marshal entirely.
+
+    Takes a cursor over the shared read-only connection (see `query_cursor`).
+    DuckLake being attached READ_ONLY is fine: the publish only *reads*
+    DuckLake (filtered persons + buildings) and *writes* through the
+    operational Postgres ATTACH, which isn't read-only. The cursor is what
+    gives the BEGIN/COMMIT below its own transaction state instead of
+    sharing one with every concurrent reader.
     """
     settings = get_settings()
-    # Use the shared read-only connection. DuckLake is attached READ_ONLY,
-    # which is fine because the publish only *reads* DuckLake (filtered
-    # persons + buildings); it *writes* through the operational Postgres
-    # ATTACH, which isn't read-only. Going through this connection avoids
-    # the local-dev DuckLake file-lock conflict (DuckDB allows only one
-    # connection per process to attach a local DuckLake file at a time)
-    # and matches how the rest of the read endpoints (count, sample, etc.)
-    # already operate. The cached connection MUST NOT be closed.
-    conn = get_connection(settings, read_only=True)
 
     try:
         attach_operational_postgres(conn, settings)

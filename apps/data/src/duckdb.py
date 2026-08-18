@@ -1,7 +1,9 @@
 import os
 import tempfile
+import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,6 +24,7 @@ LOCAL_DUCKLAKE_GEO_DATA_DIR = "ducklake_geo_local_data/"
 # eliminates both overheads. Seeds (`read_only=False`) bypass the cache —
 # they manage their own connection lifecycle and need write access.
 _shared_ro_conn: duckdb.DuckDBPyConnection | None = None
+_shared_ro_lock = threading.Lock()
 
 
 def get_connection(settings: Settings, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
@@ -37,10 +40,37 @@ def get_connection(settings: Settings, *, read_only: bool = False) -> duckdb.Duc
     """
     global _shared_ro_conn
     if read_only:
+        # Query threads reach this concurrently, so guard the lazy build:
+        # two racing builders would each ATTACH the DuckLake catalog, which
+        # a local-file catalog forbids, and one of them would be discarded
+        # still holding its attachments.
         if _shared_ro_conn is None:
-            _shared_ro_conn = _build_connection(settings, read_only=True)
+            with _shared_ro_lock:
+                if _shared_ro_conn is None:
+                    _shared_ro_conn = _build_connection(settings, read_only=True)
         return _shared_ro_conn
     return _build_connection(settings, read_only=False)
+
+
+@contextmanager
+def query_cursor(settings: Settings) -> Iterator[duckdb.DuckDBPyConnection]:
+    """A short-lived cursor over the shared read-only connection.
+
+    A connection object cannot be driven from two threads at once — the
+    statements interleave and corrupt each other's state — so anything
+    running off the event loop needs its own. A cursor is an independent
+    connection over the same database instance: it shares the buffer pool,
+    the attached catalogs and the instance settings (the whole point of
+    caching one connection) while keeping its own query and transaction
+    state. `USE` is per-connection and is not inherited from the parent, so
+    re-apply it — unqualified names (SHOW TABLES, DESCRIBE) depend on it.
+    """
+    cursor = get_connection(settings, read_only=True).cursor()
+    try:
+        cursor.execute("USE ducklake")
+        yield cursor
+    finally:
+        cursor.close()
 
 
 def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPyConnection:

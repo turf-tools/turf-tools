@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
@@ -15,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
+import duckdb
 from src import timing
 from src.custom_fields import (
     append_custom_fields,
@@ -31,6 +33,7 @@ from src.duckdb import (
     OPERATIONAL_PG_ALIAS,
     attach_operational_postgres,
     get_connection,
+    query_cursor,
     refresh_s3_secret_on_shared_connection,
     s3_secret_expires,
 )
@@ -53,6 +56,27 @@ from src.timing import timed
 logger = logging.getLogger("uvicorn")
 
 settings = get_settings()
+
+
+# How many DuckDB queries may run at once. Each runs off the event loop on
+# its own cursor, so requests stop queueing behind one another; the cap keeps
+# a burst from stacking concurrent operators onto one shared memory budget
+# (they would spill, not finish sooner). DuckDB's thread pool is per-instance,
+# so this does not multiply worker threads.
+_QUERY_CONCURRENCY = max(1, int(os.environ.get("DATA_QUERY_CONCURRENCY", "4")))
+_query_slots = asyncio.Semaphore(_QUERY_CONCURRENCY)
+
+
+async def run_query[T](work: Callable[[duckdb.DuckDBPyConnection], T]) -> T:
+    """Run one synchronous unit of DuckDB work off the event loop, on its own
+    cursor. Handlers stay `async def` and hand their whole body to this."""
+
+    def call() -> T:
+        with query_cursor(settings) as conn:
+            return work(conn)
+
+    async with _query_slots:
+        return await asyncio.to_thread(call)
 
 
 def _log_background_task_failure(task: asyncio.Task) -> None:
@@ -205,16 +229,18 @@ async def healthcheck():
 
 @app.get("/ducklake/status")
 async def ducklake_status():
-    conn = get_connection(settings, read_only=True)
-    tables = conn.execute("SHOW TABLES").fetchall()
-    table_info = {}
-    for (table_name,) in tables:
-        columns = conn.execute(f"DESCRIBE {table_name}").fetchall()
-        table_info[table_name] = [{"name": col[0], "type": col[1]} for col in columns]
-    return {
-        "status": "ok",
-        "tables": table_info,
-    }
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        tables = conn.execute("SHOW TABLES").fetchall()
+        table_info = {}
+        for (table_name,) in tables:
+            columns = conn.execute(f"DESCRIBE {table_name}").fetchall()
+            table_info[table_name] = [{"name": col[0], "type": col[1]} for col in columns]
+        return {
+            "status": "ok",
+            "tables": table_info,
+        }
+
+    return await run_query(work)
 
 
 @app.get("/key-groups/{key_group}/geojson")
@@ -230,8 +256,7 @@ async def key_group_geojson(key_group: str, org_slug: str):
     the call site to bust browser caches.
     """
 
-    def build() -> str:
-        conn = get_connection(settings, read_only=True)
+    def build(conn: duckdb.DuckDBPyConnection) -> str:
         schema = resolve_version(conn, settings, org_slug).schema
         # Validate the table exists before querying — keeps the error message
         # friendlier than a generic SQL failure.
@@ -260,9 +285,9 @@ async def key_group_geojson(key_group: str, org_slug: str):
         """).fetchone()
         return rows[0] if rows else '{"type":"FeatureCollection","features":[]}'
 
-    # Long synchronous DuckDB query — run off the event loop so other
-    # requests keep being served while it builds.
-    body = await asyncio.to_thread(build)
+    # Long synchronous DuckDB query — run off the event loop, on its own
+    # cursor, so other requests keep being served while it builds.
+    body = await run_query(build)
 
     return Response(
         content=body,
@@ -366,16 +391,18 @@ async def custom_fields_examples(req: _CustomFieldExamplesRequest):
     Examples row. Sampled from the lake values table (not the registry) so
     scalar fields work; Category fields never call this (their option set
     lives on the registry row)."""
-    # Shared read-only connection — never close it (see get_connection).
-    conn = get_connection(settings, read_only=True)
-    table = custom_fields_table_for(conn, req.dataset_slug)
-    if table is None:
-        return {"values": []}
-    rows = conn.execute(
-        f"SELECT DISTINCT value FROM {table} WHERE field_id = ? ORDER BY random() LIMIT 10",
-        [req.field_id],
-    ).fetchall()
-    return {"values": [r[0] for r in rows]}
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        table = custom_fields_table_for(conn, req.dataset_slug)
+        if table is None:
+            return {"values": []}
+        rows = conn.execute(
+            f"SELECT DISTINCT value FROM {table} WHERE field_id = ? ORDER BY random() LIMIT 10",
+            [req.field_id],
+        ).fetchall()
+        return {"values": [r[0] for r in rows]}
+
+    return await run_query(work)
 
 
 @app.post("/custom-fields/clear")
@@ -386,17 +413,22 @@ async def custom_fields_clear(req: _CustomFieldClearRequest):
     the web edge (the auth boundary), like every other endpoint's org_slug.
     History, if ever needed, is DuckLake snapshots — not application state.
     """
-    conn = get_connection(settings)
-    try:
-        table = custom_fields_fqn(req.dataset_slug)
+
+    def run() -> dict[str, Any]:
+        conn = get_connection(settings)
         try:
-            conn.execute(f"DELETE FROM {table} WHERE field_id = ?", [req.field_id])
-        except Exception:  # noqa: BLE001 — no values table yet: nothing to clear
-            return {"ok": True}
-        sync_registry(conn, req.dataset_slug, include_values=False)
-    finally:
-        conn.close()
-    return {"ok": True}
+            table = custom_fields_fqn(req.dataset_slug)
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE field_id = ?", [req.field_id])
+            except Exception:  # noqa: BLE001 — no values table yet: nothing to clear
+                return {"ok": True}
+            sync_registry(conn, req.dataset_slug, include_values=False)
+        finally:
+            conn.close()
+        return {"ok": True}
+
+    # Its own write connection, so no cursor needed — but still blocking.
+    return await asyncio.to_thread(run)
 
 
 class _PersonsCountRequest(_WireBaseModel):
@@ -411,32 +443,35 @@ async def persons_count(req: _PersonsCountRequest):
 
     Response shape: ``{personCount, doorCount, buildingCount}``.
     """
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    schema = version.schema
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    params: list = []
-    where = criteria_to_where(catalog, criteria, req.key_filter, params)
-    sql = resolve(
-        f"""
-        SELECT
-            count(*) AS "personCount",
-            count(DISTINCT door_i) AS "doorCount",
-            count(DISTINCT building_i) AS "buildingCount"
-        FROM {{persons_geocoded}}
-        {where}
-        """,
-        schema,
-    )
-    with timed("query"):
-        row = conn.execute(sql, params).fetchone()
-    if row is None:
-        raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
-    return {
-        "personCount": row[0],
-        "doorCount": row[1],
-        "buildingCount": row[2],
-    }
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, req.key_filter, params)
+        sql = resolve(
+            f"""
+            SELECT
+                count(*) AS "personCount",
+                count(DISTINCT door_i) AS "doorCount",
+                count(DISTINCT building_i) AS "buildingCount"
+            FROM {{persons_geocoded}}
+            {where}
+            """,
+            schema,
+        )
+        with timed("query"):
+            row = conn.execute(sql, params).fetchone()
+        if row is None:
+            raise HTTPException(status_code=500, detail="Persons count query returned no rows.")
+        return {
+            "personCount": row[0],
+            "doorCount": row[1],
+            "buildingCount": row[2],
+        }
+
+    return await run_query(work)
 
 
 class _PersonsCountCascadeRequest(_WireBaseModel):
@@ -453,22 +488,25 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     prior row. The step verb (add/narrow/remove) determines how each step
     modifies the running set.
     """
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    persons_table = resolve("{persons_geocoded}", version.schema)
-    params: list = []
-    sql = cascade_sql(catalog, criteria, persons_table, params)
-    with timed("query"):
-        row = conn.execute(sql, params).fetchone()
-    counts = list(row)
-    steps_result = []
-    prev = counts[0]
-    steps_result.append({"count": prev, "delta": None})
-    for c in counts[1:]:
-        steps_result.append({"count": c, "delta": c - prev})
-        prev = c
-    return {"steps": steps_result}
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        persons_table = resolve("{persons_geocoded}", version.schema)
+        params: list = []
+        sql = cascade_sql(catalog, criteria, persons_table, params)
+        with timed("query"):
+            row = conn.execute(sql, params).fetchone()
+        counts = list(row)
+        steps_result = []
+        prev = counts[0]
+        steps_result.append({"count": prev, "delta": None})
+        for c in counts[1:]:
+            steps_result.append({"count": c, "delta": c - prev})
+            prev = c
+        return {"steps": steps_result}
+
+    return await run_query(work)
 
 
 class _PersonsSampleRequest(_WireBaseModel):
@@ -487,41 +525,44 @@ async def persons_sample(req: _PersonsSampleRequest):
     editor's list-view preview. Capped at ``limit`` (default 100).
     """
     limit = max(1, min(req.limit, 500))
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    schema = version.schema
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    params: list = []
-    where = criteria_to_where(catalog, criteria, req.key_filter, params)
-    sql = resolve(
-        f"""
-        SELECT * FROM (
-            SELECT first_name, middle_name, last_name, name_suffix,
-                   address_line_1, address_line_2, city, state, zip5
-            FROM {{persons_geocoded}}
-            {where}
-        ) USING SAMPLE {limit} ROWS
-        """,
-        schema,
-    )
-    with timed("query"):
-        rows = conn.execute(sql, params).fetchall()
-    return {
-        "persons": [
-            {
-                "firstName": r[0],
-                "middleName": r[1],
-                "lastName": r[2],
-                "nameSuffix": r[3],
-                "addressLine1": r[4],
-                "addressLine2": r[5],
-                "city": r[6],
-                "state": r[7],
-                "zip5": r[8],
-            }
-            for r in rows
-        ]
-    }
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, req.key_filter, params)
+        sql = resolve(
+            f"""
+            SELECT * FROM (
+                SELECT first_name, middle_name, last_name, name_suffix,
+                       address_line_1, address_line_2, city, state, zip5
+                FROM {{persons_geocoded}}
+                {where}
+            ) USING SAMPLE {limit} ROWS
+            """,
+            schema,
+        )
+        with timed("query"):
+            rows = conn.execute(sql, params).fetchall()
+        return {
+            "persons": [
+                {
+                    "firstName": r[0],
+                    "middleName": r[1],
+                    "lastName": r[2],
+                    "nameSuffix": r[3],
+                    "addressLine1": r[4],
+                    "addressLine2": r[5],
+                    "city": r[6],
+                    "state": r[7],
+                    "zip5": r[8],
+                }
+                for r in rows
+            ]
+        }
+
+    return await run_query(work)
 
 
 class _PersonsSearchRequest(_WireBaseModel):
@@ -553,10 +594,12 @@ async def persons_search(req: _PersonsSearchRequest):
     )
     if not query:
         return {"numHits": 0, "hits": [], "offset": req.offset, "limit": req.limit}
-    conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
+    version = await run_query(lambda conn: resolve_version(conn, settings, req.org_slug))
     index_id = persons_index_id(version.schema)
-    result = quickwit_search(
+    # Quickwit's client is blocking HTTP rather than DuckDB — off the loop
+    # too, but it holds no query slot.
+    result = await asyncio.to_thread(
+        quickwit_search,
         settings,
         index_id,
         query,
@@ -582,26 +625,29 @@ async def person_detail(req: _PersonDetailRequest):
     districts, voting history, …) lives in `persons_geocoded`. Returns
     ``{person: {<column>: value, …, votingHistory: [...]}}`` or ``{person: null}``.
     """
-    conn = get_connection(settings, read_only=True)
-    version = resolve_version(conn, settings, req.org_slug)
-    # Return every column (we don't have the manifest here to whitelist), minus a
-    # few internal geocoding/matching fields the detail pane never shows. These
-    # always exist on persons_geocoded, so EXCLUDE is safe.
-    sql = resolve(
-        "SELECT * EXCLUDE ("
-        "voting_history, building_id, door_id, building_i, door_i, blockface_id, "
-        "match_score, position_source, latitude, longitude"
-        "), to_json(voting_history) AS voting_history "
-        "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",
-        version.schema,
-    )
-    cursor = conn.execute(sql, [req.external_id])
-    row = cursor.fetchone()
-    if row is None:
-        return {"person": None}
-    person = dict(zip([d[0] for d in cursor.description], row, strict=True))
-    person["votingHistory"] = json.loads(person.pop("voting_history") or "[]")
-    return {"person": person}
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version = resolve_version(conn, settings, req.org_slug)
+        # Return every column (we don't have the manifest here to whitelist), minus a
+        # few internal geocoding/matching fields the detail pane never shows. These
+        # always exist on persons_geocoded, so EXCLUDE is safe.
+        sql = resolve(
+            "SELECT * EXCLUDE ("
+            "voting_history, building_id, door_id, building_i, door_i, blockface_id, "
+            "match_score, position_source, latitude, longitude"
+            "), to_json(voting_history) AS voting_history "
+            "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",
+            version.schema,
+        )
+        result = conn.execute(sql, [req.external_id])
+        row = result.fetchone()
+        if row is None:
+            return {"person": None}
+        person = dict(zip([d[0] for d in result.description], row, strict=True))
+        person["votingHistory"] = json.loads(person.pop("voting_history") or "[]")
+        return {"person": person}
+
+    return await run_query(work)
 
 
 class _PersonsCountByKeyRequest(_WireBaseModel):
@@ -620,36 +666,39 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
     boundary tinting. Response shape:
     ``{counts: {<key>: {doors, people}, ...}}``.
     """
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    schema = version.schema
-    group_expr = boundary_key_expr_for(catalog, req.key_group)
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    params: list = []
-    where = criteria_to_where(catalog, criteria, req.key_filter, params)
-    sql = resolve(
-        f"""
-        SELECT
-            {group_expr} AS key,
-            count(DISTINCT door_i) AS doors,
-            count(*) AS people
-        FROM {{persons_geocoded}}
-        {where}
-        GROUP BY {group_expr}
-        """,
-        schema,
-    )
-    with timed("query"):
-        rows = conn.execute(sql, params).fetchall()
-    counts: dict[str, dict[str, int]] = {}
-    for key, doors, people in rows:
-        if key is None:
-            continue
-        counts[key] = {
-            "doors": int(doors),
-            "people": int(people),
-        }
-    return {"counts": counts}
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        group_expr = boundary_key_expr_for(catalog, req.key_group)
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, req.key_filter, params)
+        sql = resolve(
+            f"""
+            SELECT
+                {group_expr} AS key,
+                count(DISTINCT door_i) AS doors,
+                count(*) AS people
+            FROM {{persons_geocoded}}
+            {where}
+            GROUP BY {group_expr}
+            """,
+            schema,
+        )
+        with timed("query"):
+            rows = conn.execute(sql, params).fetchall()
+        counts: dict[str, dict[str, int]] = {}
+        for key, doors, people in rows:
+            if key is None:
+                continue
+            counts[key] = {
+                "doors": int(doors),
+                "people": int(people),
+            }
+        return {"counts": counts}
+
+    return await run_query(work)
 
 
 class _SegmentExportRequest(_WireBaseModel):
@@ -694,32 +743,36 @@ async def segments_export(req: _SegmentExportRequest):
     if req.format not in ("csv", "parquet"):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
 
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    schema = version.schema
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    params: list = []
-    where = criteria_to_where(catalog, criteria, None, params)
-    persons_columns = {row[0] for row in conn.execute(f"DESCRIBE {resolve('{persons_geocoded}', schema)}").fetchall()}
-    # Skip only optional-and-absent; a missing required column stays in the
-    # SELECT and fails loudly at bind time.
-    select_cols = ", ".join(c for c in _EXPORT_COLUMNS if c in persons_columns or c not in _EXPORT_OPTIONAL)
-    select_sql = resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
-
     suffix = ".parquet" if req.format == "parquet" else ".csv"
-    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
-    os.close(fd)
-    # `tmp_path` is server-generated and the COPY options are from a fixed
-    # allowlist, so the only untrusted input (criteria) stays in bound `params`.
-    copy_opts = "FORMAT parquet" if req.format == "parquet" else "FORMAT csv, HEADER"
-    copy_sql = f"COPY ({select_sql}) TO '{tmp_path}' ({copy_opts})"
-    try:
-        row = conn.execute(copy_sql, params).fetchone()
-    except Exception:
-        with suppress(OSError):
-            os.remove(tmp_path)
-        raise
-    row_count = int(row[0]) if row else 0
+
+    def work(conn: duckdb.DuckDBPyConnection) -> tuple[str, int]:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, None, params)
+        describe_sql = f"DESCRIBE {resolve('{persons_geocoded}', schema)}"
+        persons_columns = {row[0] for row in conn.execute(describe_sql).fetchall()}
+        # Skip only optional-and-absent; a missing required column stays in the
+        # SELECT and fails loudly at bind time.
+        select_cols = ", ".join(c for c in _EXPORT_COLUMNS if c in persons_columns or c not in _EXPORT_OPTIONAL)
+        select_sql = resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
+
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
+        os.close(fd)
+        # `tmp_path` is server-generated and the COPY options are from a fixed
+        # allowlist, so the only untrusted input (criteria) stays in bound `params`.
+        copy_opts = "FORMAT parquet" if req.format == "parquet" else "FORMAT csv, HEADER"
+        copy_sql = f"COPY ({select_sql}) TO '{tmp_path}' ({copy_opts})"
+        try:
+            row = conn.execute(copy_sql, params).fetchone()
+        except Exception:
+            with suppress(OSError):
+                os.remove(tmp_path)
+            raise
+        return tmp_path, int(row[0]) if row else 0
+
+    tmp_path, row_count = await run_query(work)
 
     media = "application/octet-stream" if req.format == "parquet" else "text/csv"
     return FileResponse(
@@ -746,33 +799,36 @@ async def buildings_list(req: _BuildingsListRequest):
     zone, with enough detail to compute "what's inside this drawn
     polygon" client-side.
     """
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    schema = version.schema
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    params: list = []
-    where = criteria_to_where(catalog, criteria, req.key_filter, params)
-    sql = resolve(
-        f"""
-        SELECT
-            b.building_id              AS "buildingId",
-            b.longitude,
-            b.latitude,
-            count(DISTINCT fp.door_i)  AS "doorCount",
-            count(*)                   AS "personCount"
-        FROM {{buildings_geocoded}} b
-        JOIN (
-            SELECT building_id, door_i FROM {{persons_geocoded}} {where}
-        ) fp ON fp.building_id = b.building_id
-        GROUP BY b.building_id, b.longitude, b.latitude
-        """,
-        schema,
-    )
-    with timed("query"):
-        cursor = conn.execute(sql, params)
-        cols = [d[0] for d in cursor.description]
-        rows = [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
-    return {"buildings": rows}
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, req.key_filter, params)
+        sql = resolve(
+            f"""
+            SELECT
+                b.building_id              AS "buildingId",
+                b.longitude,
+                b.latitude,
+                count(DISTINCT fp.door_i)  AS "doorCount",
+                count(*)                   AS "personCount"
+            FROM {{buildings_geocoded}} b
+            JOIN (
+                SELECT building_id, door_i FROM {{persons_geocoded}} {where}
+            ) fp ON fp.building_id = b.building_id
+            GROUP BY b.building_id, b.longitude, b.latitude
+            """,
+            schema,
+        )
+        with timed("query"):
+            result = conn.execute(sql, params)
+            cols = [d[0] for d in result.description]
+            rows = [dict(zip(cols, row, strict=True)) for row in result.fetchall()]
+        return {"buildings": rows}
+
+    return await run_query(work)
 
 
 class _BuildingsPointsRequest(_WireBaseModel):
@@ -796,50 +852,46 @@ async def buildings_points(req: _BuildingsPointsRequest):
     mantissa on intra-cluster precision. Gives millimeter-scale at z20
     instead of meter-scale.
     """
-    conn = get_connection(settings, read_only=True)
-    version, catalog = query_context(conn, req.org_slug)
-    schema = version.schema
-    criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-    params: list = []
-    where = criteria_to_where(catalog, criteria, req.key_filter, params)
-    sql = resolve(
-        f"""
-        WITH pts AS (
-            SELECT
-                (b.longitude + 180.0) / 360.0 AS mx,
-                0.5 - ln(tan(pi()/4 + radians(b.latitude)/2)) / (2*pi()) AS my
-            FROM {{buildings_geocoded}} b
-            WHERE b.building_i IN (
-                SELECT DISTINCT building_i FROM {{persons_geocoded}} {where}
-            )
-        ),
-        o AS (SELECT avg(mx) AS ox, avg(my) AS oy FROM pts)
-        SELECT pts.mx - o.ox AS dx, pts.my - o.oy AS dy, o.ox AS ox, o.oy AS oy
-        FROM pts, o
-        """,
-        schema,
-    )
-    # fetchnumpy + vectorized repack: materializing hundreds of thousands of
-    # rows as Python tuples costs several times the query itself.
-    with timed("query"):
-        cursor = conn.execute(sql, params)
-        cols = cursor.fetchnumpy()
-    dx, dy = cols["dx"], cols["dy"]
-    if len(dx) == 0:
-        return Response(
-            content=array.array("d", [0.0, 0.0]).tobytes(),
-            media_type="application/octet-stream",
+
+    def work(conn: duckdb.DuckDBPyConnection) -> bytes:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, req.key_filter, params)
+        sql = resolve(
+            f"""
+            WITH pts AS (
+                SELECT
+                    (b.longitude + 180.0) / 360.0 AS mx,
+                    0.5 - ln(tan(pi()/4 + radians(b.latitude)/2)) / (2*pi()) AS my
+                FROM {{buildings_geocoded}} b
+                WHERE b.building_i IN (
+                    SELECT DISTINCT building_i FROM {{persons_geocoded}} {where}
+                )
+            ),
+            o AS (SELECT avg(mx) AS ox, avg(my) AS oy FROM pts)
+            SELECT pts.mx - o.ox AS dx, pts.my - o.oy AS dy, o.ox AS ox, o.oy AS oy
+            FROM pts, o
+            """,
+            schema,
         )
-    header = np.array([cols["ox"][0], cols["oy"][0]], dtype=np.float64)
-    deltas = np.empty((len(dx), 2), dtype=np.float32)
-    deltas[:, 0] = dx
-    deltas[:, 1] = dy
-    return Response(
-        content=header.tobytes() + deltas.tobytes(),
-        media_type="application/octet-stream",
-    )
+        # fetchnumpy + vectorized repack: materializing hundreds of thousands of
+        # rows as Python tuples costs several times the query itself.
+        with timed("query"):
+            cols = conn.execute(sql, params).fetchnumpy()
+        dx, dy = cols["dx"], cols["dy"]
+        if len(dx) == 0:
+            return array.array("d", [0.0, 0.0]).tobytes()
+        header = np.array([cols["ox"][0], cols["oy"][0]], dtype=np.float64)
+        deltas = np.empty((len(dx), 2), dtype=np.float32)
+        deltas[:, 0] = dx
+        deltas[:, 1] = dy
+        return header.tobytes() + deltas.tobytes()
+
+    return Response(content=await run_query(work), media_type="application/octet-stream")
 
 
 @app.post("/turfs/publish")
 async def turfs_publish(req: PublishTurfsRequest) -> dict[str, Any]:
-    return await publish_turfs(req)
+    return await run_query(lambda conn: publish_turfs(conn, req))
