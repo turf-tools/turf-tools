@@ -20,7 +20,12 @@ export default defineConfig({
   plugins: isTest
     ? []
     : [
-        tanstackStart({ spa: { enabled: true } }),
+        // Server-rendered: route loaders run during SSR and their query data
+        // ships with the document, so a page paints with content instead of
+        // fetching it after hydration. The trade is time-to-first-byte —
+        // the server now runs auth + loaders before it can respond, and the
+        // browser holds the previous paint until it does.
+        tanstackStart(),
         nitro(),
         // React's plugin must come after Start's.
         react(),
