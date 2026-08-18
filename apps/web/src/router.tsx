@@ -3,7 +3,7 @@ import { createRouter, defaultStringifySearch } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
 import { ErrorPage } from "./components/error-page";
-import { __registerRouter } from "./lib/current-route";
+import { __registerRouter, slugFromPathname } from "./lib/current-route";
 import { routeTree } from "./routeTree.gen";
 
 // Strip null/undefined search params before serializing so e.g. setting a
@@ -19,6 +19,7 @@ function stringifySearch(search: Record<string, unknown>): string {
 
 type RouterLike = {
   state: {
+    location: { pathname: string };
     matches: ReadonlyArray<{
       routeId: string;
       params: Record<string, string | undefined>;
@@ -59,8 +60,22 @@ export function getRouter() {
         // `["campaigns"]`) get different cache slots. `routerRef` is
         // captured per-request on SSR, so concurrent requests don't race.
         queryKeyHashFn: (key) => {
-          const match = routerRef?.state.matches.find((m) => m.routeId === "/$orgSlug");
-          const slug = match?.params.orgSlug;
+          const matches = routerRef?.state.matches ?? [];
+          const match = matches.find((m) => m.routeId === "/$orgSlug");
+          // Matches only commit after loaders resolve, and SSR prefetches run
+          // *inside* those loaders — so on the server, route params may not
+          // exist yet when a key hashes. Falling back to router state alone
+          // would hash without the slug there and with it on the client,
+          // filing the dehydrated payload under a key no component reads and
+          // silently refetching every route after hydration. So: on the
+          // server the URL is the source of truth (it carries the slug from
+          // the first byte, whatever state the matches are in); on the
+          // client, committed route params are.
+          const slug =
+            match?.params.orgSlug ??
+            (typeof window === "undefined"
+              ? (slugFromPathname(routerRef?.state.location.pathname ?? "") ?? undefined)
+              : undefined);
           return hashKey(slug ? [slug, ...(key as unknown[])] : (key as unknown[]));
         },
       },
