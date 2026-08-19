@@ -87,7 +87,7 @@ def test_no_active_version_raises_empty_state() -> None:
 
 
 def test_query_context_registers_custom_fields(monkeypatch) -> None:
-    monkeypatch.setattr(custom_fields, "custom_fields_table_for", lambda conn, slug: "cf_table")
+    monkeypatch.setattr(custom_fields, "custom_wide_table_for", lambda conn, slug: "cf_wide")
     conn = _StubConn(fields=[("f-1", "enum"), ("f-2", "number")])
     version, catalog = query_context(conn, "default")
     assert version.dataset_slug == "probe"
@@ -102,7 +102,7 @@ def test_query_context_skips_probe_without_custom_fields(monkeypatch) -> None:
     def _boom(conn, slug):
         raise AssertionError("probe must not run when the registry is empty")
 
-    monkeypatch.setattr(custom_fields, "custom_fields_table_for", _boom)
+    monkeypatch.setattr(custom_fields, "custom_wide_table_for", _boom)
     _version, catalog = query_context(_StubConn(), "default")
     assert catalog.fields is not None
 

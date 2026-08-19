@@ -3,9 +3,15 @@
 One long-format table per dataset, beside (not inside) the version schemas —
 `ducklake.main.<slug>_custom_fields (external_id, field_id, value, upload_id)`
 — which is what makes floating-across-versions visible in the layout itself.
-One row per (person, field) that has a value; `value` is a string cast at
-query time. Mutated directly (insert/upsert/delete) — history comes from
-DuckLake snapshots, not a hand-rolled journal.
+One row per (person, field) that has a value. Mutated directly
+(insert/upsert/delete) — history comes from DuckLake snapshots, not a
+hand-rolled journal.
+
+The long table is the source of truth; queries run against a derived wide
+companion `ducklake.main.<slug>_custom_wide` — one row per person with values,
+one typed column per field, keyed by `person_h` (see `rebuild_custom_wide`).
+Rebuilt wholesale after every append/clear, so filters compile to typed column
+predicates behind a single integer semi-join.
 
 Used by the synchronous append and clear endpoints in `main.py`.
 """
@@ -14,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.dsl.criteria import FieldCatalog, build_field_catalog
+from src.dsl.criteria import FieldCatalog, build_field_catalog, person_h_sql, wide_column
 from src.dsl.elections import election_bits
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, heal_stale_attach
 from src.settings import get_settings
@@ -53,6 +59,83 @@ _TYPE_LABELS = {
 
 def custom_fields_fqn(dataset_slug: str) -> str:
     return table_fqn(_SCHEMA, f"{dataset_slug}_custom_fields")
+
+
+def custom_wide_fqn(dataset_slug: str) -> str:
+    return table_fqn(_SCHEMA, f"{dataset_slug}_custom_wide")
+
+
+# Wide-table column types per field type; everything else stays VARCHAR.
+# Cast with try_cast at rebuild so an unparseable value becomes NULL (never
+# matches) — the same arbiter the ingest validation applies.
+_WIDE_CASTS = {"number": "DOUBLE", "date": "DATE"}
+
+
+def rebuild_custom_wide(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> None:
+    """Rebuild the wide companion from the long table: one row per person with
+    any value, one typed column per registered field (archived included —
+    saved segments referencing them must still compile), keyed by the same
+    `person_h` expression assembly materializes on persons_geocoded
+    (`person_h_sql`). CREATE OR REPLACE is transactional in DuckLake, so
+    readers see the old table until the swap."""
+    attach_operational_postgres(conn, get_settings())
+    fields = conn.execute(
+        f"""
+        SELECT f.custom_field_id::VARCHAR, f.field_type
+        FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields f
+        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = f.dataset_id
+        WHERE d.slug = ?
+        """,
+        [dataset_slug],
+    ).fetchall()
+    values_table = custom_fields_table_for(conn, dataset_slug)
+    if not fields or values_table is None:
+        return
+    distinct_ids, distinct_hashes = conn.execute(
+        f"SELECT count(DISTINCT external_id), count(DISTINCT {person_h_sql()}) FROM {values_table}"
+    ).fetchone()
+    if distinct_ids != distinct_hashes:
+        raise RuntimeError(f"person_h collision in {values_table}: {distinct_ids} ids, {distinct_hashes} hashes")
+    cols = ", ".join(
+        f"any_value({_wide_value_sql(field_id, field_type)}) AS {wide_column(field_id)}"
+        for field_id, field_type in fields
+    )
+    conn.execute(f"""
+        CREATE OR REPLACE TABLE {custom_wide_fqn(dataset_slug)} AS
+        SELECT {person_h_sql()} AS person_h, {cols}
+        FROM {values_table}
+        GROUP BY external_id
+    """)
+    _wide_table_cache[dataset_slug] = custom_wide_fqn(dataset_slug)
+
+
+def _wide_value_sql(field_id: str, field_type: str) -> str:
+    """Per-field value expression for the rebuild's pivot. `field_id` is a
+    registry UUID (server-issued), safe to inline."""
+    value = f"CASE WHEN field_id = '{field_id}' THEN value END"
+    cast = _WIDE_CASTS.get(field_type)
+    return f"try_cast({value} AS {cast})" if cast else value
+
+
+# Wide-table existence probes, cached like `_values_table_cache`: the table is
+# created by the first rebuild and never dropped, so only the None→exists
+# transition invalidates — and `rebuild_custom_wide` writes the cache directly.
+_wide_table_cache: dict[str, str | None] = {}
+
+
+def custom_wide_table_for(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> str | None:
+    """FQN of the dataset's wide companion, or None before any append — custom
+    filters then compile to match-nothing rather than erroring."""
+    if dataset_slug in _wide_table_cache:
+        return _wide_table_cache[dataset_slug]
+    fqn = custom_wide_fqn(dataset_slug)
+    try:
+        conn.execute(f"SELECT 1 FROM {fqn} LIMIT 0")
+    except Exception:  # noqa: BLE001 — missing table is the expected miss
+        _wide_table_cache[dataset_slug] = None
+        return None
+    _wide_table_cache[dataset_slug] = fqn
+    return fqn
 
 
 def ensure_custom_fields_table(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> None:
@@ -170,7 +253,7 @@ def query_context(conn: duckdb.DuckDBPyConnection, org_slug: str) -> tuple[Resol
             return version, build_field_catalog(version.manifest, election_bits=election_bits(version.derived_metadata))
         return version, build_field_catalog(
             version.manifest,
-            custom_table=custom_fields_table_for(conn, version.dataset_slug),
+            custom_table=custom_wide_table_for(conn, version.dataset_slug),
             custom_fields=custom_fields,
             election_bits=election_bits(version.derived_metadata),
         )
@@ -198,7 +281,7 @@ def _catalog_for(conn: duckdb.DuckDBPyConnection, version: ResolvedVersion) -> F
     ).fetchall()
     return build_field_catalog(
         version.manifest,
-        custom_table=custom_fields_table_for(conn, version.dataset_slug),
+        custom_table=custom_wide_table_for(conn, version.dataset_slug),
         custom_fields={r[0]: r[1] for r in rows},
         election_bits=election_bits(version.derived_metadata),
     )
@@ -379,6 +462,7 @@ def append_custom_fields(
         raise
 
     sync_registry(conn, dataset_slug)
+    rebuild_custom_wide(conn, dataset_slug)
     labels = [r[0] for r in conn.execute("SELECT DISTINCT label FROM _rows ORDER BY label").fetchall()]
     # The label is for the dialog's success message; the id keys the
     # provenance row (labels are display-only and renameable).

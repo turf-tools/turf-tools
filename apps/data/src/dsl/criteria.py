@@ -304,12 +304,13 @@ class FieldCatalog:
     `fields` maps a filter `key` → the compiler's typed `FieldDef`. `key_groups`
     maps a boundary keyGroup → the field key carrying that key on
     persons_geocoded (drives `keyFilter` clauses + per-key aggregation GROUP BYs).
-    `custom_table` is the FQN of the dataset's custom-fields values table
-    (`main.<slug>_custom_fields`), or None before any append — custom-field
-    filters then compile to match-nothing. Custom fields enter `fields`
-    alongside manifest fields as `CustomFieldDef`s keyed by field id, so the
-    same filter kinds work against both; the compiler branches only on where
-    the field lives (persons column vs. values-table semi-join).
+    `custom_table` is the FQN of the dataset's wide custom-fields companion
+    (`main.<slug>_custom_wide`, typed column per field, keyed by `person_h`),
+    or None before any append — custom-field filters then compile to
+    match-nothing. Custom fields enter `fields` alongside manifest fields as
+    `CustomFieldDef`s keyed by field id, so the same filter kinds work against
+    both; the compiler branches only on where the field lives (persons column
+    vs. companion semi-join).
     """
 
     fields: dict[str, "FieldDef | CustomFieldDef"]
@@ -323,6 +324,21 @@ class CustomFieldDef(BaseModel):
 
     kind: Literal["number", "date", "text", "text_multi", "enum"]
     key: str
+
+
+def wide_column(field_id: str) -> str:
+    """The custom-wide table's column for a registry field id — shared by the
+    rebuild (which names the columns) and the compiler (which references
+    them), so the two can't drift. UUIDs aren't valid bare identifiers."""
+    return f"f_{field_id.replace('-', '')}"
+
+
+def person_h_sql() -> str:
+    """The `person_h` key expression over `external_id` — the single place it
+    lives, so persons_geocoded (assembly) and the custom-wide rebuild can't
+    drift. MD5 because the mapping must be stable across engine versions. Low
+    64 bits; every writer pairs it with a distinct-count collision guard."""
+    return "md5_number_lower(external_id)"
 
 
 def build_field_catalog(

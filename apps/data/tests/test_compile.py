@@ -552,13 +552,14 @@ def test_mixed_verb_sequence_preserves_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Custom-field filters (values-table semi-join — see docs/plans/custom-fields.md)
+# Custom-field filters (wide-companion semi-join on person_h)
 # ---------------------------------------------------------------------------
 
 
+WIDE = "ducklake.main.nys_custom_wide"
 CUSTOM_CATALOG = build_field_catalog(
     NYS_MANIFEST,
-    custom_table="ducklake.main.nys_custom_fields",
+    custom_table=WIDE,
     custom_fields={
         "f-num": "number",
         "f-date": "date",
@@ -577,14 +578,12 @@ def test_custom_number_range_semi_join() -> None:
         None,
         params,
     )
-    assert where == (
-        "WHERE external_id IN (SELECT external_id FROM ducklake.main.nys_custom_fields "
-        "WHERE field_id = ? AND try_cast(value AS DOUBLE) >= ? AND try_cast(value AS DOUBLE) <= ?)"
-    )
-    assert params == ["f-num", 0.5, 0.9]
+    # The companion column is natively DOUBLE — bounds compare directly.
+    assert where == f"WHERE person_h IN (SELECT person_h FROM {WIDE} WHERE f_fnum >= ? AND f_fnum <= ?)"
+    assert params == [0.5, 0.9]
 
 
-def test_custom_date_range_casts_value() -> None:
+def test_custom_date_range_native_column() -> None:
     params: list = []
     where = criteria_to_where(
         CUSTOM_CATALOG,
@@ -592,11 +591,12 @@ def test_custom_date_range_casts_value() -> None:
         None,
         params,
     )
-    assert "try_cast(value AS DATE) >= ?" in where
-    assert params == ["f-date", "2026-01-01"]
+    assert "f_fdate >= ?" in where
+    assert params == ["2026-01-01"]
 
 
-def test_custom_enum_and_text_clauses() -> None:
+def test_custom_narrows_fold_into_one_probe() -> None:
+    """Consecutive narrow custom-field steps share a single semi-join probe."""
     params: list = []
     where = criteria_to_where(
         CUSTOM_CATALOG,
@@ -607,9 +607,65 @@ def test_custom_enum_and_text_clauses() -> None:
         None,
         params,
     )
-    assert "WHERE field_id = ? AND value IN (?, ?)" in where
-    assert "WHERE field_id = ? AND value ILIKE ?" in where
-    assert params == ["f-enum", "a", "b", "f-text", "%smith%"]
+    assert where == f"WHERE person_h IN (SELECT person_h FROM {WIDE} WHERE f_fenum IN (?, ?) AND f_ftext ILIKE ?)"
+    assert params == ["a", "b", "%smith%"]
+
+
+def test_custom_fold_spans_noncustom_narrows() -> None:
+    """A non-custom narrow between two custom narrows doesn't split the fold —
+    the whole narrow run is one conjunction, and bind order follows textual
+    order (persons clause first, probe last)."""
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        _narrow(
+            EnumFilter(kind="enum", key="f-enum", values=["a"]),
+            EnumFilter(kind="enum", key="enrollment", values=["democratic"]),
+            TextMultiFilter(kind="text-multi", key="f-code", values=["40"]),
+        ),
+        None,
+        params,
+    )
+    assert where == (
+        f"WHERE (enrollment IN (?)) AND (person_h IN (SELECT person_h FROM {WIDE} "
+        f"WHERE f_fenum IN (?) AND f_fcode IN (?)))"
+    )
+    assert params == ["democratic", "a", "40"]
+
+
+def test_custom_add_verb_probes_individually() -> None:
+    """`add` ends the narrow run: its custom filter gets its own probe, OR-ed
+    after the folded conjunction."""
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        Criteria(
+            steps=[
+                Step(verb="narrow", filter=EnumFilter(kind="enum", key="f-enum", values=["a"])),
+                Step(verb="add", filter=TextMultiFilter(kind="text-multi", key="f-code", values=["40"])),
+            ]
+        ),
+        None,
+        params,
+    )
+    assert where == (
+        f"WHERE (person_h IN (SELECT person_h FROM {WIDE} WHERE f_fenum IN (?))) "
+        f"OR (person_h IN (SELECT person_h FROM {WIDE} WHERE f_fcode IN (?)))"
+    )
+    assert params == ["a", "40"]
+
+
+def test_custom_without_table_matches_nothing() -> None:
+    catalog = build_field_catalog(NYS_MANIFEST, custom_table=None, custom_fields={"f-enum": "enum"})
+    params: list = []
+    where = criteria_to_where(
+        catalog,
+        _narrow(EnumFilter(kind="enum", key="f-enum", values=["a"])),
+        None,
+        params,
+    )
+    assert where == "WHERE 1=0"
+    assert params == []
 
 
 def test_custom_code_matches_whole_values_not_substrings() -> None:
@@ -623,11 +679,8 @@ def test_custom_code_matches_whole_values_not_substrings() -> None:
         None,
         params,
     )
-    assert where == (
-        "WHERE external_id IN (SELECT external_id FROM ducklake.main.nys_custom_fields "
-        "WHERE field_id = ? AND value IN (?, ?))"
-    )
-    assert params == ["f-code", "3", "40"]
+    assert where == f"WHERE person_h IN (SELECT person_h FROM {WIDE} WHERE f_fcode IN (?, ?))"
+    assert params == ["3", "40"]
 
 
 def test_custom_code_blank_values_are_inactive() -> None:
@@ -885,10 +938,10 @@ def test_cascade_supports_stacked_subquery_filters() -> None:
     import duckdb
 
     conn = duckdb.connect()
-    conn.execute("CREATE TABLE persons (external_id VARCHAR, zip5 VARCHAR)")
-    conn.execute("INSERT INTO persons VALUES ('p1','11226'), ('p2','10025'), ('p3','10025')")
-    conn.execute("CREATE TABLE cf (external_id VARCHAR, field_id VARCHAR, value VARCHAR)")
-    conn.execute("INSERT INTO cf VALUES ('p1','f-enum','1'), ('p1','f-code','40'), ('p2','f-enum','2')")
+    conn.execute("CREATE TABLE persons (external_id VARCHAR, person_h UBIGINT, zip5 VARCHAR)")
+    conn.execute("INSERT INTO persons VALUES ('p1',1,'11226'), ('p2',2,'10025'), ('p3',3,'10025')")
+    conn.execute("CREATE TABLE cf (person_h UBIGINT, f_fenum VARCHAR, f_fcode VARCHAR)")
+    conn.execute("INSERT INTO cf VALUES (1,'1','40'), (2,'2',NULL)")
 
     catalog = build_field_catalog(
         NYS_MANIFEST, custom_table="cf", custom_fields={"f-enum": "enum", "f-code": "text_multi"}

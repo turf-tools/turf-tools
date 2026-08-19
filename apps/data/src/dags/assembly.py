@@ -21,6 +21,7 @@ consumers query.
 
 import duckdb
 from src.addressing import housenumber_display_sql, housenumber_norm_sql
+from src.dsl.criteria import person_h_sql
 from src.dsl.elections import (
     ELECTIONS_TABLE,
     VOTING_HISTORY_COLUMN,
@@ -268,16 +269,27 @@ def persons_geocoded(
         -- `*_i`: lake-internal integer companions to the address-string ids —
         -- count(DISTINCT) over an 8-byte column reads a fraction of the bytes
         -- the ~25-char strings cost, and dense_rank is an exact bijection.
+        -- `person_h`: integer companion to external_id for cross-table joins
+        -- (custom-field filters semi-join on it). A value hash, not a rank:
+        -- the custom-fields tables float across versions, so the key must be
+        -- a pure function of the id — MD5 so it's also stable across engine
+        -- versions. Collision-checked below.
         -- ORDER BY zip5 clusters row groups so geography-correlated filters
         -- (zip, district) prune via zonemaps instead of scanning everything.
         SELECT
             *,
             IF(building_id IS NULL, NULL, dense_rank() OVER (ORDER BY building_id)) AS building_i,
-            IF(door_id IS NULL, NULL, dense_rank() OVER (ORDER BY door_id))         AS door_i
+            IF(door_id IS NULL, NULL, dense_rank() OVER (ORDER BY door_id))         AS door_i,
+            {person_h_sql()}                                                        AS person_h
             {"".join(f", {e}" for e in mask_exprs)}
         FROM assembled
         ORDER BY zip5
     """)
+    distinct_ids, distinct_hashes = conn.execute(
+        f"SELECT count(DISTINCT external_id), count(DISTINCT person_h) FROM {fqn}"
+    ).fetchone()
+    if distinct_ids != distinct_hashes:
+        raise RuntimeError(f"person_h collision in {fqn}: {distinct_ids} ids, {distinct_hashes} hashes")
 
     version = _current_version(conn)
     return TableRef(

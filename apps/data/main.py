@@ -24,6 +24,7 @@ from src.custom_fields import (
     custom_fields_table_for,
     load_upload_table,
     query_context,
+    rebuild_custom_wide,
     sync_registry,
 )
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
@@ -423,6 +424,7 @@ async def custom_fields_clear(req: _CustomFieldClearRequest):
             except Exception:  # noqa: BLE001 — no values table yet: nothing to clear
                 return {"ok": True}
             sync_registry(conn, req.dataset_slug, include_values=False)
+            rebuild_custom_wide(conn, req.dataset_slug)
         finally:
             conn.close()
         return {"ok": True}

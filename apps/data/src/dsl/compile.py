@@ -43,6 +43,7 @@ from .criteria import (
     VotingHistoryCountFilter,
     VotingHistoryDetailFieldDef,
     VotingHistoryDetailFilter,
+    wide_column,
 )
 from .elections import election_type, election_year, mask_column, word_masks
 
@@ -170,12 +171,44 @@ def boundary_key_expr_for(catalog: FieldCatalog, key_group: str) -> str:
 def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[Any]) -> str:
     """Reduce criteria to a Boolean SQL expression string.
 
+    Custom-field filters in a run of ``narrow`` steps fold into a single
+    semi-join probe — AND is associative, so all their typed predicates can
+    share one pass over the wide table. An ``add`` or ``remove`` step ends the
+    run (the pending conjunction must bind before the verb applies); custom
+    filters under those verbs probe individually via ``_filter_clause``.
+    Folded predicates buffer their params locally so bind order still matches
+    textual order when non-custom narrows interleave.
+
     Returns ``""`` for empty / fully-inactive criteria (match all).
     """
     current: str | None = None  # None = True (full universe)
+    pending: list[str] = []
+    pending_params: list[Any] = []
+
+    def flush() -> None:
+        nonlocal current
+        if not pending:
+            return
+        if catalog.custom_table is None:
+            clause = "1=0"
+        else:
+            clause = f"person_h IN (SELECT person_h FROM {catalog.custom_table} WHERE {' AND '.join(pending)})"
+            params.extend(pending_params)
+        pending.clear()
+        pending_params.clear()
+        current = clause if current is None else f"({current}) AND ({clause})"
 
     for step in criteria.steps:
-        fc = _filter_clause(catalog, step.filter, params)
+        f = step.filter
+        def_ = catalog.fields.get(f.key) if hasattr(f, "key") else None
+        if step.verb == "narrow" and isinstance(def_, CustomFieldDef):
+            pred = _custom_pred(f, def_, pending_params)
+            if pred:
+                pending.append(pred)
+            continue
+        if step.verb != "narrow":
+            flush()
+        fc = _filter_clause(catalog, f, params)
         if not fc:
             # Inactive filter (empty enum values, unbounded age range, etc.)
             # has no effect on the set regardless of verb.
@@ -191,6 +224,7 @@ def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[
             else:  # remove
                 current = f"({current}) AND NOT ({fc})"
 
+    flush()
     return current or ""
 
 
@@ -261,18 +295,37 @@ def _custom_clause(
     catalog: FieldCatalog,
     params: list[Any],
 ) -> str:
-    """Predicate on a custom field — a semi-join against the dataset's
-    long-format values table, with the value cast per the field's type.
-    Inactive filters return "" exactly like their persons-column cousins."""
+    """Predicate on a custom field — a semi-join against the dataset's wide
+    companion table on the `person_h` integer key. Inactive filters return ""
+    exactly like their persons-column cousins."""
+    pred_params: list[Any] = []
+    pred = _custom_pred(f, def_, pred_params)
+    if not pred:
+        return ""
+    if catalog.custom_table is None:
+        return "1=0"
+    params.extend(pred_params)
+    return f"person_h IN (SELECT person_h FROM {catalog.custom_table} WHERE {pred})"
+
+
+def _custom_pred(
+    f: EnumFilter | TextFilter | TextMultiFilter | DateRangeFilter | NumberRangeFilter,
+    def_: CustomFieldDef,
+    params: list[Any],
+) -> str:
+    """Typed predicate over a custom field's wide-table column ("" when
+    inactive). The column is natively typed (see `rebuild_custom_wide`), so
+    number/date filters compare directly."""
+    col = wide_column(def_.key)
     if isinstance(f, EnumFilter):
         if def_.kind != "enum":
             raise CriteriaError(f"Field {f.key} is not an enum field")
         if not f.values:
             return ""
         placeholders = ", ".join("?" for _ in f.values)
-        pred = f"value IN ({placeholders})"
-        pred_params: list[Any] = list(f.values)
-    elif isinstance(f, TextMultiFilter):
+        params.extend(f.values)
+        return f"{col} IN ({placeholders})"
+    if isinstance(f, TextMultiFilter):
         if def_.kind != "text_multi":
             raise CriteriaError(f"Field {f.key} is not a code field")
         # Whole-value match against the typed-in list — the point of the type
@@ -281,49 +334,28 @@ def _custom_clause(
         if not vals:
             return ""
         placeholders = ", ".join("?" for _ in vals)
-        pred = f"value IN ({placeholders})"
-        pred_params = list(vals)
-    elif isinstance(f, TextFilter):
+        params.extend(vals)
+        return f"{col} IN ({placeholders})"
+    if isinstance(f, TextFilter):
         if def_.kind != "text":
             raise CriteriaError(f"Field {f.key} is not a text field")
         if not f.value.strip():
             return ""
-        pred = "value ILIKE ?"
-        pred_params = [f"%{f.value}%"]
-    elif isinstance(f, DateRangeFilter):
+        params.append(f"%{f.value}%")
+        return f"{col} ILIKE ?"
+    if isinstance(f, DateRangeFilter):
         if def_.kind != "date":
             raise CriteriaError(f"Field {f.key} is not a date field")
-        if not f.min and not f.max:
-            return ""
-        parts: list[str] = []
-        pred_params = []
-        if f.min:
-            parts.append("try_cast(value AS DATE) >= ?")
-            pred_params.append(f.min)
-        if f.max:
-            parts.append("try_cast(value AS DATE) <= ?")
-            pred_params.append(f.max)
-        pred = " AND ".join(parts)
-    else:  # NumberRangeFilter
-        if def_.kind != "number":
-            raise CriteriaError(f"Field {f.key} is not a number field")
-        if f.min is None and f.max is None:
-            return ""
-        parts = []
-        pred_params = []
-        if f.min is not None:
-            parts.append("try_cast(value AS DOUBLE) >= ?")
-            pred_params.append(f.min)
-        if f.max is not None:
-            parts.append("try_cast(value AS DOUBLE) <= ?")
-            pred_params.append(f.max)
-        pred = " AND ".join(parts)
-
-    if catalog.custom_table is None:
-        return "1=0"
-    params.append(def_.key)
-    params.extend(pred_params)
-    return f"external_id IN (SELECT external_id FROM {catalog.custom_table} WHERE field_id = ? AND {pred})"
+    elif def_.kind != "number":
+        raise CriteriaError(f"Field {f.key} is not a number field")
+    parts: list[str] = []
+    for bound, op in ((f.min, ">="), (f.max, "<=")):
+        # None and "" are both "no bound" (dates arrive as strings, numbers as
+        # floats — 0.0 is a real bound).
+        if bound is not None and bound != "":
+            parts.append(f"{col} {op} ?")
+            params.append(bound)
+    return " AND ".join(parts)
 
 
 def _enum_clause(f: EnumFilter, def_: FieldDef, params: list[Any]) -> str:
