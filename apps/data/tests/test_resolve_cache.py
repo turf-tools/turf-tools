@@ -53,7 +53,7 @@ class _StubConn:
         self.version_fetches += 1  # version-payload query
         assert params is not None
         number = int(params[0].removeprefix("v-"))  # "v-2" → version 2
-        return _Result([("probe", number, json.dumps(MANIFEST))])
+        return _Result([("probe", number, json.dumps(MANIFEST), None)])
 
 
 @pytest.fixture(autouse=True)

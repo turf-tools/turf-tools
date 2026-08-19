@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.dsl.elections import ELECTION_MIN_VOTERS, election_key_sql, election_label
+from src.dsl.elections import ELECTIONS_TABLE, election_label
 
 if TYPE_CHECKING:
     import duckdb
@@ -25,39 +25,25 @@ def compute_derived_metadata(conn: duckdb.DuckDBPyConnection, geocoded_fqn: str,
     derived: dict[str, Any] = {
         "rowCount": conn.execute(f"SELECT count(*) FROM {geocoded_fqn}").fetchone()[0],
     }
-    elections = _compute_elections(conn, geocoded_fqn, manifest)
+    elections = _read_elections(conn, geocoded_fqn, manifest)
     if elections is not None:
         derived["elections"] = elections
     return derived
 
 
-def _compute_elections(
+def _read_elections(
     conn: duckdb.DuckDBPyConnection, geocoded_fqn: str, manifest: Manifest
-) -> list[dict[str, str]] | None:
-    """Distinct (year, type) elections above the voter-count floor — the
-    voting-history-detail picker's options, newest first. None when the dataset
-    has no such field."""
+) -> list[dict[str, Any]] | None:
+    """The version's election registry — picker options + the bit assignment the
+    compiler maps selected keys through. Read back from the `elections` table
+    assembly wrote, the single bit-assignment source. None when the dataset has
+    no voting-history-detail field."""
     field = next(
         (fd for section in manifest.fields for fd in section if fd.filter_kind == "voting-history-detail"),
         None,
     )
     if field is None:
         return None
-    column = field.column or field.identifier
-    # Same key expression the detail filter compiles against (`election_key_sql`),
-    # so a picked value always matches a compiled predicate. The floor drops
-    # degenerate keys (corrupt years, phantom off-cycle types) that only a handful
-    # of voters carry.
-    rows = conn.execute(
-        f"""
-        SELECT e.year AS year, e.type AS type, {election_key_sql("e")} AS key
-        FROM {geocoded_fqn}, UNNEST({column}) AS t(e)
-        WHERE e.year IS NOT NULL
-        GROUP BY 1, 2, 3
-        HAVING count(DISTINCT external_id) >= ?
-        """,
-        [ELECTION_MIN_VOTERS],
-    ).fetchall()
-    # Newest first: year desc, then type.
-    rows.sort(key=lambda r: (-r[0], r[1]))
-    return [{"value": key, "label": election_label(year, type_)} for year, type_, key in rows]
+    elections_fqn = f"{geocoded_fqn.rsplit('.', 1)[0]}.{ELECTIONS_TABLE}"
+    rows = conn.execute(f"SELECT key, year, type, bit FROM {elections_fqn} ORDER BY bit").fetchall()
+    return [{"value": key, "label": election_label(year, type_), "bit": bit} for key, year, type_, bit in rows]

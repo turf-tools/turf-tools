@@ -117,16 +117,18 @@ def dataset_version_schema(dataset_slug: str, version_number: int) -> str:
 
 @dataclass(frozen=True)
 class ResolvedVersion:
-    """A resolved dataset version. Both the DuckLake `schema` and the field
-    `manifest` are just properties of the version — a live segment resolves the
-    active version, a published turf its pinned one, and each then derives the
-    schema it queries and the manifest it compiles against from the same place.
+    """A resolved dataset version. The DuckLake `schema`, the field `manifest`,
+    and the `derived_metadata` blob are all just properties of the version — a
+    live segment resolves the active version, a published turf its pinned one,
+    and each then derives the schema it queries and the metadata it compiles
+    against from the same place.
     """
 
     dataset_version_id: str
     dataset_slug: str
     version_number: int
     manifest: Manifest
+    derived_metadata: dict | None = None
 
     @property
     def schema(self) -> str:
@@ -185,7 +187,7 @@ def resolve_version_by_id(conn: "duckdb.DuckDBPyConnection", dataset_version_id:
         return cached
     row = conn.execute(
         f"""
-        SELECT d.slug, v.version_number, v.manifest
+        SELECT d.slug, v.version_number, v.manifest, v.derived_metadata
         FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
         JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
         WHERE v.dataset_version_id = ?::UUID
@@ -194,12 +196,13 @@ def resolve_version_by_id(conn: "duckdb.DuckDBPyConnection", dataset_version_id:
     ).fetchone()
     if row is None:
         raise ValueError(f"dataset_version {dataset_version_id!r} not found")
-    dataset_slug, version_number, manifest = row
+    dataset_slug, version_number, manifest, derived_metadata = row
     resolved = ResolvedVersion(
         dataset_version_id=dataset_version_id,
         dataset_slug=dataset_slug,
         version_number=version_number,
         manifest=_parse_manifest(manifest),
+        derived_metadata=json.loads(derived_metadata) if isinstance(derived_metadata, str) else derived_metadata,
     )
     _resolved_versions[dataset_version_id] = resolved
     return resolved

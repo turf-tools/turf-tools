@@ -5,10 +5,13 @@ Used by the typed query endpoints (`/persons/count`, `/persons/by-key`,
 the persons-side filter portion of their SQL.
 
 User values flow through `params` (DuckDB `?` bind), never through
-string interpolation. Field metadata from the catalog (column names) is
-the only thing that lands directly in the SQL string.
+string interpolation. Only two things land directly in the SQL string:
+field metadata from the catalog (column names), and election-mask
+integer literals — user-selected election keys mapped through the
+version's registry into ints, never the user's text itself.
 """
 
+from datetime import date
 from typing import Any
 
 from .criteria import (
@@ -41,7 +44,7 @@ from .criteria import (
     VotingHistoryDetailFieldDef,
     VotingHistoryDetailFilter,
 )
-from .elections import election_key_sql
+from .elections import election_type, election_year, mask_column, word_masks
 
 
 class CriteriaError(ValueError):
@@ -421,22 +424,32 @@ def _address_clause(f: AddressFilter, def_: FieldDef, params: list[Any]) -> str:
     return "(" + " AND ".join(parts) + ")"
 
 
+def _registry_bits(def_: VotingHistoryCountFieldDef | VotingHistoryDetailFieldDef) -> dict[str, int]:
+    if def_.bits is None:
+        raise CriteriaError(f"Field {def_.key}: version has no election-mask registry — reimport or backfill it")
+    return def_.bits
+
+
 def _voting_history_count_clause(f: VotingHistoryCountFilter, def_: FieldDef, params: list[Any]) -> str:
     if not isinstance(def_, VotingHistoryCountFieldDef):
         raise CriteriaError(f"Field {f.key} is not a voting-history-count field")
     if f.window_years <= 0 or f.count < 0:
         return ""
+    bits = _registry_bits(def_)
+    # The registry only carries above-floor elections, so a bit_count is a
+    # count of *distinct real* elections — duplicate history entries and
+    # degenerate keys (corrupt future years etc.) never inflate it.
+    # `year > current - N` counts the N most recent years inclusive of the
+    # current one — "last 1 year" in 2026 is 2026 only.
     types = _VH_TYPE_GROUPS[f.type]
-    type_placeholders = ", ".join("?" for _ in types)
-    # list_filter + len keeps this a scalar expression (no correlated subquery).
-    # `year > year(current_date) - N` counts the N most recent years inclusive of
-    # the current one — "last 1 year" in 2026 is 2026 only, "last 2" is 2025-2026.
-    inner = f"len(list_filter({def_.column}, e -> e.year > year(current_date) - ? AND e.type IN ({type_placeholders})))"
-    params.append(f.window_years)
-    params.extend(types)
+    cutoff = date.today().year - f.window_years
+    selected = [k for k in bits if election_year(k) > cutoff and election_type(k) in types]
+    masks = word_masks(bits, selected) if selected else []
+    counts = [f"bit_count({mask_column(def_.column, w)} & {m}::UBIGINT)" for w, m in enumerate(masks) if m]
+    inner = " + ".join(counts) if counts else "0"
     op = ">=" if f.comparator == "at_least" else "="
     params.append(f.count)
-    return f"{inner} {op} ?"
+    return f"({inner}) {op} ?"
 
 
 def _voting_history_detail_clause(f: VotingHistoryDetailFilter, def_: FieldDef, params: list[Any]) -> str:
@@ -444,15 +457,21 @@ def _voting_history_detail_clause(f: VotingHistoryDetailFilter, def_: FieldDef, 
         raise CriteriaError(f"Field {f.key} is not a voting-history-detail field")
     if not f.elections:
         return ""
-    placeholders = ", ".join("?" for _ in f.elections)
-    params.extend(f.elections)
-    # Project each person's entries to their (year, type) election keys, then
-    # test membership. `election_key_sql` is the same expression the picker
-    # precompute builds its option values from, so keys can't drift. `any` →
-    # overlaps the selected set; `all` → contains every selected election.
-    keys = f"list_transform({def_.column}, e -> {election_key_sql('e')})"
-    fn = "list_has_all" if f.mode == "all" else "list_has_any"
-    return f"{fn}({keys}, [{placeholders}])"
+    bits = _registry_bits(def_)
+    # A selected key absent from the registry doesn't exist in this version, so
+    # nobody voted in it: it's unsatisfiable under `all`, and contributes no
+    # matches under `any`.
+    known = [k for k in f.elections if k in bits]
+    if not known or (f.mode == "all" and len(known) < len(f.elections)):
+        return "1=0"
+    masks = word_masks(bits, known)
+    if f.mode == "all":
+        terms = [f"({mask_column(def_.column, w)} & {m}::UBIGINT) = {m}::UBIGINT" for w, m in enumerate(masks) if m]
+        joined = " AND ".join(terms)
+    else:
+        terms = [f"({mask_column(def_.column, w)} & {m}::UBIGINT) != 0" for w, m in enumerate(masks) if m]
+        joined = " OR ".join(terms)
+    return joined if len(terms) == 1 else f"({joined})"
 
 
 def _key_filter_clause(catalog: FieldCatalog, kf: KeyFilter, params: list[Any]) -> str:

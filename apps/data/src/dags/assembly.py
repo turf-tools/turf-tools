@@ -21,6 +21,12 @@ consumers query.
 
 import duckdb
 from src.addressing import housenumber_display_sql, housenumber_norm_sql
+from src.dsl.elections import (
+    ELECTIONS_TABLE,
+    VOTING_HISTORY_COLUMN,
+    compute_election_registry,
+    mask_select_exprs,
+)
 from src.models import TableRef
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
@@ -188,6 +194,11 @@ def persons_geocoded(
     convention. Single-family doors get a double-pipe in door_id (empty
     middle segment) so building_id and door_id never collide.
 
+    Election participation is also materialized as fixed-width mask
+    columns (`voting_history_mask_<w>`, see dsl/elections.py) so the
+    voting-history filters compile to bitwise tests instead of scanning
+    the STRUCT[] column per query.
+
     Schema: drops and recreates on every run. Tolerates schema iteration
     while the canonical-record shape is being settled.
     """
@@ -200,6 +211,7 @@ def persons_geocoded(
     coords_fqn = refined_positions.fqn
     osm_only_fqn = osm_only_matches.fqn
 
+    mask_exprs = _election_masks(conn, schema, persons_fqn)
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} AS
@@ -262,6 +274,7 @@ def persons_geocoded(
             *,
             IF(building_id IS NULL, NULL, dense_rank() OVER (ORDER BY building_id)) AS building_i,
             IF(door_id IS NULL, NULL, dense_rank() OVER (ORDER BY door_id))         AS door_i
+            {"".join(f", {e}" for e in mask_exprs)}
         FROM assembled
         ORDER BY zip5
     """)
@@ -273,6 +286,37 @@ def persons_geocoded(
         table=table_suffix,
         version=version,
     )
+
+
+def _election_masks(conn: duckdb.DuckDBPyConnection, schema: str, persons_fqn: str) -> list[str]:
+    """Election-mask SELECT expressions for the persons_geocoded build, plus the
+    version's `elections` registry table (bit order = year desc, type — newest
+    first, so recent-election queries stay inside mask word 0). Registry counts
+    run over persons_validated: a superset of the geocoded rows, so every
+    above-floor election in the final table is guaranteed a bit. Datasets
+    without a voting-history column get no registry and no mask columns."""
+    has_column = any(
+        r[0] == VOTING_HISTORY_COLUMN for r in conn.execute(f"DESCRIBE SELECT * FROM {persons_fqn} LIMIT 0").fetchall()
+    )
+    if not has_column:
+        return []
+    registry = compute_election_registry(conn, persons_fqn)
+    elections_fqn = table_fqn(schema, ELECTIONS_TABLE)
+    conn.execute(f"DROP TABLE IF EXISTS {elections_fqn}")
+    conn.execute(f"""
+        CREATE TABLE {elections_fqn} (
+            key   VARCHAR,
+            year  INTEGER,
+            type  VARCHAR,
+            bit   INTEGER
+        )
+    """)
+    if registry:
+        conn.executemany(
+            f"INSERT INTO {elections_fqn} VALUES (?, ?, ?, ?)",
+            [(key, year, type_, bit) for bit, (key, year, type_) in enumerate(registry)],
+        )
+    return mask_select_exprs([key for key, _year, _type in registry])
 
 
 # ---------------------------------------------------------------------------

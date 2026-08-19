@@ -35,9 +35,11 @@ export type DatasetVersionStatus = "importing" | "ready" | "failed";
 // so reads never recompute them over the (immutable) version's rows. Written by
 // the data server's `finalize_version` alongside `manifest`. `rowCount` is the
 // person count; `elections` backs the voting-history-detail filter's picker.
+// `bit` is the election's position in the persons table's mask columns, which
+// the data server's filter compiler maps selections through.
 export type DerivedMetadata = {
   rowCount?: number;
-  elections?: { value: string; label: string }[];
+  elections?: { value: string; label: string; bit?: number }[];
 };
 
 // An immutable, retained version of a dataset. Never deleted, so any pinned

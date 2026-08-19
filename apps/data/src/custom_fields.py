@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.dsl.criteria import FieldCatalog, build_field_catalog
+from src.dsl.elections import election_bits
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, heal_stale_attach
 from src.settings import get_settings
 from src.tables import (
@@ -166,11 +167,12 @@ def query_context(conn: duckdb.DuckDBPyConnection, org_slug: str) -> tuple[Resol
     with timed("catalog"):
         custom_fields = {fid: ftype for (_vid, fid, ftype) in rows if fid is not None}
         if not custom_fields:
-            return version, build_field_catalog(version.manifest)
+            return version, build_field_catalog(version.manifest, election_bits=election_bits(version.derived_metadata))
         return version, build_field_catalog(
             version.manifest,
             custom_table=custom_fields_table_for(conn, version.dataset_slug),
             custom_fields=custom_fields,
+            election_bits=election_bits(version.derived_metadata),
         )
 
 
@@ -198,6 +200,7 @@ def _catalog_for(conn: duckdb.DuckDBPyConnection, version: ResolvedVersion) -> F
         version.manifest,
         custom_table=custom_fields_table_for(conn, version.dataset_slug),
         custom_fields={r[0]: r[1] for r in rows},
+        election_bits=election_bits(version.derived_metadata),
     )
 
 

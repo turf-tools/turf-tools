@@ -258,13 +258,18 @@ class DateRangeFieldDef(BaseModel):
 class VotingHistoryCountFieldDef(BaseModel):
     kind: Literal["voting-history-count"]
     key: str  # catalog identifier, e.g. "voting_history_count"
-    column: str  # the STRUCT[] column the clause array-scans, e.g. "voting_history"
+    column: str  # the STRUCT[] column the masks were materialized from, e.g. "voting_history"
+    # The version's election registry (key→bit). Both clauses compile to bitwise
+    # tests on the `<column>_mask_<w>` columns; None means the version has no
+    # registry (compile raises).
+    bits: dict[str, int] | None = None
 
 
 class VotingHistoryDetailFieldDef(BaseModel):
     kind: Literal["voting-history-detail"]
     key: str  # catalog identifier, e.g. "voting_history_detail"
-    column: str  # the STRUCT[] column the clause array-scans (shared with count)
+    column: str  # the STRUCT[] column the masks were materialized from (shared with count)
+    bits: dict[str, int] | None = None
 
 
 class AddressFieldDef(BaseModel):
@@ -324,11 +329,13 @@ def build_field_catalog(
     manifest: Manifest,
     custom_table: str | None = None,
     custom_fields: dict[str, str] | None = None,
+    election_bits: dict[str, int] | None = None,
 ) -> FieldCatalog:
     """Derive the compiler catalog from a dataset version's `Manifest`.
 
     Manifest `filter_kind` values mirror the compiler's `FieldDef` kinds 1:1, so
-    this is near-identity.
+    this is near-identity. `election_bits` is the resolved version's registry
+    (see `elections.election_bits`) and lands on the voting-history field defs.
     """
     fields: dict[str, FieldDef] = {}
     key_groups: dict[str, str] = {}
@@ -349,9 +356,13 @@ def build_field_catalog(
         elif fd.filter_kind == "date-range":
             fields[key] = DateRangeFieldDef(kind="date-range", key=key)
         elif fd.filter_kind == "voting-history-count":
-            fields[key] = VotingHistoryCountFieldDef(kind="voting-history-count", key=key, column=fd.column or key)
+            fields[key] = VotingHistoryCountFieldDef(
+                kind="voting-history-count", key=key, column=fd.column or key, bits=election_bits
+            )
         elif fd.filter_kind == "voting-history-detail":
-            fields[key] = VotingHistoryDetailFieldDef(kind="voting-history-detail", key=key, column=fd.column or key)
+            fields[key] = VotingHistoryDetailFieldDef(
+                kind="voting-history-detail", key=key, column=fd.column or key, bits=election_bits
+            )
         elif fd.filter_kind == "address":
             fields[key] = AddressFieldDef(kind="address", key="address")
         if fd.key_group:

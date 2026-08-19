@@ -1,5 +1,7 @@
 """Tests for criteria → WHERE compilation and the cascade aggregate query."""
 
+from datetime import date
+
 import pytest
 
 from src.dsl.compile import (
@@ -32,7 +34,19 @@ from src.dsl.criteria import (
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 
 # The compiler is manifest-driven; exercise it against the real NYS field set.
-CATALOG = build_field_catalog(NYS_MANIFEST)
+# The election registry is per-version data (bits assigned newest-first at
+# import); count-filter windows are relative to today, so key years are too.
+# `2005-general` at bit 64 exercises the second mask word.
+_Y = date.today().year
+ELECTION_BITS = {
+    f"{_Y}-general": 0,
+    f"{_Y}-primary": 1,
+    f"{_Y - 1}-general": 2,
+    f"{_Y - 1}-presidential_primary": 3,
+    f"{_Y - 2}-general": 4,
+    "2005-general": 64,
+}
+CATALOG = build_field_catalog(NYS_MANIFEST, election_bits=ELECTION_BITS)
 
 
 def _narrow(*filters) -> Criteria:
@@ -227,11 +241,10 @@ def test_voting_history_at_least_primary() -> None:
         None,
         params,
     )
-    assert "list_filter(voting_history" in where
-    assert "year(current_date) - ?" in where
-    assert ">= ?" in where
-    # window_years, then the two primary type values, then count.
-    assert params == [4, "primary", "presidential_primary", 3]
+    # In-window primaries: bits 1 (this year's primary) + 3 (last year's
+    # presidential primary) → mask 0b1010; popcount against the mask column.
+    assert where == "WHERE (bit_count(voting_history_mask_0 & 10::UBIGINT)) >= ?"
+    assert params == [3]
 
 
 def test_address_all_four_fields() -> None:
@@ -305,9 +318,9 @@ def test_voting_history_exactly_general() -> None:
         None,
         params,
     )
-    assert "list_filter(voting_history" in where
-    assert ") = ?" in where
-    assert params == [4, "general", 1]
+    # In-window generals: bits 0, 2, 4 → mask 0b10101.
+    assert where == "WHERE (bit_count(voting_history_mask_0 & 21::UBIGINT)) = ?"
+    assert params == [1]
 
 
 def test_voting_history_detail_any_membership() -> None:
@@ -320,15 +333,15 @@ def test_voting_history_detail_any_membership() -> None:
                 kind="voting-history-detail",
                 key="voting_history_detail",
                 mode="any",
-                elections=["2024-primary", "2022-general"],
+                elections=[f"{_Y}-primary", f"{_Y - 1}-general"],
             )
         ),
         None,
         params,
     )
-    # Reads the physical voting_history column (not the synthetic catalog key).
-    assert "list_has_any(list_transform(voting_history" in where
-    assert params == ["2024-primary", "2022-general"]
+    # Bits 1 + 2 → mask 0b110; selected keys map to a mask literal, not params.
+    assert where == "WHERE (voting_history_mask_0 & 6::UBIGINT) != 0"
+    assert params == []
 
 
 def test_voting_history_detail_all_membership() -> None:
@@ -341,14 +354,77 @@ def test_voting_history_detail_all_membership() -> None:
                 kind="voting-history-detail",
                 key="voting_history_detail",
                 mode="all",
-                elections=["2024-primary", "2022-general"],
+                elections=[f"{_Y}-primary", f"{_Y - 1}-general"],
             )
         ),
         None,
         params,
     )
-    assert "list_has_all(list_transform(voting_history" in where
-    assert params == ["2024-primary", "2022-general"]
+    assert where == "WHERE (voting_history_mask_0 & 6::UBIGINT) = 6::UBIGINT"
+    assert params == []
+
+
+def test_voting_history_detail_spans_mask_words() -> None:
+    """A selection reaching past bit 63 adds a second-word term; words the
+    selection doesn't touch contribute none."""
+    params: list = []
+    where = criteria_to_where(
+        CATALOG,
+        _narrow(
+            VotingHistoryDetailFilter(
+                kind="voting-history-detail",
+                key="voting_history_detail",
+                mode="any",
+                elections=[f"{_Y}-general", "2005-general"],
+            )
+        ),
+        None,
+        params,
+    )
+    assert where == ("WHERE ((voting_history_mask_0 & 1::UBIGINT) != 0 OR (voting_history_mask_1 & 1::UBIGINT) != 0)")
+    assert params == []
+
+
+def test_voting_history_detail_unknown_key_matches_nothing() -> None:
+    """Keys absent from the version's registry: `any` over only-unknown keys is
+    unsatisfiable, and one unknown key poisons `all`."""
+    for mode, elections in (("any", ["1900-general"]), ("all", [f"{_Y}-general", "1900-general"])):
+        params: list = []
+        where = criteria_to_where(
+            CATALOG,
+            _narrow(
+                VotingHistoryDetailFilter(
+                    kind="voting-history-detail",
+                    key="voting_history_detail",
+                    mode=mode,
+                    elections=elections,
+                )
+            ),
+            None,
+            params,
+        )
+        assert where == "WHERE 1=0"
+        assert params == []
+
+
+def test_voting_history_without_registry_raises() -> None:
+    """A version resolved without an election registry can't compile
+    voting-history filters — backfill/reimport, never silently mis-filter."""
+    catalog = build_field_catalog(NYS_MANIFEST)
+    with pytest.raises(CriteriaError, match="registry"):
+        criteria_to_where(
+            catalog,
+            _narrow(
+                VotingHistoryDetailFilter(
+                    kind="voting-history-detail",
+                    key="voting_history_detail",
+                    mode="any",
+                    elections=[f"{_Y}-general"],
+                )
+            ),
+            None,
+            [],
+        )
 
 
 def test_voting_history_detail_empty_is_inactive() -> None:
