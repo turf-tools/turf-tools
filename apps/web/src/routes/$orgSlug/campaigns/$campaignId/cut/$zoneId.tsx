@@ -419,6 +419,9 @@ export function Cutter({
 
   const publishMutation = useMutation({
     mutationFn: () => client.turfs.publish({ campaignId, zoneId }),
+    // Errors render inline in the publish dialog's callout; skip the
+    // global toast.
+    meta: { errorHandled: true },
     onSuccess: () => {
       setPublishOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["turfs"] });
@@ -544,10 +547,11 @@ export function Cutter({
         <Button
           disabled={publishSummary.count === 0}
           onClick={() => {
-            // Clear any stale error from a prior failed attempt so the
-            // dialog reopens clean. Synchronous so the open render sees
-            // both `publishOpen=true` and `error=null` in one pass.
-            if (publishMutation.error) publishMutation.reset();
+            // Clear stale state from the prior attempt — an old error, or
+            // the success that holds the confirm button's spinner through
+            // the close animation. Synchronous so the open render sees
+            // clean state and `publishOpen=true` in one pass.
+            publishMutation.reset();
             setPublishOpen(true);
           }}
         >
@@ -664,7 +668,12 @@ export function Cutter({
           ) : null}
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button onClick={() => publishMutation.mutate()} loading={publishMutation.isPending}>
+            <Button
+              onClick={() => publishMutation.mutate()}
+              // isSuccess keeps the spinner up while the dialog animates
+              // closed — isPending alone flashes the idle icon first.
+              loading={publishMutation.isPending || publishMutation.isSuccess}
+            >
               <Send />
               Publish
             </Button>

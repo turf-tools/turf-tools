@@ -465,7 +465,7 @@ function GroupHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("flex items-baseline gap-3", className)}>
+    <div className={cn("flex items-baseline gap-6", className)}>
       <p className="min-w-0 flex-1 text-muted-foreground leading-5">{group.name}</p>
       <button
         type="button"

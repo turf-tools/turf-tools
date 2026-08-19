@@ -64,7 +64,7 @@ export function Sidebar({ collapsed, onToggle, role, orgSlug }: SidebarProps) {
     items.filter((i) => !i.requires || (role != null && hasPermission(role, i.requires)));
 
   return (
-    <nav className="flex h-full flex-col gap-6 px-2 pt-3.5 pb-4">
+    <nav className="flex h-full flex-col gap-6 overflow-y-auto px-2 pt-3.5 pb-4">
       <NavGroup
         items={visible(PRIMARY)}
         collapsed={collapsed}

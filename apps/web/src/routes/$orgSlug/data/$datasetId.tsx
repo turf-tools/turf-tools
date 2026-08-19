@@ -614,6 +614,9 @@ type FieldRow = {
   values: string[] | null;
   personCount: number;
   isArchived: boolean;
+  // Latest upload's counts — null for fields predating count tracking.
+  rowCount: number | null;
+  matchedCount: number | null;
 };
 
 // Every custom field with its coverage, bars scaled to the largest. Click a
@@ -824,13 +827,27 @@ function FieldDialog({
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Type</label>
-            {/* Static — retyping a field would invalidate already-typed
-                values; the honest path is clear + re-append. */}
-            <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm">
-              {field ? FIELD_TYPE_META[field.fieldType] : ""}
-            </span>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Type</label>
+              {/* Static — retyping a field would invalidate already-typed
+                  values; the honest path is clear + re-append. */}
+              <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm">
+                {field ? FIELD_TYPE_META[field.fieldType] : ""}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Total</label>
+              <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm tabular-nums">
+                {field?.rowCount != null ? field.rowCount.toLocaleString() : "—"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Matched</label>
+              <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm tabular-nums">
+                {field?.matchedCount != null ? field.matchedCount.toLocaleString() : "—"}
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-col gap-1.5">

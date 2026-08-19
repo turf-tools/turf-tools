@@ -60,7 +60,7 @@ import {
   type VotingHistoryDetailFilter,
   VERB_META,
 } from "~/lib/filters";
-import { useRememberSelection } from "~/lib/last-selected";
+import { useRememberedState, useRememberSelection } from "~/lib/last-selected";
 import {
   segmentCascadeQuery,
   segmentCountsQuery,
@@ -149,7 +149,9 @@ function SegmentEditor() {
     [authoredCriteria.steps, segmentsById],
   );
 
-  const [view, setView] = useState<"map" | "list" | "waterfall">("map");
+  // Session-remembered across visits, like the segment selection itself.
+  const [rememberedView, setView] = useRememberedState(orgSlug, "segments-view", "map");
+  const view = rememberedView === "list" || rememberedView === "waterfall" ? rememberedView : "map";
 
   // Counts are always needed (shown in every view). View-specific queries
   // only fire when that view is active — no point hitting DuckDB for data
@@ -277,16 +279,26 @@ function SegmentEditor() {
   // Auto-scroll the step list to the bottom when a step is added so the
   // newly-added step is always visible even when the list overflows.
   const stepsContainerRef = useRef<HTMLDivElement>(null);
-  const prevStepsLengthRef = useRef(steps.length);
+  // Track per-segment so tabbing between segments doesn't read "count grew."
+  const prevStepsRef = useRef<{ segmentId: string; length: number } | null>(null);
   useEffect(() => {
-    if (steps.length > prevStepsLengthRef.current && stepsContainerRef.current) {
+    // While the segment itself is loading, steps going 0→N is data arrival,
+    // not a user add — don't record a baseline or scroll.
+    if (!activeSegmentDetail) return;
+    const prev = prevStepsRef.current;
+    if (
+      prev &&
+      prev.segmentId === segmentId &&
+      steps.length > prev.length &&
+      stepsContainerRef.current
+    ) {
       stepsContainerRef.current.scrollTo({
         top: stepsContainerRef.current.scrollHeight,
         behavior: "smooth",
       });
     }
-    prevStepsLengthRef.current = steps.length;
-  }, [steps.length]);
+    prevStepsRef.current = { segmentId, length: steps.length };
+  }, [activeSegmentDetail, segmentId, steps.length]);
 
   return (
     <div className="flex gap-4 h-full">

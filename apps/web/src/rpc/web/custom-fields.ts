@@ -1,6 +1,11 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq } from "@turf-tools/db";
-import { customFields, datasetOrganizations, datasets } from "@turf-tools/db/schema";
+import { and, asc, desc, eq } from "@turf-tools/db";
+import {
+  customFields,
+  customFieldUploads,
+  datasetOrganizations,
+  datasets,
+} from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
@@ -30,7 +35,24 @@ export const list = pub
       .from(customFields)
       .where(eq(customFields.datasetId, datasetId))
       .orderBy(asc(customFields.label));
-    return rows.map(({ archivedAt, ...f }) => ({ ...f, isArchived: archivedAt != null }));
+    // Latest upload per field — the field dialog shows its row/matched counts.
+    const uploads = await context.db
+      .select({
+        customFieldId: customFieldUploads.customFieldId,
+        rowCount: customFieldUploads.rowCount,
+        matchedCount: customFieldUploads.matchedCount,
+      })
+      .from(customFieldUploads)
+      .where(eq(customFieldUploads.datasetId, datasetId))
+      .orderBy(desc(customFieldUploads.createdAt));
+    const latest = new Map<string, { rowCount: number | null; matchedCount: number | null }>();
+    for (const u of uploads) if (!latest.has(u.customFieldId)) latest.set(u.customFieldId, u);
+    return rows.map(({ archivedAt, ...f }) => ({
+      ...f,
+      isArchived: archivedAt != null,
+      rowCount: latest.get(f.customFieldId)?.rowCount ?? null,
+      matchedCount: latest.get(f.customFieldId)?.matchedCount ?? null,
+    }));
   });
 
 // Rename is a one-row UPDATE with no fallout: criteria and lake values are

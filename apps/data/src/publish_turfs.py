@@ -101,6 +101,7 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     key_filter = KeyFilter(keyGroup=scope.key_group, keys=scope.keys) if scope.key_group is not None else None
     where_sql = criteria_to_where(catalog, criteria, key_filter, where_params)
     _check_no_ambiguous_assignments(conn, req, schema, where_sql, where_params)
+    _check_no_empty_turfs(conn, req, schema, where_sql, where_params)
 
     # Which optional payload fields this dataset actually has — the rest are left
     # out of the per-person blob so publish works for any importer.
@@ -218,6 +219,52 @@ def _check_no_ambiguous_assignments(
                 f"fall{'s' if ambiguous_count == 1 else ''} inside more than one turf."
                 " Adjust the turfs so that each building belongs to exactly "
                 "one turf before publishing."
+            ),
+        )
+
+
+def _check_no_empty_turfs(
+    conn: duckdb.DuckDBPyConnection,
+    req: PublishTurfsRequest,
+    schema: str,
+    where_sql: str,
+    where_params: list[Any],
+) -> None:
+    """Reject publishes where any draft polygon contains no matched
+    buildings (⇒ a zero-door turf — doors only exist through assigned
+    buildings). An empty turf is never intentional — usually a stray
+    polygon left behind while editing — and it would publish as an
+    unwalkable turf, so fail and make the user remove or redraw it."""
+    persons_table = resolve("{persons_geocoded}", schema)
+    buildings_table = resolve("{buildings_geocoded}", schema)
+    sql = f"""
+    WITH drafts AS (
+        SELECT ST_GeomFromGeoJSON(d.geometry::VARCHAR) AS geom
+        FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts d
+        WHERE d.campaign_id = ?::UUID AND d.zone_id IS NOT DISTINCT FROM ?::UUID
+    ),
+    matched_buildings AS (
+        SELECT DISTINCT b.building_id, b.longitude, b.latitude
+        FROM (SELECT DISTINCT building_id FROM {persons_table} {where_sql}) p
+        JOIN {buildings_table} b ON b.building_id = p.building_id
+    )
+    SELECT count(*)::INT
+    FROM drafts d
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM matched_buildings mb
+        WHERE ST_Contains(d.geom, ST_Point(mb.longitude, mb.latitude))
+    );
+    """
+    row = conn.execute(sql, [req.campaignId, req.zoneId, *where_params]).fetchone()
+    empty_count = int(row[0]) if row else 0
+    if empty_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{empty_count} turf{'s' if empty_count > 1 else ''} "
+                f"contain{'s' if empty_count == 1 else ''} no doors."
+                " Remove or redraw the empty turfs before publishing."
             ),
         )
 

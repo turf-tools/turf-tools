@@ -40,8 +40,8 @@ export const customFields = app.table(
 );
 
 // Provenance for one append — inserted after the synchronous ingest succeeds
-// (failed appends write nothing). Audit-only: nothing renders it today, but
-// lake values carry `upload_id` so every value traces back here.
+// (failed appends write nothing). The field dialog renders the latest upload's
+// counts; lake values carry `upload_id` so every value traces back here.
 export const customFieldUploads = app.table("custom_field_uploads", {
   customFieldUploadId: uuid().defaultRandom().primaryKey(),
   datasetId: uuid()

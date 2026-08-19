@@ -130,7 +130,7 @@ function QuestionsTable({
     <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
-          <TableHead className="w-56">Name</TableHead>
+          <TableHead className="w-72">Name</TableHead>
           <TableHead className="w-36">Type</TableHead>
           <TableHead>Text</TableHead>
           <TableHead className="w-24">Used in</TableHead>

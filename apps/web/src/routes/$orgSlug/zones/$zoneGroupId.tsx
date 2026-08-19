@@ -17,7 +17,7 @@ import { Pill } from "~/components/pill";
 import { Swatch } from "~/components/swatch";
 import { Switch } from "~/components/switch";
 import { darkAtom } from "~/lib/atoms/theme";
-import { useRememberSelection } from "~/lib/last-selected";
+import { useRememberedState, useRememberSelection } from "~/lib/last-selected";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { liveAwareStaleTime, segmentDetailQuery, segmentsListQuery } from "~/lib/queries/segments";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
@@ -62,10 +62,18 @@ function ZoneGroupEditor() {
 
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
 
-  // Segment-counts overlay. State sticks across toggle off/on so flicking
-  // back resumes with the same segment.
+  // Segment-counts overlay. The segment sticks across toggle off/on and
+  // across visits (session-remembered, like the zone group itself); a
+  // remembered segment that no longer exists drops to no selection.
   const [showSegmentCounts, setShowSegmentCounts] = useState(false);
-  const [overlaySegmentId, setOverlaySegmentId] = useState<string | null>(null);
+  const [rememberedSegmentId, setOverlaySegmentId] = useRememberedState(
+    orgSlug,
+    "zones-overlay-segment",
+    null,
+  );
+  const overlaySegmentId = segments?.some((s) => s.segmentId === rememberedSegmentId)
+    ? rememberedSegmentId
+    : null;
   const overlaySegmentDropdown = useDeferredRadioDropdown({
     onCommit: (v) => setOverlaySegmentId(v || null),
   });
@@ -214,12 +222,18 @@ function ZoneGroupEditor() {
   // heatmap on doors with sqrt scaling.
   const overlayActive = showSegmentCounts && !!overlayCounts;
 
+  // Overlay on but counts still in flight (fresh toggle or segment switch):
+  // blank the fills rather than cycling through zone colors on the way to
+  // the new heatmap.
+  const overlayPending = showSegmentCounts && !!overlaySegmentId && !overlayCounts;
+
   type KeyCount = { doors: number; people: number };
   const overlayCountsByKey = overlayActive
     ? (overlayCounts.counts as Record<string, KeyCount>)
     : null;
 
   const coloringByKey = useMemo(() => {
+    if (overlayPending) return {};
     if (overlayCountsByKey) {
       let max = 0;
       for (const v of Object.values(overlayCountsByKey)) if (v.doors > max) max = v.doors;
@@ -236,7 +250,7 @@ function ZoneGroupEditor() {
       for (const key of zone.keys) out[key] = color;
     });
     return out;
-  }, [zones, overlayCountsByKey, isDark]);
+  }, [zones, overlayCountsByKey, overlayPending, isDark]);
 
   // Keys with a thicker outline — every key in the selected zone.
   const activeKeys = useMemo(() => {
@@ -488,7 +502,11 @@ function ZoneGroupEditor() {
               render={<Button variant="outline" className="w-full justify-between" />}
             >
               <span className="min-w-0 truncate">
-                {segments?.find((s) => s.segmentId === overlaySegmentId)?.name ?? "Pick a segment…"}
+                {(() => {
+                  const s = segments?.find((s) => s.segmentId === overlaySegmentId);
+                  if (!s) return "Pick a segment…";
+                  return s.isArchived ? `${s.name} (Archived)` : s.name;
+                })()}
               </span>
               <ChevronDown className="size-3.5 shrink-0" />
             </DropdownMenuTrigger>
@@ -502,6 +520,7 @@ function ZoneGroupEditor() {
                   .map((s) => (
                     <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
                       {s.name}
+                      {s.isArchived ? " (Archived)" : null}
                     </DropdownMenuRadioItem>
                   ))}
               </DropdownMenuRadioGroup>
