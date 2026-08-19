@@ -46,7 +46,10 @@ export function Shell({ children, role, orgSlug, orgName, orgs }: ShellProps) {
             orgSlug={orgSlug}
           />
         </aside>
-        <main className="flex-1">{children}</main>
+        {/* min-w-0: without it, intrinsically wide content (a long
+            filter label, an unwrapped table) stretches main past the
+            viewport and defeats every truncate/overflow below. */}
+        <main className="min-w-0 flex-1">{children}</main>
       </div>
     </div>
   );

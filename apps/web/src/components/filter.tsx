@@ -35,9 +35,9 @@ export function Filter({ icon, label, value, options, allLabel = "All", onChange
 
   return (
     <DropdownMenu {...dd.menu}>
-      {/* min-w-0/shrink + truncate: a long option label ellipsizes inside
-          the trigger instead of pushing its flex row off-screen. */}
-      <DropdownMenuTrigger render={<Button variant="outline" className="min-w-0 shrink" />}>
+      <DropdownMenuTrigger
+        render={<Button variant="outline" className="max-w-56 min-w-0 shrink" />}
+      >
         {icon}
         <span className="truncate">{label ?? " "}</span>
         <ChevronDown className="size-3.5" />
