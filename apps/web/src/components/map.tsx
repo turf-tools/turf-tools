@@ -1,6 +1,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { useAtomValue } from "jotai";
+import { LoaderCircle } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Layer,
@@ -17,6 +18,7 @@ import {
   MAPTILER_OPENMAPTILES_TILEJSON_URL,
 } from "~/lib/maptiler";
 import { cn } from "~/lib/utils";
+import { useDelayedFlag } from "~/lib/use-delayed-flag";
 import { PointsLayer } from "./points-layer";
 import { Switch } from "./switch";
 
@@ -102,6 +104,10 @@ type MapProps = {
   // each just say `loading={!myDataReady}` and don't have to chase
   // map-internal events.
   loading?: boolean;
+  // Centered spinner on the loading curtain. Opt-in for maps whose
+  // context hides the global loading indicator (dialogs) — elsewhere
+  // that indicator already covers it.
+  loadingSpinner?: boolean;
   // Optional point overlay rendered via a custom WebGL layer. The
   // caller owns the data and passes a mercator-delta buffer + the fp64
   // origin those deltas were computed against straight into the GPU
@@ -219,6 +225,7 @@ export function Map({
   onPolygonHover,
   onBackgroundClick,
   loading,
+  loadingSpinner = false,
   points,
   pointColors,
   pointSizes,
@@ -285,6 +292,11 @@ export function Map({
   // bounds short-circuit the fit effect so a focus refetch doesn't reset
   // the camera the user just panned.
   const lastFitBoundsRef = useRef<readonly number[] | null>(null);
+  // Spinner on the curtain once it's been up a beat — the curtain is
+  // otherwise featureless, indistinguishable from an empty map.
+  // Delayed so fast loads never flash it.
+  const curtainUp = !mapReady || pendingFit || Boolean(loading);
+  const showSpinner = useDelayedFlag(loadingSpinner && curtainUp, { showAfter: 300 });
 
   useEffect(() => {
     if (!boundariesUrl) return;
@@ -1054,15 +1066,23 @@ export function Map({
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-0 z-30 bg-background",
+          "pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-background",
           // Show instantly when activating so a binding swap can never
           // leave the canvas partially visible during a fade-in;
           // transition only when retreating, so the reveal is smooth.
-          !mapReady || pendingFit || loading
-            ? "opacity-100"
-            : "opacity-0 transition-opacity duration-150",
+          curtainUp ? "opacity-100" : "opacity-0 transition-opacity duration-150",
         )}
-      />
+      >
+        {/* Fade lives on the wrapper — `animate-in` and `animate-spin`
+            both set `animation`, so on one element the spin clobbers
+            the fade. Stays mounted past curtain-drop (`minVisible`)
+            so it fades out with the curtain instead of popping off. */}
+        {showSpinner ? (
+          <span className="animate-in fade-in duration-300">
+            <LoaderCircle className="size-6 animate-spin text-muted-foreground [stroke-width:2.5]" />
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

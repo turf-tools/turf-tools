@@ -823,6 +823,7 @@ function ZoneMapDialog({
               pointColors={pointColors}
               fitBounds={bounds}
               loading={!zoneData}
+              loadingSpinner
               streetsAlwaysOn
               onBadgeClick={onSelectTurf}
             />
@@ -898,6 +899,7 @@ function TurfMapDialog({
               points={points}
               fitBounds={bounds}
               loading={!data}
+              loadingSpinner
               selectedZoneId={turf.turfId}
               streetsAlwaysOn
             />
