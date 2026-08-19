@@ -97,7 +97,7 @@ function RailNew({ label, onClick }: { label: string; onClick: () => void }) {
         type="button"
         onClick={onClick}
         className={cn(
-          "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+          "flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm",
           "text-muted-foreground hover:bg-muted hover:text-foreground",
         )}
       >
