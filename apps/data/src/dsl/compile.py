@@ -278,11 +278,12 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
     if isinstance(f, PersonIdSetFilter):
         # Resolved canvass / operational-data filter: a literal person set.
         # Empty set → 1=0 (no one matched), distinct from an inactive filter.
+        # One list bind — per-id placeholders dominate plan time as canvass
+        # volume grows (same cure as `_key_filter_clause`).
         if not f.ids:
             return "1=0"
-        placeholders = ", ".join("?" for _ in f.ids)
-        params.extend(f.ids)
-        return f"external_id IN ({placeholders})"
+        params.append(list(f.ids))
+        return "external_id IN (SELECT unnest(?))"
     if isinstance(f, (CanvassOutcomeFilter, CanvassResponseFilter)):
         # Should have been reduced to a PersonIdSetFilter in resolve.py.
         raise CriteriaError(f"{type(f).__name__} reached the compiler unresolved")

@@ -56,6 +56,8 @@ def resolve_criteria(
         if needs_segments:
             segments = _load_segments_for_org(conn, org_slug)
             criteria = expand_segment_refs(criteria, segments)
+            # Refs can hide canvass leaves; re-check the expanded tree.
+            needs_canvass = _has_canvass_refs(criteria)
         if needs_canvass:
             criteria = _resolve_canvass_refs(criteria, conn, org_slug)
         return criteria

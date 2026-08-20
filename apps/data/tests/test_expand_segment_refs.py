@@ -109,3 +109,23 @@ def test_leaves_non_segment_filters_untouched() -> None:
         ],
     )
     assert expand_segment_refs(outer, _map()) == outer
+
+
+def test_resolve_criteria_resolves_canvass_filter_hidden_behind_ref(monkeypatch) -> None:
+    # A canvass leaf visible only behind a ref must still resolve — the
+    # pre-expansion needs_canvass check can't see it.
+    from src.dsl import resolve
+    from src.dsl.criteria import CanvassOutcomeFilter, PersonIdSetFilter
+
+    monkeypatch.setattr(resolve, "attach_operational_postgres", lambda conn, settings: None)
+    canvass = CanvassOutcomeFilter(kind="canvass-outcome", outcomes=["canvassed"])
+    canvass_seg = _seg("a", "A", Criteria(steps=[Step(verb="narrow", filter=canvass)]))
+    monkeypatch.setattr(resolve, "_load_segments_for_org", lambda conn, org: _map(canvass_seg))
+    monkeypatch.setattr(resolve, "_canvass_outcome_person_ids", lambda conn, org, outcomes: ["p1"])
+
+    outer = Criteria(steps=[Step(verb="narrow", filter=_ref("a"))])
+    resolved = resolve.resolve_criteria(outer, conn=None, settings=None, org_slug="org")
+
+    nested = resolved.steps[0].filter
+    assert isinstance(nested, NestedFilter)
+    assert nested.criteria.steps[0].filter == PersonIdSetFilter(kind="person-id-set", ids=["p1"])

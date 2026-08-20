@@ -1145,6 +1145,7 @@ def test_nested_filter_compiles_recursively() -> None:
 
 
 def test_person_id_set_compiles_to_external_id_in() -> None:
+    # One list bind — per-id placeholders dominate plan time at volume.
     params: list = []
     where = criteria_to_where(
         CATALOG,
@@ -1152,8 +1153,8 @@ def test_person_id_set_compiles_to_external_id_in() -> None:
         None,
         params,
     )
-    assert where == "WHERE external_id IN (?, ?)"
-    assert params == ["abc", "def"]
+    assert where == "WHERE external_id IN (SELECT unnest(?))"
+    assert params == [["abc", "def"]]
 
 
 def test_empty_person_id_set_matches_nothing() -> None:
@@ -1184,8 +1185,8 @@ def test_person_id_set_remove_composes_as_and_not() -> None:
         None,
         params,
     )
-    assert where == "WHERE (enrollment IN (?)) AND NOT (external_id IN (?))"
-    assert params == ["democratic", "abc"]
+    assert where == "WHERE (enrollment IN (?)) AND NOT (external_id IN (SELECT unnest(?)))"
+    assert params == ["democratic", ["abc"]]
 
 
 def test_unresolved_canvass_outcome_filter_raises() -> None:
