@@ -1,6 +1,8 @@
 import { useIsFetching, useIsMutating } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
+import { useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
+import { mapLoadingCountAtom } from "~/lib/atoms/map-loading";
 import { cn } from "~/lib/utils";
 import { Spinner } from "./spinner";
 
@@ -19,7 +21,10 @@ export function LoadingIndicator() {
   const routing = useRouterState({
     select: (s) => s.isLoading || s.matches.some((m) => m.status === "pending"),
   });
-  const active = !hydrated || fetching || mutating || routing;
+  // Maps report their curtain here — their style/tile fetches are
+  // invisible to the query and router signals above.
+  const mapLoading = useAtomValue(mapLoadingCountAtom) > 0;
+  const active = !hydrated || fetching || mutating || routing || mapLoading;
 
   // Pause the spin while hidden because an invisible animation still burns
   // compositor frames forever. Paused once the fade-out ends (transitionend).

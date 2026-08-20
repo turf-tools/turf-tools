@@ -1,6 +1,6 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { LoaderCircle } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -11,6 +11,7 @@ import {
   Source,
   type ViewState,
 } from "react-map-gl/maplibre";
+import { mapLoadingCountAtom } from "~/lib/atoms/map-loading";
 import { darkAtom } from "~/lib/atoms/theme";
 import {
   getMaptilerStyleUrl,
@@ -297,6 +298,15 @@ export function Map({
   // Delayed so fast loads never flash it.
   const curtainUp = !mapReady || pendingFit || Boolean(loading);
   const showSpinner = useDelayedFlag(loadingSpinner && curtainUp, { showAfter: 300 });
+  // Report curtain-up to the global indicator: the map's own network
+  // work (style/tiles) is invisible to React Query and the router, so
+  // without this the indicator drops while the map is still blank.
+  const setMapLoading = useSetAtom(mapLoadingCountAtom);
+  useEffect(() => {
+    if (!curtainUp) return;
+    setMapLoading((c) => c + 1);
+    return () => setMapLoading((c) => c - 1);
+  }, [curtainUp, setMapLoading]);
 
   useEffect(() => {
     if (!boundariesUrl) return;
