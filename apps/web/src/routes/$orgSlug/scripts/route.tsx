@@ -278,6 +278,7 @@ function ScriptsLayout() {
           ))}
           <Rail.New
             label="New script"
+            disabled={createScript.isPending}
             onClick={() =>
               createScript.mutate({ name: nextUntitledName("Untitled script", scripts) })
             }

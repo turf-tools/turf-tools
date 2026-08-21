@@ -140,8 +140,8 @@ function ZoneGroupEditor() {
   const createZoneMutation = useMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zones.create(input),
     onSuccess: (created) => {
-      void queryClient.invalidateQueries({ queryKey: ["zones", zoneGroupId] });
       setActiveZoneId(created.zoneId);
+      return queryClient.invalidateQueries({ queryKey: ["zones", zoneGroupId] });
     },
     onError: (e) => console.error("zones.create failed", e),
   });
@@ -443,6 +443,7 @@ function ZoneGroupEditor() {
         {zones ? (
           <button
             type="button"
+            disabled={createZoneMutation.isPending}
             onClick={() =>
               createZoneMutation.mutate({
                 zoneGroupId,

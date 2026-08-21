@@ -90,11 +90,22 @@ function RailShowArchived({
   );
 }
 
-function RailNew({ label, onClick }: { label: string; onClick: () => void }) {
+function RailNew({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  // No disabled styling on purpose: the pending window is brief and a
+  // dimmed flash on every create reads worse than a silently inert button.
+  disabled?: boolean;
+}) {
   return (
     <div className="px-2 pb-1">
       <button
         type="button"
+        disabled={disabled}
         onClick={onClick}
         className={cn(
           "flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm",

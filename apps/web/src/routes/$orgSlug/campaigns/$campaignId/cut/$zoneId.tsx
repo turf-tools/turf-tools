@@ -245,6 +245,9 @@ export function Cutter({
         sortOrder: number;
       }>,
     ) => client.turfDrafts.replaceAll({ campaignId, zoneId, drafts: payload }),
+    // Safe to retry: an idempotent full snapshot, and scope serialization
+    // keeps a retry from reordering past a newer save.
+    retry: 2,
     scope: { id: `turf-drafts-${campaignId}-${zoneId}` },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["turf-drafts", campaignId, zoneId] });

@@ -365,6 +365,7 @@ function SegmentsLayout() {
           ))}
           <Rail.New
             label="New segment"
+            disabled={createSegment.isPending}
             onClick={() =>
               createSegment.mutate({ name: nextUntitledName("Untitled segment", segments) })
             }
