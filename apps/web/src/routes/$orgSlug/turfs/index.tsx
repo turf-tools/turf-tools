@@ -1168,24 +1168,26 @@ function TurfCard({
     >
       <div className="flex items-center gap-1.5 p-3">
         <span className="w-8 text-[18px] font-bold tabular-nums">{turfLabel(turf.name)}</span>
-        {summary.walks.length > 0 ? (
-          <span className={cn(badge, "bg-muted")}>
-            {summary.walks.length >= 2 ? (
-              <CheckCheck className="size-4 [stroke-width:2.5]" />
-            ) : (
-              <Check className="size-4 [stroke-width:2.5]" />
-            )}
-          </span>
-        ) : null}
-        {summary.live ? (
-          <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
-            <Radio className="size-4 [stroke-width:2.5]" />
-          </span>
-        ) : pending ? (
-          <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
-            <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
-          </span>
-        ) : null}
+        <span className="-ml-1 flex items-center gap-1.5">
+          {summary.walks.length > 0 ? (
+            <span className={cn(badge, "bg-muted")}>
+              {summary.walks.length >= 2 ? (
+                <CheckCheck className="size-4 [stroke-width:2.5]" />
+              ) : (
+                <Check className="size-4 [stroke-width:2.5]" />
+              )}
+            </span>
+          ) : null}
+          {summary.live ? (
+            <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
+              <Radio className="size-4 [stroke-width:2.5]" />
+            </span>
+          ) : pending ? (
+            <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
+              <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
+            </span>
+          ) : null}
+        </span>
         <span className="ml-auto flex items-center gap-1.5">
           <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
             <UserRound className="size-3.5" />
@@ -1227,7 +1229,7 @@ function TurfCard({
             )}
           />
         </button>
-        <span className={cn(badge, "ml-[8px] bg-muted font-mono tabular-nums")}>
+        <span className={cn(badge, "ml-[4px] bg-muted font-mono tabular-nums")}>
           {turf.turfCode ?? "—"}
         </span>
         <span className="flex-1" />
