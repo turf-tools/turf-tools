@@ -753,7 +753,16 @@ export function Map({
         mapStyle={getMaptilerStyleUrl(isDark)}
         attributionControl={false}
         style={{ width: "100%", height: "100%" }}
+        // Every map stays north-up and flat: no rotation, no pitch.
+        // touchZoomRotate={false} would kill pinch zoom too, so only its
+        // rotation half is disabled (below, after load).
+        dragRotate={false}
+        touchPitch={false}
+        maxPitch={0}
         onLoad={() => {
+          const map = mapRef.current?.getMap();
+          map?.touchZoomRotate.disableRotation();
+          map?.keyboard.disableRotation();
           setMapReady(true);
           // Dev-only console handle for render-loop / placement
           // diagnostics (label-fade gate, idle behavior).
