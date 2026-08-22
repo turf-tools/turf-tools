@@ -93,6 +93,8 @@ def boundary_from_geojson(
 def boundary_from_blocks(
     persons_geocoded: TableRef,
     tiger_tabblock_raw: TableRef,
+    tiger_state_fips: str,
+    tiger_county_fips: list[str],
     key_group: str,
     key_expression: str,
     schema: str,
@@ -136,11 +138,19 @@ def boundary_from_blocks(
     Water-only blocks (``land_area = 0``) are excluded from
     backfilling so polygons don't extend across rivers, the harbor,
     Central Park's reservoir, etc.
+
+    Tabblock rows are filtered to the configured state/county scope on
+    read: the shared tabblock table is an accumulating download cache and
+    may hold counties from previous, wider imports. Without the filter,
+    every out-of-scope land block backfills onto the nearest in-scope
+    key, ballooning edge keys far beyond the voter file's footprint.
     """
     ensure_schema(conn, schema)
     fqn = table_fqn(schema, key_group)
     persons_fqn = persons_geocoded.fqn
     tabblock_fqn = tiger_tabblock_raw.fqn
+    counties_sql_list = ", ".join(f"'{c}'" for c in tiger_county_fips)
+    tabblock_scope = f"state_fips = '{tiger_state_fips}' AND county_fips IN ({counties_sql_list})"
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
@@ -164,6 +174,7 @@ def boundary_from_blocks(
             FROM unique_points up
             JOIN {tabblock_fqn} b
               ON ST_Contains(b.geom, ST_Point(up.longitude, up.latitude))
+            WHERE {tabblock_scope}
         ),
         block_key_counts AS (
             SELECT
@@ -202,6 +213,7 @@ def boundary_from_blocks(
             LEFT JOIN winning_key wk USING (block_geoid)
             WHERE wk.block_geoid IS NULL
               AND b.land_area > 0
+              AND {tabblock_scope}
         ),
         backfilled AS (
             SELECT

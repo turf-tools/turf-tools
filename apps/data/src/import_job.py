@@ -176,6 +176,8 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
                     "conn": conn,
                     "key_group": source["key_group"],
                     "key_expression": source["key_expression"],
+                    "tiger_state_fips": settings.tiger_state_fips,
+                    "tiger_county_fips": settings.tiger_county_fips,
                 },
                 overrides={
                     "persons_geocoded": result["persons_geocoded"],
