@@ -3,7 +3,7 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { cleanCoords } from "@turf/clean-coords";
 import { union } from "@turf/union";
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
-import { CircleDotDashed, DoorClosed, Scissors, Send, UserRound } from "lucide-react";
+import { CircleDashed, CircleDotDashed, DoorClosed, Scissors, Send, UserRound } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -304,7 +304,11 @@ function CampaignEditor() {
         }
         out.push({
           ...merged,
-          properties: { zoneId: zone.zoneId, name: zone.name, color: colorFor(idx) },
+          properties: {
+            zoneId: zone.zoneId,
+            name: zone.name,
+            color: colorFor(idx),
+          },
         });
       } catch (e) {
         console.warn(`zonePerimeters: skipping zone ${zone.zoneId}`, e);
@@ -396,7 +400,7 @@ function CampaignEditor() {
       {/* Sidebar renders immediately against loader-cached chrome data
           (zones + segment binding). The map curtain handles waits for
           the heavy data still fetching in-component. */}
-      <div className="w-128 shrink-0 h-full min-h-0">
+      <div className="w-112 shrink-0 h-full min-h-0">
         <ZonesList
           campaignId={campaignId}
           zones={zones ?? null}
@@ -409,7 +413,10 @@ function CampaignEditor() {
           // flashing zeros first.
           fullSegmentCounts={
             segmentTotals
-              ? { doors: segmentTotals.doorCount, people: segmentTotals.personCount }
+              ? {
+                  doors: segmentTotals.doorCount,
+                  people: segmentTotals.personCount,
+                }
               : null
           }
           segmentName={activeSegment?.name ?? null}
@@ -520,8 +527,10 @@ function ZonesList({
           campaignId={campaignId}
           counts={fullSegmentCounts}
           // Zoneless turfs land under the empty-string key in
-          // statsForCampaign — see the sentinel comment there.
-          turfStats={turfStats?.[""] ?? null}
+          // statsForCampaign — see the sentinel comment there. Once stats
+          // resolve, a missing entry means "no turfs yet": zeros, not null,
+          // so the drafts pill still shows 0.
+          turfStats={turfStats ? (turfStats[""] ?? { drafts: 0, published: 0, active: 0 }) : null}
           onCut={() => onCut(null)}
         />
       ) : (
@@ -533,7 +542,15 @@ function ZonesList({
             color={colorFor(idx)}
             selected={zone.zoneId === selectedZoneId}
             counts={zoneCounts?.[zone.zoneId] ?? null}
-            turfStats={turfStats?.[zone.zoneId] ?? null}
+            turfStats={
+              turfStats
+                ? (turfStats[zone.zoneId] ?? {
+                    drafts: 0,
+                    published: 0,
+                    active: 0,
+                  })
+                : null
+            }
             onSelect={() => onSelect(zone.zoneId)}
             onCut={() => onCut(zone.zoneId)}
           />
@@ -610,54 +627,62 @@ function FullSegmentRow({
   return (
     <div
       className={cn(
-        "flex h-11 items-center gap-2 rounded-md border border-border bg-card py-2 pr-2 pl-3 text-left",
+        "flex flex-col gap-1.5 rounded-md border border-border bg-card p-2 pl-3 text-left",
       )}
     >
-      <span className="flex-1 truncate text-sm">Full segment</span>
       {/* Keyed by campaignId — matches the ZoneRow pattern so pills
           remount + re-fire animate-in on every campaign switch. */}
-      {counts ? (
-        <Fragment key={campaignId}>
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <UserRound className="size-3.5 text-foreground" />
-            {counts.people.toLocaleString()}
-          </Pill>
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <DoorClosed className="size-3.5 text-foreground" />
-            {counts.doors.toLocaleString()}
-          </Pill>
-          {turfStats ? (
-            <>
-              {turfStats.published > 0 ? (
-                <Pill
-                  variant="number"
-                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
-                >
-                  <Send className="size-3.5 text-foreground" />
-                  {turfStats.published.toLocaleString()}
-                </Pill>
-              ) : null}
+      <div className="flex min-h-8 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm">Full segment</span>
+        {counts && turfStats ? (
+          <span key={campaignId} className="ml-auto flex items-center gap-1.5">
+            {turfStats.published > 0 ? (
               <Pill
                 variant="number"
-                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
               >
-                <CircleDotDashed className="size-3.5 text-foreground" />
-                {turfStats.drafts}
+                <Send className="size-3.5 text-foreground" />
+                {turfStats.published.toLocaleString()}
               </Pill>
-            </>
-          ) : null}
-        </Fragment>
-      ) : null}
-      <Button variant="outline" className="h-[31px]" onClick={onCut}>
-        <Scissors />
-        Cut
-      </Button>
+            ) : null}
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+            >
+              {turfStats.drafts > 0 ? (
+                <CircleDotDashed className="size-3.5 text-foreground" />
+              ) : (
+                <CircleDashed className="size-3.5 text-foreground" />
+              )}
+              {turfStats.drafts}
+            </Pill>
+          </span>
+        ) : null}
+      </div>
+      <div className="flex min-h-8 items-center gap-1.5">
+        {counts ? (
+          <Fragment key={campaignId}>
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+            >
+              <UserRound className="size-3.5 text-foreground" />
+              {counts.people.toLocaleString()}
+            </Pill>
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+            >
+              <DoorClosed className="size-3.5 text-foreground" />
+              {counts.doors.toLocaleString()}
+            </Pill>
+          </Fragment>
+        ) : null}
+        <Button variant="outline" className="ml-auto h-[31px]" onClick={onCut}>
+          <Scissors />
+          Cut
+        </Button>
+      </div>
     </div>
   );
 }
@@ -693,64 +718,75 @@ function ZoneRow({
         }
       }}
       className={cn(
-        "flex h-11 items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
+        "flex flex-col gap-1.5 rounded-md border bg-card p-2 pl-3 text-left",
         selected ? "border-foreground" : "border-border hover:border-muted-foreground",
       )}
     >
-      <Swatch color={color} className="mr-1" />
-      <span className="flex-1 truncate text-sm">{zone.name}</span>
-      {/* Keyed by campaignId so all badges remount (and re-fire animate-in)
+      {/* min-h holds each row's height while counts load; pills fade in.
+          Keyed by campaignId so all badges remount (and re-fire animate-in)
           on every campaign switch, even when two campaigns share segment
           + zone group bindings and counts/turfStats refs are reused. */}
-      {counts ? (
-        <Fragment key={campaignId}>
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <UserRound className="size-3.5 text-foreground" />
-            {counts.people.toLocaleString()}
-          </Pill>
-          <Pill
-            variant="number"
-            className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
-          >
-            <DoorClosed className="size-3.5 text-foreground" />
-            {counts.doors.toLocaleString()}
-          </Pill>
-          {turfStats ? (
-            <>
-              {turfStats.published > 0 ? (
-                <Pill
-                  variant="number"
-                  className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
-                >
-                  <Send className="size-3.5 text-foreground" />
-                  {turfStats.published.toLocaleString()}
-                </Pill>
-              ) : null}
+      <div className="flex min-h-8 items-center gap-2">
+        {/* 1px tuck: the pill below hides its bg behind a transparent border
+            (bg-clip-padding), so its visible edge sits 1px in from its box. */}
+        <Swatch color={color} className="ml-[1px] mr-1 size-4" />
+        <span className="min-w-0 flex-1 truncate text-sm">{zone.name}</span>
+        {counts && turfStats ? (
+          <span key={campaignId} className="ml-auto flex items-center gap-1.5">
+            {turfStats.published > 0 ? (
               <Pill
                 variant="number"
-                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+                className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
               >
-                <CircleDotDashed className="size-3.5 text-foreground" />
-                {turfStats.drafts}
+                <Send className="size-3.5 text-foreground" />
+                {turfStats.published.toLocaleString()}
               </Pill>
-            </>
-          ) : null}
-        </Fragment>
-      ) : null}
-      <Button
-        variant="outline"
-        className="h-[31px]"
-        onClick={(e) => {
-          e.stopPropagation();
-          onCut();
-        }}
-      >
-        <Scissors />
-        Cut
-      </Button>
+            ) : null}
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+            >
+              {turfStats.drafts > 0 ? (
+                <CircleDotDashed className="size-3.5 text-foreground" />
+              ) : (
+                <CircleDashed className="size-3.5 text-foreground" />
+              )}
+              {turfStats.drafts}
+            </Pill>
+          </span>
+        ) : null}
+      </div>
+      <div className="flex min-h-8 items-center gap-1.5">
+        {counts ? (
+          <Fragment key={campaignId}>
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+            >
+              <UserRound className="size-3.5 text-foreground" />
+              {counts.people.toLocaleString()}
+            </Pill>
+            <Pill
+              variant="number"
+              className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
+            >
+              <DoorClosed className="size-3.5 text-foreground" />
+              {counts.doors.toLocaleString()}
+            </Pill>
+          </Fragment>
+        ) : null}
+        <Button
+          variant="outline"
+          className="ml-auto h-[31px]"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCut();
+          }}
+        >
+          <Scissors />
+          Cut
+        </Button>
+      </div>
     </div>
   );
 }
