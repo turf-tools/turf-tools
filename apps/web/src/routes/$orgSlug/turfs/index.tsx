@@ -1197,12 +1197,12 @@ function TurfCard({
             <DoorClosed className="size-3.5" />
             {doorLabel(turf.doorCount)}
           </span>
-          {/* Chrome always rendered with a stable width so sibling badges
-              don't shift when the value lands; the value fades in. */}
+          {/* Chrome renders as a square placeholder until the value lands,
+              then the pill hugs its content; the value fades in. */}
           <span
             className={cn(
               badge,
-              "min-w-13 justify-center font-mono tabular-nums",
+              "min-w-7 justify-center font-mono tabular-nums",
               pct !== null && pct > 0 ? "badge-tint" : "bg-muted",
             )}
             style={pct !== null && pct > 0 ? tintStyle(progressColor(pct)) : undefined}
