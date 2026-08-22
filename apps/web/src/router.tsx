@@ -92,7 +92,8 @@ export function getRouter() {
     defaultPendingMs: 300,
     defaultPendingMinMs: 300,
     // Gives every route match a real error boundary — loader and render
-    // errors render in place, with the app shell around them intact.
+    // errors are caught at the failing match, and ErrorPage overlays the
+    // full viewport from wherever it caught.
     defaultErrorComponent: ErrorPage,
     // Skip loader re-runs entirely while the route's data is inside the
     // query-fresh window — a background reload that fetchQuery would
