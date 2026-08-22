@@ -16,6 +16,9 @@ function getTransport(): Transporter | null {
   if (!transporter) {
     const port = Number(process.env.SMTP_PORT ?? 465);
     transporter = nodemailer.createTransport({
+      // Reuse authenticated SMTP connections — a cold session per send is
+      // the dominant cost of each invite/login email.
+      pool: true,
       host,
       port,
       secure: port === 465,
