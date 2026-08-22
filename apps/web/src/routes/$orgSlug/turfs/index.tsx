@@ -388,20 +388,38 @@ function summarize(walks: WalkRow[], scannedAt: Date | string | undefined): Walk
 
 function useTurfRows(campaignId: string | null, zoneId: string | null) {
   const { data } = useSuspenseQuery(turfsListQuery(campaignId));
-  // Bulk publish writes all rows in a single statement, so they share a
-  // created_at; name (natural-numeric) breaks the tie so "Turf 2" stays
-  // ahead of "Turf 10" within a single publish batch.
-  return useMemo(
-    () =>
-      data
-        .filter((t) => zoneId === null || regionId(t) === zoneId)
-        .sort((a, b) => {
-          const t = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          if (t !== 0) return t;
-          return a.name.localeCompare(b.name, undefined, { numeric: true });
-        }),
-    [data, zoneId],
-  );
+  // Row order drives everything downstream — the desktop table, the mobile
+  // group headers (first-seen), and the zone filter menu. Campaigns cluster
+  // in publish-time order; zones within a campaign follow the zone editor's
+  // drag order (regions with no live zone — segment-cut or deleted — sort
+  // last, by name). Within a zone: bulk publish writes all rows in a single
+  // statement, so they share a created_at; name (natural-numeric) breaks
+  // the tie so "Turf 2" stays ahead of "Turf 10" within a publish batch.
+  return useMemo(() => {
+    const rows = data.filter((t) => zoneId === null || regionId(t) === zoneId);
+    const campaignStart = new Map<string, number>();
+    for (const t of rows) {
+      const ts = new Date(t.createdAt).getTime();
+      const cur = campaignStart.get(t.campaignId);
+      if (cur === undefined || ts < cur) campaignStart.set(t.campaignId, ts);
+    }
+    return rows.sort((a, b) => {
+      if (a.campaignId !== b.campaignId) {
+        const c = (campaignStart.get(a.campaignId) ?? 0) - (campaignStart.get(b.campaignId) ?? 0);
+        if (c !== 0) return c;
+        return a.campaignId.localeCompare(b.campaignId);
+      }
+      const o = (a.zoneOrder ?? Infinity) - (b.zoneOrder ?? Infinity);
+      if (o !== 0) return o;
+      const r = (regionName(a) ?? "").localeCompare(regionName(b) ?? "", undefined, {
+        numeric: true,
+      });
+      if (r !== 0) return r;
+      const t = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (t !== 0) return t;
+      return a.name.localeCompare(b.name, undefined, { numeric: true });
+    });
+  }, [data, zoneId]);
 }
 
 function useWalkSummaries(campaignId: string | null) {

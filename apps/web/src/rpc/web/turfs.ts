@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import { and, asc, eq, isNull, sql } from "@turf-tools/db";
-import { campaigns, segments, turfDrafts, turfs } from "@turf-tools/db/schema";
+import { campaigns, segments, turfDrafts, turfs, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
 import { activeDatasetId } from "./active-dataset";
@@ -42,11 +42,16 @@ export const listForOrg = pub
         // Stamped at publish — deliberately not the zone's current name,
         // so labels always describe the zone as it was cut.
         zoneName: turfs.zoneName,
+        // Live join, unlike the name: display position follows the zone
+        // editor's drag order. Null when the zone was deleted (or the
+        // turf is segment-cut) — those regions sort last.
+        zoneOrder: zones.order,
         createdAt: turfs.createdAt,
       })
       .from(turfs)
       .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
       .leftJoin(segments, eq(turfs.segmentId, segments.segmentId))
+      .leftJoin(zones, eq(turfs.zoneId, zones.zoneId))
       .where(where)
       .orderBy(asc(turfs.createdAt));
     return rows;

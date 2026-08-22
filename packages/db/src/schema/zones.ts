@@ -1,4 +1,4 @@
-import { jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { integer, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { users } from "./auth/users";
 import { zoneGroups } from "./zone-groups";
@@ -17,6 +17,10 @@ export const zones = app.table("zones", {
   // Opaque key identifiers, scoped to the parent group's keyGroup.
   // e.g. for "nyc_eds": ["36-65-39", "36-65-40", ...]
   keys: jsonb().$type<string[]>().notNull().default([]),
+  // Display position within the group (drag-reorder). Ties are legal —
+  // rows that have never been dragged sit at the default — so reads
+  // tiebreak on createdAt to stay stable.
+  order: integer().notNull().default(0),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   createdBy: uuid()

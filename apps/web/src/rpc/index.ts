@@ -93,6 +93,7 @@ export const webRouter = {
     create: zones.create,
     remove: zones.remove,
     removeAllInGroup: zones.removeAllInGroup,
+    reorder: zones.reorder,
   },
   turfs: {
     listForOrg: webTurfs.listForOrg,

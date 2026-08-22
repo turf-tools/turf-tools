@@ -1,8 +1,17 @@
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "jotai";
-import { ChevronDown, Diamond, DoorClosed, Plus, Trash2, UserRound } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronDown,
+  Diamond,
+  DoorClosed,
+  GripVertical,
+  Plus,
+  Trash2,
+  UserRound,
+} from "lucide-react";
+import { Reorder, useDragControls } from "motion/react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import {
   DropdownMenu,
@@ -141,7 +150,9 @@ function ZoneGroupEditor() {
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zones.create(input),
     onSuccess: (created) => {
       setActiveZoneId(created.zoneId);
-      return queryClient.invalidateQueries({ queryKey: ["zones", zoneGroupId] });
+      return queryClient.invalidateQueries({
+        queryKey: ["zones", zoneGroupId],
+      });
     },
     onError: (e) => console.error("zones.create failed", e),
   });
@@ -176,6 +187,64 @@ function ZoneGroupEditor() {
 
   const [renamingZoneId, setRenamingZoneId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+
+  // While a drag is active, the visual list reorders via `draft`; the query
+  // cache only updates on drop. Mirrors the segment editor's step reorder.
+  const [draftZones, setDraftZones] = useState<typeof zones | null>(null);
+  const displayZones = draftZones ?? zones;
+
+  const reorderZonesMutation = useMutation({
+    mutationFn: (input: { zoneGroupId: string; zoneIds: string[] }) => client.zones.reorder(input),
+    onMutate: async ({ zoneIds }) => {
+      await queryClient.cancelQueries({ queryKey: ["zones", zoneGroupId] });
+      const previous = queryClient.getQueryData<typeof zones>(["zones", zoneGroupId]);
+      // Object, not Map: the `Map` identifier here is the map component.
+      const byId = Object.fromEntries((previous ?? []).map((z) => [z.zoneId, z]));
+      queryClient.setQueryData<typeof zones>(["zones", zoneGroupId], (old) =>
+        old ? zoneIds.map((id) => byId[id]).filter((z) => z !== undefined) : old,
+      );
+      return { previous };
+    },
+    onError: (e, _v, ctx) => {
+      console.error("zones.reorder failed", e);
+      if (ctx?.previous) queryClient.setQueryData(["zones", zoneGroupId], ctx.previous);
+    },
+    // No invalidate: the optimistic write is a complete mirror of the new
+    // order, and the campaign editor reads the same ["zones", id] cache.
+  });
+
+  const handleZoneDragEnd = () => {
+    if (!draftZones) return;
+    const next = draftZones.map((z) => z.zoneId);
+    const current = (zones ?? []).map((z) => z.zoneId);
+    if (next.join("\n") !== current.join("\n")) {
+      reorderZonesMutation.mutate({ zoneGroupId, zoneIds: next });
+    }
+    setDraftZones(null);
+  };
+
+  // Auto-scroll the zone list to the bottom when a zone is added so the new
+  // card (and the New zone button) stay in view even when the list
+  // overflows. Tracked per-group so switching groups doesn't read "count
+  // grew"; while zones are loading, 0→N is data arrival, not a user add.
+  const zoneListRef = useRef<HTMLDivElement>(null);
+  const prevZonesRef = useRef<{ zoneGroupId: string; length: number } | null>(null);
+  useEffect(() => {
+    if (!zones) return;
+    const prev = prevZonesRef.current;
+    if (
+      prev &&
+      prev.zoneGroupId === zoneGroupId &&
+      zones.length > prev.length &&
+      zoneListRef.current
+    ) {
+      zoneListRef.current.scrollTo({
+        top: zoneListRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+    prevZonesRef.current = { zoneGroupId, length: zones.length };
+  }, [zones, zoneGroupId]);
 
   // Delete / Backspace removes the active zone (mirrors the trash button).
   // Skipped while typing in any text input so the rename flow isn't hijacked.
@@ -262,29 +331,33 @@ function ZoneGroupEditor() {
 
   // Per-zone rollup of segment counts — sums per-key counts across each
   // zone's keys, no extra round trip. Drives the sidebar's pills/colors.
+  // Swatch color is the mean of the zone's keys' positions on the map's
+  // ramp (per-key doors / max key doors), so the swatch matches how the
+  // zone's area reads on the map; the pills carry the exact totals.
   const zoneOverlay = useMemo(() => {
     if (!overlayCountsByKey || !zones) return null;
+    let maxKeyDoors = 0;
+    for (const v of Object.values(overlayCountsByKey))
+      if (v.doors > maxKeyDoors) maxKeyDoors = v.doors;
     const doors: Record<string, number> = {};
     const people: Record<string, number> = {};
-    let maxDoors = 0;
+    const colors: Record<string, string> = {};
     for (const zone of zones) {
       let d = 0;
       let p = 0;
+      let tSum = 0;
       for (const k of zone.keys) {
         const c = overlayCountsByKey[k];
         if (c) {
           d += c.doors;
           p += c.people;
         }
+        if (maxKeyDoors > 0) tSum += Math.sqrt((c?.doors ?? 0) / maxKeyDoors);
       }
       doors[zone.zoneId] = d;
       people[zone.zoneId] = p;
-      if (d > maxDoors) maxDoors = d;
-    }
-    const colors: Record<string, string> = {};
-    for (const [zoneId, count] of Object.entries(doors)) {
-      const t = maxDoors === 0 ? 0 : Math.sqrt(count / maxDoors);
-      colors[zoneId] = interpolateRamp(t, isDark);
+      const t = zone.keys.length > 0 ? tSum / zone.keys.length : 0;
+      colors[zone.zoneId] = interpolateRamp(t, isDark);
     }
     return { doors, people, colors };
   }, [overlayCountsByKey, zones, isDark]);
@@ -323,6 +396,14 @@ function ZoneGroupEditor() {
     // Plain click activates the zone that contains the key (or clears).
     const owner = zones.find((z) => z.keys.includes(key));
     setActiveZoneId(owner?.zoneId ?? null);
+    // Map-originated activation only: surface the card in the list (a
+    // card click never scrolls — it's already in view). block: "nearest"
+    // is a no-op when the card is visible.
+    if (owner) {
+      document
+        .querySelector(`[data-zone-card="${owner.zoneId}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   };
 
   // Click outside the map clears the active zone. Suppressed while a
@@ -348,98 +429,139 @@ function ZoneGroupEditor() {
 
   return (
     <div className="flex gap-4 h-full">
-      <div className="w-86 shrink-0 flex flex-col gap-2 overflow-y-auto">
-        {zones?.map((zone, idx) => {
-          const isActive = zone.zoneId === activeZoneId;
-          const isRenaming = renamingZoneId === zone.zoneId;
-          return (
-            <div
-              key={zone.zoneId}
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                if (isRenaming) return;
-                setActiveZoneId(zone.zoneId);
-              }}
-              onKeyDown={(e) => {
-                if (isRenaming) return;
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setActiveZoneId(zone.zoneId);
-                }
-              }}
-              className={cn(
-                "flex h-11 items-center gap-2 rounded-md border bg-card py-2 pr-2 pl-3 text-left",
-                isActive ? "border-foreground" : "border-border hover:border-muted-foreground",
-              )}
-            >
-              <Swatch
-                color={zoneOverlay ? zoneOverlay.colors[zone.zoneId] : colorFor(idx)}
-                className="mr-1"
-              />
-              {isRenaming ? (
-                <Input
-                  autoFocus
-                  value={renameDraft}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setRenameDraft(e.target.value)}
-                  onBlur={() => commitRename(zone.zoneId, zone.name)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      commitRename(zone.zoneId, zone.name);
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      setRenamingZoneId(null);
-                    }
-                  }}
-                  className="h-7 flex-1 px-2 text-sm"
-                />
-              ) : (
-                <span
-                  className="flex-1 truncate text-sm select-none"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setRenameDraft(zone.name);
-                    setRenamingZoneId(zone.zoneId);
-                  }}
-                >
-                  {zone.name}
-                </span>
-              )}
-              {zoneOverlay ? (
-                <>
-                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                    <UserRound className="size-3.5 text-foreground" />
-                    {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
-                  </Pill>
-                  <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                    <DoorClosed className="size-3.5 text-foreground" />
-                    {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
-                  </Pill>
-                </>
-              ) : (
-                <Pill variant="number" className="!w-fit shrink-0 justify-end gap-1.5">
-                  <Diamond className="size-3.5 text-foreground" />
-                  {zone.keys.length}
-                </Pill>
-              )}
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className="-ml-[1px] h-8"
-                aria-label="Delete zone"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeZoneId === zone.zoneId) setActiveZoneId(null);
-                  removeZoneMutation.mutate(zone.zoneId);
-                }}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          );
-        })}
+      <div ref={zoneListRef} className="w-86 shrink-0 flex flex-col gap-2 overflow-y-auto">
+        {/* Mounted only when non-empty: an empty group div still takes a slot
+            in the parent's gap, nudging the New-zone card off the top edge. */}
+        {displayZones?.length ? (
+          <Reorder.Group
+            axis="y"
+            values={displayZones}
+            onReorder={setDraftZones}
+            as="div"
+            className="flex flex-col gap-2"
+          >
+            {displayZones?.map((zone, idx) => {
+              const isActive = zone.zoneId === activeZoneId;
+              const isRenaming = renamingZoneId === zone.zoneId;
+              return (
+                <ReorderZoneItem key={zone.zoneId} zone={zone} onDragEnd={handleZoneDragEnd}>
+                  {(dragControls) => (
+                    <div
+                      data-zone-card={zone.zoneId}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (isRenaming) return;
+                        setActiveZoneId(zone.zoneId);
+                      }}
+                      onKeyDown={(e) => {
+                        if (isRenaming) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setActiveZoneId(zone.zoneId);
+                        }
+                      }}
+                      className={cn(
+                        "flex flex-col gap-1.5 rounded-md border bg-card p-2 pl-3 text-left",
+                        isActive
+                          ? "border-foreground"
+                          : "border-border hover:border-muted-foreground",
+                      )}
+                    >
+                      {/* min-h matches the campaign card's top row so both
+                          cards share one height. */}
+                      <div className="flex min-h-8 items-center gap-2">
+                        <button
+                          type="button"
+                          className="shrink-0 cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground"
+                          aria-label="Drag to reorder"
+                          onPointerDown={(e) => dragControls.start(e)}
+                        >
+                          <GripVertical className="size-3.5" />
+                        </button>
+                        {/* Heatmap swatches: 90% opacity sits visually with
+                            the map's 0.8 fills (different grounds wash color
+                            differently), and colorless while counts are in
+                            flight, like the map's blanked fills. */}
+                        <Swatch
+                          color={
+                            overlayPending
+                              ? undefined
+                              : zoneOverlay
+                                ? zoneOverlay.colors[zone.zoneId]
+                                : colorFor(idx)
+                          }
+                          className={cn("mr-1 size-4", zoneOverlay && "opacity-90")}
+                        />
+                        {isRenaming ? (
+                          <Input
+                            autoFocus
+                            value={renameDraft}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onBlur={() => commitRename(zone.zoneId, zone.name)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitRename(zone.zoneId, zone.name);
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                setRenamingZoneId(null);
+                              }
+                            }}
+                            className="h-7 flex-1 px-2 text-sm"
+                          />
+                        ) : (
+                          <span
+                            className="min-w-0 flex-1 truncate text-sm select-none"
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              setRenameDraft(zone.name);
+                              setRenamingZoneId(zone.zoneId);
+                            }}
+                          >
+                            {zone.name}
+                          </span>
+                        )}
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          className="ml-auto h-8"
+                          aria-label="Delete zone"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (activeZoneId === zone.zoneId) setActiveZoneId(null);
+                            removeZoneMutation.mutate(zone.zoneId);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                      <div className="flex min-h-8 items-center gap-1.5">
+                        <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
+                          <Diamond className="size-3.5 text-foreground" />
+                          {zone.keys.length}
+                        </Pill>
+                        {zoneOverlay ? (
+                          <>
+                            <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
+                              <UserRound className="size-3.5 text-foreground" />
+                              {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
+                            </Pill>
+                            <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
+                              <DoorClosed className="size-3.5 text-foreground" />
+                              {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
+                            </Pill>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+                </ReorderZoneItem>
+              );
+            })}
+          </Reorder.Group>
+        ) : null}
         {zones ? (
           <button
             type="button"
@@ -560,5 +682,36 @@ function ZoneGroupEditor() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Per-item drag controls need a hook, so the card body renders through a
+// child component. Matches the segment editor's ReorderStepRow settings:
+// position-only layout animation, no drag momentum.
+function ReorderZoneItem({
+  zone,
+  onDragEnd,
+  children,
+}: {
+  zone: { zoneId: string };
+  onDragEnd: () => void;
+  children: (dragControls: ReturnType<typeof useDragControls>) => ReactNode;
+}) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={zone}
+      dragListener={false}
+      dragControls={controls}
+      as="div"
+      onDragEnd={onDragEnd}
+      layout="position"
+      transition={{
+        layout: { type: "tween", duration: 0.15, ease: "easeOut" },
+      }}
+      dragTransition={{ bounceStiffness: 10000, bounceDamping: 500, power: 0 }}
+    >
+      {children(controls)}
+    </Reorder.Item>
   );
 }
