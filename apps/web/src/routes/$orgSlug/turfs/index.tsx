@@ -248,7 +248,7 @@ function TurfsIndex() {
   );
 
   return (
-    <Page className={shouldFade}>
+    <Page className={cn("md:flex md:h-[calc(100vh-3.5rem)] md:flex-col", shouldFade)}>
       {/* Desktop header */}
       <div className="hidden md:block">
         <EditorHeader title="Turfs">
@@ -302,7 +302,7 @@ function TurfsIndex() {
           />
         )}
       </div>
-      <div className="hidden md:block">
+      <div className="hidden min-h-0 flex-1 flex-col md:flex">
         <TurfsTable
           campaignId={campaignId}
           zoneId={zoneId}
@@ -1446,7 +1446,7 @@ function TurfsTable({
   const progressByTurf = useProgressByTurf(campaignId);
 
   return (
-    <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
+    <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
           <TableHead className="w-20">Turf</TableHead>

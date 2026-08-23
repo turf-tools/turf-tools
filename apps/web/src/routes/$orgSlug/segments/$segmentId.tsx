@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import {
   Calendar as CalendarIcon,
   ChevronDown,
@@ -236,7 +236,7 @@ function SegmentEditor() {
     },
     onError: (e, { segmentId: id }, ctx) => {
       console.error("segments.updateCriteria failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.previousDetail) queryClient.setQueryData(["segment", id], ctx.previousDetail);
       if (ctx?.previousList) queryClient.setQueryData(["segments"], ctx.previousList);
     },

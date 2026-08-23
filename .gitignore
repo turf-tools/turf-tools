@@ -37,3 +37,5 @@ scripts/bench/results/
 # Shared `.claude/settings.json` and similar can still be committed.
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Scratch page for trying nav-status treatments (see components/nav-status.tsx)
+apps/web/src/routes/$orgSlug/toasts.tsx

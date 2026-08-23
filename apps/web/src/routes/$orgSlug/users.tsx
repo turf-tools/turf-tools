@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
 import {
@@ -98,7 +98,7 @@ function UsersIndex() {
       : (STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? null);
 
   return (
-    <Page className={shouldFade}>
+    <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
       <EditorHeader title="Users">
         <Filter
           icon={<Tag className="size-3.5" />}
@@ -143,7 +143,7 @@ function UsersTable({
   });
 
   return (
-    <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
+    <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
           <TableHead>Name</TableHead>
@@ -186,17 +186,17 @@ function UserRow({ user }: { user: UserRowData }) {
   const changeRole = useMutation({
     mutationFn: (role: Role) => client.users.updateRole({ userId: user.userId, role }),
     onSuccess: invalidate,
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
   const resendInvite = useMutation({
     mutationFn: () => client.users.resendInvite({ userId: user.userId }),
-    onSuccess: () => toast.success("Invite sent"),
-    onError: (e) => toast.error(e.message),
+    onSuccess: () => notify.success("Invite sent"),
+    onError: (e) => notify.error(e.message),
   });
   const unarchive = useMutation({
     mutationFn: () => client.users.unarchive({ userId: user.userId }),
     onSuccess: invalidate,
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
 
   const archive = useDialogMutation({
@@ -393,7 +393,33 @@ function InviteDialog({
   const { data: existingUsers } = useSuspenseQuery(usersListQuery());
   const [rows, setRows] = useState<InviteRow[]>([emptyRow()]);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const inviteMutation = useMutation({
+    mutationFn: async (toInvite: InviteRow[]) => {
+      for (const r of toInvite) {
+        await client.users.invite({
+          email: r.email.trim(),
+          name: r.name.trim() || undefined,
+          role: r.role,
+          sendEmail: r.sendEmail,
+        });
+      }
+    },
+    // Errors render inline in the dialog; skip the global error status.
+    meta: { errorHandled: true },
+    onSuccess: (_data, toInvite) => {
+      void queryClient.invalidateQueries({ queryKey: ["users"] });
+      const emailed = toInvite.filter((r) => r.sendEmail).length;
+      notify.success(
+        emailed > 0
+          ? `Sent ${emailed} invite${emailed === 1 ? "" : "s"}`
+          : `Added ${toInvite.length} user${toInvite.length === 1 ? "" : "s"}`,
+      );
+      onOpenChange(false);
+    },
+  });
+  // isSuccess keeps the spinner up while the dialog animates closed —
+  // isPending alone flashes the idle state first.
+  const pending = inviteMutation.isPending || inviteMutation.isSuccess;
   // Delayed copy of `pending` so fast invites don't flash `disabled:opacity-50`
   // on the row Buttons/Toggles (Inputs have no disabled visual). `pending`
   // itself stays synchronous for the submit-double-click guard.
@@ -403,14 +429,15 @@ function InviteDialog({
     if (open) {
       setRows([emptyRow()]);
       setError(null);
-      setPending(false);
+      inviteMutation.reset();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const valid =
     rows.length > 0 && rows.every((r) => r.email.trim().length > 0 && r.email.includes("@"));
 
-  const submit = async () => {
+  const submit = () => {
     setError(null);
     // Block partial-success — preflight before inserting. Compare on
     // canonical form so `foo.bar@gmail.com` and `foobar@gmail.com` collide
@@ -436,40 +463,36 @@ function InviteDialog({
       setError(`Already a member: ${conflicts.join(", ")}`);
       return;
     }
-    setPending(true);
-    try {
-      for (const r of rows) {
-        await client.users.invite({
-          email: r.email.trim(),
-          name: r.name.trim() || undefined,
-          role: r.role,
-          sendEmail: r.sendEmail,
-        });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["users"] });
-      onOpenChange(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Invite failed");
-    } finally {
-      setPending(false);
-    }
+    inviteMutation.mutate(rows);
   };
 
+  const clearErrors = () => {
+    setError(null);
+    inviteMutation.reset();
+  };
   const updateRow = (i: number, patch: Partial<InviteRow>) => {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-    setError(null);
+    clearErrors();
   };
   const removeRow = (i: number) => {
     setRows((prev) => prev.filter((_, idx) => idx !== i));
-    setError(null);
+    clearErrors();
   };
   const addRow = () => {
     setRows((prev) => [...prev, emptyRow()]);
-    setError(null);
+    clearErrors();
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Block close-while-pending so click-outside doesn't strand the
+        // user wondering whether the invites landed.
+        if (pending) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-3xl">
         <DialogTitle>Invite users</DialogTitle>
         <DialogDescription>
@@ -480,7 +503,7 @@ function InviteDialog({
           onSubmit={(e) => {
             e.preventDefault();
             if (!valid || pending) return;
-            void submit();
+            submit();
           }}
           className="flex flex-col gap-3"
         >
@@ -543,7 +566,7 @@ function InviteDialog({
             <Plus />
             Add another
           </Button>
-          <DialogError error={error} />
+          <DialogError error={error ?? inviteMutation.error?.message ?? null} />
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>

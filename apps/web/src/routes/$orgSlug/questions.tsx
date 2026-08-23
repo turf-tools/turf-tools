@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tansta
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Activity, Archive, ArchiveRestore, MoreHorizontal, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
 import {
@@ -91,7 +91,7 @@ function QuestionsPage() {
   const [editing, setEditing] = useState<string | null>(null);
 
   return (
-    <Page className={shouldFade}>
+    <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
       <EditorHeader title="Questions">
         <Filter
           icon={<Activity className="size-3.5" />}
@@ -127,7 +127,7 @@ function QuestionsTable({
   const { data: rows } = useSuspenseQuery(questionsListQuery(status));
 
   return (
-    <Table containerClassName="h-[calc(100vh-9rem)] overflow-y-auto" className="table-fixed">
+    <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
           <TableHead className="w-72">Name</TableHead>
@@ -173,12 +173,12 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
         void queryClient.invalidateQueries({ queryKey: ["script", scriptId] });
       }
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
   const unarchive = useMutation({
     mutationFn: () => client.questions.unarchive({ questionId: question.questionId }),
     onSuccess: invalidate,
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
 
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
@@ -371,7 +371,7 @@ function CreateBody({
     mutationFn: (input: { name: string; responseType: ResponseType }) =>
       client.questions.create(input),
     onSuccess: onCreated,
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
 
   const valid = name.trim().length > 0;
@@ -432,7 +432,7 @@ function EditBody({ questionId }: { questionId: string }) {
       return { prev };
     },
     onError: (e, _name, ctx) => {
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["question", questionId], ctx.prev);
     },
     onSuccess: () => {

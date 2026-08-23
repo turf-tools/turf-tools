@@ -1,9 +1,9 @@
 import { hashKey, MutationCache, QueryClient } from "@tanstack/react-query";
 import { createRouter, defaultStringifySearch } from "@tanstack/react-router";
-import { toast } from "sonner";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
 import { ErrorPage } from "./components/error-page";
 import { __registerRouter, slugFromPathname } from "./lib/current-route";
+import { notify } from "./lib/notify";
 import { routeTree } from "./routeTree.gen";
 
 // Strip null/undefined search params before serializing so e.g. setting a
@@ -37,12 +37,12 @@ export function getRouter() {
 
   const queryClient: QueryClient = new QueryClient({
     // Default error surface: a mutation without its own onError (and not
-    // flagged `meta.errorHandled`, e.g. dialogs showing inline errors) gets a
-    // toast — a failed write must never be silent.
+    // flagged `meta.errorHandled`, e.g. dialogs showing inline errors) gets
+    // the nav error chip — a failed write must never be silent.
     mutationCache: new MutationCache({
       onError: (error, _variables, _context, mutation) => {
         if (mutation.options.onError || mutation.meta?.errorHandled) return;
-        toast.error(error.message);
+        notify.error(error.message);
       },
     }),
     defaultOptions: {

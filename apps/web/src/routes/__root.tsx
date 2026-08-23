@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -11,10 +11,10 @@ import {
   useRouterState,
 } from "@tanstack/react-router";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Provider as JotaiProvider } from "jotai";
+import { createStore, Provider as JotaiProvider } from "jotai";
 
 import { Shell } from "~/components/shell";
-import { Toaster } from "~/components/sonner";
+import { __registerNotifyStore } from "~/lib/notify";
 import { getSession } from "~/lib/server/session";
 import { detectDisplayTimezone } from "~/lib/timezones";
 import { client } from "~/rpc/client";
@@ -132,9 +132,15 @@ function RootComponent() {
     })();
   }, [needsTzDetect, router]);
 
+  // Explicit store so imperative call sites (notify) share the tree's atoms.
+  // Fresh per render tree on SSR; created once in the browser. Registration
+  // is browser-only and idempotent, mirroring __registerRouter.
+  const [jotaiStore] = useState(() => createStore());
+  if (typeof window !== "undefined") __registerNotifyStore(jotaiStore);
+
   return (
     <QueryClientProvider client={queryClient}>
-      <JotaiProvider>
+      <JotaiProvider store={jotaiStore}>
         <RootDocument>
           {chromeless || !orgSlug || !currentOrg ? (
             <Outlet />
@@ -143,7 +149,6 @@ function RootComponent() {
               <Outlet />
             </Shell>
           )}
-          <Toaster />
         </RootDocument>
       </JotaiProvider>
     </QueryClientProvider>

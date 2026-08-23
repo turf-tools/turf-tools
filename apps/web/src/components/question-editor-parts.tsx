@@ -3,7 +3,7 @@ import { BLUE, BROWN, PURPLE } from "~/lib/palette";
 import { GripVertical, Plus, X } from "lucide-react";
 import { motion, Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { Input } from "~/components/input";
 import { questionDetailQuery } from "~/lib/queries/questions";
@@ -93,7 +93,7 @@ export function QuestionTextEditor({ questionId }: { questionId: string }) {
     },
     onError: (e, _text, ctx) => {
       console.error("questions.updateText failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(questionKey, ctx.prev);
     },
   });
@@ -163,7 +163,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     },
     onError: (e, _vars, ctx) => {
       console.error("questions.addResponseOption failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.tempId) {
         setDetail((d) => ({
           ...d,
@@ -187,7 +187,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     },
     onError: (e, _id, ctx) => {
       console.error("questions.removeResponseOption failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["question", questionId], ctx.prev);
     },
   });
@@ -201,7 +201,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     onSettled: refreshQuestionProjections,
     onError: (e) => {
       console.error("questions.reorderResponseOptions failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       void queryClient.invalidateQueries({
         queryKey: ["question", questionId],
       });
@@ -222,7 +222,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     },
     onError: (e) => {
       console.error("questions.updateResponseOptionText failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       void queryClient.invalidateQueries({
         queryKey: ["question", questionId],
       });

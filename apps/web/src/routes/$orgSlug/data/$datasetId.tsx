@@ -23,7 +23,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useRef, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
 import {
@@ -198,7 +198,7 @@ function DatasetEditor({
       await goToIndex();
       void queryClient.invalidateQueries({ queryKey: ["datasets"] });
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
 
   const renameDataset = useDatasetRename();
@@ -210,7 +210,7 @@ function DatasetEditor({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["datasets"] });
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
 
   // null in URL = "current" (the default). The Filter helper maps null →
@@ -374,7 +374,7 @@ function VersionsCard({
       queryClient.removeQueries({ queryKey: ["elections"] });
       void queryClient.invalidateQueries();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
   const archive = useMutation({
     mutationFn: (versionId: string) => client.datasets.archive({ versionId }),
@@ -391,12 +391,12 @@ function VersionsCard({
       if (versions.every((v) => v.isArchived || v.versionId === versionId)) await onAllArchived();
       void queryClient.invalidateQueries({ queryKey: ["datasets"] });
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
   const unarchive = useMutation({
     mutationFn: (versionId: string) => client.datasets.unarchive({ versionId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["datasets"] }),
-    onError: (e) => toast.error(e.message),
+    onError: (e) => notify.error(e.message),
   });
 
   const visible = versions.filter((v) =>

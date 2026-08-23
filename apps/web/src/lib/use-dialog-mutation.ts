@@ -33,7 +33,7 @@ export function useDialogMutation<TInput, TOutput>(opts: {
   const mutation = useMutation({
     mutationFn: opts.mutationFn,
     onError: opts.onError,
-    // Errors render inline via `error` below; skip the global toast.
+    // Errors render inline via `error` below; skip the global error status.
     meta: { errorHandled: true },
   });
 

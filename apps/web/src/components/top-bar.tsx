@@ -12,6 +12,7 @@ import {
 } from "./dropdown-menu";
 import { LightDarkToggle } from "./light-dark-toggle";
 import { LoadingIndicator } from "./loading-indicator";
+import { NavStatus } from "./nav-status";
 import { PRIMARY, SECONDARY, type NavItem } from "./sidebar";
 import { UserBadge } from "./user-badge";
 
@@ -31,12 +32,13 @@ export function TopBar({ orgSlug, orgName, orgs, role }: TopBarProps) {
     <header
       className={cn(
         "sticky top-0 z-40",
-        "flex h-14 items-center justify-between",
+        "relative flex h-14 items-center justify-between",
         "border-b border-border bg-background",
         "px-4",
       )}
     >
       <Breadcrumb orgSlug={orgSlug} orgName={orgName} orgs={orgs} />
+      <NavStatus className="absolute left-1/2 hidden -translate-x-1/2 md:flex" />
       <div className="flex items-center gap-3 text-sm">
         <LoadingIndicator />
         <LightDarkToggle />

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
+import { notify } from "~/lib/notify";
 import { darkAtom } from "~/lib/atoms/theme";
 import { Button } from "~/components/button";
 import { Callout } from "~/components/callout";
@@ -40,7 +41,7 @@ import { turfDraftsQuery } from "~/lib/queries/turf-drafts";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
 import { useFadeOnce } from "~/lib/use-fade-once";
-import { parseHexRgb } from "~/lib/utils";
+import { cn, parseHexRgb } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
@@ -423,12 +424,14 @@ export function Cutter({
   const publishMutation = useMutation({
     mutationFn: () => client.turfs.publish({ campaignId, zoneId }),
     // Errors render inline in the publish dialog's callout; skip the
-    // global toast.
+    // global error status.
     meta: { errorHandled: true },
     onSuccess: () => {
       setPublishOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["turfs"] });
       void queryClient.invalidateQueries({ queryKey: ["turf-stats", campaignId] });
+      const n = publishSummary.count;
+      notify.success(`Published ${n} turf${n === 1 ? "" : "s"}`);
     },
   });
 
@@ -529,7 +532,7 @@ export function Cutter({
     (!!campaign.segmentId && buildings === undefined) || (!!campaign.zoneGroupId && !boundaryFC);
 
   return (
-    <div className={shouldFade}>
+    <div className={cn("flex h-full flex-col", shouldFade)}>
       <EditorHeader
         title="Turf Cutter"
         subtitle={zoneId === null ? "Full segment" : zone?.name}
@@ -562,7 +565,7 @@ export function Cutter({
           Publish
         </Button>
       </EditorHeader>
-      <div className="flex gap-4 h-[calc(100vh-9rem)]">
+      <div className="flex min-h-0 flex-1 gap-4">
         <div className="w-72 shrink-0 min-h-0">
           <TurfList
             turfs={turfRows}

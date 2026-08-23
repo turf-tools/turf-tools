@@ -2,7 +2,7 @@ import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-q
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { Archive, ArchiveRestore, Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
 import {
@@ -221,7 +221,7 @@ function ScriptsLayout() {
       setRemoveSnapshot({ name: activeScript.name, blockers });
       setRemoveOpen(true);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't check references.");
+      notify.error(e instanceof Error ? e.message : "Couldn't check references.");
     }
   };
 

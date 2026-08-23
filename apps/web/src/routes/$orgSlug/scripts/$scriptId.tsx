@@ -3,7 +3,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Check, CornerDownRight, GripVertical, Plus, X } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { Badge } from "~/components/badge";
 import { DialogError } from "~/components/callout";
 import { Button } from "~/components/button";
@@ -116,7 +116,7 @@ function ScriptEditor() {
     },
     onError: (e) => {
       console.error("scripts.addStep failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
     },
   });
 
@@ -141,7 +141,7 @@ function ScriptEditor() {
     },
     onError: (e) => {
       console.error("scripts.addStep failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
     },
   });
 
@@ -165,7 +165,7 @@ function ScriptEditor() {
     },
     onError: (e) => {
       console.error("create question + addStep failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
     },
   });
 
@@ -177,7 +177,7 @@ function ScriptEditor() {
     },
     onError: (e, _id, ctx) => {
       console.error("scripts.removeStep failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
     },
     onSuccess: () => {
@@ -201,7 +201,7 @@ function ScriptEditor() {
     },
     onError: (e, _ids, ctx) => {
       console.error("scripts.reorderSteps failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
     },
     onSuccess: () => {
@@ -225,7 +225,7 @@ function ScriptEditor() {
     },
     onError: (e, _input, ctx) => {
       console.error("scripts.setStepCondition failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
     },
   });
@@ -241,7 +241,7 @@ function ScriptEditor() {
     },
     onError: (e, _input, ctx) => {
       console.error("scripts.updateTextStep failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["script", scriptId], ctx.prev);
     },
   });
@@ -618,7 +618,7 @@ function QuestionStepBody({
     },
     onError: (e, _name, ctx) => {
       console.error("questions.rename failed", e);
-      toast.error(e.message);
+      notify.error(e.message);
       if (ctx?.prev) queryClient.setQueryData(["question", questionId], ctx.prev);
     },
     onSuccess: () => {

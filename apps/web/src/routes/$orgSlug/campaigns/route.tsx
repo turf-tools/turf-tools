@@ -17,7 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
 import {
@@ -329,7 +329,7 @@ function CampaignsLayout() {
       if (ctx?.previous) queryClient.setQueryData(["campaign", input.campaignId], ctx.previous);
       // The dialog has already closed by the time the write settles, so a
       // silent rollback reads as the app changing its mind — say so.
-      toast.error("Couldn't save the campaign configuration. Please try again.");
+      notify.error("Couldn't save the campaign configuration. Please try again.");
     },
     // Settle-with-invalidation: the campaigns LIST also carries segmentId /
     // zoneGroupId and seeds the configure dialog, so both keys must re-sync.
@@ -414,7 +414,7 @@ function CampaignsLayout() {
       setRemoveSnapshot({ name: activeCampaign.name, blockers });
       setRemoveOpen(true);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't check references.");
+      notify.error(e instanceof Error ? e.message : "Couldn't check references.");
     }
   };
 
