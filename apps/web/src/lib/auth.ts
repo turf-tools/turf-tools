@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { emailOTP } from "better-auth/plugins";
+import { tanstackStartCookies } from "better-auth/tanstack-start";
 import nodemailer, { type Transporter } from "nodemailer";
 import { and, db, eq, isNull } from "@turf-tools/db";
 import { accounts, memberships, sessions, users, verifications } from "@turf-tools/db/schema";
@@ -35,6 +36,13 @@ export const auth = betterAuth({
   // OTP send/verify tracing is in the hooks below — BA itself doesn't log
   // around those.
   logger: { level: "info" },
+  session: {
+    // 30 days with sliding renewal (default updateAge = 1 day): any device
+    // active at least monthly never re-logs-in; anything idle a month dies.
+    // The tanstackStartCookies plugin below is what delivers each renewed
+    // cookie to the browser.
+    expiresIn: 60 * 60 * 24 * 30,
+  },
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: {
@@ -185,5 +193,9 @@ export const auth = betterAuth({
         });
       },
     }),
+    // Writes cookies from programmatic auth.api.* calls (notably the sliding
+    // session renewal in getSession) onto the response via TanStack Start's
+    // setCookie; no-ops outside a request context. Must stay the last plugin.
+    tanstackStartCookies(),
   ],
 });
