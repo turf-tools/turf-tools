@@ -42,6 +42,11 @@ export const auth = betterAuth({
     // The tanstackStartCookies plugin below is what delivers each renewed
     // cookie to the browser.
     expiresIn: 60 * 60 * 24 * 30,
+    // Serve getSession from a signed cookie instead of a per-request session
+    // lookup; the store is consulted only when the window rolls over, so
+    // sliding renewal still happens (checked every maxAge, due daily) and a
+    // revoked session lingers at most maxAge.
+    cookieCache: { enabled: true, maxAge: 60 * 5 },
   },
   database: drizzleAdapter(db, {
     provider: "pg",
