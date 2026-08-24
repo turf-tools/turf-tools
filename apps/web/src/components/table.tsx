@@ -76,12 +76,9 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
       data-slot="table-cell"
-      // Horizontal padding becomes the gap between pills (pr + pl of
-      // adjacent cells). Vertical padding becomes the gap between rows.
-      className={cn(
-        "px-1 py-1 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
-        className,
-      )}
+      // Base lives in styles.css as `.table-td`; its padding is the
+      // gap between pills and rows.
+      className={cn("table-td", className)}
       {...props}
     />
   );

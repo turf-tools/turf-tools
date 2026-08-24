@@ -7,7 +7,8 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
-import { dataFetch, passthrough, prefixDataTiming } from "~/lib/server/data-proxy";
+import { dataFetch, passthrough } from "~/lib/server/data-proxy";
+import { newTimingStore, serverTimingValue, timed, timingScope } from "~/lib/server/timing";
 import { buildVoterDataContext } from "~/rpc/context";
 
 const corsHeaders = {
@@ -27,46 +28,42 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-points")({
         if (!orgSlug) {
           return new Response("Not Found", { status: 404, headers: corsHeaders });
         }
-        const t0 = performance.now();
-        let context;
-        try {
-          context = await buildVoterDataContext(db, request.headers, orgSlug);
-        } catch {
-          return new Response("Unauthorized", { status: 401, headers: corsHeaders });
-        }
-        const authMs = performance.now() - t0;
-        const body = (await request.json()) as {
-          criteria: unknown;
-          keyFilter?: { keyGroup: string; keys: string[] } | null;
-        };
-        const tFetch = performance.now();
-        const upstream = await dataFetch("/buildings/points", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/octet-stream",
-          },
-          body: JSON.stringify({
-            criteria: body.criteria,
-            keyFilter: body.keyFilter,
-            orgSlug: context.orgSlug,
-          }),
-        });
-        if (!upstream.ok) {
-          return new Response(await upstream.text(), {
-            status: upstream.status,
-            headers: corsHeaders,
+        const store = newTimingStore();
+        const res = await timingScope.run(store, async () => {
+          let context;
+          try {
+            context = await timed("auth", () =>
+              buildVoterDataContext(db, request.headers, orgSlug),
+            );
+          } catch {
+            return new Response("Unauthorized", { status: 401 });
+          }
+          const body = (await request.json()) as {
+            criteria: unknown;
+            keyFilter?: { keyGroup: string; keys: string[] } | null;
+          };
+          const upstream = await dataFetch("/buildings/points", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/octet-stream",
+            },
+            body: JSON.stringify({
+              criteria: body.criteria,
+              keyFilter: body.keyFilter,
+              orgSlug: context.orgSlug,
+            }),
           });
-        }
-        const upstreamTiming = upstream.headers.get("Server-Timing");
-        return passthrough(upstream, {
-          ...corsHeaders,
-          "Server-Timing": [
-            `auth;dur=${authMs.toFixed(1)}`,
-            `data-fetch;dur=${(performance.now() - tFetch).toFixed(1)}`,
-            ...(upstreamTiming ? [prefixDataTiming(upstreamTiming)] : []),
-          ].join(", "),
+          if (!upstream.ok) {
+            return new Response(await upstream.text(), { status: upstream.status });
+          }
+          return passthrough(upstream, corsHeaders);
         });
+        for (const [key, value] of Object.entries(corsHeaders)) {
+          res.headers.set(key, value);
+        }
+        res.headers.set("Server-Timing", serverTimingValue(store));
+        return res;
       },
     },
   },
