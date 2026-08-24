@@ -39,18 +39,19 @@ const getClient = createIsomorphicFn()
     return createORPCClient(link);
   });
 
-// Dev-only RPC timing. Wraps every client level as a Proxy that traps both
+// Per-call RPC timing. Wraps every client level as a Proxy that traps both
 // property access (to keep `client.segments.list` chaining intact, since oRPC
-// returns callable proxies at every level) and invocation (to time the call).
-// Filter the console by "[rpc]" to see what's running during a user
-// interaction and how long each call took.
-function timedRpc<T extends object>(target: T, path: string[] = []): T {
+// returns callable proxies at every level) and invocation (to time the call),
+// reporting each call's duration to `sink`.
+type RpcSink = (path: string, ms: number) => void;
+
+function timedRpc<T extends object>(target: T, sink: RpcSink, path: string[] = []): T {
   return new Proxy(target, {
     get(t, prop, receiver) {
       const value = Reflect.get(t, prop, receiver);
       if (typeof prop === "symbol" || prop === "then" || value == null) return value;
       if (typeof value === "function" || typeof value === "object") {
-        return timedRpc(value as object, [...path, String(prop)]);
+        return timedRpc(value as object, sink, [...path, String(prop)]);
       }
       return value;
     },
@@ -58,15 +59,29 @@ function timedRpc<T extends object>(target: T, path: string[] = []): T {
       const t0 = performance.now();
       const result = Reflect.apply(t as (...a: unknown[]) => unknown, thisArg, args);
       if (result instanceof Promise) {
-        return result.finally(() => {
-          const ms = performance.now() - t0;
-          console.log(`[rpc] ${path.join(".")} ${ms.toFixed(0)}ms`);
-        });
+        return result.finally(() => sink(path.join("."), performance.now() - t0));
       }
       return result;
     },
   }) as T;
 }
 
+// Server: durations land in the request's Server-Timing scope. The module
+// is loaded lazily so the browser bundle never touches node:async_hooks;
+// the ALS context survives the import promise, and src/server.ts waits a
+// tick before stamping the header so these records land.
+const serverSink: RpcSink = (path, ms) => {
+  void import("~/lib/server/timing").then((m) =>
+    m.recordTiming(`rpc-${path.replaceAll(".", "-")}`, ms),
+  );
+};
+
 const rawClient = getClient() as RouterClient<WebRouter>;
-export const client = import.meta.env.DEV ? timedRpc(rawClient) : rawClient;
+export const client =
+  typeof window === "undefined"
+    ? timedRpc(rawClient, serverSink)
+    : import.meta.env.DEV
+      ? // Filter the console by "[rpc]" to see what runs during an
+        // interaction and how long each call took.
+        timedRpc(rawClient, (path, ms) => console.log(`[rpc] ${path} ${ms.toFixed(0)}ms`))
+      : rawClient;

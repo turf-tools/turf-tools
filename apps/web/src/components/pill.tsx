@@ -20,13 +20,12 @@ type PillProps = {
 export function Pill({ variant = "text", color, className, style, children }: PillProps) {
   return (
     <span
+      // Base lives in styles.css as `.pill` (hoisted for SSR document
+      // size). It bumps SVG stroke-width to 2.5 inside pills only —
+      // icons sit alongside small text, where the default 2 reads too
+      // thin; other icons in the app stay on the lucide default.
       className={cn(
-        // Bump SVG stroke-width to 2.5 inside pills only — icons sit
-        // alongside small text in the badge, where the default 2 reads
-        // a touch too thin against the surrounding font weight. Other
-        // icons in the app (header buttons, modal triggers, etc.)
-        // stay on the lucide default.
-        "flex h-8 w-full items-center rounded-md border border-transparent bg-clip-padding px-2 text-sm [&_svg]:[stroke-width:2.5]",
+        "pill",
         variant === "number" && "font-mono tabular-nums",
         color ? "badge-tint" : "bg-muted",
         className,

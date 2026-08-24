@@ -1,24 +1,6 @@
 import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import type { Feature, FeatureCollection } from "geojson";
-import {
-  Check,
-  CheckCheck,
-  ChevronDown,
-  Copy,
-  DoorClosed,
-  LayoutGrid,
-  LoaderCircle,
-  Map as MapIcon,
-  Megaphone,
-  Phone,
-  QrCode,
-  Radio,
-  Rows3,
-  UserRound,
-  UsersRound,
-  Waypoints,
-} from "lucide-react";
 import { useAtomValue } from "jotai";
 import polylabel from "polylabel";
 import { QRCodeSVG } from "qrcode.react";
@@ -27,6 +9,7 @@ import { Button } from "~/components/button";
 import { Dialog, DialogClose, DialogCloseX, DialogContent, DialogTitle } from "~/components/dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
+import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
 import { Page } from "~/components/page";
 import { tintStyle } from "~/components/badge";
@@ -228,7 +211,7 @@ function TurfsIndex() {
   // where you came from.
   const campaignFilter = (
     <Filter
-      icon={<Megaphone className="size-3.5" />}
+      icon={<Icon name="megaphone" className="size-3.5" />}
       label={campaignId === null ? "All campaigns" : campaignName}
       value={campaignId}
       options={campaignOptions}
@@ -238,7 +221,7 @@ function TurfsIndex() {
   );
   const zoneFilter = (
     <Filter
-      icon={<Waypoints className="size-3.5" />}
+      icon={<Icon name="waypoints" className="size-3.5" />}
       label={regionLabel}
       value={zoneId}
       options={regionOptions}
@@ -273,10 +256,10 @@ function TurfsIndex() {
             }}
           >
             <ToggleGroupItem value="cards" aria-label="Cards">
-              <LayoutGrid className="size-3.5" />
+              <Icon name="layout-grid" className="size-3.5" />
             </ToggleGroupItem>
             <ToggleGroupItem value="table" aria-label="Table">
-              <Rows3 className="size-3.5" />
+              <Icon name="rows-3" className="size-3.5" />
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
@@ -491,7 +474,7 @@ function GroupHeader({
         onClick={() => onShowZoneMap(group.rows[0]!)}
       >
         View map
-        <MapIcon className="size-3.5" />
+        <Icon name="map" className="size-3.5" />
       </button>
     </div>
   );
@@ -597,7 +580,7 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
         className={cn(card, "badge-tint border-black/15 dark:border-white/18")}
         style={tintStyle(BLUE)}
       >
-        <Radio className="size-4 shrink-0 [stroke-width:2.5]" />
+        <Icon name="radio" className="size-4 shrink-0 [stroke-width:2.5]" />
         <NamesLine prefix="Out with" names={summary.activeNames} />
       </div>
     );
@@ -608,7 +591,7 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
         className={cn(card, "badge-tint border-black/15 dark:border-white/18")}
         style={tintStyle(BLUE)}
       >
-        <LoaderCircle className="size-4 shrink-0 animate-spin [stroke-width:2.5]" />
+        <Icon name="loader-circle" className="size-4 shrink-0 animate-spin [stroke-width:2.5]" />
         <span>Signing out…</span>
       </div>
     );
@@ -617,9 +600,9 @@ function QrStatus({ summary }: { summary: WalkSummary }) {
     return (
       <div className={cn(card, "border-border bg-white text-foreground dark:bg-transparent")}>
         {summary.walks.length >= 2 ? (
-          <CheckCheck className="size-4 shrink-0 [stroke-width:2.5]" />
+          <Icon name="check-check" className="size-4 shrink-0 [stroke-width:2.5]" />
         ) : (
-          <Check className="size-4 shrink-0 [stroke-width:2.5]" />
+          <Icon name="check" className="size-4 shrink-0 [stroke-width:2.5]" />
         )}
         <NamesLine prefix="Walked by" names={summary.names} />
       </div>
@@ -698,9 +681,15 @@ function QrDialog({
                   {turf.turfCode}
                 </span>
                 {copied ? (
-                  <Check className="size-4 shrink-0 text-foreground [stroke-width:2.5] animate-in fade-in duration-300" />
+                  <Icon
+                    name="check"
+                    className="size-4 shrink-0 text-foreground [stroke-width:2.5] animate-in fade-in duration-300"
+                  />
                 ) : (
-                  <Copy className="size-4 shrink-0 text-foreground [stroke-width:2.5] animate-in fade-in duration-300" />
+                  <Icon
+                    name="copy"
+                    className="size-4 shrink-0 text-foreground [stroke-width:2.5] animate-in fade-in duration-300"
+                  />
                 )}
               </button>
               <div className="mt-1 flex items-center justify-between">
@@ -997,9 +986,9 @@ function WalkedBadge({ summary, tz }: { summary: WalkSummary; tz: string }) {
       {last ? (
         <span className="flex items-center gap-1.5 animate-in fade-in duration-100">
           {summary.walks.length >= 2 ? (
-            <CheckCheck className="size-4" />
+            <Icon name="check-check" className="size-4" />
           ) : (
-            <Check className="size-4" />
+            <Icon name="check" className="size-4" />
           )}
           {formatMonthDay(last.openedAt, tz)}
         </span>
@@ -1016,14 +1005,14 @@ function StatusBadge({ summary }: { summary: WalkSummary }) {
   if (summary.live) {
     return (
       <Pill className="justify-center" color={BLUE}>
-        <Radio className="size-4" />
+        <Icon name="radio" className="size-4" />
       </Pill>
     );
   }
   if (pending) {
     return (
       <Pill className="justify-center" color={BLUE}>
-        <LoaderCircle className="size-4 animate-spin" />
+        <Icon name="loader-circle" className="size-4 animate-spin" />
       </Pill>
     );
   }
@@ -1085,7 +1074,10 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
                   render={<a href={`sms:${w.canvasserPhone}`} />}
                 >
                   <span className="truncate">{w.canvasserName}</span>
-                  <Phone className="ml-px size-3.5 shrink-0 text-muted-foreground [stroke-width:2.25]" />
+                  <Icon
+                    name="phone"
+                    className="ml-px size-3.5 shrink-0 text-muted-foreground [stroke-width:2.25]"
+                  />
                 </Button>
               ) : (
                 <span className="block truncate">{w.canvasserName}</span>
@@ -1190,29 +1182,29 @@ function TurfCard({
           {summary.walks.length > 0 ? (
             <span className={cn(badge, "bg-muted")}>
               {summary.walks.length >= 2 ? (
-                <CheckCheck className="size-4 [stroke-width:2.5]" />
+                <Icon name="check-check" className="size-4 [stroke-width:2.5]" />
               ) : (
-                <Check className="size-4 [stroke-width:2.5]" />
+                <Icon name="check" className="size-4 [stroke-width:2.5]" />
               )}
             </span>
           ) : null}
           {summary.live ? (
             <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
-              <Radio className="size-4 [stroke-width:2.5]" />
+              <Icon name="radio" className="size-4 [stroke-width:2.5]" />
             </span>
           ) : pending ? (
             <span className={cn(badge, "badge-tint")} style={tintStyle(BLUE)}>
-              <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
+              <Icon name="loader-circle" className="size-4 animate-spin [stroke-width:2.5]" />
             </span>
           ) : null}
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
-            <UserRound className="size-3.5" />
+            <Icon name="user-round" className="size-3.5" />
             {turf.personCount != null ? turf.personCount.toLocaleString() : "—"}
           </span>
           <span className={cn(badge, "bg-muted font-mono tabular-nums")}>
-            <DoorClosed className="size-3.5" />
+            <Icon name="door-closed" className="size-3.5" />
             {doorLabel(turf.doorCount)}
           </span>
           {/* Chrome renders as a square placeholder until the value lands,
@@ -1240,7 +1232,8 @@ function TurfCard({
           }}
           className="-ml-0.5 flex items-center"
         >
-          <ChevronDown
+          <Icon
+            name="chevron-down"
             className={cn(
               "size-5 text-foreground [stroke-width:2.5] transition-transform duration-150",
               expanded && "scale-y-[-1]",
@@ -1261,7 +1254,7 @@ function TurfCard({
             onShowTurfMap(turf);
           }}
         >
-          <MapIcon className="size-3.5" />
+          <Icon name="map" className="size-3.5" />
           Map
         </Button>
         <Button
@@ -1272,7 +1265,7 @@ function TurfCard({
             onShowQr(turf);
           }}
         >
-          <QrCode className="size-3.5" />
+          <Icon name="qr-code" className="size-3.5" />
           Scan
         </Button>
       </div>
@@ -1345,7 +1338,7 @@ function CompactList({
                   className="min-w-0 flex-1 px-0"
                   onClick={() => onShowTurfMap(t)}
                 >
-                  <MapIcon className="size-3.5" />
+                  <Icon name="map" className="size-3.5" />
                 </Button>
                 <Button
                   variant="outline"
@@ -1354,13 +1347,13 @@ function CompactList({
                   disabled={!t.turfCode || t.status !== "active"}
                   onClick={() => onShowQr(t)}
                 >
-                  <QrCode className="size-3.5" />
+                  <Icon name="qr-code" className="size-3.5" />
                 </Button>
                 <span className={cn(cell, "w-9 bg-muted")}>
                   {summary.walks.length >= 2 ? (
-                    <CheckCheck className="size-4 [stroke-width:2.5]" />
+                    <Icon name="check-check" className="size-4 [stroke-width:2.5]" />
                   ) : summary.walks.length === 1 ? (
-                    <Check className="size-4 [stroke-width:2.5]" />
+                    <Icon name="check" className="size-4 [stroke-width:2.5]" />
                   ) : null}
                 </span>
                 <CompactStatus summary={summary} cell={cell} />
@@ -1370,7 +1363,7 @@ function CompactList({
                     "w-16 justify-start gap-1 bg-muted px-2 font-mono tabular-nums",
                   )}
                 >
-                  <DoorClosed className="size-3.5 shrink-0" />
+                  <Icon name="door-closed" className="size-3.5 shrink-0" />
                   {doorLabel(t.doorCount)}
                 </span>
                 <span
@@ -1392,7 +1385,7 @@ function CompactList({
                   disabled={summary.walks.length === 0}
                   onClick={() => onShowWalks(t)}
                 >
-                  <UsersRound className="size-3.5" />
+                  <Icon name="users-round" className="size-3.5" />
                 </Button>
               </div>
             );
@@ -1412,9 +1405,9 @@ function CompactStatus({ summary, cell }: { summary: WalkSummary; cell: string }
       style={active ? tintStyle(BLUE) : undefined}
     >
       {summary.live ? (
-        <Radio className="size-4 [stroke-width:2.5]" />
+        <Icon name="radio" className="size-4 [stroke-width:2.5]" />
       ) : pending ? (
-        <LoaderCircle className="size-4 animate-spin [stroke-width:2.5]" />
+        <Icon name="loader-circle" className="size-4 animate-spin [stroke-width:2.5]" />
       ) : null}
     </span>
   );
@@ -1486,7 +1479,7 @@ function TurfsTable({
                   className="w-full justify-start"
                   onClick={() => onShowTurfMap(t)}
                 >
-                  <MapIcon className="size-3.5 shrink-0" />
+                  <Icon name="map" className="size-3.5 shrink-0" />
                   <span className="font-mono tabular-nums">{turfLabel(t.name)}</span>
                 </Button>
               </TableCell>
@@ -1497,7 +1490,7 @@ function TurfsTable({
                   disabled={!t.turfCode || t.status !== "active"}
                   onClick={() => onShowQr(t)}
                 >
-                  <QrCode className="size-3.5" />
+                  <Icon name="qr-code" className="size-3.5" />
                   <span className="font-mono tabular-nums">{t.turfCode ?? "—"}</span>
                 </Button>
               </TableCell>
@@ -1509,13 +1502,13 @@ function TurfsTable({
               </TableCell>
               <TableCell>
                 <Pill variant="number" className="gap-1.5">
-                  <UserRound className="size-3.5 shrink-0 text-foreground" />
+                  <Icon name="user-round" className="size-3.5 shrink-0 text-foreground" />
                   {t.personCount != null ? t.personCount.toLocaleString() : "—"}
                 </Pill>
               </TableCell>
               <TableCell>
                 <Pill variant="number" className="gap-1.5">
-                  <DoorClosed className="size-3.5 shrink-0 text-foreground" />
+                  <Icon name="door-closed" className="size-3.5 shrink-0 text-foreground" />
                   {doorLabel(t.doorCount)}
                 </Pill>
               </TableCell>
@@ -1529,7 +1522,7 @@ function TurfsTable({
                   disabled={summary.walks.length === 0}
                   onClick={() => onShowWalks(t)}
                 >
-                  <UsersRound className="size-3.5 shrink-0" />
+                  <Icon name="users-round" className="size-3.5 shrink-0" />
                   <span className="min-w-0 truncate">{summary.names.join(", ")}</span>
                 </Button>
               </TableCell>
@@ -1540,7 +1533,7 @@ function TurfsTable({
                     className="w-full justify-start"
                     onClick={() => onShowZoneMap(t)}
                   >
-                    <MapIcon className="size-3.5 shrink-0" />
+                    <Icon name="map" className="size-3.5 shrink-0" />
                     <span className="min-w-0 truncate">{regionName(t)}</span>
                   </Button>
                 ) : (
