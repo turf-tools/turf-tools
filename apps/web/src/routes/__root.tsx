@@ -35,6 +35,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Turf Tools" },
     ],
     links: [
+      // Preload the icon sprite so icons don't pop in after first paint.
+      { rel: "preload", href: "/sprite.svg", as: "image", type: "image/svg+xml" },
       { rel: "icon", type: "image/png", href: "/favicon/arrow.png" },
       {
         rel: "icon",

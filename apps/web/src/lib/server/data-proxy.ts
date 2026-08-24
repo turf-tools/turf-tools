@@ -4,19 +4,11 @@
 // the upstream-failure shape, and the streaming pass-through pattern
 // all live in one place.
 
-import { AsyncLocalStorage } from "node:async_hooks";
-
-// Per-request capture of the data service's Server-Timing header and the
-// web-side fetch wall (time-to-headers: event-loop queue + processing +
-// network; fetchMs − data-total = time the request spent queued). A route
-// that wants upstream phase timings in its own response wraps its handler
-// in `dataTiming.run({}, ...)` and reads the store afterwards; calls outside
-// a scope record nothing.
-export const dataTiming = new AsyncLocalStorage<{ header?: string; fetchMs?: number }>();
+import { recordRawTiming, recordTiming } from "~/lib/server/timing";
 
 // Re-namespace upstream phases (resolve, query, total, …) as data-* so they
 // coexist with the web tier's own entries in one Server-Timing header.
-export function prefixDataTiming(header: string): string {
+function prefixDataTiming(header: string): string {
   return header
     .split(",")
     .map((part) => `data-${part.trim()}`)
@@ -33,14 +25,14 @@ function dataUrl(path: string): string {
 }
 
 // Generic fetch against the data service. Caller controls method/body/headers.
+// Records `data-fetch` (time-to-headers; data-fetch − data-total ≈ upstream
+// queueing) plus the service's own phases into the request's timing scope.
 export async function dataFetch(path: string, init?: RequestInit): Promise<Response> {
   const t0 = performance.now();
   const res = await fetch(dataUrl(path), init);
-  const store = dataTiming.getStore();
-  if (store) {
-    store.header = res.headers.get("Server-Timing") ?? undefined;
-    store.fetchMs = performance.now() - t0;
-  }
+  recordTiming("data-fetch", performance.now() - t0);
+  const header = res.headers.get("Server-Timing");
+  if (header) recordRawTiming(prefixDataTiming(header));
   return res;
 }
 
