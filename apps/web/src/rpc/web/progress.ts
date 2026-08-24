@@ -17,6 +17,20 @@ const cache = new Map<string, { at: number; rows: ProgressRow[] }>();
 
 type ProgressRow = { turfId: string; attempted: number };
 
+type ZoneProgressRow = {
+  campaignId: string;
+  campaignName: string;
+  zoneId: string | null;
+  zoneName: string | null;
+  people: number;
+  doors: number;
+  turfs: number;
+  used: number;
+  attempted: number;
+};
+
+const zoneCache = new Map<string, { at: number; rows: ZoneProgressRow[] }>();
+
 export const forOrg = pub
   .input(z.object({ campaignId: z.string().uuid().optional() }).optional())
   .handler(async ({ context, input }): Promise<ProgressRow[]> => {
@@ -53,5 +67,87 @@ export const forOrg = pub
       attempted: r.attempted,
     }));
     cache.set(key, { at: Date.now(), rows });
+    return rows;
+  });
+
+// Per-(campaign, zone) rollup for the Progress page. All counts are
+// commitment-frame: people/doors/turfs are frozen turf snapshots (what was
+// cut and published), attempted is the latest-per-(campaign, person)
+// reduction, and used counts turfs with at least one surviving attempt —
+// a turf whose only results were cleared stays unused. Live segment
+// evaluation (the intent frame) is deliberately absent here.
+export const byZone = pub
+  .input(z.object({}).optional())
+  .handler(async ({ context }): Promise<ZoneProgressRow[]> => {
+    const datasetId = await activeDatasetId(context.db, context.organizationId);
+    if (!datasetId) return [];
+    const key = `${context.organizationId}:${datasetId}`;
+    const hit = zoneCache.get(key);
+    if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
+
+    const result = await context.db.execute(sql`
+      WITH latest AS (
+        SELECT DISTINCT ON (t.campaign_id, e.person_id)
+          t.campaign_id,
+          e.turf_id,
+          e.payload->>'outcome' AS outcome
+        FROM app.canvass_events e
+        JOIN app.turfs t ON t.turf_id = e.turf_id
+        JOIN app.campaigns c ON c.campaign_id = t.campaign_id
+        WHERE e.kind = 'result'
+          AND e.person_id IS NOT NULL
+          AND c.organization_id = ${context.organizationId}
+          AND c.dataset_id = ${datasetId}
+        ORDER BY t.campaign_id, e.person_id, e.sequence DESC
+      ),
+      attempted AS (
+        SELECT campaign_id, turf_id, count(*)::int AS att
+        FROM latest WHERE outcome IS NOT NULL
+        GROUP BY campaign_id, turf_id
+      )
+      SELECT
+        c.campaign_id,
+        c.name AS campaign_name,
+        t.zone_id,
+        t.zone_name,
+        coalesce(sum(t.person_count), 0)::int AS people,
+        coalesce(sum(t.door_count), 0)::int AS doors,
+        count(*)::int AS turfs,
+        count(a.turf_id)::int AS used,
+        coalesce(sum(a.att), 0)::int AS attempted
+      FROM app.turfs t
+      JOIN app.campaigns c ON c.campaign_id = t.campaign_id
+      LEFT JOIN attempted a ON a.turf_id = t.turf_id AND a.campaign_id = t.campaign_id
+      WHERE t.status = 'active'
+        AND c.organization_id = ${context.organizationId}
+        AND c.dataset_id = ${datasetId}
+        AND c.archived_at IS NULL
+      GROUP BY c.campaign_id, c.name, t.zone_id, t.zone_name
+      ORDER BY c.name, t.zone_name NULLS FIRST
+    `);
+    const rows = (
+      result as unknown as Array<{
+        campaign_id: string;
+        campaign_name: string;
+        zone_id: string | null;
+        zone_name: string | null;
+        people: number;
+        doors: number;
+        turfs: number;
+        used: number;
+        attempted: number;
+      }>
+    ).map((r) => ({
+      campaignId: r.campaign_id,
+      campaignName: r.campaign_name,
+      zoneId: r.zone_id,
+      zoneName: r.zone_name,
+      people: r.people,
+      doors: r.doors,
+      turfs: r.turfs,
+      used: r.used,
+      attempted: r.attempted,
+    }));
+    zoneCache.set(key, { at: Date.now(), rows });
     return rows;
   });

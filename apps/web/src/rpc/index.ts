@@ -108,6 +108,7 @@ export const webRouter = {
   },
   progress: {
     forOrg: progress.forOrg,
+    byZone: progress.byZone,
   },
   turfDrafts: {
     list: turfDrafts.list,
