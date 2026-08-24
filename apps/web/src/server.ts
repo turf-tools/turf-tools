@@ -1,11 +1,9 @@
 import handler, { createServerEntry } from "@tanstack/react-start/server-entry";
 import { serverTimingValue, timingScope } from "~/lib/server/timing";
 
-// Custom entry solely for a Server-Timing breakdown of SSR TTFB: `total`
-// covers auth + loaders + shell prep (streaming continues after headers
-// go out, so render isn't included); `auth` and `rpc-*` entries come
-// from getSession and the server-side RPC client. total − sum(parts) ≈
-// framework overhead.
+// Custom entry only to stamp a Server-Timing breakdown per request:
+// `auth` and `rpc-*` are recorded by getSession and the server-side
+// RPC client; `total` is the whole handler.
 export default createServerEntry({
   async fetch(request) {
     const timings = new Map<string, number>();

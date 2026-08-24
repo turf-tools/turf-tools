@@ -66,10 +66,8 @@ function timedRpc<T extends object>(target: T, sink: RpcSink, path: string[] = [
   }) as T;
 }
 
-// Server: durations land in the request's Server-Timing scope. The module
-// is loaded lazily so the browser bundle never touches node:async_hooks;
-// the ALS context survives the import promise, and src/server.ts waits a
-// tick before stamping the header so these records land.
+// Server: durations land in the request's Server-Timing scope. Lazy
+// import keeps node:async_hooks out of the browser bundle.
 const serverSink: RpcSink = (path, ms) => {
   void import("~/lib/server/timing").then((m) =>
     m.recordTiming(`rpc-${path.replaceAll(".", "-")}`, ms),

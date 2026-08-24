@@ -20,10 +20,9 @@ type PillProps = {
 export function Pill({ variant = "text", color, className, style, children }: PillProps) {
   return (
     <span
-      // Base lives in styles.css as `.pill` (hoisted for SSR document
-      // size). It bumps SVG stroke-width to 2.5 inside pills only —
-      // icons sit alongside small text, where the default 2 reads too
-      // thin; other icons in the app stay on the lucide default.
+      // Base lives in styles.css as `.pill`; it bumps SVG stroke-width
+      // to 2.5 — icons sit alongside small text, where the default 2
+      // reads too thin.
       className={cn(
         "pill",
         variant === "number" && "font-mono tabular-nums",

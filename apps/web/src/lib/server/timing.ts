@@ -1,10 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-// Request-scoped Server-Timing collector. The server entry (src/server.ts)
-// opens a scope per request; server-side code records durations into it
-// (the SSR RPC client, getSession); the entry stamps the header once the
-// handler settles. Without a scope every record is a no-op, so shared
-// code paths can record unconditionally.
+// Request-scoped Server-Timing collector. src/server.ts opens a scope
+// per request and stamps the header; recorders no-op without a scope,
+// so shared code paths can record unconditionally.
 export const timingScope = new AsyncLocalStorage<Map<string, number>>();
 
 export function recordTiming(name: string, ms: number) {

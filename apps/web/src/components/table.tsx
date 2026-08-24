@@ -76,8 +76,8 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   return (
     <td
       data-slot="table-cell"
-      // Base lives in styles.css as `.table-td` (hoisted for SSR
-      // document size): its padding is the gap between pills and rows.
+      // Base lives in styles.css as `.table-td`; its padding is the
+      // gap between pills and rows.
       className={cn("table-td", className)}
       {...props}
     />

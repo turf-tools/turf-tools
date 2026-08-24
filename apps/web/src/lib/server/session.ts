@@ -52,7 +52,6 @@ export const getSession = createServerFn({ method: "GET" }).handler(
     user: SessionUser;
     orgsBySlug: Record<string, SessionOrg>;
   } | null> =>
-    // `auth` in the SSR Server-Timing breakdown (see src/server.ts).
     timed("auth", async () => {
       if (process.env.AUTH_DISABLED === "1") {
         const row = (await db.select().from(users).where(eq(users.id, SEEDED_ADMIN_USER_ID)))[0];

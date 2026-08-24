@@ -8,8 +8,7 @@ import { cn } from "~/lib/utils";
 type ButtonClickHandler = NonNullable<ButtonPrimitive.Props["onClick"]>;
 type ButtonClickEvent = Parameters<ButtonClickHandler>[0];
 
-// The invariant base lives in styles.css as `.btn` (hoisted for SSR
-// document size); only variant deltas are inlined per instance.
+// Base styles live in styles.css as `.btn`.
 const buttonVariants = cva("group/button btn", {
   variants: {
     variant: {
