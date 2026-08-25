@@ -1,12 +1,5 @@
+import { Icon } from "~/components/icon";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Calendar as CalendarIcon,
-  ChevronDown,
-  Filter as FilterIcon,
-  Minus,
-  Plus,
-  X,
-} from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -352,7 +345,7 @@ function CanvassResponseEditor({
           <span className={cn("truncate", !selected ? "text-muted-foreground" : null)}>
             {triggerLabel}
           </span>
-          <ChevronDown className="text-muted-foreground" />
+          <Icon name="chevron-down" className="text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="min-w-48 max-h-[291px] overflow-y-auto">
           {!questions ? null : questions.length === 0 ? (
@@ -500,7 +493,7 @@ function DatePickerInput({
         <PopoverTrigger
           render={
             <Button variant="outline" size="sm" className="h-7 px-2 font-normal">
-              <CalendarIcon className="size-3.5" />
+              <Icon name="calendar" className="size-3.5" />
               <span className={cn(!value && "text-muted-foreground")}>
                 {value ? formatHuman(value) : placeholder}
               </span>
@@ -532,7 +525,7 @@ function DatePickerInput({
           onClick={() => onChange(null)}
           aria-label="Clear date"
         >
-          <X className="size-4" />
+          <Icon name="x" className="size-4" />
         </Button>
       ) : null}
     </div>
@@ -888,7 +881,7 @@ function SegmentFilterEditor({
         <span className={cn("truncate", !selected ? "text-muted-foreground" : null)}>
           {triggerLabel}
         </span>
-        <ChevronDown className="text-muted-foreground" />
+        <Icon name="chevron-down" className="text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent className="min-w-48 max-h-[291px] overflow-y-auto">
         {selectable.length === 0 ? (
@@ -918,9 +911,9 @@ export function AddStepMenu({
   onAdd: (verb: Verb, def: FilterDef) => void;
 }) {
   const verbIcons: Record<Verb, ReactNode> = {
-    narrow: <FilterIcon className="size-3" strokeWidth={2.5} />,
-    add: <Plus className="size-3" strokeWidth={2.5} />,
-    remove: <Minus className="size-3" strokeWidth={2.5} />,
+    narrow: <Icon name="funnel" className="size-3" strokeWidth={2.5} />,
+    add: <Icon name="plus" className="size-3" strokeWidth={2.5} />,
+    remove: <Icon name="minus" className="size-3" strokeWidth={2.5} />,
   };
 
   const allVerbs: Verb[] = ["narrow", "remove", "add"];

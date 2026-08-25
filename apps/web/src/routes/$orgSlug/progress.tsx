@@ -118,7 +118,7 @@ function ProgressIndex() {
         />
       </EditorHeader>
       <div className="flex min-h-0 flex-1 gap-6">
-        <div className="flex w-150 shrink-0 flex-col overflow-hidden">
+        <div className="flex w-160 shrink-0 flex-col overflow-hidden">
           <ProgressTable
             campaignFilter={campaign}
             showAllZones={zonesView === "all"}
@@ -185,11 +185,11 @@ function ProgressMap({
     [data, campaignFilter],
   );
 
-  // Same discrete red/yellow/green as the table and turf board, so a
-  // zone's fill and its Progress pill always agree. Cut-but-unstarted
-  // zones read red (0% ≤ 25) — on this map red is the work remaining,
-  // which is the thing being looked for. The Cut view drops uncut zones
-  // entirely; the All view keeps them with a faint no-data fill.
+  // Turf-grain (used/total), matching the table's colored Progress pill
+  // — the dispatch signal: red = turf still to hand out. Same discrete
+  // red/yellow/green thresholds as the turf board. The Cut view drops
+  // uncut zones entirely; the All view keeps them with a faint no-data
+  // fill.
   const coloredPerimeters = useMemo(() => {
     if (!perimeters) return undefined;
     const features = showAllZones
@@ -199,7 +199,7 @@ function ProgressMap({
       ...perimeters,
       features: features.map((f) => {
         const row = byZone.get(f.properties?.zoneId as string);
-        const pct = row && row.people > 0 ? Math.round((100 * row.attempted) / row.people) : null;
+        const pct = row && row.turfs > 0 ? Math.round((100 * row.used) / row.turfs) : null;
         return {
           ...f,
           properties: {
@@ -229,8 +229,8 @@ function ProgressMap({
     onMatch: () => onSelectZone(null),
   });
 
-  const percentOf = (row: { people: number; attempted: number }) =>
-    row.people > 0 ? `${Math.round((100 * row.attempted) / row.people)}%` : "—";
+  const percentOf = (row: { turfs: number; used: number }) =>
+    row.turfs > 0 ? `${Math.round((100 * row.used) / row.turfs)}%` : "—";
   const selected = selectedZoneId ? (byZone.get(selectedZoneId) ?? null) : null;
   // An uncut zone (clickable in the All view) has no rollup row; its
   // name rides the feature properties.
@@ -338,14 +338,15 @@ function ProgressTable({
           <TableHead>Zone</TableHead>
           <TableHead className="w-26">People</TableHead>
           <TableHead className="w-26">Doors</TableHead>
-          <TableHead className="w-24">Turfs</TableHead>
-          <TableHead className="w-22">Progress</TableHead>
+          <TableHead className="w-24">Attempted</TableHead>
+          <TableHead className="w-24">Turfs used</TableHead>
+          <TableHead className="w-24">Turfs left</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.length === 0 ? (
           <TableRow className="h-10">
-            <TableCell colSpan={5}>
+            <TableCell colSpan={6}>
               <Pill>
                 <span>No results</span>
               </Pill>
@@ -353,7 +354,14 @@ function ProgressTable({
           </TableRow>
         ) : (
           rows.map((r) => {
-            const pct = r.inferred
+            // Turf-grain drives the Progress % (and the map): this is
+            // the dispatch board, and person-grain overstates capacity
+            // once all turf is out but plateaued mid-walk. Person-grain
+            // "Attempted" (any outcome / cut people) rides along for
+            // the typical-completion glance.
+            const turfPct =
+              r.inferred || r.turfs === 0 ? null : Math.round((100 * r.used) / r.turfs);
+            const personPct = r.inferred
               ? null
               : r.people > 0
                 ? Math.round((100 * r.attempted) / r.people)
@@ -402,14 +410,27 @@ function ProgressTable({
                   </Pill>
                 </TableCell>
                 <TableCell>
-                  {/* used / total; remaining is the visible difference. */}
-                  <Pill variant="number">{r.inferred ? null : `${r.used} / ${r.turfs}`}</Pill>
+                  <Pill
+                    variant="number"
+                    color={personPct !== null ? progressColor(personPct) : undefined}
+                  >
+                    {personPct !== null ? `${personPct}%` : null}
+                  </Pill>
                 </TableCell>
                 <TableCell>
                   {/* 0% tints red too — matching the map, where red is
                       the work remaining. */}
-                  <Pill variant="number" color={pct !== null ? progressColor(pct) : undefined}>
-                    {pct !== null ? `${pct}%` : null}
+                  <Pill
+                    variant="number"
+                    color={turfPct !== null ? progressColor(turfPct) : undefined}
+                  >
+                    {turfPct !== null ? `${turfPct}%` : null}
+                  </Pill>
+                </TableCell>
+                <TableCell>
+                  {/* The dispatch number — the row's punchline. */}
+                  <Pill variant="number">
+                    {r.inferred ? null : `${r.turfs - r.used} / ${r.turfs}`}
                   </Pill>
                 </TableCell>
               </TableRow>

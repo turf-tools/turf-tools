@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, Copy, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -271,7 +271,9 @@ function ScriptsLayout() {
               key={s.scriptId}
               label={s.name}
               active={s.scriptId === activeScriptId}
-              trailing={s.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
+              trailing={
+                s.isArchived ? <Icon name="archive" className="ml-2 size-4 shrink-0" /> : undefined
+              }
               onSelect={() => void goToScript(s.scriptId)}
               onRename={renameScript.open}
             />
@@ -288,11 +290,11 @@ function ScriptsLayout() {
         <EditorPage>
           <EditorHeader title="Script Editor" subtitle={activeScript?.name}>
             <Button variant="outline" onClick={renameScript.open} disabled={!activeScript}>
-              <Pencil />
+              <Icon name="pencil" />
               Rename
             </Button>
             <Button variant="outline" onClick={cloneScript.open} disabled={!activeScript}>
-              <Copy />
+              <Icon name="copy" />
               Clone
             </Button>
             <Button
@@ -304,12 +306,12 @@ function ScriptsLayout() {
               }
               disabled={!activeScript}
             >
-              {activeScript?.isArchived ? <ArchiveRestore /> : <Archive />}
+              {activeScript?.isArchived ? <Icon name="archive-restore" /> : <Icon name="archive" />}
               {activeScript?.isArchived ? "Unarchive" : "Archive"}
             </Button>
             {activeScript?.isArchived ? (
               <Button variant="outline" onClick={() => void deleteActiveScript()}>
-                <Trash2 />
+                <Icon name="trash-2" />
                 Delete
               </Button>
             ) : null}
@@ -518,7 +520,7 @@ function ArchiveDialog({
         <div className="mt-2 flex justify-end gap-2">
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button onClick={onConfirm} loading={pending}>
-            <Archive />
+            <Icon name="archive" />
             Archive script
           </Button>
         </div>

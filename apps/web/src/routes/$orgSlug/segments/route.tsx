@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, ChevronDown, Copy, Download, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -358,7 +358,9 @@ function SegmentsLayout() {
               key={s.segmentId}
               label={s.name}
               active={s.segmentId === activeSegmentId}
-              trailing={s.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
+              trailing={
+                s.isArchived ? <Icon name="archive" className="ml-2 size-4 shrink-0" /> : undefined
+              }
               onSelect={() => void goToSegment(s.segmentId)}
               onRename={renameSegment.open}
             />
@@ -376,9 +378,9 @@ function SegmentsLayout() {
           <EditorHeader title="Segment Editor" subtitle={activeSegment?.name}>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="outline" disabled={!activeSegment} />}>
-                <Download />
+                <Icon name="download" />
                 Export
-                <ChevronDown className="-mr-1 size-4 text-muted-foreground" />
+                <Icon name="chevron-down" className="-mr-1 size-4 text-muted-foreground" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => onExport("csv")}>CSV</DropdownMenuItem>
@@ -386,11 +388,11 @@ function SegmentsLayout() {
               </DropdownMenuContent>
             </DropdownMenu>
             <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
-              <Pencil />
+              <Icon name="pencil" />
               Rename
             </Button>
             <Button variant="outline" onClick={cloneSegment.open} disabled={!activeSegment}>
-              <Copy />
+              <Icon name="copy" />
               Clone
             </Button>
             <Button
@@ -405,12 +407,16 @@ function SegmentsLayout() {
               }
               disabled={!activeSegment}
             >
-              {activeSegment?.isArchived ? <ArchiveRestore /> : <Archive />}
+              {activeSegment?.isArchived ? (
+                <Icon name="archive-restore" />
+              ) : (
+                <Icon name="archive" />
+              )}
               {activeSegment?.isArchived ? "Unarchive" : "Archive"}
             </Button>
             {activeSegment?.isArchived ? (
               <Button variant="outline" onClick={() => void deleteActiveSegment()}>
-                <Trash2 />
+                <Icon name="trash-2" />
                 Delete
               </Button>
             ) : null}
@@ -444,7 +450,7 @@ function SegmentsLayout() {
                 setExportConfirmOpen(false);
               }}
             >
-              <Download />
+              <Icon name="download" />
               Export
             </Button>
           </div>
@@ -649,7 +655,7 @@ function ArchiveDialog({
         <div className="mt-2 flex justify-end gap-2">
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button onClick={onConfirm} loading={pending}>
-            <Archive />
+            <Icon name="archive" />
             Archive segment
           </Button>
         </div>

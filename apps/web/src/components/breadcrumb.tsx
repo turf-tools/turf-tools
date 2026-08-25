@@ -1,5 +1,5 @@
+import { Icon } from "~/components/icon";
 import { useNavigate } from "@tanstack/react-router";
-import { Check, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   DropdownMenu,
@@ -79,7 +79,7 @@ function OrgSwitcher({
         )}
       >
         <OrgName orgName={orgName} />
-        <ChevronDown className="size-4 shrink-0" />
+        <Icon name="chevron-down" className="size-4 shrink-0" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={6} className="w-max max-w-72">
         {sorted.map((o) => {
@@ -92,7 +92,9 @@ function OrgSwitcher({
               }
             >
               <span className="min-w-0 truncate">{o.orgName}</span>
-              {isCurrent ? <Check className="ml-auto size-4 shrink-0 text-foreground" /> : null}
+              {isCurrent ? (
+                <Icon name="check" className="ml-auto size-4 shrink-0 text-foreground" />
+              ) : null}
             </DropdownMenuItem>
           );
         })}

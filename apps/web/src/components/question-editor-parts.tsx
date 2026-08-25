@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BLUE, BROWN, PURPLE } from "~/lib/palette";
-import { GripVertical, Plus, X } from "lucide-react";
 import { motion, Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
@@ -310,7 +310,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
           onClick={() => addOption.mutate()}
           loading={addOption.isPending}
         >
-          <Plus className="-ml-0.5 mr-0.5" />
+          <Icon name="plus" className="-ml-0.5 mr-0.5" />
           Add option
         </Button>
         <span aria-hidden className="w-6 shrink-0" />
@@ -367,7 +367,7 @@ function OptionRow({
           onPointerDown={(e) => dragControls?.start(e)}
           aria-label="Drag to reorder"
         >
-          <GripVertical className="size-3.5" />
+          <Icon name="grip-vertical" className="size-3.5" />
         </button>
         <BlurSaveInput
           value={option.text}
@@ -384,7 +384,7 @@ function OptionRow({
         aria-label="Remove option"
         className={cn("h-8 w-6", isNew && "animate-in fade-in duration-200")}
       >
-        <X className="size-4 text-muted-foreground" />
+        <Icon name="x" className="size-4 text-muted-foreground" />
       </Button>
     </div>
   );

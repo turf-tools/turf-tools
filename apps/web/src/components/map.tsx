@@ -1,7 +1,7 @@
+import { Icon } from "~/components/icon";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { useAtomValue, useSetAtom } from "jotai";
-import { LoaderCircle } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Layer,
@@ -1112,7 +1112,10 @@ export function Map({
             so it fades out with the curtain instead of popping off. */}
         {showSpinner ? (
           <span className="animate-in fade-in duration-300">
-            <LoaderCircle className="size-6 animate-spin text-muted-foreground [stroke-width:2.5]" />
+            <Icon
+              name="loader-circle"
+              className="size-6 animate-spin text-muted-foreground [stroke-width:2.5]"
+            />
           </span>
         ) : null}
       </div>

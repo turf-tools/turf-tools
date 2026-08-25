@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { Check, CornerDownRight, GripVertical, Plus, X } from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
@@ -303,7 +303,7 @@ function ScriptEditor() {
                   />
                 }
               >
-                <Plus />
+                <Icon name="plus" />
                 Add question
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start">
@@ -317,7 +317,7 @@ function ScriptEditor() {
                 ))}
                 {availableQuestions.length > 0 ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem onClick={() => setNewQuestionDialogOpen(true)}>
-                  <Plus />
+                  <Icon name="plus" />
                   <span>New question</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -328,7 +328,7 @@ function ScriptEditor() {
               onClick={() => addText.mutate()}
               loading={addText.isPending}
             >
-              <Plus />
+              <Icon name="plus" />
               Add text
             </Button>
           </div>
@@ -490,7 +490,7 @@ function StepConditionRow({
             />
           }
         >
-          <CornerDownRight />
+          <Icon name="corner-down-right" />
           {step.showIfOptionId == null
             ? "Show only if…"
             : current
@@ -514,7 +514,7 @@ function StepConditionRow({
                 >
                   <span className="truncate">{o.text || "Empty option"}</span>
                   {o.responseOptionId === step.showIfOptionId ? (
-                    <Check className="ml-auto size-4 shrink-0" />
+                    <Icon name="check" className="ml-auto size-4 shrink-0" />
                   ) : null}
                 </DropdownMenuItem>
               ))}
@@ -534,7 +534,7 @@ function GripHandle({ dragControls }: { dragControls?: ReturnType<typeof useDrag
       onPointerDown={(e) => dragControls?.start(e)}
       aria-label="Drag to reorder"
     >
-      <GripVertical className="size-3.5" />
+      <Icon name="grip-vertical" className="size-3.5" />
     </button>
   );
 }
@@ -554,7 +554,7 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
       onMouseDown={(e) => e.preventDefault()}
       aria-label="Remove step"
     >
-      <X className="size-4" />
+      <Icon name="x" className="size-4" />
     </Button>
   );
 }

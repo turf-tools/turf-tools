@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { Icon } from "~/components/icon";
 import type { ReactNode } from "react";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { Button } from "./button";
@@ -44,7 +44,7 @@ export function Filter({ icon, label, value, options, allLabel = "All", onChange
       >
         {icon}
         <span className="truncate">{label ?? " "}</span>
-        <ChevronDown className="size-3.5" />
+        <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuRadioGroup {...dd.radio} value={value ?? ALL_VALUE}>

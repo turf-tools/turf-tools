@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, ArchiveRestore, Copy, Eraser, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -300,7 +300,9 @@ function ZonesLayout() {
               key={g.zoneGroupId}
               label={g.name}
               active={g.zoneGroupId === activeGroupId}
-              trailing={g.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
+              trailing={
+                g.isArchived ? <Icon name="archive" className="ml-2 size-4 shrink-0" /> : undefined
+              }
               onSelect={() => void goToGroup(g.zoneGroupId)}
               onRename={renameGroup.open}
             />
@@ -311,15 +313,15 @@ function ZonesLayout() {
         <EditorPage>
           <EditorHeader title="Zone Editor" subtitle={activeGroup?.name}>
             <Button variant="outline" onClick={renameGroup.open} disabled={!activeGroup}>
-              <Pencil />
+              <Icon name="pencil" />
               Rename
             </Button>
             <Button variant="outline" onClick={cloneGroup.open} disabled={!activeGroup}>
-              <Copy />
+              <Icon name="copy" />
               Clone
             </Button>
             <Button variant="outline" onClick={clearZones.open} disabled={!activeGroup}>
-              <Eraser />
+              <Icon name="eraser" />
               Clear
             </Button>
             <Button
@@ -334,12 +336,12 @@ function ZonesLayout() {
               }
               disabled={!activeGroup}
             >
-              {activeGroup?.isArchived ? <ArchiveRestore /> : <Archive />}
+              {activeGroup?.isArchived ? <Icon name="archive-restore" /> : <Icon name="archive" />}
               {activeGroup?.isArchived ? "Unarchive" : "Archive"}
             </Button>
             {activeGroup?.isArchived ? (
               <Button variant="outline" onClick={() => void deleteActiveGroup()}>
-                <Trash2 />
+                <Icon name="trash-2" />
                 Delete
               </Button>
             ) : null}
@@ -660,7 +662,7 @@ function ArchiveDialog({
         <div className="mt-2 flex justify-end gap-2">
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
           <Button onClick={onConfirm} loading={pending}>
-            <Archive />
+            <Icon name="archive" />
             Archive group
           </Button>
         </div>

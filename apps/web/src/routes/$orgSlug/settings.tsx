@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { ChevronDown } from "lucide-react";
 import { Button } from "~/components/button";
 import {
   DropdownMenu,
@@ -54,7 +54,7 @@ function SettingsPage() {
               render={<Button variant="outline" className={"w-full justify-between"} />}
             >
               <span>{currentTzLabel}</span>
-              <ChevronDown className="size-3.5" />
+              <Icon name="chevron-down" className="size-3.5" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuRadioGroup {...tzDropdown.radio} value={currentTz}>

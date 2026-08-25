@@ -1,4 +1,4 @@
-import { Archive } from "lucide-react";
+import { Icon } from "~/components/icon";
 
 type CampaignRow = {
   campaignId: string;
@@ -16,7 +16,7 @@ export function campaignFilterOptions(campaigns: ReadonlyArray<CampaignRow>) {
       value: c.campaignId,
       label: c.name,
       icon: c.isArchived ? (
-        <Archive className="text-muted-foreground size-3.5 shrink-0" />
+        <Icon name="archive" className="text-muted-foreground size-3.5 shrink-0" />
       ) : undefined,
     }),
   );

@@ -1,7 +1,7 @@
+import { Icon } from "~/components/icon";
 import { keepPreviousData, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import type { FeatureCollection } from "geojson";
-import { CircleDashed, CircleDotDashed, DoorClosed, Scissors, Send, UserRound } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -594,7 +594,7 @@ function FullSegmentRow({
                 variant="number"
                 className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
               >
-                <Send className="size-3.5 text-foreground" />
+                <Icon name="send" className="size-3.5 text-foreground" />
                 {turfStats.published.toLocaleString()}
               </Pill>
             ) : null}
@@ -603,9 +603,9 @@ function FullSegmentRow({
               className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
             >
               {turfStats.drafts > 0 ? (
-                <CircleDotDashed className="size-3.5 text-foreground" />
+                <Icon name="circle-dot-dashed" className="size-3.5 text-foreground" />
               ) : (
-                <CircleDashed className="size-3.5 text-foreground" />
+                <Icon name="circle-dashed" className="size-3.5 text-foreground" />
               )}
               {turfStats.drafts}
             </Pill>
@@ -619,20 +619,20 @@ function FullSegmentRow({
               variant="number"
               className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
             >
-              <UserRound className="size-3.5 text-foreground" />
+              <Icon name="user-round" className="size-3.5 text-foreground" />
               {counts.people.toLocaleString()}
             </Pill>
             <Pill
               variant="number"
               className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
             >
-              <DoorClosed className="size-3.5 text-foreground" />
+              <Icon name="door-closed" className="size-3.5 text-foreground" />
               {counts.doors.toLocaleString()}
             </Pill>
           </Fragment>
         ) : null}
         <Button variant="outline" className="ml-auto h-[31px]" onClick={onCut}>
-          <Scissors />
+          <Icon name="scissors" />
           Cut
         </Button>
       </div>
@@ -692,7 +692,7 @@ function ZoneRow({
                 variant="number"
                 className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100 [&_svg]:[stroke-width:2]"
               >
-                <Send className="size-3.5 text-foreground" />
+                <Icon name="send" className="size-3.5 text-foreground" />
                 {turfStats.published.toLocaleString()}
               </Pill>
             ) : null}
@@ -701,9 +701,9 @@ function ZoneRow({
               className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
             >
               {turfStats.drafts > 0 ? (
-                <CircleDotDashed className="size-3.5 text-foreground" />
+                <Icon name="circle-dot-dashed" className="size-3.5 text-foreground" />
               ) : (
-                <CircleDashed className="size-3.5 text-foreground" />
+                <Icon name="circle-dashed" className="size-3.5 text-foreground" />
               )}
               {turfStats.drafts}
             </Pill>
@@ -717,14 +717,14 @@ function ZoneRow({
               variant="number"
               className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
             >
-              <UserRound className="size-3.5 text-foreground" />
+              <Icon name="user-round" className="size-3.5 text-foreground" />
               {counts.people.toLocaleString()}
             </Pill>
             <Pill
               variant="number"
               className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
             >
-              <DoorClosed className="size-3.5 text-foreground" />
+              <Icon name="door-closed" className="size-3.5 text-foreground" />
               {counts.doors.toLocaleString()}
             </Pill>
           </Fragment>
@@ -737,7 +737,7 @@ function ZoneRow({
             onCut();
           }}
         >
-          <Scissors />
+          <Icon name="scissors" />
           Cut
         </Button>
       </div>

@@ -1,15 +1,7 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "jotai";
-import {
-  ChevronDown,
-  Diamond,
-  DoorClosed,
-  GripVertical,
-  Plus,
-  Trash2,
-  UserRound,
-} from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
@@ -472,7 +464,7 @@ function ZoneGroupEditor() {
                           aria-label="Drag to reorder"
                           onPointerDown={(e) => dragControls.start(e)}
                         >
-                          <GripVertical className="size-3.5" />
+                          <Icon name="grip-vertical" className="size-3.5" />
                         </button>
                         {/* Heatmap swatches: 90% opacity sits visually with
                             the map's 0.8 fills (different grounds wash color
@@ -529,22 +521,22 @@ function ZoneGroupEditor() {
                             removeZoneMutation.mutate(zone.zoneId);
                           }}
                         >
-                          <Trash2 className="size-4" />
+                          <Icon name="trash-2" className="size-4" />
                         </Button>
                       </div>
                       <div className="flex min-h-8 items-center gap-1.5">
                         <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
-                          <Diamond className="size-3.5 text-foreground" />
+                          <Icon name="diamond" className="size-3.5 text-foreground" />
                           {zone.keys.length}
                         </Pill>
                         {zoneOverlay ? (
                           <>
                             <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
-                              <UserRound className="size-3.5 text-foreground" />
+                              <Icon name="user-round" className="size-3.5 text-foreground" />
                               {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
                             </Pill>
                             <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
-                              <DoorClosed className="size-3.5 text-foreground" />
+                              <Icon name="door-closed" className="size-3.5 text-foreground" />
                               {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
                             </Pill>
                           </>
@@ -574,7 +566,7 @@ function ZoneGroupEditor() {
             )}
           >
             <div className="flex items-center gap-2">
-              <Plus className="size-3.5" />
+              <Icon name="plus" className="size-3.5" />
               <span className="text-sm">New zone</span>
             </div>
           </button>
@@ -626,7 +618,7 @@ function ZoneGroupEditor() {
                   return s.isArchived ? `${s.name} (Archived)` : s.name;
                 })()}
               </span>
-              <ChevronDown className="size-3.5 shrink-0" />
+              <Icon name="chevron-down" className="size-3.5 shrink-0" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuRadioGroup
@@ -663,11 +655,11 @@ function ZoneGroupEditor() {
               {overlayCountsByKey ? (
                 <div className="flex justify-end gap-1.5">
                   <Pill variant="number" className="!w-fit gap-1.5">
-                    <UserRound className="size-3.5 text-foreground" />
+                    <Icon name="user-round" className="size-3.5 text-foreground" />
                     {(overlayCountsByKey[displayedHoverKey]?.people ?? 0).toLocaleString()}
                   </Pill>
                   <Pill variant="number" className="!w-fit gap-1.5">
-                    <DoorClosed className="size-3.5 text-foreground" />
+                    <Icon name="door-closed" className="size-3.5 text-foreground" />
                     {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
                   </Pill>
                 </div>

@@ -1,8 +1,8 @@
+import { Icon } from "~/components/icon";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
 import { notify } from "~/lib/notify";
-import { GripVertical, X } from "lucide-react";
 import { type ComponentProps, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
@@ -638,7 +638,7 @@ function StepRow({
             onPointerDown={(e) => dragControls?.start(e)}
             aria-label="Drag to reorder"
           >
-            <GripVertical className="size-3.5" />
+            <Icon name="grip-vertical" className="size-3.5" />
           </button>
           <span className="text-sm truncate">
             <span className="text-muted-foreground pr-2 tabular-nums">{number}</span>
@@ -654,7 +654,7 @@ function StepRow({
             onMouseDown={(e) => e.preventDefault()}
             aria-label="Remove step"
           >
-            <X className="size-4" />
+            <Icon name="x" className="size-4" />
           </Button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Icon } from "~/components/icon";
 import { type ReactNode, useEffect, useState } from "react";
 import { Switch } from "~/components/switch";
 import { cn } from "~/lib/utils";
@@ -112,7 +112,7 @@ function RailNew({
           "text-muted-foreground hover:bg-muted hover:text-foreground",
         )}
       >
-        <Plus className="size-3.5 [stroke-width:2.25]" />
+        <Icon name="plus" className="size-3.5 [stroke-width:2.25]" />
         <span>{label}</span>
       </button>
     </div>
