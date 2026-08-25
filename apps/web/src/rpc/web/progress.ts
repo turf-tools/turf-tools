@@ -1,4 +1,5 @@
 import { sql } from "@turf-tools/db";
+import { dataPostJson } from "~/lib/server/data-proxy";
 import { z } from "zod";
 import { activeDatasetId } from "./active-dataset";
 import { webPub as pub } from "../context";
@@ -75,7 +76,9 @@ export const forOrg = pub
 // cut and published), attempted is the latest-per-(campaign, person)
 // reduction, and used counts turfs with at least one surviving attempt —
 // a turf whose only results were cleared stays unused. Live segment
-// evaluation (the intent frame) is deliberately absent here.
+// evaluation (the intent frame) is deliberately absent here. Archived
+// campaigns' rows are included — the page always scopes to one campaign,
+// and a finished pass's final state is legitimate history.
 export const byZone = pub
   .input(z.object({}).optional())
   .handler(async ({ context }): Promise<ZoneProgressRow[]> => {
@@ -121,7 +124,6 @@ export const byZone = pub
       WHERE t.status = 'active'
         AND c.organization_id = ${context.organizationId}
         AND c.dataset_id = ${datasetId}
-        AND c.archived_at IS NULL
       GROUP BY c.campaign_id, c.name, t.zone_id, t.zone_name
       ORDER BY c.name, t.zone_name NULLS FIRST
     `);
@@ -150,4 +152,22 @@ export const byZone = pub
     }));
     zoneCache.set(key, { at: Date.now(), rows });
     return rows;
+  });
+
+export type ProgressTargetsRow = {
+  campaignId: string;
+  zoneId: string;
+  zoneName: string | null;
+  people: number;
+  doors: number;
+};
+
+// Live intent-frame counts (campaign segment ∩ zone, current dataset) —
+// computed in apps/data; the frozen cut columns stay Postgres-only.
+export const targets = pub
+  .input(z.object({}).optional())
+  .handler(async ({ context }): Promise<{ rows: ProgressTargetsRow[] }> => {
+    return dataPostJson<{ rows: ProgressTargetsRow[] }>("/progress/targets", {
+      orgSlug: context.orgSlug,
+    });
   });

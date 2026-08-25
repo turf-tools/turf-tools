@@ -115,6 +115,20 @@ export function segmentRefsVersion(
   return max ? String(max) : "";
 }
 
+// Version stamp for queries whose criteria live server-side (the server
+// reads each campaign's segment itself, so there's nothing to hash on the
+// client). Poses the campaigns' segments as refs in a synthetic criteria
+// so the walk above covers them directly and transitively.
+export function campaignSegmentsVersion(
+  campaigns: ReadonlyArray<{ segmentId: string | null; isArchived: boolean }>,
+  segments: ReadonlyArray<SegmentRefRow> | undefined,
+): string {
+  const steps = campaigns
+    .filter((c) => !c.isArchived && c.segmentId != null)
+    .map((c) => ({ verb: "narrow", filter: { kind: "segment", segmentId: c.segmentId } }));
+  return segmentRefsVersion({ steps }, segments);
+}
+
 function referencesTransitively(
   fromId: string,
   toId: string,

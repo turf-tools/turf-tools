@@ -37,10 +37,10 @@ export const PRIMARY: NavItem[] = [
   { to: "/$orgSlug/segments", label: "Segments", icon: Layers, requires: "voter.read" },
   { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints, requires: "voter.read" },
   { to: "/$orgSlug/turfs", label: "Turfs", icon: Map },
+  { to: "/$orgSlug/progress", label: "Progress", icon: TrendingUp, requires: "voter.read" },
   { to: "/$orgSlug/lookup", label: "Lookup", icon: Search, requires: "voter.read" },
   { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen, requires: "voter.read" },
   { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck, requires: "voter.read" },
-  { to: "/$orgSlug/progress", label: "Progress", icon: TrendingUp, requires: "voter.read" },
   { to: "/$orgSlug/results", label: "Results", icon: ChartNoAxesColumn, requires: "voter.read" },
   { to: "/$orgSlug/reports", label: "Reports", icon: Files, requires: "voter.read" },
 ];

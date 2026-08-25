@@ -110,6 +110,7 @@ export const webRouter = {
   progress: {
     forOrg: progress.forOrg,
     byZone: progress.byZone,
+    targets: progress.targets,
   },
   results: {
     aggregate: results.aggregate,

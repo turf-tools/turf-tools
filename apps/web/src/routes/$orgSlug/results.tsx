@@ -1,25 +1,53 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { interpolateYlGnBu } from "d3-scale-chromatic";
-import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
+import { type CSSProperties, Fragment, type ReactNode, useMemo, useState } from "react";
 import { Button } from "~/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
+import { FilterValueEditor } from "~/components/filter-editors";
 import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
+import { Popover, PopoverContent, PopoverTrigger } from "~/components/popover";
+import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
+import { emptyFilterFor, type FilterDef, filterKey, isActiveFilter } from "~/lib/filters";
+import { bboxOfFeatures } from "~/lib/geometry";
+import { useFilterCatalog } from "~/lib/manifest";
+import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
-import { resultsAggregateQuery, zonePerimetersQuery } from "~/lib/queries/results";
+import { type Condition, resultsAggregateQuery, zonePerimetersQuery } from "~/lib/queries/results";
+import { segmentsListQuery } from "~/lib/queries/segments";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
+import { useHotkey } from "~/lib/use-hotkey";
 import { cn } from "~/lib/utils";
-import type { ZoneFunnelRow } from "~/rpc/web/results";
+import type { ResultsAggregate, ZoneFunnelRow } from "~/rpc/web/results";
 
 type ResultsSearch = {
+  // Campaign id, "all", or null = default (newest active campaign) — so
+  // the default tracks new campaigns without being pinned in the URL.
   campaign: string | null;
   day: string | null;
 };
+
+// Resolve the search param to a concrete scope: null = all campaigns.
+function scopedCampaignId(
+  param: string | null,
+  campaigns: ReadonlyArray<{ campaignId: string; createdAt: string | Date; isArchived: boolean }>,
+): string | null {
+  return param === "all" ? null : (param ?? defaultCampaignId(campaigns));
+}
+
+const EMPTY_AGGREGATE = { days: [], rows: [] } as ResultsAggregate;
 
 // One metric today (contact rate); per-question persuasion metrics are
 // the planned additions — the dropdown returns when there are two.
@@ -36,35 +64,85 @@ export const Route = createFileRoute("/$orgSlug/results")({
   loaderDeps: ({ search }) => ({ campaign: search.campaign, day: search.day }),
   loader: async ({ context: { queryClient, session }, deps }) => {
     const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
-    await Promise.all([
-      queryClient.fetchQuery(campaignsListQuery()),
-      queryClient.fetchQuery(
-        resultsAggregateQuery(deps.campaign ? [deps.campaign] : null, deps.day, tz),
-      ),
-    ]);
+    // The default scope is derived from the campaigns list, so it loads first.
+    const campaigns = await queryClient.fetchQuery(campaignsListQuery());
+    const campaignId = scopedCampaignId(deps.campaign, campaigns);
+    await queryClient.fetchQuery(
+      resultsAggregateQuery(campaignId ? [campaignId] : null, deps.day, tz, []),
+    );
   },
   component: ResultsIndex,
 });
 
 function ResultsIndex() {
-  const { campaign: campaignFilter, day: dayFilter } = Route.useSearch();
+  const { campaign: campaignParam, day: dayFilter } = Route.useSearch();
+  // Conditions are page state, not URL state: URL churn on every toggle
+  // read as noise, and routing them through the loader made adding a
+  // chip wait on the refetch. A deliberate share-link affordance can
+  // serialize them later.
+  const [filters, setFiltersState] = useState<Condition[]>([]);
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/results");
   const { session } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  // Deselection follows map convention (Google Maps et al.): background
+  // click within the map, the × button, or Escape — page chrome clicks
+  // never touch the selection.
+  useHotkey({
+    key: "Escape",
+    enabled: selectedZoneId !== null,
+    onMatch: () => setSelectedZoneId(null),
+  });
 
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
-  const current = campaigns.filter((c) => !c.isArchived);
-  const campaignOptions = current.map((c) => ({ value: c.campaignId, label: c.name }));
+  const campaignOptions = campaignFilterOptions(campaigns);
+  // Parity with Progress: default = newest active campaign. "All
+  // campaigns" stays reachable for cross-pass totals — its per-person
+  // reduction only makes sense for campaigns run as passes, so the
+  // combined view is a deliberate selection, not the landing state.
+  const campaignFilter = scopedCampaignId(campaignParam, campaigns);
   const campaignLabel =
     campaignFilter === null
       ? "All campaigns"
       : (campaignOptions.find((o) => o.value === campaignFilter)?.label ?? null);
 
-  const { data: aggregate } = useSuspenseQuery(
-    resultsAggregateQuery(campaignFilter ? [campaignFilter] : null, dayFilter, tz),
+  // Only leaves with values constrain anything — a just-added empty
+  // chip changes nothing until edited, so it triggers no refetch.
+  const activeFilters = filters.filter((c) => isActiveFilter(c.filter));
+  // Plain useQuery: suspense would ignore keepPreviousData and unmount
+  // the page (and the map, mid-teardown) on every key change. The loader
+  // prefetches the unfiltered scope, so data is present on first paint;
+  // the empty fallback only covers transient states.
+  const { data } = useQuery(
+    resultsAggregateQuery(campaignFilter ? [campaignFilter] : null, dayFilter, tz, activeFilters),
   );
+  const aggregate = data ?? EMPTY_AGGREGATE;
+
+  // Condition chips; the popover edits one leaf in place.
+  const { sections, definitionFor } = useFilterCatalog();
+  const { data: allSegments } = useQuery(segmentsListQuery());
+  const [openFilter, setOpenFilter] = useState<number | null>(null);
+  const addFilter = (def: FilterDef) => {
+    setFiltersState([...filters, { filter: emptyFilterFor(def), negated: false }]);
+    setOpenFilter(filters.length);
+  };
+  const updateFilter = (idx: number, next: Partial<Condition>) =>
+    setFiltersState(filters.map((c, i) => (i === idx ? { ...c, ...next } : c)));
+  const removeFilter = (idx: number) => {
+    setOpenFilter(null);
+    setFiltersState(filters.filter((_, i) => i !== idx));
+  };
+  // No canvass leaves here: outcomes/responses are this page's outputs,
+  // and conditioning on them reads circular. Targeting-time use stays in
+  // the segment editor (reachable via a segment reference if truly needed).
+  const addableSections = sections
+    .map((section) =>
+      section.filter(
+        (d) => d.kind !== "all" && d.kind !== "canvass-outcome" && d.kind !== "canvass-response",
+      ),
+    )
+    .filter((section) => section.length > 0);
 
   const dayOptions = aggregate.days.map((d) => ({
     value: d,
@@ -120,20 +198,77 @@ function ResultsIndex() {
   return (
     <EditorPage className={cn("h-[calc(100vh-3.5rem)]", shouldFade)}>
       <EditorHeader title="Results">
-        {/* Static mock of header filter chips — unwired, judging layout.
-            Add opens a modal; each added filter lives here as a chip. */}
-        <Button variant="outline" className="max-w-56 min-w-0 shrink">
-          <span className="truncate">Zohran support</span>
-          <Icon name="x" className="size-3.5 shrink-0 text-muted-foreground" />
-        </Button>
-        <Button variant="outline" className="max-w-56 min-w-0 shrink">
-          <span className="truncate">Age</span>
-          <Icon name="x" className="size-3.5 shrink-0 text-muted-foreground" />
-        </Button>
-        <Button variant="outline">
-          <Icon name="funnel" className="size-3.5" />
-          Add filter
-        </Button>
+        {filters.map((c, i) => {
+          const def = definitionFor(filterKey(c.filter));
+          return (
+            <Popover
+              key={i}
+              open={openFilter === i}
+              onOpenChange={(open) => setOpenFilter(open ? i : null)}
+            >
+              <PopoverTrigger
+                render={<Button variant="outline" className="max-w-56 min-w-0 shrink" />}
+              >
+                <span className="truncate">{def?.label ?? "Filter"}</span>
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  aria-label="Remove filter"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFilter(i);
+                  }}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Icon name="x" className="size-3.5 shrink-0" />
+                </span>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="flex w-96 flex-col gap-3 p-3">
+                {/* Membership verbs, not the segment editor's pipeline
+                    verbs: chips are flat and unordered, so each states
+                    its effect — who's in, who's out. */}
+                <ToggleGroup
+                  variant="outline"
+                  size="sm"
+                  value={[c.negated ? "exclude" : "include"]}
+                  onValueChange={(values) => {
+                    const next = values[0];
+                    if (next === "include" || next === "exclude")
+                      updateFilter(i, { negated: next === "exclude" });
+                  }}
+                >
+                  <ToggleGroupItem value="include">Include</ToggleGroupItem>
+                  <ToggleGroupItem value="exclude">Exclude</ToggleGroupItem>
+                </ToggleGroup>
+                <FilterValueEditor
+                  filter={c.filter}
+                  def={def}
+                  onChange={(next) => updateFilter(i, { filter: next })}
+                  currentSegmentId=""
+                  allSegments={allSegments ?? []}
+                />
+              </PopoverContent>
+            </Popover>
+          );
+        })}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="outline" />}>
+            <Icon name="funnel" className="size-3.5" />
+            Add filter
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-h-96 w-56 overflow-y-auto">
+            {addableSections.map((section, si) => (
+              <Fragment key={si}>
+                {si > 0 ? <DropdownMenuSeparator /> : null}
+                {section.map((d) => (
+                  <DropdownMenuItem key={d.key} onClick={() => addFilter(d)}>
+                    {d.label}
+                  </DropdownMenuItem>
+                ))}
+              </Fragment>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Filter
           icon={<Icon name="calendar" className="size-3.5" />}
           label={dayLabel}
@@ -155,16 +290,13 @@ function ResultsIndex() {
           // not exist in the new campaign, and anything smarter than a
           // reset breeds corner cases.
           onChange={(next) =>
-            void navigate({ search: (prev) => ({ ...prev, campaign: next, day: null }) })
+            void navigate({ search: (prev) => ({ ...prev, campaign: next ?? "all", day: null }) })
           }
         />
       </EditorHeader>
       <div className="flex min-h-0 flex-1 gap-6">
-        <div className="flex w-104 shrink-0 flex-col gap-4 overflow-y-auto pb-4">
-          <FunnelPanel
-            scope={scope}
-            targeted={selectedRow ? selectedRow.targeted : aggregate.targeted}
-          />
+        <div className="flex w-96 shrink-0 flex-col gap-4 overflow-y-auto pb-4">
+          <FunnelPanel scope={scope} />
           <QuestionsPanel scope={scope} />
         </div>
         <div className="relative min-h-0 flex-1">
@@ -208,7 +340,6 @@ function sumRows(rows: ZoneFunnelRow[]): ZoneFunnelRow {
   const out: ZoneFunnelRow = {
     zoneId: null,
     zoneName: null,
-    targeted: null,
     attempted: 0,
     contacted: 0,
     responses: {},
@@ -276,12 +407,11 @@ function CountCell({ count, rate }: { count: number; rate: number | null }) {
   );
 }
 
-const FUNNEL_GRID = "grid grid-cols-2 items-center gap-2";
+const FUNNEL_GRID = "grid grid-cols-[3fr_2fr] items-center gap-2";
 
-function FunnelPanel({ scope, targeted }: { scope: ZoneFunnelRow; targeted: number | null }) {
+function FunnelPanel({ scope }: { scope: ZoneFunnelRow }) {
   const stages: Array<{ label: string; count: number; denom: number | null }> = [
-    ...(targeted !== null ? [{ label: "Targeted", count: targeted, denom: null }] : []),
-    { label: "Attempted", count: scope.attempted, denom: targeted },
+    { label: "Attempted", count: scope.attempted, denom: null },
     { label: "Contacted", count: scope.contacted, denom: scope.attempted },
   ];
   return (
@@ -315,7 +445,7 @@ function QuestionsPanel({ scope }: { scope: ZoneFunnelRow }) {
         return (
           <ReportCard key={q.questionId}>
             {/* Responses ride person results only, so a lone People column. */}
-            <div className="grid h-10 grid-cols-2 items-center gap-2 text-sm">
+            <div className="grid h-10 grid-cols-[3fr_2fr] items-center gap-2 text-sm">
               <span className="truncate font-semibold">{q.name}</span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Icon name="user-round" className="size-3.5 shrink-0 [stroke-width:2.5]" />
@@ -329,7 +459,7 @@ function QuestionsPanel({ scope }: { scope: ZoneFunnelRow }) {
                 return (
                   <div
                     key={o.responseOptionId}
-                    className="grid h-10 grid-cols-2 items-center gap-2"
+                    className="grid h-10 grid-cols-[3fr_2fr] items-center gap-2"
                   >
                     <span className="truncate text-sm text-muted-foreground">{o.text}</span>
                     <CountCell count={n} rate={rateOrNull(n, scope.contacted)} />
@@ -341,27 +471,4 @@ function QuestionsPanel({ scope }: { scope: ZoneFunnelRow }) {
       })}
     </>
   );
-}
-
-function bboxOfFeatures(features: GeoJSON.Feature[]): [number, number, number, number] | null {
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
-  const visit = (coords: unknown) => {
-    if (!Array.isArray(coords)) return;
-    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
-      minLng = Math.min(minLng, coords[0] as number);
-      maxLng = Math.max(maxLng, coords[0] as number);
-      minLat = Math.min(minLat, coords[1] as number);
-      maxLat = Math.max(maxLat, coords[1] as number);
-      return;
-    }
-    for (const c of coords) visit(c);
-  };
-  for (const f of features) {
-    if ("coordinates" in f.geometry) visit(f.geometry.coordinates);
-  }
-  if (!Number.isFinite(minLng)) return null;
-  return [minLng, minLat, maxLng, maxLat];
 }

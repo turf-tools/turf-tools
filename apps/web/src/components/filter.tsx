@@ -15,6 +15,8 @@ const ALL_VALUE = "__all__";
 type FilterOption = {
   value: string;
   label: string;
+  // Trailing marker (e.g. an archived badge); the label stays clean.
+  icon?: ReactNode;
 };
 
 interface FilterProps {
@@ -24,7 +26,9 @@ interface FilterProps {
   label: string | null;
   value: string | null;
   options: FilterOption[];
-  allLabel?: string;
+  // `null` drops the "All" row — for filters that must always have a
+  // concrete selection.
+  allLabel?: string | null;
   onChange: (next: string | null) => void;
 }
 
@@ -44,10 +48,13 @@ export function Filter({ icon, label, value, options, allLabel = "All", onChange
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuRadioGroup {...dd.radio} value={value ?? ALL_VALUE}>
-          <DropdownMenuRadioItem value={ALL_VALUE}>{allLabel}</DropdownMenuRadioItem>
+          {allLabel !== null ? (
+            <DropdownMenuRadioItem value={ALL_VALUE}>{allLabel}</DropdownMenuRadioItem>
+          ) : null}
           {options.map((o) => (
             <DropdownMenuRadioItem key={o.value} value={o.value}>
-              {o.label}
+              <span className="truncate">{o.label}</span>
+              {o.icon}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

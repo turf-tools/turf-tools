@@ -284,7 +284,13 @@ def attach_operational_postgres(conn: duckdb.DuckDBPyConnection, settings: Setti
     # makes this a no-op if a previous call on the same connection already
     # attached.
     escaped = settings.database_url.replace("'", "''")
-    conn.execute(f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)")
+    try:
+        conn.execute(f"ATTACH IF NOT EXISTS '{escaped}' AS {OPERATIONAL_PG_ALIAS} (TYPE postgres)")
+    except duckdb.BinderException as e:
+        # Concurrent cursors can race the IF NOT EXISTS check; the loser
+        # errors "already exists" — which is the desired end state.
+        if "already exists" not in str(e):
+            raise
 
 
 def heal_stale_attach[T](conn: duckdb.DuckDBPyConnection, run: Callable[[], T]) -> T:

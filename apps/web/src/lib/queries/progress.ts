@@ -22,3 +22,15 @@ export const progressByZoneQuery = () =>
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
   });
+
+// Live targets change only with segment edits / dataset flips; slower
+// cadence than the event-driven counts. `version` folds the campaigns'
+// segment updatedAt stamps (see campaignSegmentsVersion) — the criteria
+// are read server-side, so without it a segment edit couldn't re-key
+// this and tabbing back would serve the stale counts.
+export const progressTargetsQuery = (version: string) =>
+  queryOptions({
+    queryKey: ["progress-targets", version] as const,
+    queryFn: () => client.progress.targets(),
+    staleTime: 5 * 60_000,
+  });

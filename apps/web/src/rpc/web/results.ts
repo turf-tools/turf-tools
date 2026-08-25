@@ -5,9 +5,6 @@ import { webPub as pub } from "../context";
 export type ZoneFunnelRow = {
   zoneId: string | null;
   zoneName: string | null;
-  // Targeted = campaign segment ∧ request criteria, evaluated live.
-  // Null when no single campaign is scoped (no clean union semantics).
-  targeted: number | null;
   attempted: number;
   contacted: number;
   // questionId → optionId → count, among the contacted.
@@ -15,7 +12,6 @@ export type ZoneFunnelRow = {
 };
 
 export type ResultsAggregate = {
-  targeted: number | null;
   // Distinct canvass days (display-timezone dates, newest first) in the
   // campaign scope, ignoring the day filter — the date chip's options.
   days: string[];
