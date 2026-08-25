@@ -162,12 +162,14 @@ export type ProgressTargetsRow = {
   doors: number;
 };
 
-// Live intent-frame counts (campaign segment ∩ zone, current dataset) —
-// computed in apps/data; the frozen cut columns stay Postgres-only.
+// Live intent-frame counts for one campaign (segment ∩ zone, current
+// dataset) — computed in apps/data; the frozen cut columns stay
+// Postgres-only.
 export const targets = pub
-  .input(z.object({}).optional())
-  .handler(async ({ context }): Promise<{ rows: ProgressTargetsRow[] }> => {
+  .input(z.object({ campaignId: z.string().uuid() }))
+  .handler(async ({ context, input }): Promise<{ rows: ProgressTargetsRow[] }> => {
     return dataPostJson<{ rows: ProgressTargetsRow[] }>("/progress/targets", {
       orgSlug: context.orgSlug,
+      campaignId: input.campaignId,
     });
   });

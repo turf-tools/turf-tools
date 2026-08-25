@@ -35,7 +35,7 @@ import {
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
-import { cn } from "~/lib/utils";
+import { cn, revealZoneCard } from "~/lib/utils";
 import { client } from "~/rpc/client";
 import { colorFor } from "~/lib/zone-colors";
 
@@ -455,7 +455,10 @@ function CampaignEditor() {
           zonePerimeters={zonePerimeters}
           fitBounds={fitBounds}
           selectedZoneId={selectedZoneId}
-          onZoneClick={(zoneId) => setSelectedZoneId(zoneId)}
+          onZoneClick={(zoneId) => {
+            setSelectedZoneId(zoneId);
+            revealZoneCard(zoneId);
+          }}
           onBackgroundClick={() => setSelectedZoneId(null)}
           loading={!ready}
         />
@@ -708,6 +711,7 @@ function ZoneRow({
 }) {
   return (
     <div
+      data-zone-card={zone.zoneId}
       role="button"
       tabIndex={0}
       onClick={onSelect}

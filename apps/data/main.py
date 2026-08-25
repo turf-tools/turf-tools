@@ -824,15 +824,18 @@ async def zone_perimeters(req: _ZonePerimetersRequest):
 
 class _ProgressTargetsRequest(_WireBaseModel):
     org_slug: str = Field(validation_alias="orgSlug")
+    campaign_id: str = Field(validation_alias="campaignId")
 
 
 @app.post("/progress/targets")
 async def progress_targets(req: _ProgressTargetsRequest):
-    """Live per-(campaign, zone) target counts.
+    """Live per-zone target counts for one campaign.
 
-    Each unarchived campaign's segment, as currently defined, evaluated
-    against the active dataset within each zone of the campaign's group —
-    the intent-frame companion to the Progress table's frozen cut counts.
+    The campaign's segment, as currently defined, evaluated against the
+    active dataset within each zone of the campaign's group — the
+    intent-frame companion to the Progress table's frozen cut counts.
+    Archived campaigns are served too: an explicit request for a finished
+    pass is a history view.
     """
 
     def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
@@ -847,9 +850,9 @@ async def progress_targets(req: _ProgressTargetsRequest):
             JOIN {OPERATIONAL_PG_ALIAS}.app.segments s ON s.segment_id = c.segment_id
             JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
                 ON o.organization_id = c.organization_id
-            WHERE o.slug = ? AND c.archived_at IS NULL AND c.zone_group_id IS NOT NULL
+            WHERE o.slug = ? AND c.campaign_id::VARCHAR = ? AND c.zone_group_id IS NOT NULL
             """,
-            [req.org_slug],
+            [req.org_slug, req.campaign_id],
         ).fetchall()
         zone_rows = conn.execute(
             f"""

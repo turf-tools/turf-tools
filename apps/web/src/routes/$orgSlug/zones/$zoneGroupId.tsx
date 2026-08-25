@@ -33,7 +33,7 @@ import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { segmentRefsVersion } from "~/lib/segment-refs";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useHotkey } from "~/lib/use-hotkey";
-import { cn } from "~/lib/utils";
+import { cn, revealZoneCard } from "~/lib/utils";
 import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
@@ -397,13 +397,8 @@ function ZoneGroupEditor() {
     const owner = zones.find((z) => z.keys.includes(key));
     setActiveZoneId(owner?.zoneId ?? null);
     // Map-originated activation only: surface the card in the list (a
-    // card click never scrolls — it's already in view). block: "nearest"
-    // is a no-op when the card is visible.
-    if (owner) {
-      document
-        .querySelector(`[data-zone-card="${owner.zoneId}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
+    // card click never scrolls — it's already in view).
+    if (owner) revealZoneCard(owner.zoneId);
   };
 
   // Click outside the map clears the active zone. Suppressed while a

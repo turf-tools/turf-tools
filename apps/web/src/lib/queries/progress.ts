@@ -24,13 +24,13 @@ export const progressByZoneQuery = () =>
   });
 
 // Live targets change only with segment edits / dataset flips; slower
-// cadence than the event-driven counts. `version` folds the campaigns'
-// segment updatedAt stamps (see campaignSegmentsVersion) — the criteria
+// cadence than the event-driven counts. `version` folds the campaign's
+// segment updatedAt stamp (see campaignSegmentsVersion) — the criteria
 // are read server-side, so without it a segment edit couldn't re-key
 // this and tabbing back would serve the stale counts.
-export const progressTargetsQuery = (version: string) =>
+export const progressTargetsQuery = (campaignId: string, version: string) =>
   queryOptions({
-    queryKey: ["progress-targets", version] as const,
-    queryFn: () => client.progress.targets(),
+    queryKey: ["progress-targets", campaignId, version] as const,
+    queryFn: () => client.progress.targets({ campaignId }),
     staleTime: 5 * 60_000,
   });

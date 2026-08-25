@@ -1,6 +1,7 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { interpolateYlGnBu } from "d3-scale-chromatic";
+import { useAtomValue } from "jotai";
 import { type CSSProperties, Fragment, type ReactNode, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import {
@@ -18,6 +19,7 @@ import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
 import { Popover, PopoverContent, PopoverTrigger } from "~/components/popover";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
+import { darkAtom } from "~/lib/atoms/theme";
 import { emptyFilterFor, type FilterDef, filterKey, isActiveFilter } from "~/lib/filters";
 import { bboxOfFeatures } from "~/lib/geometry";
 import { useFilterCatalog } from "~/lib/manifest";
@@ -55,6 +57,12 @@ function rateOf(row: ZoneFunnelRow): number | null {
   if (row.attempted === 0) return null;
   return row.contacted / row.attempted;
 }
+
+// Color-scale domain for contact rate: door-knocking contact rates live
+// in 0–20% essentially universally, so a 0–100% scale washes every zone
+// into the bottom fifth. Question rates stay 0–100%: options split a
+// population that sums to one.
+const CONTACT_RATE_MAX = 0.2;
 
 export const Route = createFileRoute("/$orgSlug/results")({
   validateSearch: (search): ResultsSearch => ({
@@ -165,8 +173,10 @@ function ResultsIndex() {
 
   const byZone = useMemo(() => new Map(aggregate.rows.map((r) => [r.zoneId, r])), [aggregate]);
 
-  // Color each zone by the selected rate on the same absolute 0-100%
-  // YlGnBu scale as the badges, so a zone's fill and its badges agree.
+  // Color each zone by contact rate on the same absolute 0-20% YlGnBu
+  // scale as the funnel's contact badge, so a zone's fill and its badge
+  // agree.
+  const isDark = useAtomValue(darkAtom);
   const coloredPerimeters = useMemo(() => {
     if (!perimeters) return undefined;
     return {
@@ -179,13 +189,13 @@ function ResultsIndex() {
           properties: {
             ...f.properties,
             ...(rate !== null
-              ? { color: interpolateYlGnBu(rate), opacity: 0.6 }
+              ? { color: rateRamp(Math.min(rate / CONTACT_RATE_MAX, 1), isDark), opacity: 0.6 }
               : { opacity: 0.06 }),
           },
         };
       }),
     };
-  }, [perimeters, byZone]);
+  }, [perimeters, byZone, isDark]);
 
   const fitBounds = useMemo(
     () => (coloredPerimeters ? bboxOfFeatures(coloredPerimeters.features) : null),
@@ -368,10 +378,18 @@ function rateOrNull(num: number, denom: number | null): number | null {
   return num / denom;
 }
 
-// Rate badges share the map's YlGnBu scale (rates are 0–100%) at the
-// map's fill opacity; ink flips light/dark by background luminance.
-function rateBadgeStyle(rate: number): CSSProperties {
-  const [r, g, b] = (interpolateYlGnBu(rate).match(/\d+/g) ?? ["0", "0", "0"]).map(Number);
+// Inverted in dark mode like the segment-overlay ramp: high rates stay
+// the bright, most-visible end on a dark basemap. Badges follow so fill
+// and badge always agree.
+function rateRamp(t: number, isDark: boolean): string {
+  return interpolateYlGnBu(isDark ? 1 - t : t);
+}
+
+// Rate badges share the map's YlGnBu scale at the map's fill opacity;
+// ink flips light/dark by background luminance. Takes the domain-
+// normalized position (0–1), not the raw rate.
+function rateBadgeStyle(t: number, isDark: boolean): CSSProperties {
+  const [r, g, b] = (rateRamp(t, isDark).match(/\d+/g) ?? ["0", "0", "0"]).map(Number);
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return {
     backgroundColor: `rgba(${r}, ${g}, ${b}, 0.6)`,
@@ -391,14 +409,25 @@ function ReportCard({ children }: { children: ReactNode }) {
   );
 }
 
-function CountCell({ count, rate }: { count: number; rate: number | null }) {
+// `rateMax` sets the color domain only — the printed percent is always
+// the true rate.
+function CountCell({
+  count,
+  rate,
+  rateMax = 1,
+}: {
+  count: number;
+  rate: number | null;
+  rateMax?: number;
+}) {
+  const isDark = useAtomValue(darkAtom);
   return (
     <span className="flex items-center gap-1.5">
       <span className="font-mono text-sm tabular-nums">{count.toLocaleString()}</span>
       {rate !== null ? (
         <span
           className="rounded px-1.5 py-0.5 font-mono text-sm tabular-nums"
-          style={rateBadgeStyle(rate)}
+          style={rateBadgeStyle(Math.min(rate / rateMax, 1), isDark)}
         >
           {(100 * rate).toFixed(1)}%
         </span>
@@ -426,7 +455,13 @@ function FunnelPanel({ scope }: { scope: ZoneFunnelRow }) {
       {stages.map((s) => (
         <div key={s.label} className={cn(FUNNEL_GRID, "h-10")}>
           <span className="text-sm text-muted-foreground">{s.label}</span>
-          <CountCell count={s.count} rate={rateOrNull(s.count, s.denom)} />
+          {/* Contacted/attempted is the contact rate — color it on the
+              same 0-20% domain as the map. */}
+          <CountCell
+            count={s.count}
+            rate={rateOrNull(s.count, s.denom)}
+            rateMax={s.label === "Contacted" ? CONTACT_RATE_MAX : 1}
+          />
         </div>
       ))}
     </ReportCard>

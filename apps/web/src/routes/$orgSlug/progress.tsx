@@ -1,6 +1,7 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "~/components/button";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
@@ -8,7 +9,6 @@ import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import { GREEN, RED, YELLOW } from "~/lib/palette";
 import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
 import { bboxOfFeatures } from "~/lib/geometry";
@@ -19,7 +19,7 @@ import { segmentsListQuery } from "~/lib/queries/segments";
 import { useHotkey } from "~/lib/use-hotkey";
 import { campaignSegmentsVersion } from "~/lib/segment-refs";
 import { useFadeOnce } from "~/lib/use-fade-once";
-import { cn } from "~/lib/utils";
+import { cn, revealZoneCard } from "~/lib/utils";
 
 // Same thresholds as the turfs board so a given percent reads as the
 // same color everywhere.
@@ -32,14 +32,12 @@ type ProgressSearch = {
   zones: "all" | null;
 };
 
-type View = "map" | "table";
-
 export const Route = createFileRoute("/$orgSlug/progress")({
   validateSearch: (search): ProgressSearch => ({
     campaign: typeof search.campaign === "string" ? search.campaign : null,
     zones: search.zones === "all" ? "all" : null,
   }),
-  loaderDeps: ({ search }) => ({ zones: search.zones }),
+  loaderDeps: ({ search }) => ({ zones: search.zones, campaign: search.campaign }),
   loader: async ({ context: { queryClient }, deps }) => {
     const [campaigns, , segments] = await Promise.all([
       queryClient.fetchQuery(campaignsListQuery()),
@@ -48,9 +46,11 @@ export const Route = createFileRoute("/$orgSlug/progress")({
     ]);
     // In the all-zones view the inferred rows are part of the table's
     // first paint — without this they'd flash in after the cut rows.
-    if (segments) {
+    const campaignId = deps.campaign ?? defaultCampaignId(campaigns);
+    if (segments && campaignId) {
+      const scoped = campaigns.filter((c) => c.campaignId === campaignId);
       await queryClient.fetchQuery(
-        progressTargetsQuery(campaignSegmentsVersion(campaigns, segments)),
+        progressTargetsQuery(campaignId, campaignSegmentsVersion(scoped, segments)),
       );
     }
   },
@@ -61,8 +61,27 @@ function ProgressIndex() {
   const { campaign: campaignFilter, zones: zonesView } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/progress");
-  const [view, setView] = useState<View>("table");
+  // Selection is shared: a map click highlights the zone's table row.
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
+
+  // Selection can be made from the table, so the whole page is the
+  // selection surface (zone-editor convention): clicking chrome outside
+  // the map clears. Firing on mousedown is also what makes re-clicking a
+  // zone button flash its map outline — clear here, re-select on click.
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedZoneId) return;
+    const handler = (e: MouseEvent) => {
+      if (e.detail >= 2) return;
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (mapWrapperRef.current?.contains(target)) return;
+      setSelectedZoneId(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [selectedZoneId]);
 
   // Always exactly one campaign in scope: cross-campaign progress has no
   // clean denominator (overlapping passes double-count people), so there
@@ -77,21 +96,6 @@ function ProgressIndex() {
     // container collapses to zero.
     <EditorPage className={cn("h-[calc(100vh-3.5rem)]", shouldFade)}>
       <EditorHeader title="Progress">
-        <ToggleGroup
-          variant="outline"
-          value={[view]}
-          onValueChange={(values) => {
-            const next = values[0];
-            if (next === "map" || next === "table") setView(next);
-          }}
-        >
-          <ToggleGroupItem value="map" aria-label="Map">
-            <Icon name="map" className="size-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="table" aria-label="Table">
-            <Icon name="rows-3" className="size-3.5" />
-          </ToggleGroupItem>
-        </ToggleGroup>
         <Filter
           icon={<Icon name="waypoints" className="size-3.5" />}
           label={zonesView === "all" ? "All zones" : "Cut zones"}
@@ -113,18 +117,29 @@ function ProgressIndex() {
           onChange={(next) => void navigate({ search: (prev) => ({ ...prev, campaign: next }) })}
         />
       </EditorHeader>
-      {view === "map" ? (
-        <ProgressMap campaignFilter={campaign} showAllZones={zonesView === "all"} />
-      ) : (
-        <ProgressTable campaignFilter={campaign} showAllZones={zonesView === "all"} />
-      )}
+      <div className="flex min-h-0 flex-1 gap-6">
+        <div className="flex w-150 shrink-0 flex-col overflow-hidden">
+          <ProgressTable
+            campaignFilter={campaign}
+            showAllZones={zonesView === "all"}
+            selectedZoneId={selectedZoneId}
+            onSelectZone={setSelectedZoneId}
+          />
+        </div>
+        <ProgressMap
+          campaignFilter={campaign}
+          showAllZones={zonesView === "all"}
+          selectedZoneId={selectedZoneId}
+          onSelectZone={setSelectedZoneId}
+          wrapperRef={mapWrapperRef}
+        />
+      </div>
     </EditorPage>
   );
 }
 
 type ProgressRow = {
   campaignId: string;
-  campaignName: string;
   zoneId: string | null;
   zoneName: string | null;
   people: number;
@@ -140,15 +155,20 @@ type ProgressRow = {
 function ProgressMap({
   campaignFilter,
   showAllZones,
+  selectedZoneId,
+  onSelectZone,
+  wrapperRef,
 }: {
   campaignFilter: string | null;
   showAllZones: boolean;
+  selectedZoneId: string | null;
+  onSelectZone: (zoneId: string | null) => void;
+  wrapperRef: RefObject<HTMLDivElement | null>;
 }) {
   // campaignFilter is null only when the org has no campaigns at all —
   // everything below degrades to an empty map.
   const { data } = useSuspenseQuery(progressByZoneQuery());
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
 
   // Zone shapes for the selected campaign's group.
   const scopeCampaign = campaigns.find((c) => c.campaignId === campaignFilter);
@@ -196,24 +216,21 @@ function ProgressMap({
     [coloredPerimeters],
   );
 
-  const percentOf = (row: { people: number; attempted: number }) =>
-    row.people > 0 ? `${Math.round((100 * row.attempted) / row.people)}%` : "—";
   // Drop the selection when its zone leaves the drawn set (All→Cut
   // toggle, campaign switch) — a readout for an invisible shape reads
   // as a stuck state.
   useEffect(() => {
-    if (!showAllZones && selectedZoneId && !byZone.has(selectedZoneId)) setSelectedZoneId(null);
-  }, [showAllZones, selectedZoneId, byZone]);
+    if (!showAllZones && selectedZoneId && !byZone.has(selectedZoneId)) onSelectZone(null);
+  }, [showAllZones, selectedZoneId, byZone, onSelectZone]);
 
-  // Deselection follows map convention (Google Maps et al.): background
-  // click within the map, the × button, or Escape — page chrome clicks
-  // never touch the selection.
   useHotkey({
     key: "Escape",
     enabled: selectedZoneId !== null,
-    onMatch: () => setSelectedZoneId(null),
+    onMatch: () => onSelectZone(null),
   });
 
+  const percentOf = (row: { people: number; attempted: number }) =>
+    row.people > 0 ? `${Math.round((100 * row.attempted) / row.people)}%` : "—";
   const selected = selectedZoneId ? (byZone.get(selectedZoneId) ?? null) : null;
   // An uncut zone (clickable in the All view) has no rollup row; its
   // name rides the feature properties.
@@ -222,44 +239,44 @@ function ProgressMap({
       ? ((perimeters?.features.find((f) => f.properties?.zoneId === selectedZoneId)?.properties
           ?.zoneName as string | undefined) ?? null)
       : null;
-  const totals = { people: 0, attempted: 0 };
-  for (const row of byZone.values()) {
-    totals.people += row.people;
-    totals.attempted += row.attempted;
-  }
-
   const hasSelection = Boolean(selected || selectedUncutName);
+
+  // Corner readout answers "what did I just click" without leaving the
+  // map; the table's highlighted button is the linked echo with the
+  // full numbers. Selection-only — an idle default would flash through
+  // every reselect (the outside-click mousedown clears first).
   return (
-    <div className="relative min-h-0 flex-1">
+    <div ref={wrapperRef} className="relative min-h-0 flex-1">
       <MapView
         className="h-full"
         zonePerimeters={coloredPerimeters}
         selectedZoneId={selectedZoneId}
-        onZoneClick={(zoneId) => setSelectedZoneId(zoneId)}
-        onBackgroundClick={() => setSelectedZoneId(null)}
+        onZoneClick={(zoneId) => {
+          onSelectZone(zoneId);
+          revealZoneCard(zoneId);
+        }}
+        onBackgroundClick={() => onSelectZone(null)}
         fitBounds={fitBounds}
         loading={!coloredPerimeters}
         cornerUpperLeft={
-          <div className="flex flex-col px-3 py-2">
-            <span className="flex items-center gap-2">
-              <span className="font-semibold">
-                {selected?.zoneName ?? selectedUncutName ?? "All zones"}
-              </span>
-              {hasSelection ? (
+          hasSelection ? (
+            <div className="flex flex-col px-3 py-2">
+              <span className="flex items-center gap-2">
+                <span className="font-semibold">{selected?.zoneName ?? selectedUncutName}</span>
                 <button
                   type="button"
                   aria-label="Clear zone selection"
-                  onClick={() => setSelectedZoneId(null)}
+                  onClick={() => onSelectZone(null)}
                   className="text-muted-foreground hover:text-foreground"
                 >
                   <Icon name="x" className="size-3.5" />
                 </button>
-              ) : null}
-            </span>
-            <span className="text-muted-foreground">
-              {selected ? percentOf(selected) : hasSelection ? "No turfs cut" : percentOf(totals)}
-            </span>
-          </div>
+              </span>
+              <span className="text-muted-foreground">
+                {selected ? percentOf(selected) : "No turfs cut"}
+              </span>
+            </div>
+          ) : undefined
         }
       />
     </div>
@@ -269,23 +286,29 @@ function ProgressMap({
 function ProgressTable({
   campaignFilter,
   showAllZones,
+  selectedZoneId,
+  onSelectZone,
 }: {
   campaignFilter: string | null;
   showAllZones: boolean;
+  selectedZoneId: string | null;
+  onSelectZone: (zoneId: string | null) => void;
 }) {
   const { data } = useSuspenseQuery(progressByZoneQuery());
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   // Live-evaluated counts for uncut zones — fetched only in the
   // all-zones view, so the default board never touches the data service.
+  // Scoped to the selected campaign (archived included — an explicit
+  // request for a finished pass is a history view).
   const { data: segments } = useQuery({ ...segmentsListQuery(), enabled: showAllZones });
+  const scoped = campaigns.filter((c) => c.campaignId === campaignFilter);
   const { data: targetsData } = useQuery({
-    ...progressTargetsQuery(campaignSegmentsVersion(campaigns, segments)),
-    enabled: showAllZones && segments !== undefined,
+    ...progressTargetsQuery(campaignFilter ?? "", campaignSegmentsVersion(scoped, segments)),
+    enabled: showAllZones && segments !== undefined && campaignFilter !== null,
   });
   // Hold the all-zones first paint until the inferred rows are in hand —
   // a cut-rows-only table that reshuffles when they land reads as a bug.
-  if (showAllZones && !targetsData) return null;
-  const campaignName = new Map(campaigns.map((c) => [c.campaignId, c.name]));
+  if (showAllZones && campaignFilter !== null && !targetsData) return null;
   const cutKeys = new Set(data.map((r) => `${r.campaignId}:${r.zoneId}`));
   const inferredRows: ProgressRow[] =
     showAllZones && targetsData
@@ -293,7 +316,6 @@ function ProgressTable({
           .filter((r) => !cutKeys.has(`${r.campaignId}:${r.zoneId}`))
           .map((r) => ({
             campaignId: r.campaignId,
-            campaignName: campaignName.get(r.campaignId) ?? "",
             zoneId: r.zoneId,
             zoneName: r.zoneName,
             people: r.people,
@@ -304,10 +326,8 @@ function ProgressTable({
             inferred: true,
           }))
       : [];
-  const merged: ProgressRow[] = [...data, ...inferredRows].sort(
-    (a, b) =>
-      a.campaignName.localeCompare(b.campaignName) ||
-      (a.zoneName ?? "").localeCompare(b.zoneName ?? ""),
+  const merged: ProgressRow[] = [...data, ...inferredRows].sort((a, b) =>
+    (a.zoneName ?? "").localeCompare(b.zoneName ?? ""),
   );
   const rows = campaignFilter ? merged.filter((r) => r.campaignId === campaignFilter) : merged;
 
@@ -315,23 +335,17 @@ function ProgressTable({
     <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
       <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
         <TableRow>
-          {/* 60/40 split of the flexible space between the two name
-              columns — zone names run longer than campaign names.
-              Campaign sits far right like on the turfs board. */}
-          <TableHead className="w-[36%]">Zone</TableHead>
-          <TableHead className="w-28">People</TableHead>
-          <TableHead className="w-28">Doors</TableHead>
-          <TableHead className="w-20">Turfs</TableHead>
-          <TableHead className="w-20">Used</TableHead>
-          <TableHead className="w-26">Remaining</TableHead>
-          <TableHead className="w-24">Progress</TableHead>
-          <TableHead className="w-[24%]">Campaign</TableHead>
+          <TableHead>Zone</TableHead>
+          <TableHead className="w-26">People</TableHead>
+          <TableHead className="w-26">Doors</TableHead>
+          <TableHead className="w-24">Turfs</TableHead>
+          <TableHead className="w-22">Progress</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.length === 0 ? (
           <TableRow className="h-10">
-            <TableCell colSpan={8}>
+            <TableCell colSpan={5}>
               <Pill>
                 <span>No results</span>
               </Pill>
@@ -345,11 +359,35 @@ function ProgressTable({
                 ? Math.round((100 * r.attempted) / r.people)
                 : null;
             return (
-              <TableRow key={`${r.campaignId}:${r.zoneId ?? "none"}`}>
+              <TableRow
+                key={`${r.campaignId}:${r.zoneId ?? "none"}`}
+                data-zone-card={r.zoneId ?? undefined}
+                // Sticky header overlays the container top; without the
+                // margin, upward scrollIntoView parks the row under it.
+                className="scroll-mt-10"
+              >
                 <TableCell>
-                  <Pill className="min-w-0">
-                    <span className="truncate">{r.zoneName ?? "—"}</span>
-                  </Pill>
+                  {r.zoneId != null ? (
+                    // Border carries the selected state both directions —
+                    // click here or on the map. Re-clicking the selected
+                    // zone flashes it (the outside-click mousedown clears,
+                    // this click re-selects) — a locating aid, same
+                    // mechanism as the zone editor's cards.
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start",
+                        r.zoneId === selectedZoneId && "border-foreground dark:border-foreground",
+                      )}
+                      onClick={() => onSelectZone(r.zoneId)}
+                    >
+                      <span className="truncate">{r.zoneName ?? "—"}</span>
+                    </Button>
+                  ) : (
+                    <Pill className="min-w-0">
+                      <span className="truncate">—</span>
+                    </Pill>
+                  )}
                 </TableCell>
                 <TableCell>
                   <Pill variant="number" className={cn("gap-1.5", r.inferred && "italic")}>
@@ -364,27 +402,14 @@ function ProgressTable({
                   </Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">{r.inferred ? null : r.turfs.toLocaleString()}</Pill>
+                  {/* used / total; remaining is the visible difference. */}
+                  <Pill variant="number">{r.inferred ? null : `${r.used} / ${r.turfs}`}</Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">{r.inferred ? null : r.used.toLocaleString()}</Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill variant="number">
-                    {r.inferred ? null : (r.turfs - r.used).toLocaleString()}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill
-                    variant="number"
-                    color={pct !== null && pct > 0 ? progressColor(pct) : undefined}
-                  >
+                  {/* 0% tints red too — matching the map, where red is
+                      the work remaining. */}
+                  <Pill variant="number" color={pct !== null ? progressColor(pct) : undefined}>
                     {pct !== null ? `${pct}%` : null}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill className="min-w-0">
-                    <span className="truncate">{r.campaignName}</span>
                   </Pill>
                 </TableCell>
               </TableRow>
