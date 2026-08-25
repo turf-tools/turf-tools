@@ -140,6 +140,8 @@ type MapProps = {
   // Content for the upper-right inset — same card styling and edge offsets
   // as the lower-right slot. Positional slot; the route owns the content.
   cornerUpperRight?: ReactNode;
+  // Upper-left counterpart.
+  cornerUpperLeft?: ReactNode;
 };
 
 const DEFAULT_VIEW: Partial<ViewState> = {
@@ -234,6 +236,7 @@ export function Map({
   streetsAlwaysOn,
   cornerLowerRight,
   cornerUpperRight,
+  cornerUpperLeft,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
   const [streetsToggled, setStreetsToggled] = useState(false);
@@ -1066,6 +1069,17 @@ export function Map({
             </label>
           ) : null}
           {cornerLowerRight}
+        </div>
+      ) : null}
+
+      {cornerUpperLeft ? (
+        <div
+          className={
+            "absolute top-3 left-3 z-20 flex flex-col items-stretch " +
+            "rounded-md border border-border bg-background text-sm"
+          }
+        >
+          {cornerUpperLeft}
         </div>
       ) : null}
 

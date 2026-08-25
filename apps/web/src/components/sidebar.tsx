@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import {
-  ChartColumn,
+  ChartNoAxesColumn,
   CheckCheck,
   CircleUser,
   Database,
@@ -14,10 +14,10 @@ import {
   ClipboardPen,
   Search,
   Settings,
-  Summary,
   TrendingUp,
   Users,
   Waypoints,
+  Files,
 } from "lucide-react";
 import { hasPermission, type Permission } from "~/lib/permissions";
 import { cn } from "~/lib/utils";
@@ -33,8 +33,6 @@ export type NavItem = {
 // only the turfs board (plus Settings/Account below).
 export const PRIMARY: NavItem[] = [
   { to: "/$orgSlug/overview", label: "Overview", icon: LayoutDashboard, requires: "voter.read" },
-  { to: "/$orgSlug/progress", label: "Progress", icon: TrendingUp, requires: "voter.read" },
-  { to: "/$orgSlug/results", label: "Results", icon: ChartColumn, requires: "voter.read" },
   { to: "/$orgSlug/campaigns", label: "Campaigns", icon: Megaphone, requires: "voter.read" },
   { to: "/$orgSlug/segments", label: "Segments", icon: Layers, requires: "voter.read" },
   { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints, requires: "voter.read" },
@@ -42,7 +40,9 @@ export const PRIMARY: NavItem[] = [
   { to: "/$orgSlug/lookup", label: "Lookup", icon: Search, requires: "voter.read" },
   { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen, requires: "voter.read" },
   { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck, requires: "voter.read" },
-  { to: "/$orgSlug/reports", label: "Reports", icon: Summary, requires: "voter.read" },
+  { to: "/$orgSlug/progress", label: "Progress", icon: TrendingUp, requires: "voter.read" },
+  { to: "/$orgSlug/results", label: "Results", icon: ChartNoAxesColumn, requires: "voter.read" },
+  { to: "/$orgSlug/reports", label: "Reports", icon: Files, requires: "voter.read" },
 ];
 
 export const SECONDARY: NavItem[] = [

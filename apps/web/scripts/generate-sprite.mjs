@@ -5,11 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ICONS = [
+  "calendar",
+  "chart-no-axes-column",
   "check",
   "check-check",
   "chevron-down",
   "copy",
   "door-closed",
+  "funnel",
   "layout-grid",
   "loader-circle",
   "map",
@@ -21,6 +24,7 @@ const ICONS = [
   "user-round",
   "users-round",
   "waypoints",
+  "x",
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));

@@ -1,10 +1,10 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Map as MapIcon, Megaphone, Rows3 } from "lucide-react";
 import { useState } from "react";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
+import { Icon } from "~/components/icon";
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
@@ -70,14 +70,14 @@ function ProgressIndex() {
           }}
         >
           <ToggleGroupItem value="map" aria-label="Map">
-            <MapIcon className="size-3.5" />
+            <Icon name="map" className="size-3.5" />
           </ToggleGroupItem>
           <ToggleGroupItem value="table" aria-label="Table">
-            <Rows3 className="size-3.5" />
+            <Icon name="rows-3" className="size-3.5" />
           </ToggleGroupItem>
         </ToggleGroup>
         <Filter
-          icon={<Megaphone className="size-3.5" />}
+          icon={<Icon name="megaphone" className="size-3.5" />}
           label={filterLabel}
           value={campaignFilter}
           options={options}
@@ -109,8 +109,8 @@ function ProgressTable({ campaignFilter }: { campaignFilter: string | null }) {
               columns — zone names run longer than campaign names.
               Campaign sits far right like on the turfs board. */}
           <TableHead className="w-[36%]">Zone</TableHead>
-          <TableHead className="w-24">People</TableHead>
-          <TableHead className="w-24">Doors</TableHead>
+          <TableHead className="w-28">People</TableHead>
+          <TableHead className="w-28">Doors</TableHead>
           <TableHead className="w-20">Turfs</TableHead>
           <TableHead className="w-20">Used</TableHead>
           <TableHead className="w-26">Remaining</TableHead>
@@ -138,10 +138,16 @@ function ProgressTable({ campaignFilter }: { campaignFilter: string | null }) {
                   </Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">{r.people.toLocaleString()}</Pill>
+                  <Pill variant="number" className="gap-1.5">
+                    <Icon name="user-round" className="size-3.5 shrink-0 text-foreground" />
+                    {r.people.toLocaleString()}
+                  </Pill>
                 </TableCell>
                 <TableCell>
-                  <Pill variant="number">{r.doors.toLocaleString()}</Pill>
+                  <Pill variant="number" className="gap-1.5">
+                    <Icon name="door-closed" className="size-3.5 shrink-0 text-foreground" />
+                    {r.doors.toLocaleString()}
+                  </Pill>
                 </TableCell>
                 <TableCell>
                   <Pill variant="number">{r.turfs.toLocaleString()}</Pill>

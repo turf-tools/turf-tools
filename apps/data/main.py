@@ -28,7 +28,7 @@ from src.custom_fields import (
     sync_registry,
 )
 from src.dsl.compile import boundary_key_expr_for, cascade_sql, criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter
+from src.dsl.criteria import Criteria, KeyFilter, NestedFilter, Step
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import (
     OPERATIONAL_PG_ALIAS,
@@ -731,6 +731,320 @@ _EXPORT_COLUMNS = [
 ]
 # `| None = None` on Person — an importer may omit these columns entirely.
 _EXPORT_OPTIONAL = {"middle_name", "name_suffix", "address_line_2", "zip4"}
+
+
+class _ZonePerimetersRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    zone_group_ids: list[str] = Field(validation_alias="zoneGroupIds")
+
+
+@app.post("/zones/perimeters")
+async def zone_perimeters(req: _ZonePerimetersRequest):
+    """One unioned polygon per zone, as a GeoJSON FeatureCollection.
+
+    Unions each zone's boundary polygons with GEOS (ST_Union_Agg) — robust
+    on shared edges, unlike the client-side martinez union whose sliver
+    output flickered triangles at some zooms. Zone definitions come from
+    operational Postgres; geometry from the active version's boundary
+    tables.
+    """
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        schema = resolve_version(conn, settings, req.org_slug).schema
+        attach_operational_postgres(conn, settings)
+        zone_rows = conn.execute(
+            f"""
+            SELECT z.zone_id::VARCHAR, z.name, CAST(z.keys AS VARCHAR),
+                   z.zone_group_id::VARCHAR, zg.key_group
+            FROM {OPERATIONAL_PG_ALIAS}.app.zones z
+            JOIN {OPERATIONAL_PG_ALIAS}.app.zone_groups zg
+                ON zg.zone_group_id = z.zone_group_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = zg.organization_id
+            WHERE o.slug = ? AND z.zone_group_id::VARCHAR IN (SELECT unnest(?))
+            ORDER BY z."order"
+            """,
+            [req.org_slug, list(req.zone_group_ids)],
+        ).fetchall()
+
+        features: list[dict[str, Any]] = []
+        with timed("query"):
+            for zone_id, name, keys_json, zone_group_id, key_group in zone_rows:
+                keys = json.loads(keys_json)
+                if not keys:
+                    continue
+                fqn = table_fqn(schema, key_group)
+                row = conn.execute(
+                    f"""
+                    SELECT ST_AsGeoJSON(ST_Union_Agg(geom))
+                    FROM {fqn} WHERE key IN (SELECT unnest(?))
+                    """,
+                    [keys],
+                ).fetchone()
+                if row is None or row[0] is None:
+                    continue
+                features.append(
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zoneId": zone_id,
+                            "zoneName": name,
+                            "zoneGroupId": zone_group_id,
+                        },
+                        "geometry": json.loads(row[0]),
+                    }
+                )
+        return {"type": "FeatureCollection", "features": features}
+
+    return await run_query(work)
+
+
+class _ResultsAggregateRequest(_WireBaseModel):
+    criteria: Criteria = Criteria()
+    org_slug: str = Field(validation_alias="orgSlug")
+    campaign_ids: list[str] | None = Field(default=None, validation_alias="campaignIds")
+    start: str | None = None
+    end: str | None = None
+    # Single canvass-day filter; boundaries in `tz` so DST can't shift them.
+    day: str | None = None
+    tz: str = "America/New_York"
+
+
+@app.post("/results/aggregate")
+async def results_aggregate(req: _ResultsAggregateRequest):
+    """Per-zone canvass-result funnel over the conditioned population.
+
+    Reduces the event log to the latest result per person (by sequence)
+    across the selected campaigns — within the date window when one is
+    given — then joins the population (criteria over persons; empty =
+    everyone) and aggregates the funnel stages per zone,
+    plus per-question option counts among the contacted.
+    Top-level population counts serve "% of population" denominators.
+    """
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        attach_operational_postgres(conn, settings)
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        where_params: list = []
+        where = criteria_to_where(catalog, criteria, None, where_params)
+        persons = resolve("{persons_geocoded}", version.schema)
+
+        # Targeted = the campaign's segment ∧ the request criteria, evaluated
+        # live — only meaningful when exactly one campaign is scoped (a union
+        # of different campaigns' segments has no clean semantics).
+        targeted_where: str | None = None
+        targeted_params: list = []
+        if req.campaign_ids and len(req.campaign_ids) == 1:
+            seg_row = conn.execute(
+                f"""
+                SELECT CAST(s.criteria AS VARCHAR)
+                FROM {OPERATIONAL_PG_ALIAS}.app.campaigns c
+                JOIN {OPERATIONAL_PG_ALIAS}.app.segments s ON s.segment_id = c.segment_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                    ON o.organization_id = c.organization_id
+                WHERE o.slug = ? AND c.campaign_id::VARCHAR = ?
+                """,
+                [req.org_slug, req.campaign_ids[0]],
+            ).fetchone()
+            if seg_row and seg_row[0]:
+                combined = Criteria(
+                    steps=[
+                        Step(
+                            verb="add",
+                            filter=NestedFilter(
+                                kind="nested",
+                                criteria=Criteria.model_validate(json.loads(seg_row[0])),
+                            ),
+                        ),
+                        Step(verb="narrow", filter=NestedFilter(kind="nested", criteria=req.criteria)),
+                    ]
+                )
+                combined = resolve_criteria(combined, conn, settings, req.org_slug)
+                targeted_where = criteria_to_where(catalog, combined, None, targeted_params)
+
+        # Base scope (org + campaigns) is shared by the funnel queries and
+        # the canvass-day list; date filters apply to the funnel only.
+        base_filters = ["e.kind = 'result'", "e.person_id IS NOT NULL", "o.slug = ?"]
+        base_params: list = [req.org_slug]
+        if req.campaign_ids:
+            base_filters.append("c.campaign_id::VARCHAR IN (SELECT unnest(?))")
+            base_params.append(list(req.campaign_ids))
+        event_filters = [*base_filters]
+        event_params: list = [*base_params]
+        if req.start:
+            event_filters.append("e.created_at >= ?::TIMESTAMPTZ")
+            event_params.append(req.start)
+        if req.end:
+            event_filters.append("e.created_at <= ?::TIMESTAMPTZ")
+            event_params.append(req.end)
+        if req.day:
+            event_filters.append("(e.created_at AT TIME ZONE ?)::DATE = ?::DATE")
+            event_params.extend([req.tz, req.day])
+
+        joined = f"""
+            WITH latest AS (
+                SELECT * FROM (
+                    SELECT
+                        e.person_id,
+                        json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') AS outcome,
+                        json_extract(CAST(e.payload AS VARCHAR), '$.responses') AS responses,
+                        t.zone_id::VARCHAR AS zone_id,
+                        t.zone_name,
+                        e.sequence
+                    FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+                    JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+                    JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+                    JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                        ON o.organization_id = c.organization_id
+                    WHERE {" AND ".join(event_filters)}
+                    QUALIFY row_number() OVER (
+                        PARTITION BY e.person_id ORDER BY e.sequence DESC
+                    ) = 1
+                )
+            ),
+            pop AS (
+                SELECT external_id FROM {persons} {where}
+            ),
+            joined AS (
+                SELECT l.* FROM latest l JOIN pop p ON p.external_id = l.person_id
+            )
+        """
+
+        stages_sql = (
+            joined
+            + """
+            SELECT
+                zone_id,
+                any_value(zone_name) AS zone_name,
+                count(*) FILTER (WHERE outcome IS NOT NULL) AS attempted,
+                count(*) FILTER (WHERE outcome = 'canvassed') AS contacted
+            FROM joined
+            GROUP BY zone_id
+            """
+        )
+
+        responses_sql = (
+            joined
+            + """
+            SELECT zone_id, q.question_id, o.option_id, count(*) AS n
+            FROM joined,
+                 UNNEST(json_keys(responses)) AS q(question_id),
+                 UNNEST(CAST(json_extract(responses,
+                     '$."' || q.question_id || '".optionIds') AS VARCHAR[])) AS o(option_id)
+            WHERE outcome = 'canvassed'
+            GROUP BY 1, 2, 3
+            """
+        )
+
+        # Zones of the scoped campaigns' groups — every zone gets a row
+        # (zeros when unwalked) with its population under the criteria,
+        # so a map click always has a full funnel to show. Archived
+        # campaigns stay in: their results are history, not noise.
+        zone_filters = ["o.slug = ?"]
+        zone_params: list = [req.org_slug]
+        if req.campaign_ids:
+            zone_filters.append("c.campaign_id::VARCHAR IN (SELECT unnest(?))")
+            zone_params.append(list(req.campaign_ids))
+        zone_rows = conn.execute(
+            f"""
+            SELECT DISTINCT z.zone_id::VARCHAR, z.name, CAST(z.keys AS VARCHAR), zg.key_group
+            FROM {OPERATIONAL_PG_ALIAS}.app.campaigns c
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = c.organization_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.zone_groups zg
+                ON zg.zone_group_id = c.zone_group_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.zones z ON z.zone_group_id = zg.zone_group_id
+            WHERE {" AND ".join(zone_filters)}
+            """,
+            zone_params,
+        ).fetchall()
+        zones_by_group: dict[str, list[tuple[str, str, list[str]]]] = {}
+        for zone_id, zone_name, keys_json, key_group in zone_rows:
+            zones_by_group.setdefault(key_group, []).append((zone_id, zone_name, json.loads(keys_json)))
+
+        days_sql = f"""
+            SELECT DISTINCT ((e.created_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
+            FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+            JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = c.organization_id
+            WHERE {" AND ".join(base_filters)}
+            ORDER BY day DESC
+        """
+
+        params = event_params + where_params
+        targeted_by_zone: dict[str, int] = {}
+        targeted_row = None
+        with timed("query"):
+            day_rows = conn.execute(days_sql, [req.tz, *base_params]).fetchall()
+            stage_rows = conn.execute(stages_sql, params).fetchall()
+            response_rows = conn.execute(responses_sql, params).fetchall()
+            if targeted_where is not None:
+                targeted_row = conn.execute(
+                    f"SELECT count(*) FROM {persons} {targeted_where}",
+                    targeted_params,
+                ).fetchone()
+                for key_group, zone_list in zones_by_group.items():
+                    expr = boundary_key_expr_for(catalog, key_group)
+                    zone_ids_flat: list[str] = []
+                    keys_flat: list[str] = []
+                    for zone_id, _name, keys in zone_list:
+                        zone_ids_flat.extend([zone_id] * len(keys))
+                        keys_flat.extend(keys)
+                    if not keys_flat:
+                        continue
+                    # Parallel unnests zip into aligned (zone_id, key) rows.
+                    rows = conn.execute(
+                        f"""
+                        WITH zk AS (SELECT unnest(?) AS zone_id, unnest(?) AS key)
+                        SELECT zk.zone_id, count(*)
+                        FROM {persons} JOIN zk ON {expr} = zk.key
+                        {targeted_where}
+                        GROUP BY zk.zone_id
+                        """,
+                        [zone_ids_flat, keys_flat, *targeted_params],
+                    ).fetchall()
+                    for zone_id, people in rows:
+                        targeted_by_zone[zone_id] = people
+
+        def empty_row(zone_id: str | None, zone_name: str | None) -> dict[str, Any]:
+            return {
+                "zoneId": zone_id,
+                "zoneName": zone_name,
+                "targeted": targeted_by_zone.get(zone_id or "", 0) if targeted_where else None,
+                "attempted": 0,
+                "contacted": 0,
+                "responses": {},
+            }
+
+        by_zone: dict[str | None, dict[str, Any]] = {}
+        for zone_list in zones_by_group.values():
+            for zone_id, zone_name, _keys in zone_list:
+                by_zone[zone_id] = empty_row(zone_id, zone_name)
+        for zone_id, zone_name, att, con in stage_rows:
+            entry = by_zone.setdefault(zone_id, empty_row(zone_id, zone_name))
+            entry.update(
+                {
+                    # Prefer the publish-time stamp over the zone's current name.
+                    "zoneName": zone_name,
+                    "attempted": att,
+                    "contacted": con,
+                }
+            )
+        for zone_id, question_id, option_id, n in response_rows:
+            zone = by_zone.get(zone_id)
+            if zone is None:
+                continue
+            zone["responses"].setdefault(question_id, {})[option_id] = n
+        return {
+            "targeted": targeted_row[0] if targeted_row else None,
+            "days": [r[0] for r in day_rows],
+            "rows": sorted(by_zone.values(), key=lambda r: r["zoneName"] or ""),
+        }
+
+    return await run_query(work)
 
 
 @app.post("/segments/export")
