@@ -1,8 +1,6 @@
 import { keepPreviousData, useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { cleanCoords } from "@turf/clean-coords";
-import { union } from "@turf/union";
-import type { Feature, FeatureCollection, MultiPolygon, Polygon } from "geojson";
+import type { FeatureCollection } from "geojson";
 import { CircleDashed, CircleDotDashed, DoorClosed, Scissors, Send, UserRound } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
@@ -16,8 +14,8 @@ import {
 import { Map } from "~/components/map";
 import { Pill } from "~/components/pill";
 import { Swatch } from "~/components/swatch";
+import { bboxOfFeatures } from "~/lib/geometry";
 import { useRememberSelection } from "~/lib/last-selected";
-import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import { manifestQuery } from "~/lib/queries/manifest";
 import {
   campaignDetailQuery,
@@ -33,7 +31,12 @@ import {
   type SegmentCriteria,
 } from "~/lib/queries/segments";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
-import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import {
+  zoneGroupsQuery,
+  zonePerimetersQuery,
+  zonePerimetersVersion,
+  zonesQuery,
+} from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
 import { cn, revealZoneCard } from "~/lib/utils";
 import { client } from "~/rpc/client";
@@ -90,33 +93,6 @@ function bboxOfMercDeltas(buffer: {
   const maxLat = mercY2Lat(oy + minY);
   const minLat = mercY2Lat(oy + maxY);
   return [minLng, minLat, maxLng, maxLat];
-}
-
-// Walks every coord in a polygon/multipolygon FeatureCollection.
-function bboxOfPolys(fc: FeatureCollection): [number, number, number, number] | null {
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
-  let touched = false;
-  const visit = (c: number[]) => {
-    const lng = c[0]!;
-    const lat = c[1]!;
-    if (lng < minLng) minLng = lng;
-    if (lng > maxLng) maxLng = lng;
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-    touched = true;
-  };
-  for (const f of fc.features) {
-    const g = f.geometry;
-    if (g.type === "Polygon") {
-      for (const ring of g.coordinates) for (const c of ring) visit(c);
-    } else if (g.type === "MultiPolygon") {
-      for (const poly of g.coordinates) for (const ring of poly) for (const c of ring) visit(c);
-    }
-  }
-  return touched ? [minLng, minLat, maxLng, maxLat] : null;
 }
 
 export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/")({
@@ -183,10 +159,19 @@ function CampaignEditor() {
     ...turfStatsForCampaignQuery(campaignId),
   });
 
-  const { data: boundaryFC, isPlaceholderData: boundaryStale } = useQuery({
-    ...boundariesGeoJsonQuery(activeZoneGroup?.keyGroup ?? "", manifestRow?.versionId ?? ""),
-    enabled: !!activeZoneGroup,
-    placeholderData: keepPreviousData,
+  // Server-side GEOS zone unions. The version stamp folds the per-zone
+  // key assignment and the boundary dataset version, so zone edits and
+  // dataset flips re-key immediately instead of waiting out staleTime.
+  // Gated on settled zones so a binding switch can't fetch under a
+  // stale-zones version and refetch a beat later. No placeholderData:
+  // stale shapes from the previous binding would float over the new
+  // area; the curtain covers the gap.
+  const { data: rawPerimeters } = useQuery({
+    ...zonePerimetersQuery(
+      campaign?.zoneGroupId ? [campaign.zoneGroupId] : [],
+      zonePerimetersVersion(manifestRow?.versionId, zones),
+    ),
+    enabled: !!campaign?.zoneGroupId && !!zones && !zonesStale,
   });
 
   const keyFilter = useMemo(
@@ -262,66 +247,31 @@ function CampaignEditor() {
     return { drafts, active, published };
   }, [turfStats]);
 
-  // One unioned polygon per zone, tagged with `zoneId`. Single-key zones
-  // short-circuit because turf.union returns null for degenerate inputs.
-  // Bails when zoneless — `zones` and `boundaryFC` use placeholderData,
-  // so without this guard a zoned→zoneless switch flashes the previous
-  // campaign's polygons.
+  // Server perimeters decorated with each zone's list-position color, so
+  // map fills match the sidebar swatches. Bails when zoneless — without
+  // the guard a zoned→zoneless switch flashes the previous campaign's
+  // polygons.
   const zonePerimeters = useMemo<FeatureCollection | undefined>(() => {
     if (!campaign?.zoneGroupId) return undefined;
-    if (!zones || !boundaryFC) return undefined;
-    const featuresByKey: Record<string, Feature<Polygon | MultiPolygon>> = {};
-    for (const f of boundaryFC.features) {
-      const k = f.properties?.key;
-      if (
-        typeof k === "string" &&
-        (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon")
-      ) {
-        featuresByKey[k] = f as Feature<Polygon | MultiPolygon>;
-      }
-    }
-    const out: Feature[] = [];
-    zones.forEach((zone, idx) => {
-      try {
-        const polys = zone.keys
-          .map((k) => featuresByKey[k])
-          .filter((f): f is Feature<Polygon | MultiPolygon> => !!f);
-        if (polys.length === 0) return;
-        const raw =
-          polys.length === 1
-            ? polys[0]!
-            : (union({ type: "FeatureCollection", features: polys }) ?? polys[0]!);
-        // turf.union output sometimes carries near-duplicate vertices along
-        // input-polygon shared edges; cleanCoords drops them. Wrapped in
-        // try/catch because cleanCoords throws on rings it considers
-        // degenerate (e.g. <4 points after dedup) — one bad zone shouldn't
-        // crash the whole page.
-        let merged: Feature<Polygon | MultiPolygon>;
-        try {
-          merged = cleanCoords(raw) as Feature<Polygon | MultiPolygon>;
-        } catch {
-          merged = raw as Feature<Polygon | MultiPolygon>;
-        }
-        out.push({
-          ...merged,
-          properties: {
-            zoneId: zone.zoneId,
-            name: zone.name,
-            color: colorFor(idx),
-          },
-        });
-      } catch (e) {
-        console.warn(`zonePerimeters: skipping zone ${zone.zoneId}`, e);
-      }
-    });
-    return { type: "FeatureCollection", features: out };
-  }, [zones, boundaryFC, campaign?.zoneGroupId]);
+    if (!zones || !rawPerimeters) return undefined;
+    // globalThis: the Map *component* import shadows the built-in here.
+    const colorByZone = new globalThis.Map(zones.map((z, idx) => [z.zoneId, colorFor(idx)]));
+    return {
+      type: "FeatureCollection",
+      features: rawPerimeters.features.flatMap((f) => {
+        const zoneId = f.properties?.zoneId as string;
+        const color = colorByZone.get(zoneId);
+        if (!color) return [];
+        return [{ ...f, properties: { zoneId, name: f.properties?.zoneName, color } }];
+      }),
+    };
+  }, [zones, rawPerimeters, campaign?.zoneGroupId]);
 
   // Prefer zone perimeters for the fit when we have them (matches the
   // visible boundary on the map). Fall back to the points cloud for
   // zoneless campaigns so the map still lands somewhere sensible.
   const fitBounds = useMemo(() => {
-    if (zonePerimeters) return bboxOfPolys(zonePerimeters);
+    if (zonePerimeters) return bboxOfFeatures(zonePerimeters.features);
     if (pointsBuffer) return bboxOfMercDeltas(pointsBuffer);
     return null;
   }, [zonePerimeters, pointsBuffer]);
@@ -342,7 +292,7 @@ function CampaignEditor() {
     }
     if (z) {
       if (!zones || zonesStale) return false;
-      if (!boundaryFC || boundaryStale) return false;
+      if (!zonePerimeters) return false;
       if (!perKeyCounts || countsStale) return false;
     } else if (s) {
       // Zoneless: header totals come from segmentTotals instead of

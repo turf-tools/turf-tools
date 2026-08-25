@@ -33,14 +33,3 @@ export const resultsAggregateQuery = (
     // Filter/scope changes swap data in place — no suspension, no flash.
     placeholderData: keepPreviousData,
   });
-
-// Perimeters change only when zones are edited or the boundary version
-// flips; a modest staleTime keeps map interactions snappy without a
-// bespoke invalidation chain.
-export const zonePerimetersQuery = (zoneGroupIds: string[]) =>
-  queryOptions({
-    queryKey: ["zone-perimeters", [...zoneGroupIds].sort()] as const,
-    queryFn: () => client.results.perimeters({ zoneGroupIds }),
-    staleTime: 5 * 60_000,
-    enabled: zoneGroupIds.length > 0,
-  });

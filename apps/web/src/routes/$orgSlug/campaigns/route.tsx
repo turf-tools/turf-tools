@@ -40,7 +40,6 @@ import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail, useShowArchived } from "~/components/rail";
-import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignKeyCountsQuery,
   campaignPointsQuery,
@@ -52,7 +51,12 @@ import { scriptsListQuery } from "~/lib/queries/scripts";
 import { segmentsListQuery } from "~/lib/queries/segments";
 import { hasPermission } from "~/lib/permissions";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
-import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import {
+  zoneGroupsQuery,
+  zonePerimetersQuery,
+  zonePerimetersVersion,
+  zonesQuery,
+} from "~/lib/queries/zones";
 import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -173,7 +177,10 @@ function CampaignsLayout() {
       queryClient.prefetchQuery(turfStatsForCampaignQuery(target.campaignId)),
       nextZoneGroup
         ? queryClient.prefetchQuery(
-            boundariesGeoJsonQuery(nextZoneGroup.keyGroup, manifest?.versionId ?? ""),
+            zonePerimetersQuery(
+              [nextZoneGroup.zoneGroupId],
+              zonePerimetersVersion(manifest?.versionId, nextZones),
+            ),
           )
         : Promise.resolve(),
       nextCriteria && nextKeyFilter

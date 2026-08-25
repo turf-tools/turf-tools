@@ -14,7 +14,7 @@ import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options
 import { bboxOfFeatures } from "~/lib/geometry";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { progressByZoneQuery, progressTargetsQuery } from "~/lib/queries/progress";
-import { zonePerimetersQuery } from "~/lib/queries/results";
+import { zonePerimetersQuery } from "~/lib/queries/zones";
 import { segmentsListQuery } from "~/lib/queries/segments";
 import { useHotkey } from "~/lib/use-hotkey";
 import { campaignSegmentsVersion } from "~/lib/segment-refs";
