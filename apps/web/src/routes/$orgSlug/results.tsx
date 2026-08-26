@@ -1,6 +1,6 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
 import {
@@ -33,6 +33,7 @@ import { segmentsListQuery } from "~/lib/queries/segments";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
+import { useZoneSelection } from "~/lib/use-zone-selection";
 import { cn, revealZoneCard } from "~/lib/utils";
 import type { ResultsAggregate, ZoneFunnelRow } from "~/rpc/web/results";
 
@@ -113,29 +114,15 @@ function ResultsIndex() {
   const shouldFade = useFadeOnce("/results");
   const { session } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  // Whole-page selection surface with the corner riding out the
+  // clear→reselect gesture — mechanics in useZoneSelection.
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
+  const { selectedZoneId, cornerZoneId, select, clear } = useZoneSelection(mapWrapperRef);
   useHotkey({
     key: "Escape",
     enabled: selectedZoneId !== null,
-    onMatch: () => setSelectedZoneId(null),
+    onMatch: clear,
   });
-
-  // Selection can be made from the table, so the whole page is the
-  // selection surface (zone-editor convention, same as Progress):
-  // clicking chrome outside the map clears. Firing on mousedown is also
-  // what makes re-clicking a zone row flash its map outline.
-  const mapWrapperRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!selectedZoneId) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (mapWrapperRef.current?.contains(target)) return;
-      setSelectedZoneId(null);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [selectedZoneId]);
 
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
   const campaignOptions = campaignFilterOptions(campaigns);
@@ -311,12 +298,10 @@ function ResultsIndex() {
 
   // The all-zones row is a selection target like any zone: the whole
   // drawn set highlights on the map, the corner shows the aggregate.
-  const selectedRow =
-    selectedZoneId === ALL_ZONES
-      ? totals
-      : selectedZoneId
-        ? (byZone.get(selectedZoneId) ?? null)
-        : null;
+  // The corner reads cornerZoneId so a row re-click flashes the outline
+  // without blinking the readout.
+  const cornerRow =
+    cornerZoneId === ALL_ZONES ? totals : cornerZoneId ? (byZone.get(cornerZoneId) ?? null) : null;
 
   return (
     <EditorPage className={cn("h-[calc(100vh-3.5rem)]", shouldFade)}>
@@ -573,21 +558,24 @@ function ResultsIndex() {
                   row={totals}
                   columns={answerColumns}
                   selected={selectedZoneId === ALL_ZONES}
-                  onSelect={() => setSelectedZoneId(ALL_ZONES)}
+                  onSelect={() => select(ALL_ZONES)}
                 />
                 {aggregate.rows
                   .filter((r) => r.attempted > 0)
-                  .map((r) => (
-                    <ZoneRow
-                      key={r.zoneId ?? "none"}
-                      label={<span className="truncate">{r.zoneName ?? "—"}</span>}
-                      zoneId={r.zoneId}
-                      selected={r.zoneId != null && r.zoneId === selectedZoneId}
-                      onSelect={r.zoneId != null ? () => setSelectedZoneId(r.zoneId) : undefined}
-                      row={r}
-                      columns={answerColumns}
-                    />
-                  ))}
+                  .map((r) => {
+                    const zoneId = r.zoneId;
+                    return (
+                      <ZoneRow
+                        key={zoneId ?? "none"}
+                        label={<span className="truncate">{r.zoneName ?? "—"}</span>}
+                        zoneId={zoneId}
+                        selected={zoneId != null && zoneId === selectedZoneId}
+                        onSelect={zoneId != null ? () => select(zoneId) : undefined}
+                        row={r}
+                        columns={answerColumns}
+                      />
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>
@@ -614,33 +602,33 @@ function ResultsIndex() {
                   : []
             }
             onZoneClick={(zoneId) => {
-              setSelectedZoneId(zoneId);
+              select(zoneId);
               revealZoneCard(zoneId);
             }}
-            onBackgroundClick={() => setSelectedZoneId(null)}
+            onBackgroundClick={clear}
             fitBounds={fitBounds}
             loading={!coloredPerimeters}
             insetsHidden={mapCollapsed}
             cornerUpperLeft={
-              selectedRow ? (
+              cornerRow ? (
                 // Percents only — the table row has the full treatment;
                 // the corner is a glance.
                 <div className="flex flex-col px-3 py-2">
                   <span className="flex items-center gap-2">
                     <span className="truncate font-semibold">
-                      {selectedZoneId === ALL_ZONES ? "All zones" : selectedRow.zoneName}
+                      {cornerZoneId === ALL_ZONES ? "All zones" : cornerRow.zoneName}
                     </span>
                     <button
                       type="button"
                       aria-label="Clear zone selection"
-                      onClick={() => setSelectedZoneId(null)}
+                      onClick={clear}
                       className="text-muted-foreground hover:text-foreground"
                     >
                       <Icon name="x" className="size-3.5" />
                     </button>
                   </span>
                   <span className="text-muted-foreground">
-                    Contacts: <RatePercent rate={rateOf(selectedRow)} rateMax={CONTACT_RATE_MAX} />
+                    Contacts: <RatePercent rate={rateOf(cornerRow)} rateMax={CONTACT_RATE_MAX} />
                   </span>
                   {answerColumns.map((c) => (
                     <span
@@ -652,11 +640,11 @@ function ResultsIndex() {
                         rate={
                           c.option
                             ? optionRate(
-                                selectedRow,
+                                cornerRow,
                                 c.question.questionId,
                                 c.option.responseOptionId,
                               )
-                            : answeredRate(selectedRow, c.question.questionId)
+                            : answeredRate(cornerRow, c.question.questionId)
                         }
                         rateMax={1}
                       />

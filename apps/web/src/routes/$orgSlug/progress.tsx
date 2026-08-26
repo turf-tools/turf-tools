@@ -1,6 +1,6 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { tintStyle } from "~/components/badge";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
@@ -16,6 +16,7 @@ import { progressByZoneQuery, progressTargetsQuery } from "~/lib/queries/progres
 import { zonePerimetersQuery } from "~/lib/queries/zones";
 import { segmentsListQuery } from "~/lib/queries/segments";
 import { useHotkey } from "~/lib/use-hotkey";
+import { useZoneSelection } from "~/lib/use-zone-selection";
 import { campaignSegmentsVersion } from "~/lib/segment-refs";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn, revealZoneCard } from "~/lib/utils";
@@ -64,30 +65,20 @@ function ProgressIndex() {
   const { campaign: campaignFilter, zones: zonesView } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/progress");
-  // Selection is shared: a map click highlights the zone's table row.
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  // Whole-page selection surface with the corner riding out the
+  // clear→reselect gesture — mechanics in useZoneSelection. A map click
+  // highlights the zone's table row and vice versa.
+  const mapWrapperRef = useRef<HTMLDivElement>(null);
+  const { selectedZoneId, cornerZoneId, select, clear } = useZoneSelection(mapWrapperRef);
+  const onSelectZone = useCallback(
+    (zoneId: string | null) => (zoneId !== null ? select(zoneId) : clear()),
+    [select, clear],
+  );
   // Map fill metric — turf-grain by default (the dispatch signal),
   // person-grain Attempts as the alternate lens (Results' Color-by
   // pattern).
   const [mapMetric, setMapMetric] = useState<"turfs" | "attempted">("turfs");
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
-
-  // Selection can be made from the table, so the whole page is the
-  // selection surface (zone-editor convention): clicking chrome outside
-  // the map clears. Firing on mousedown is also what makes re-clicking a
-  // zone row flash its map outline — clear here, re-select on click.
-  const mapWrapperRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!selectedZoneId) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (mapWrapperRef.current?.contains(target)) return;
-      setSelectedZoneId(null);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [selectedZoneId]);
 
   // Always exactly one campaign in scope: cross-campaign progress has no
   // clean denominator (overlapping passes double-count people), so there
@@ -145,7 +136,7 @@ function ProgressIndex() {
               campaignFilter={campaign}
               showAllZones={zonesView === "all"}
               selectedZoneId={selectedZoneId}
-              onSelectZone={setSelectedZoneId}
+              onSelectZone={onSelectZone}
             />
           </div>
         </div>
@@ -154,7 +145,8 @@ function ProgressIndex() {
           showAllZones={zonesView === "all"}
           metric={mapMetric}
           selectedZoneId={selectedZoneId}
-          onSelectZone={setSelectedZoneId}
+          cornerZoneId={cornerZoneId}
+          onSelectZone={onSelectZone}
           wrapperRef={mapWrapperRef}
         />
       </div>
@@ -216,6 +208,7 @@ function ProgressMap({
   showAllZones,
   metric,
   selectedZoneId,
+  cornerZoneId,
   onSelectZone,
   wrapperRef,
 }: {
@@ -223,6 +216,7 @@ function ProgressMap({
   showAllZones: boolean;
   metric: "turfs" | "attempted";
   selectedZoneId: string | null;
+  cornerZoneId: string | null;
   onSelectZone: (zoneId: string | null) => void;
   wrapperRef: RefObject<HTMLDivElement | null>;
 }) {
@@ -305,10 +299,13 @@ function ProgressMap({
   });
 
   const allSelected = selectedZoneId === ALL_ZONES;
-  const selected = !allSelected && selectedZoneId ? (byZone.get(selectedZoneId) ?? null) : null;
+  // Corner values ride cornerZoneId (see useZoneSelection): a row
+  // re-click flashes the outline without blinking the readout.
+  const cornerAll = cornerZoneId === ALL_ZONES;
+  const selected = !cornerAll && cornerZoneId ? (byZone.get(cornerZoneId) ?? null) : null;
   // All-zones selection aggregates the campaign's cut rows — the
   // table's totals-row accounting exactly, zoneless rows included.
-  const cornerStats = allSelected
+  const cornerStats = cornerAll
     ? data
         .filter((r) => r.campaignId === campaignFilter)
         .reduce(
@@ -332,11 +329,11 @@ function ProgressMap({
   // An uncut zone (clickable in the All view) has no rollup row; its
   // name rides the feature properties.
   const selectedUncutName =
-    !allSelected && selectedZoneId && !selected
-      ? ((perimeters?.features.find((f) => f.properties?.zoneId === selectedZoneId)?.properties
+    !cornerAll && cornerZoneId && !selected
+      ? ((perimeters?.features.find((f) => f.properties?.zoneId === cornerZoneId)?.properties
           ?.zoneName as string | undefined) ?? null)
       : null;
-  const hasSelection = Boolean(allSelected || selected || selectedUncutName);
+  const hasSelection = Boolean(cornerAll || selected || selectedUncutName);
 
   // Corner readout answers "what did I just click" without leaving the
   // map; the table's highlighted row is the linked echo with the
@@ -371,7 +368,7 @@ function ProgressMap({
             <div className="flex flex-col px-3 py-2">
               <span className="flex items-center gap-2">
                 <span className="font-semibold">
-                  {allSelected ? "All zones" : (selected?.zoneName ?? selectedUncutName)}
+                  {cornerAll ? "All zones" : (selected?.zoneName ?? selectedUncutName)}
                 </span>
                 <button
                   type="button"
