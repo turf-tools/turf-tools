@@ -234,7 +234,7 @@ function TurfsIndex() {
     <Page className={cn("md:flex md:h-[calc(100vh-3.5rem)] md:flex-col", shouldFade)}>
       {/* Desktop header */}
       <div className="hidden md:block">
-        <EditorHeader title="Turfs">
+        <EditorHeader title="Turfs" subtitle="Sign out and track">
           {campaignFilter}
           {zoneFilter}
         </EditorHeader>

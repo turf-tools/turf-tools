@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate, useParams } from "@tanstack/react-router";
-import { Archive, Check } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
@@ -105,9 +105,9 @@ function DataLayout() {
             active={d.datasetId === activeDatasetId}
             trailing={
               d.isActive ? (
-                <Check className="ml-2 size-4 shrink-0 [stroke-width:2.25]" />
+                <Icon name="check" className="ml-2 size-4 shrink-0 [stroke-width:2.25]" />
               ) : d.allArchived ? (
-                <Archive className="ml-2 size-4 shrink-0" />
+                <Icon name="archive" className="ml-2 size-4 shrink-0" />
               ) : undefined
             }
             onSelect={() => void goToDataset(d.datasetId)}

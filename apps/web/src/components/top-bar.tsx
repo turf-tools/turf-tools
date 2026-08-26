@@ -1,5 +1,5 @@
+import { Icon } from "~/components/icon";
 import { Link } from "@tanstack/react-router";
-import { Menu } from "lucide-react";
 import type { SessionOrg } from "~/lib/server/session";
 import { hasPermission } from "~/lib/permissions";
 import { cn } from "~/lib/utils";
@@ -62,7 +62,7 @@ function MobileMenu({ role, orgSlug }: { role: string | null; orgSlug: string })
           "hover:bg-muted aria-expanded:bg-muted",
         )}
       >
-        <Menu className="size-4" />
+        <Icon name="menu" className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         {[...visible(PRIMARY), ...visible(SECONDARY)].map((item) => (
@@ -71,7 +71,7 @@ function MobileMenu({ role, orgSlug }: { role: string | null; orgSlug: string })
             render={<Link to={item.to} params={{ orgSlug }} />}
             className="gap-3"
           >
-            <item.icon className="size-4" />
+            <Icon name={item.icon} className="size-4" />
             {item.label}
           </DropdownMenuItem>
         ))}

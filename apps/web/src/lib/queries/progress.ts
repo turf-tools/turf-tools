@@ -12,3 +12,25 @@ export const progressQuery = (campaignId: string | null) =>
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
   });
+
+// Per-(campaign, zone) rollup for the Progress page; same cadence
+// rationale as above.
+export const progressByZoneQuery = () =>
+  queryOptions({
+    queryKey: ["progress-by-zone"] as const,
+    queryFn: () => client.progress.byZone(),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  });
+
+// Live targets change only with segment edits / dataset flips; slower
+// cadence than the event-driven counts. `version` folds the campaign's
+// segment updatedAt stamp (see campaignSegmentsVersion) — the criteria
+// are read server-side, so without it a segment edit couldn't re-key
+// this and tabbing back would serve the stale counts.
+export const progressTargetsQuery = (campaignId: string, version: string) =>
+  queryOptions({
+    queryKey: ["progress-targets", campaignId, version] as const,
+    queryFn: () => client.progress.targets({ campaignId }),
+    staleTime: 5 * 60_000,
+  });

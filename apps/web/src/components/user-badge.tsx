@@ -1,5 +1,5 @@
+import { Icon } from "~/components/icon";
 import { useRouteContext } from "@tanstack/react-router";
-import { LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,7 +49,7 @@ export function UserBadge() {
           </>
         ) : null}
         <DropdownMenuItem onClick={onSignOut}>
-          <LogOut className="size-3.5" />
+          <Icon name="log-out" className="size-3.5" />
           Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

@@ -1,4 +1,4 @@
-import { DoorClosed, Trash2, UserRound } from "lucide-react";
+import { Icon } from "~/components/icon";
 import { memo, type Ref } from "react";
 import { Button } from "~/components/button";
 import { Pill } from "~/components/pill";
@@ -90,14 +90,14 @@ const Row = memo(function Row({
             variant="number"
             className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
           >
-            <UserRound className="size-3.5 text-foreground" />
+            <Icon name="user-round" className="size-3.5 text-foreground" />
             {people.toLocaleString()}
           </Pill>
           <Pill
             variant="number"
             className="!w-fit shrink-0 gap-1.5 animate-in fade-in duration-100"
           >
-            <DoorClosed className="size-3.5 text-foreground" />
+            <Icon name="door-closed" className="size-3.5 text-foreground" />
             {doors.toLocaleString()}
           </Pill>
         </div>
@@ -105,14 +105,16 @@ const Row = memo(function Row({
       <Button
         size="icon-sm"
         variant="ghost"
-        className="-ml-[1px] h-8"
+        // bg-clip-padding: the hover wash clips 1px inside the (transparent)
+        // border, matching the adjacent pills' visible height.
+        className="-ml-[1px] h-8 bg-clip-padding"
         aria-label={`Remove turf ${index + 1}`}
         onClick={(e) => {
           e.stopPropagation();
           onRemove(id);
         }}
       >
-        <Trash2 className="size-4" />
+        <Icon name="trash-2" className="size-4" />
       </Button>
     </div>
   );

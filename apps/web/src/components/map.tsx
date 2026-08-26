@@ -1,7 +1,7 @@
+import { Icon } from "~/components/icon";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { useAtomValue, useSetAtom } from "jotai";
-import { LoaderCircle } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Layer,
@@ -74,6 +74,10 @@ type MapProps = {
   // with a heavier stroke + full opacity; the rest stay thin and
   // faded so the selection reads at a glance.
   selectedZoneId?: string | null;
+  // Multi-select variant: highlight exactly these zone ids (takes
+  // precedence over `selectedZoneId`). The map has no opinion about
+  // what the set means — callers own concepts like "all zones".
+  selectedZoneIds?: ReadonlyArray<string> | null;
   // Optional `[minLng, minLat, maxLng, maxLat]` to fit the viewport
   // to. The map calls `fitBounds` whenever this value changes. Pass
   // `null`/`undefined` to leave the viewport alone.
@@ -140,6 +144,11 @@ type MapProps = {
   // Content for the upper-right inset — same card styling and edge offsets
   // as the lower-right slot. Positional slot; the route owns the content.
   cornerUpperRight?: ReactNode;
+  // Upper-left counterpart.
+  cornerUpperLeft?: ReactNode;
+  // Suppress every corner inset — for callers that shrink the map to a
+  // sliver, where the cards clip and their labels wrap illegibly.
+  insetsHidden?: boolean;
 };
 
 const DEFAULT_VIEW: Partial<ViewState> = {
@@ -221,6 +230,7 @@ export function Map({
   shapeLabels,
   onBadgeClick,
   selectedZoneId,
+  selectedZoneIds,
   fitBounds,
   onPolygonClick,
   onPolygonHover,
@@ -234,6 +244,8 @@ export function Map({
   streetsAlwaysOn,
   cornerLowerRight,
   cornerUpperRight,
+  cornerUpperLeft,
+  insetsHidden,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
   const [streetsToggled, setStreetsToggled] = useState(false);
@@ -374,7 +386,7 @@ export function Map({
   // so the line layer's paint expression bumps its weight + opacity.
   // Mirrors the per-key `active` pattern above, just on the
   // zone-perimeters source (keyed on `zoneId` via `promoteId`).
-  const prevSelectedZoneRef = useRef<string | null>(null);
+  const prevSelectedZonesRef = useRef<ReadonlySet<string>>(new Set());
   useEffect(() => {
     if (!zonePerimeters) return;
     const map = mapRef.current?.getMap();
@@ -383,15 +395,19 @@ export function Map({
     const apply = () => {
       if (!map.getSource(ZONE_PERIMETERS_SOURCE_ID)) return;
       if (!map.isSourceLoaded(ZONE_PERIMETERS_SOURCE_ID)) return;
-      const prev = prevSelectedZoneRef.current;
-      const next = selectedZoneId ?? null;
-      if (prev && prev !== next) {
-        map.removeFeatureState({ source: ZONE_PERIMETERS_SOURCE_ID, id: prev }, "selected");
+      // Diff per id — MapLibre's bulk removeFeatureState(source, key)
+      // without an id does not reliably clear, so each previously-set
+      // id is removed explicitly.
+      const next = new Set(selectedZoneIds ?? (selectedZoneId ? [selectedZoneId] : []));
+      for (const id of prevSelectedZonesRef.current) {
+        if (!next.has(id)) {
+          map.removeFeatureState({ source: ZONE_PERIMETERS_SOURCE_ID, id }, "selected");
+        }
       }
-      if (next) {
-        map.setFeatureState({ source: ZONE_PERIMETERS_SOURCE_ID, id: next }, { selected: true });
+      for (const id of next) {
+        map.setFeatureState({ source: ZONE_PERIMETERS_SOURCE_ID, id }, { selected: true });
       }
-      prevSelectedZoneRef.current = next;
+      prevSelectedZonesRef.current = next;
     };
 
     apply();
@@ -402,7 +418,7 @@ export function Map({
     return () => {
       map.off("sourcedata", handler);
     };
-  }, [selectedZoneId, zonePerimeters, isDark, mapReady]);
+  }, [selectedZoneId, selectedZoneIds, zonePerimeters, isDark, mapReady]);
 
   // Pointer over clickable polygons, grab everywhere else. Query
   // features on every mousemove (with mouseout as a backstop) so cursor
@@ -1052,7 +1068,7 @@ export function Map({
           `divide-y` puts a separator between rows, so the
           cornerLowerRight labels just need padding/gap, not their
           own border or background. */}
-      {!streetsAlwaysOn || cornerLowerRight ? (
+      {!insetsHidden && (!streetsAlwaysOn || cornerLowerRight) ? (
         <div
           className={
             "absolute right-3 bottom-3 z-20 flex flex-col items-stretch " +
@@ -1069,9 +1085,20 @@ export function Map({
         </div>
       ) : null}
 
+      {!insetsHidden && cornerUpperLeft ? (
+        <div
+          className={
+            "absolute top-3 left-3 z-20 flex flex-col items-stretch " +
+            "rounded-md border border-border bg-background text-sm"
+          }
+        >
+          {cornerUpperLeft}
+        </div>
+      ) : null}
+
       {/* Upper-right inset — same card + edge offsets as the lower slots;
           positional, content supplied by the route. */}
-      {cornerUpperRight ? (
+      {!insetsHidden && cornerUpperRight ? (
         <div
           className={
             "absolute top-3 right-3 z-20 flex flex-col items-stretch " +
@@ -1098,7 +1125,10 @@ export function Map({
             so it fades out with the curtain instead of popping off. */}
         {showSpinner ? (
           <span className="animate-in fade-in duration-300">
-            <LoaderCircle className="size-6 animate-spin text-muted-foreground [stroke-width:2.5]" />
+            <Icon
+              name="loader-circle"
+              className="size-6 animate-spin text-muted-foreground [stroke-width:2.5]"
+            />
           </span>
         ) : null}
       </div>

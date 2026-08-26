@@ -18,6 +18,15 @@ from starlette.background import BackgroundTask
 
 import duckdb
 from src import timing
+from src.canvass_events import (
+    answered_sql,
+    assemble_zone_rows,
+    canvass_days_sql,
+    event_scope,
+    latest_results_cte,
+    responses_sql,
+    stages_sql,
+)
 from src.custom_fields import (
     append_custom_fields,
     custom_fields_fqn,
@@ -53,6 +62,7 @@ from src.tables import (
     table_fqn,
 )
 from src.timing import timed
+from src.zones import flatten_zone_keys, perimeter_union_sql, zone_target_counts_sql
 
 logger = logging.getLogger("uvicorn")
 
@@ -126,29 +136,36 @@ async def lifespan(app: FastAPI):
     # doesn't pay cold S3 round-trips for Parquet footers + page reads. Only
     # active versions (org → active_dataset_version_id): old and pinned
     # versions stay cold and pay their own first-read cost.
-    try:
-        conn = get_connection(settings, read_only=True)
-        attach_operational_postgres(conn, settings)
-        versions = conn.execute(
-            f"""
-            SELECT DISTINCT d.slug, v.version_number
-            FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
-            JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
-                ON v.dataset_version_id = o.active_dataset_version_id
-            JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
-            """
-        ).fetchall()
-        # `count(COLUMNS(*))` expands at parse time to count(col1), count(col2), …
-        # forcing DuckDB to read every column from Parquet — populates the buffer
-        # pool so segment filtering + publish don't pay column-cold I/O on the
-        # first user request.
-        for slug, version_number in versions:
-            schema = dataset_version_schema(slug, version_number)
-            for table in sorted(QUERYABLE_TABLES):
-                conn.execute(f"SELECT count(COLUMNS(*)) FROM {table_fqn(schema, table)}").fetchone()
-        logger.info("Warmup completed (%d active version(s))", len(versions))
-    except Exception:
-        logger.exception("Warmup failed; continuing")
+    #
+    # DATA_SKIP_WARMUP=1: dev-only escape hatch for setups that read the
+    # lake over a WAN, where warmup means downloading it (minutes per
+    # reload). TEMPORARY — remove with the local-mirror testing rig.
+    if os.environ.get("DATA_SKIP_WARMUP") == "1":
+        logger.info("Warmup skipped (DATA_SKIP_WARMUP=1)")
+    else:
+        try:
+            conn = get_connection(settings, read_only=True)
+            attach_operational_postgres(conn, settings)
+            versions = conn.execute(
+                f"""
+                SELECT DISTINCT d.slug, v.version_number
+                FROM {OPERATIONAL_PG_ALIAS}.app.organizations o
+                JOIN {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
+                    ON v.dataset_version_id = o.active_dataset_version_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
+                """
+            ).fetchall()
+            # `count(COLUMNS(*))` expands at parse time to count(col1), count(col2), …
+            # forcing DuckDB to read every column from Parquet — populates the buffer
+            # pool so segment filtering + publish don't pay column-cold I/O on the
+            # first user request.
+            for slug, version_number in versions:
+                schema = dataset_version_schema(slug, version_number)
+                for table in sorted(QUERYABLE_TABLES):
+                    conn.execute(f"SELECT count(COLUMNS(*)) FROM {table_fqn(schema, table)}").fetchone()
+            logger.info("Warmup completed (%d active version(s))", len(versions))
+        except Exception:
+            logger.exception("Warmup failed; continuing")
 
     # Create the asyncpg pool eagerly so a misconfigured DATABASE_URL
     # fails startup loudly instead of silently breaking the first job poll.
@@ -731,6 +748,221 @@ _EXPORT_COLUMNS = [
 ]
 # `| None = None` on Person — an importer may omit these columns entirely.
 _EXPORT_OPTIONAL = {"middle_name", "name_suffix", "address_line_2", "zip4"}
+
+
+class _ZonePerimetersRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    zone_group_ids: list[str] = Field(validation_alias="zoneGroupIds")
+
+
+@app.post("/zones/perimeters")
+async def zone_perimeters(req: _ZonePerimetersRequest):
+    """One unioned polygon per zone, as a GeoJSON FeatureCollection.
+
+    Unions each zone's boundary polygons with GEOS (ST_Union_Agg) — robust
+    on shared edges, unlike the client-side martinez union whose sliver
+    output flickered triangles at some zooms. Zone definitions come from
+    operational Postgres; geometry from the active version's boundary
+    tables.
+    """
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        schema = resolve_version(conn, settings, req.org_slug).schema
+        attach_operational_postgres(conn, settings)
+        zone_rows = conn.execute(
+            f"""
+            SELECT z.zone_id::VARCHAR, z.name, CAST(z.keys AS VARCHAR),
+                   z.zone_group_id::VARCHAR, zg.key_group
+            FROM {OPERATIONAL_PG_ALIAS}.app.zones z
+            JOIN {OPERATIONAL_PG_ALIAS}.app.zone_groups zg
+                ON zg.zone_group_id = z.zone_group_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = zg.organization_id
+            WHERE o.slug = ? AND z.zone_group_id::VARCHAR IN (SELECT unnest(?))
+            ORDER BY z."order"
+            """,
+            [req.org_slug, list(req.zone_group_ids)],
+        ).fetchall()
+
+        features: list[dict[str, Any]] = []
+        with timed("query"):
+            for zone_id, name, keys_json, zone_group_id, key_group in zone_rows:
+                keys = json.loads(keys_json)
+                if not keys:
+                    continue
+                fqn = table_fqn(schema, key_group)
+                row = conn.execute(perimeter_union_sql(fqn), [keys]).fetchone()
+                if row is None or row[0] is None:
+                    continue
+                features.append(
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "zoneId": zone_id,
+                            "zoneName": name,
+                            "zoneGroupId": zone_group_id,
+                        },
+                        "geometry": json.loads(row[0]),
+                    }
+                )
+        return {"type": "FeatureCollection", "features": features}
+
+    return await run_query(work)
+
+
+class _ProgressTargetsRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    campaign_id: str = Field(validation_alias="campaignId")
+
+
+@app.post("/progress/targets")
+async def progress_targets(req: _ProgressTargetsRequest):
+    """Live per-zone target counts for one campaign.
+
+    The campaign's segment, as currently defined, evaluated against the
+    active dataset within each zone of the campaign's group — the
+    intent-frame companion to the Progress table's frozen cut counts.
+    Archived campaigns are served too: an explicit request for a finished
+    pass is a history view.
+    """
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        attach_operational_postgres(conn, settings)
+        persons = resolve("{persons_geocoded}", version.schema)
+
+        camp_rows = conn.execute(
+            f"""
+            SELECT c.campaign_id::VARCHAR, CAST(s.criteria AS VARCHAR), c.zone_group_id::VARCHAR
+            FROM {OPERATIONAL_PG_ALIAS}.app.campaigns c
+            JOIN {OPERATIONAL_PG_ALIAS}.app.segments s ON s.segment_id = c.segment_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = c.organization_id
+            WHERE o.slug = ? AND c.campaign_id::VARCHAR = ? AND c.zone_group_id IS NOT NULL
+            """,
+            [req.org_slug, req.campaign_id],
+        ).fetchall()
+        zone_rows = conn.execute(
+            f"""
+            SELECT z.zone_group_id::VARCHAR, z.zone_id::VARCHAR, z.name,
+                   CAST(z.keys AS VARCHAR), zg.key_group
+            FROM {OPERATIONAL_PG_ALIAS}.app.zones z
+            JOIN {OPERATIONAL_PG_ALIAS}.app.zone_groups zg
+                ON zg.zone_group_id = z.zone_group_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = zg.organization_id
+            WHERE o.slug = ?
+            """,
+            [req.org_slug],
+        ).fetchall()
+        zones_by_group: dict[str, list[tuple[str, str, list[str], str]]] = {}
+        for group_id, zone_id, zone_name, keys_json, key_group in zone_rows:
+            zones_by_group.setdefault(group_id, []).append((zone_id, zone_name, json.loads(keys_json), key_group))
+
+        out: list[dict[str, Any]] = []
+        with timed("query"):
+            for campaign_id, criteria_json, zone_group_id in camp_rows:
+                zones = zones_by_group.get(zone_group_id, [])
+                if not zones:
+                    continue
+                criteria = resolve_criteria(
+                    Criteria.model_validate(json.loads(criteria_json)), conn, settings, req.org_slug
+                )
+                where_params: list = []
+                where = criteria_to_where(catalog, criteria, None, where_params)
+                # A zone group has one key group; trust the first row's.
+                key_group = zones[0][3]
+                expr = boundary_key_expr_for(catalog, key_group)
+                names = {zone_id: name for zone_id, name, _keys, _kg in zones}
+                zone_ids_flat, keys_flat = flatten_zone_keys([(zone_id, keys) for zone_id, _name, keys, _kg in zones])
+                if not keys_flat:
+                    continue
+                rows = conn.execute(
+                    zone_target_counts_sql(persons, expr, where),
+                    [zone_ids_flat, keys_flat, *where_params],
+                ).fetchall()
+                out.extend(
+                    {
+                        "campaignId": campaign_id,
+                        "zoneId": zone_id,
+                        "zoneName": names.get(zone_id),
+                        "people": people,
+                        "doors": doors,
+                    }
+                    for zone_id, people, doors in rows
+                )
+        return {"rows": out}
+
+    return await run_query(work)
+
+
+class _ResultsAggregateRequest(_WireBaseModel):
+    criteria: Criteria = Criteria()
+    org_slug: str = Field(validation_alias="orgSlug")
+    campaign_ids: list[str] | None = Field(default=None, validation_alias="campaignIds")
+    start: str | None = None
+    end: str | None = None
+    # Single canvass-day filter; boundaries in `tz` so DST can't shift them.
+    day: str | None = None
+    tz: str = "America/New_York"
+
+
+@app.post("/results/aggregate")
+async def results_aggregate(req: _ResultsAggregateRequest):
+    """Per-zone canvass-result funnel over the conditioned population.
+
+    Reduces the event log to the latest result per person (by sequence)
+    across the selected campaigns — within the date window when one is
+    given — then joins the population (criteria over persons; empty =
+    everyone) and aggregates the funnel stages per zone, plus
+    per-question option and answered counts among the contacted.
+    """
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        attach_operational_postgres(conn, settings)
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        where_params: list = []
+        where = criteria_to_where(catalog, criteria, None, where_params)
+        persons = resolve("{persons_geocoded}", version.schema)
+
+        scope = event_scope(req.org_slug, req.campaign_ids, req.start, req.end, req.day, req.tz)
+        joined = latest_results_cte(persons, where, scope.event_filters)
+
+        # Zones of the scoped campaigns' groups — every zone gets a row
+        # (zeros when unwalked); which rows to surface is the client's
+        # call. Archived campaigns stay in: their results are history,
+        # not noise.
+        zone_filters = ["o.slug = ?"]
+        zone_params: list = [req.org_slug]
+        if req.campaign_ids:
+            zone_filters.append("c.campaign_id::VARCHAR IN (SELECT unnest(?))")
+            zone_params.append(list(req.campaign_ids))
+        zone_rows = conn.execute(
+            f"""
+            SELECT DISTINCT z.zone_id::VARCHAR, z.name
+            FROM {OPERATIONAL_PG_ALIAS}.app.campaigns c
+            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                ON o.organization_id = c.organization_id
+            JOIN {OPERATIONAL_PG_ALIAS}.app.zones z ON z.zone_group_id = c.zone_group_id
+            WHERE {" AND ".join(zone_filters)}
+            """,
+            zone_params,
+        ).fetchall()
+
+        params = scope.event_params + where_params
+        with timed("query"):
+            day_rows = conn.execute(canvass_days_sql(scope.base_filters), [req.tz, *scope.base_params]).fetchall()
+            stage_rows = conn.execute(stages_sql(joined), params).fetchall()
+            response_rows = conn.execute(responses_sql(joined), params).fetchall()
+            answered_rows = conn.execute(answered_sql(joined), params).fetchall()
+
+        return {
+            "days": [r[0] for r in day_rows],
+            "rows": assemble_zone_rows(zone_rows, stage_rows, response_rows, answered_rows),
+        }
+
+    return await run_query(work)
 
 
 @app.post("/segments/export")

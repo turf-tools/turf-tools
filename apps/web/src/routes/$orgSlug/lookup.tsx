@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { EditorHeader } from "~/components/editor-header";
@@ -307,7 +307,7 @@ function ResultsPanel({
                 disabled={offset === 0}
                 onClick={() => onPage(Math.max(0, offset - PAGE_SIZE))}
               >
-                <ChevronLeft />
+                <Icon name="chevron-left" />
               </Button>
               <Button
                 variant="ghost"
@@ -315,7 +315,7 @@ function ResultsPanel({
                 disabled={offset + PAGE_SIZE >= total}
                 onClick={() => onPage(offset + PAGE_SIZE)}
               >
-                <ChevronRight />
+                <Icon name="chevron-right" />
               </Button>
             </div>
           ) : null}

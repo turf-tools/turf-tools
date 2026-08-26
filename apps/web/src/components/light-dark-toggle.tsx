@@ -1,5 +1,5 @@
+import { Icon } from "~/components/icon";
 import { useAtom } from "jotai";
-import { Sun } from "lucide-react";
 import { useEffect } from "react";
 import { darkAtom } from "~/lib/atoms/theme";
 import { cn } from "~/lib/utils";
@@ -25,7 +25,7 @@ export function LightDarkToggle() {
       )}
       aria-label="Toggle theme"
     >
-      <Sun className="size-4" />
+      <Icon name="sun" className="size-4" />
     </button>
   );
 }

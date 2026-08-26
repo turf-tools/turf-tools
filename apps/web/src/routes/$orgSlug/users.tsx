@@ -1,17 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import {
-  Activity,
-  Archive,
-  ArchiveRestore,
-  ChevronDown,
-  Mail,
-  MoreHorizontal,
-  Plus,
-  Tag,
-  UserRoundPlus,
-  X,
-} from "lucide-react";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -101,7 +90,7 @@ function UsersIndex() {
     <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
       <EditorHeader title="Users">
         <Filter
-          icon={<Tag className="size-3.5" />}
+          icon={<Icon name="tag" className="size-3.5" />}
           label={roleFilterLabel}
           value={roleFilter}
           options={ROLE_OPTIONS}
@@ -109,7 +98,7 @@ function UsersIndex() {
           onChange={onRoleChange}
         />
         <Filter
-          icon={<Activity className="size-3.5" />}
+          icon={<Icon name="activity" className="size-3.5" />}
           label={statusLabel}
           value={statusFilter}
           options={STATUS_OPTIONS}
@@ -117,7 +106,7 @@ function UsersIndex() {
           onChange={onStatusChange}
         />
         <Button onClick={() => setInviteOpen(true)}>
-          <UserRoundPlus />
+          <Icon name="user-round-plus" />
           Invite user
         </Button>
       </EditorHeader>
@@ -273,32 +262,32 @@ function RowMenu({
   if (!hasItems) {
     return (
       <Button variant="outline" size="icon" className="h-8 w-full" disabled>
-        <MoreHorizontal />
+        <Icon name="more-horizontal" />
       </Button>
     );
   }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
-        <MoreHorizontal />
+        <Icon name="more-horizontal" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {user.status === "archived" ? (
           <DropdownMenuItem onClick={onUnarchive}>
-            <ArchiveRestore />
+            <Icon name="archive-restore" />
             Unarchive
           </DropdownMenuItem>
         ) : (
           <>
             {user.status === "pending" ? (
               <DropdownMenuItem onClick={onResendInvite}>
-                <Mail />
+                <Icon name="mail" />
                 Send invite
               </DropdownMenuItem>
             ) : null}
             {isSelf ? null : (
               <DropdownMenuItem variant="destructive" onClick={onArchive}>
-                <Archive />
+                <Icon name="archive" />
                 Archive
               </DropdownMenuItem>
             )}
@@ -326,7 +315,7 @@ function RoleCell({
     <DropdownMenu {...dd.menu}>
       <DropdownMenuTrigger render={<Button variant="outline" className="w-full justify-between" />}>
         <span>{roleLabel(role)}</span>
-        <ChevronDown className="size-3.5" />
+        <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuRadioGroup {...dd.radio} value={role}>
@@ -540,7 +529,7 @@ function InviteDialog({
                   aria-label="Send email invite"
                   className="text-muted-foreground aria-pressed:text-foreground aria-pressed:border-muted-foreground w-21 justify-between"
                 >
-                  <Mail />
+                  <Icon name="mail" />
                   Email
                 </Toggle>
                 <Button
@@ -551,7 +540,7 @@ function InviteDialog({
                   disabled={pendingDelayed || rows.length === 1}
                   aria-label="Remove row"
                 >
-                  <X />
+                  <Icon name="x" />
                 </Button>
               </div>
             ))}
@@ -563,7 +552,7 @@ function InviteDialog({
             disabled={pendingDelayed}
             className="self-start"
           >
-            <Plus />
+            <Icon name="plus" />
             Add another
           </Button>
           <DialogError error={error ?? inviteMutation.error?.message ?? null} />
@@ -598,7 +587,7 @@ function RoleSelect({
         }
       >
         <span>{roleLabel(value)}</span>
-        <ChevronDown className="size-3.5" />
+        <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup {...dd.radio} value={value}>

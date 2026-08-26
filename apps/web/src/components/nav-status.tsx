@@ -1,8 +1,9 @@
 import { useAtomValue } from "jotai";
-import { Ban, Check, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { tintStyle } from "~/components/badge";
+import { Icon } from "~/components/icon";
 import { navStatusAtom, type NavStatusKind } from "~/lib/atoms/nav-status";
+import type { IconName } from "~/lib/icon-names";
 import { RED, YELLOW } from "~/lib/palette";
 import { cn } from "~/lib/utils";
 
@@ -11,11 +12,11 @@ const HOLD_MS = 3000;
 // Confirmations (success/info) are the common case and stay quiet — plain
 // muted text. Problems (error/warning) are rare and should interrupt, so
 // they render as badge-tinted chips.
-const TREATMENTS: Record<NavStatusKind, { icon: typeof Check | null; hue: string | null }> = {
-  success: { icon: Check, hue: null },
+const TREATMENTS: Record<NavStatusKind, { icon: IconName | null; hue: string | null }> = {
+  success: { icon: "check", hue: null },
   info: { icon: null, hue: null },
-  error: { icon: Ban, hue: RED },
-  warning: { icon: TriangleAlert, hue: YELLOW },
+  error: { icon: "ban", hue: RED },
+  warning: { icon: "triangle-alert", hue: YELLOW },
 };
 
 // Transient feedback in the top nav, written via notify(). Fades in on
@@ -50,7 +51,7 @@ export function NavStatus({ className }: { className?: string }) {
     >
       {s && t ? (
         <>
-          {t.icon ? <t.icon className="size-4 shrink-0" /> : null}
+          {t.icon ? <Icon name={t.icon} className="size-4 shrink-0" /> : null}
           {s.message}
         </>
       ) : null}

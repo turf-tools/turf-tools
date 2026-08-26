@@ -1,49 +1,42 @@
 import { Link } from "@tanstack/react-router";
-import {
-  CheckCheck,
-  CircleUser,
-  Database,
-  LayoutDashboard,
-  Layers,
-  type LucideIcon,
-  Map,
-  Megaphone,
-  PanelLeftClose,
-  PanelLeftOpen,
-  ClipboardPen,
-  Search,
-  Settings,
-  Users,
-  Waypoints,
-} from "lucide-react";
+import { Icon } from "~/components/icon";
+import type { IconName } from "~/lib/icon-names";
 import { hasPermission, type Permission } from "~/lib/permissions";
 import { cn } from "~/lib/utils";
 
 export type NavItem = {
   to: string;
   label: string;
-  icon: LucideIcon;
+  icon: IconName;
   requires?: Permission;
 };
 
 // Everything except Turfs requires voter-data access — field leads see
 // only the turfs board (plus Settings/Account below).
 export const PRIMARY: NavItem[] = [
-  { to: "/$orgSlug/overview", label: "Overview", icon: LayoutDashboard, requires: "voter.read" },
-  { to: "/$orgSlug/campaigns", label: "Campaigns", icon: Megaphone, requires: "voter.read" },
-  { to: "/$orgSlug/segments", label: "Segments", icon: Layers, requires: "voter.read" },
-  { to: "/$orgSlug/zones", label: "Zones", icon: Waypoints, requires: "voter.read" },
-  { to: "/$orgSlug/turfs", label: "Turfs", icon: Map },
-  { to: "/$orgSlug/lookup", label: "Lookup", icon: Search, requires: "voter.read" },
-  { to: "/$orgSlug/scripts", label: "Scripts", icon: ClipboardPen, requires: "voter.read" },
-  { to: "/$orgSlug/questions", label: "Questions", icon: CheckCheck, requires: "voter.read" },
+  { to: "/$orgSlug/overview", label: "Overview", icon: "layout-dashboard", requires: "voter.read" },
+  { to: "/$orgSlug/campaigns", label: "Campaigns", icon: "megaphone", requires: "voter.read" },
+  { to: "/$orgSlug/segments", label: "Segments", icon: "layers", requires: "voter.read" },
+  { to: "/$orgSlug/zones", label: "Zones", icon: "waypoints", requires: "voter.read" },
+  { to: "/$orgSlug/turfs", label: "Turfs", icon: "map" },
+  { to: "/$orgSlug/progress", label: "Progress", icon: "trending-up", requires: "voter.read" },
+  { to: "/$orgSlug/lookup", label: "Lookup", icon: "search", requires: "voter.read" },
+  { to: "/$orgSlug/scripts", label: "Scripts", icon: "clipboard-pen", requires: "voter.read" },
+  { to: "/$orgSlug/questions", label: "Questions", icon: "check-check", requires: "voter.read" },
+  {
+    to: "/$orgSlug/results",
+    label: "Results",
+    icon: "chart-no-axes-column",
+    requires: "voter.read",
+  },
+  { to: "/$orgSlug/reports", label: "Reports", icon: "files", requires: "voter.read" },
 ];
 
 export const SECONDARY: NavItem[] = [
-  { to: "/$orgSlug/users", label: "Users", icon: Users, requires: "users.manage" },
-  { to: "/$orgSlug/data", label: "Data", icon: Database, requires: "datasets.manage" },
-  { to: "/$orgSlug/settings", label: "Settings", icon: Settings },
-  { to: "/$orgSlug/account", label: "Account", icon: CircleUser },
+  { to: "/$orgSlug/users", label: "Users", icon: "users", requires: "users.manage" },
+  { to: "/$orgSlug/data", label: "Data", icon: "database", requires: "datasets.manage" },
+  { to: "/$orgSlug/settings", label: "Settings", icon: "settings" },
+  { to: "/$orgSlug/account", label: "Account", icon: "circle-user" },
 ];
 
 type SidebarProps = {
@@ -82,17 +75,24 @@ export function Sidebar({ collapsed, onToggle, role, orgSlug }: SidebarProps) {
         type="button"
         onClick={onToggle}
         className={cn(
-          "flex h-9 items-center gap-3",
-          "rounded-md px-2",
+          // shrink-0: the nav lists can't compress below their rows, so
+          // when height runs out this button is the only shrinkable item
+          // — it squeezes (icon drifts toward the divider) before the
+          // scrollbar engages.
+          "flex h-9 shrink-0 items-center gap-3",
+          // -mt-4 pulls against the nav's gap-6: the collapse row keeps
+          // the same 8px from the divider that the account row keeps
+          // above it (the group's py-2).
+          "-mt-4 rounded-md px-2",
           "text-sm text-foreground",
           "hover:bg-muted hover:text-foreground",
         )}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       >
         {collapsed ? (
-          <PanelLeftOpen className="size-4 shrink-0" />
+          <Icon name="panel-left-open" className="size-4 shrink-0" />
         ) : (
-          <PanelLeftClose className="size-4 shrink-0" />
+          <Icon name="panel-left-close" className="size-4 shrink-0" />
         )}
         {!collapsed && <span className="whitespace-nowrap">Collapse</span>}
       </button>
@@ -131,7 +131,6 @@ function NavLink({
   collapsed: boolean;
   orgSlug: string;
 }) {
-  const Icon = item.icon;
   return (
     <Link
       to={item.to}
@@ -150,7 +149,7 @@ function NavLink({
       activeOptions={{ exact: false }}
       title={collapsed ? item.label : undefined}
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon name={item.icon} className="size-4 shrink-0" />
       {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
     </Link>
   );

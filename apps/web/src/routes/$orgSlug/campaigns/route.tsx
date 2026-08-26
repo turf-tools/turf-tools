@@ -1,3 +1,4 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
@@ -7,15 +8,6 @@ import {
   useNavigate,
   useParams,
 } from "@tanstack/react-router";
-import {
-  Archive,
-  ArchiveRestore,
-  ChevronDown,
-  Copy,
-  Pencil,
-  Settings2,
-  Trash2,
-} from "lucide-react";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -40,7 +32,6 @@ import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail, useShowArchived } from "~/components/rail";
-import { boundariesGeoJsonQuery } from "~/lib/queries/boundaries";
 import {
   campaignKeyCountsQuery,
   campaignPointsQuery,
@@ -52,7 +43,12 @@ import { scriptsListQuery } from "~/lib/queries/scripts";
 import { segmentsListQuery } from "~/lib/queries/segments";
 import { hasPermission } from "~/lib/permissions";
 import { turfStatsForCampaignQuery } from "~/lib/queries/turfs";
-import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
+import {
+  zoneGroupsQuery,
+  zonePerimetersQuery,
+  zonePerimetersVersion,
+  zonesQuery,
+} from "~/lib/queries/zones";
 import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -173,7 +169,10 @@ function CampaignsLayout() {
       queryClient.prefetchQuery(turfStatsForCampaignQuery(target.campaignId)),
       nextZoneGroup
         ? queryClient.prefetchQuery(
-            boundariesGeoJsonQuery(nextZoneGroup.keyGroup, manifest?.versionId ?? ""),
+            zonePerimetersQuery(
+              [nextZoneGroup.zoneGroupId],
+              zonePerimetersVersion(manifest?.versionId, nextZones),
+            ),
           )
         : Promise.resolve(),
       nextCriteria && nextKeyFilter
@@ -547,7 +546,9 @@ function CampaignsLayout() {
               key={c.campaignId}
               label={c.name}
               active={c.campaignId === activeCampaignId}
-              trailing={c.isArchived ? <Archive className="ml-2 size-4 shrink-0" /> : undefined}
+              trailing={
+                c.isArchived ? <Icon name="archive" className="ml-2 size-4 shrink-0" /> : undefined
+              }
               onSelect={() => void goToCampaign(c.campaignId)}
               onRename={renameCampaign.open}
             />
@@ -566,15 +567,15 @@ function CampaignsLayout() {
                 onClick={() => setConfigOpen(true)}
                 disabled={!activeCampaign}
               >
-                <Settings2 />
+                <Icon name="settings-2" />
                 Configure
               </Button>
               <Button variant="outline" onClick={renameCampaign.open} disabled={!activeCampaign}>
-                <Pencil />
+                <Icon name="pencil" />
                 Rename
               </Button>
               <Button variant="outline" onClick={cloneCampaign.open} disabled={!activeCampaign}>
-                <Copy />
+                <Icon name="copy" />
                 Clone
               </Button>
               <Button
@@ -589,12 +590,16 @@ function CampaignsLayout() {
                 }
                 disabled={!activeCampaign}
               >
-                {activeCampaign?.isArchived ? <ArchiveRestore /> : <Archive />}
+                {activeCampaign?.isArchived ? (
+                  <Icon name="archive-restore" />
+                ) : (
+                  <Icon name="archive" />
+                )}
                 {activeCampaign?.isArchived ? "Unarchive" : "Archive"}
               </Button>
               {activeCampaign?.isArchived ? (
                 <Button variant="outline" onClick={() => void deleteActiveCampaign()}>
-                  <Trash2 />
+                  <Icon name="trash-2" />
                   Delete
                 </Button>
               ) : null}
@@ -1134,7 +1139,7 @@ function ConfigField({
           )}
         >
           <span className="truncate">{triggerLabel}</span>
-          <ChevronDown className="size-3.5 shrink-0" />
+          <Icon name="chevron-down" className="size-3.5 shrink-0" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-[var(--anchor-width)]">
           <DropdownMenuRadioGroup {...dd.radio} value={value ?? ""}>

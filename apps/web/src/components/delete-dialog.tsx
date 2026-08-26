@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Icon } from "~/components/icon";
 import { Button } from "~/components/button";
 import {
   Dialog,
@@ -59,7 +59,7 @@ export function DeleteDialog({
             <>
               <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
               <Button variant="destructive" onClick={onConfirm} loading={pending}>
-                <Trash2 />
+                <Icon name="trash-2" />
                 Delete {entity}
               </Button>
             </>

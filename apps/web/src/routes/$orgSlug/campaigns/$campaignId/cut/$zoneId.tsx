@@ -1,15 +1,8 @@
+import { Icon } from "~/components/icon";
+import type { IconName } from "~/lib/icon-names";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "jotai";
-import {
-  ArrowLeft,
-  DoorClosed,
-  Eraser,
-  type LucideIcon,
-  Send,
-  Sparkles,
-  UserRound,
-} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapProvider } from "react-map-gl/maplibre";
 import { notify } from "~/lib/notify";
@@ -71,10 +64,10 @@ export const Route = createFileRoute("/$orgSlug/campaigns/$campaignId/cut/$zoneI
 
 // A metric cell for the cutter's upper-right inset: an icon + a right-aligned
 // value (em dash when null).
-function StatValue({ icon: Icon, value }: { icon: LucideIcon; value: number | null }) {
+function StatValue({ icon, value }: { icon: IconName; value: number | null }) {
   return (
     <span className="flex items-center justify-end gap-1 tabular-nums">
-      <Icon className="size-3.5 text-foreground" />
+      <Icon name={icon} className="size-3.5 text-foreground" />
       {value?.toLocaleString() ?? "—"}
     </span>
   );
@@ -538,16 +531,16 @@ export function Cutter({
         subtitle={zoneId === null ? "Full segment" : zone?.name}
         leading={
           <Button variant="outline" size="icon" onClick={onBack} aria-label="Back to campaign">
-            <ArrowLeft />
+            <Icon name="arrow-left" />
           </Button>
         }
       >
         <Button variant="outline" disabled>
-          <Sparkles />
+          <Icon name="sparkles" />
           Autocut
         </Button>
         <Button variant="outline" disabled={turfs.length === 0} onClick={() => setClearOpen(true)}>
-          <Eraser />
+          <Icon name="eraser" />
           Clear
         </Button>
         <Button
@@ -561,7 +554,7 @@ export function Cutter({
             setPublishOpen(true);
           }}
         >
-          <Send />
+          <Icon name="send" />
           Publish
         </Button>
       </EditorHeader>
@@ -595,11 +588,11 @@ export function Cutter({
                 insetStats ? (
                   <div className="grid grid-cols-[auto_auto_auto] items-center gap-x-4 gap-y-1.5 px-3 py-2.5">
                     <span className="text-muted-foreground">Uncut</span>
-                    <StatValue icon={UserRound} value={insetStats.uncutPeople} />
-                    <StatValue icon={DoorClosed} value={insetStats.uncutDoors} />
+                    <StatValue icon="user-round" value={insetStats.uncutPeople} />
+                    <StatValue icon="door-closed" value={insetStats.uncutDoors} />
                     <span className="text-muted-foreground">Avg</span>
-                    <StatValue icon={UserRound} value={insetStats.avgPeople} />
-                    <StatValue icon={DoorClosed} value={insetStats.avgDoors} />
+                    <StatValue icon="user-round" value={insetStats.avgPeople} />
+                    <StatValue icon="door-closed" value={insetStats.avgDoors} />
                   </div>
                 ) : undefined
               }
@@ -680,7 +673,7 @@ export function Cutter({
               // closed — isPending alone flashes the idle icon first.
               loading={publishMutation.isPending || publishMutation.isSuccess}
             >
-              <Send />
+              <Icon name="send" />
               Publish
             </Button>
           </div>

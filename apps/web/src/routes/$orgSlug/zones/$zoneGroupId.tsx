@@ -1,15 +1,7 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "jotai";
-import {
-  ChevronDown,
-  Diamond,
-  DoorClosed,
-  GripVertical,
-  Plus,
-  Trash2,
-  UserRound,
-} from "lucide-react";
 import { Reorder, useDragControls } from "motion/react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/button";
@@ -33,7 +25,7 @@ import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { segmentRefsVersion } from "~/lib/segment-refs";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useHotkey } from "~/lib/use-hotkey";
-import { cn } from "~/lib/utils";
+import { cn, revealZoneCard } from "~/lib/utils";
 import { colorFor, interpolateRamp } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
@@ -397,13 +389,8 @@ function ZoneGroupEditor() {
     const owner = zones.find((z) => z.keys.includes(key));
     setActiveZoneId(owner?.zoneId ?? null);
     // Map-originated activation only: surface the card in the list (a
-    // card click never scrolls — it's already in view). block: "nearest"
-    // is a no-op when the card is visible.
-    if (owner) {
-      document
-        .querySelector(`[data-zone-card="${owner.zoneId}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
+    // card click never scrolls — it's already in view).
+    if (owner) revealZoneCard(owner.zoneId);
   };
 
   // Click outside the map clears the active zone. Suppressed while a
@@ -414,11 +401,14 @@ function ZoneGroupEditor() {
     if (!activeZoneId) return;
     if (renamingZoneId || overlaySegmentDropdown.open) return;
     const handler = (e: MouseEvent) => {
-      // Skip the second click of a double-click so dbl-click to rename
-      // doesn't deselect-then-reselect a second time (one visible flash
-      // from click 1 is what we want).
-      if (e.detail >= 2) return;
+      // Every click clears-and-reselects, rapid or paced (the blanket
+      // skip-on-double-click made the flash timing-dependent, reading as
+      // clicks not registering) — EXCEPT the second click of a dbl-click
+      // on a rename trigger, where a second flash right before the input
+      // swaps in reads as a glitch.
       const target = e.target as Node | null;
+      if (e.detail >= 2 && target instanceof Element && target.closest("[data-rename-trigger]"))
+        return;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;
       setActiveZoneId(null);
@@ -477,7 +467,7 @@ function ZoneGroupEditor() {
                           aria-label="Drag to reorder"
                           onPointerDown={(e) => dragControls.start(e)}
                         >
-                          <GripVertical className="size-3.5" />
+                          <Icon name="grip-vertical" className="size-3.5" />
                         </button>
                         {/* Heatmap swatches: 90% opacity sits visually with
                             the map's 0.8 fills (different grounds wash color
@@ -513,6 +503,7 @@ function ZoneGroupEditor() {
                           />
                         ) : (
                           <span
+                            data-rename-trigger
                             className="min-w-0 flex-1 truncate text-sm select-none"
                             onDoubleClick={(e) => {
                               e.stopPropagation();
@@ -534,22 +525,22 @@ function ZoneGroupEditor() {
                             removeZoneMutation.mutate(zone.zoneId);
                           }}
                         >
-                          <Trash2 className="size-4" />
+                          <Icon name="trash-2" className="size-4" />
                         </Button>
                       </div>
                       <div className="flex min-h-8 items-center gap-1.5">
                         <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
-                          <Diamond className="size-3.5 text-foreground" />
+                          <Icon name="diamond" className="size-3.5 text-foreground" />
                           {zone.keys.length}
                         </Pill>
                         {zoneOverlay ? (
                           <>
                             <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
-                              <UserRound className="size-3.5 text-foreground" />
+                              <Icon name="user-round" className="size-3.5 text-foreground" />
                               {(zoneOverlay.people[zone.zoneId] ?? 0).toLocaleString()}
                             </Pill>
                             <Pill variant="number" className="!w-fit shrink-0 gap-1.5">
-                              <DoorClosed className="size-3.5 text-foreground" />
+                              <Icon name="door-closed" className="size-3.5 text-foreground" />
                               {(zoneOverlay.doors[zone.zoneId] ?? 0).toLocaleString()}
                             </Pill>
                           </>
@@ -579,7 +570,7 @@ function ZoneGroupEditor() {
             )}
           >
             <div className="flex items-center gap-2">
-              <Plus className="size-3.5" />
+              <Icon name="plus" className="size-3.5" />
               <span className="text-sm">New zone</span>
             </div>
           </button>
@@ -631,7 +622,7 @@ function ZoneGroupEditor() {
                   return s.isArchived ? `${s.name} (Archived)` : s.name;
                 })()}
               </span>
-              <ChevronDown className="size-3.5 shrink-0" />
+              <Icon name="chevron-down" className="size-3.5 shrink-0" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuRadioGroup
@@ -668,11 +659,11 @@ function ZoneGroupEditor() {
               {overlayCountsByKey ? (
                 <div className="flex justify-end gap-1.5">
                   <Pill variant="number" className="!w-fit gap-1.5">
-                    <UserRound className="size-3.5 text-foreground" />
+                    <Icon name="user-round" className="size-3.5 text-foreground" />
                     {(overlayCountsByKey[displayedHoverKey]?.people ?? 0).toLocaleString()}
                   </Pill>
                   <Pill variant="number" className="!w-fit gap-1.5">
-                    <DoorClosed className="size-3.5 text-foreground" />
+                    <Icon name="door-closed" className="size-3.5 text-foreground" />
                     {(overlayCountsByKey[displayedHoverKey]?.doors ?? 0).toLocaleString()}
                   </Pill>
                 </div>

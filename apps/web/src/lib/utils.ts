@@ -33,6 +33,15 @@ export function nextUntitledName(base: string, existing: ReadonlyArray<{ name: s
   return `${base} ${n}`;
 }
 
+// Scroll a zone's list row/card (tagged `data-zone-card`) into view —
+// for map-originated selection, so the list echo is visible.
+// block:"nearest" makes it a no-op when the row is already on screen.
+export function revealZoneCard(zoneId: string) {
+  document
+    .querySelector(`[data-zone-card="${zoneId}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 // Render an ALL-CAPS voter-file string (name, address, city) as
 // title case. Capitalizes the first letter of each word *and* of
 // each segment after a hyphen or apostrophe — "O'BRIEN" → "O'Brien",

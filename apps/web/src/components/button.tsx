@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
-import { LoaderCircle } from "lucide-react";
 import { Children, isValidElement, type ReactNode } from "react";
 import { useDelayedFlag } from "~/lib/use-delayed-flag";
 import { cn } from "~/lib/utils";
@@ -105,7 +105,7 @@ function Button({
 // spinner; if there isn't one, prepend the spinner. This keeps the
 // button's text + width stable across loading transitions.
 function withLeadingSpinner(children: ReactNode): ReactNode {
-  const spinner = <LoaderCircle key="__loading-spinner__" className="animate-spin" />;
+  const spinner = <Icon name="loader-circle" key="__loading-spinner__" className="animate-spin" />;
   const arr = Children.toArray(children);
   const idx = arr.findIndex((c) => isValidElement(c));
   if (idx === -1) return [spinner, ...arr];

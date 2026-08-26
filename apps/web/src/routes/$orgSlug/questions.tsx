@@ -1,6 +1,6 @@
+import { Icon } from "~/components/icon";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Activity, Archive, ArchiveRestore, MoreHorizontal, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { tintStyle } from "~/components/badge";
@@ -92,9 +92,9 @@ function QuestionsPage() {
 
   return (
     <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
-      <EditorHeader title="Questions">
+      <EditorHeader title="Questions" subtitle="Create and edit script components">
         <Filter
-          icon={<Activity className="size-3.5" />}
+          icon={<Icon name="activity" className="size-3.5" />}
           label={statusLabel}
           value={filterValue}
           options={STATUS_OPTIONS}
@@ -102,7 +102,7 @@ function QuestionsPage() {
           onChange={onStatusChange}
         />
         <Button onClick={() => setEditing("new")}>
-          <Plus />
+          <Icon name="plus" />
           New question
         </Button>
       </EditorHeader>
@@ -197,7 +197,7 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
             </Pill>
           ) : (
             <Button variant="outline" className="w-full justify-start" onClick={onEdit}>
-              <Pencil className="size-3.5" />
+              <Icon name="pencil" className="size-3.5" />
               <span className="truncate">{question.name}</span>
             </Button>
           )}
@@ -261,22 +261,22 @@ function RowMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
-        <MoreHorizontal />
+        <Icon name="more-horizontal" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         {archived ? (
           <DropdownMenuItem onClick={onUnarchive}>
-            <ArchiveRestore />
+            <Icon name="archive-restore" />
             Unarchive
           </DropdownMenuItem>
         ) : (
           <>
             <DropdownMenuItem onClick={onEdit}>
-              <Pencil />
+              <Icon name="pencil" />
               Edit
             </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={onArchive}>
-              <Archive />
+              <Icon name="archive" />
               Archive
             </DropdownMenuItem>
           </>

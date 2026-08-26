@@ -1,3 +1,4 @@
+import { Icon } from "~/components/icon";
 import {
   keepPreviousData,
   useMutation,
@@ -11,17 +12,6 @@ import {
   useNavigate,
   type SearchSchemaInput,
 } from "@tanstack/react-router";
-import {
-  Activity,
-  Archive,
-  ArchiveRestore,
-  Check,
-  Columns2,
-  FileText,
-  MoreHorizontal,
-  Pencil,
-  Upload,
-} from "lucide-react";
 import { useRef, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -248,7 +238,7 @@ function DatasetEditor({
       <EditorHeader title={dataset.name} subtitle={importerLabel(dataset.importer)}>
         {allVersionsArchived ? (
           <Button variant="outline" onClick={() => unarchiveAll.mutate()}>
-            <ArchiveRestore className="size-4" />
+            <Icon name="archive-restore" className="size-4" />
             Unarchive all
           </Button>
         ) : (
@@ -257,12 +247,12 @@ function DatasetEditor({
             onClick={() => archiveAll.mutate()}
             disabled={importing || dataset.versions.some((v) => v.isActive)}
           >
-            <Archive className="size-4" />
+            <Icon name="archive" className="size-4" />
             Archive all
           </Button>
         )}
         <Filter
-          icon={<Activity className="size-3.5" />}
+          icon={<Icon name="activity" className="size-3.5" />}
           label={statusLabel}
           value={filterValue}
           options={STATUS_OPTIONS}
@@ -270,17 +260,17 @@ function DatasetEditor({
           onChange={onStatusChange}
         />
         <Button variant="outline" onClick={() => setAppendOpen(true)}>
-          <Columns2 className="size-4" />
+          <Icon name="columns-2" className="size-4" />
           Append
         </Button>
         <Button variant="outline" onClick={renameDataset.open}>
-          <Pencil className="size-4" />
+          <Icon name="pencil" className="size-4" />
           Rename
         </Button>
         {/* Until an import has actually landed you're still importing, not
             updating — a failed or in-flight first attempt isn't a version. */}
         <Button onClick={() => setUpdateOpen(true)} disabled={importing}>
-          <Upload className="size-4" />
+          <Icon name="upload" className="size-4" />
           {readyVersionId ? "Update" : "Import"}
         </Button>
       </EditorHeader>
@@ -482,7 +472,7 @@ function VersionsCard({
                 </TableCell>
                 <TableCell>
                   <Pill className="justify-center">
-                    {v.isActive ? <Check className="size-4" /> : null}
+                    {v.isActive ? <Icon name="check" className="size-4" /> : null}
                   </Pill>
                 </TableCell>
                 <TableCell>
@@ -532,25 +522,25 @@ function VersionRowMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
-        <MoreHorizontal />
+        <Icon name="more-horizontal" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuItem disabled={!canActivate} onClick={onMakeActive}>
-          <Check />
+          <Icon name="check" />
           Make active
         </DropdownMenuItem>
         <DropdownMenuItem onClick={onDetails}>
-          <FileText />
+          <Icon name="file-text" />
           Details
         </DropdownMenuItem>
         {isArchived ? (
           <DropdownMenuItem onClick={onUnarchive}>
-            <ArchiveRestore />
+            <Icon name="archive-restore" />
             Unarchive
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem variant="destructive" disabled={!canArchive} onClick={onArchive}>
-            <Archive />
+            <Icon name="archive" />
             Archive
           </DropdownMenuItem>
         )}
@@ -889,7 +879,7 @@ function FieldDialog({
                   disabled={pending}
                   onClick={() => setArchived.mutate(false)}
                 >
-                  <ArchiveRestore className="size-4" />
+                  <Icon name="archive-restore" className="size-4" />
                   Unarchive
                 </Button>
               ) : (
@@ -900,7 +890,7 @@ function FieldDialog({
                   disabled={pending}
                   onClick={() => setArchived.mutate(true)}
                 >
-                  <Archive className="size-4" />
+                  <Icon name="archive" className="size-4" />
                   Archive
                 </Button>
               )}
