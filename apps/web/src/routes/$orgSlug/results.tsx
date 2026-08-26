@@ -666,8 +666,9 @@ function ResultsIndex() {
               ) : undefined
             }
           />
-          {/* The caret rides the map's upper-right: it points where the
-              edge will go, and in the sliver it is the whole surface. */}
+          {/* The toggle rides the map's upper-right — the sidebar's
+              panel-collapse pair, mirrored for a right-side panel; in
+              the sliver it is the whole surface. */}
           <Button
             variant="outline"
             size="icon"
@@ -675,7 +676,10 @@ function ResultsIndex() {
             onClick={() => setMapCollapsed((c) => !c)}
             className="absolute top-2 right-2 z-10"
           >
-            <Icon name={mapCollapsed ? "chevron-left" : "chevron-right"} className="size-3.5" />
+            <Icon
+              name={mapCollapsed ? "panel-right-open" : "panel-right-close"}
+              className="size-4 shrink-0"
+            />
           </Button>
         </div>
       </div>

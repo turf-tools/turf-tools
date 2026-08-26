@@ -42,6 +42,8 @@ export const ICON_NAMES = [
   "paintbrush",
   "panel-left-close",
   "panel-left-open",
+  "panel-right-close",
+  "panel-right-open",
   "pencil",
   "phone",
   "plus",
