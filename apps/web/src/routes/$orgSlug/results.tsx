@@ -1,6 +1,7 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
 import {
   DropdownMenu,
@@ -19,7 +20,6 @@ import { Map as MapView } from "~/components/map";
 import { Popover, PopoverContent, PopoverTrigger } from "~/components/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
-import { tintStyle } from "~/components/badge";
 import { emptyFilterFor, type FilterDef, filterKey, isActiveFilter } from "~/lib/filters";
 import { BLUE, PINK, PURPLE } from "~/lib/palette";
 import { bboxOfFeatures } from "~/lib/geometry";
@@ -62,8 +62,12 @@ function rateOf(row: ZoneFunnelRow): number | null {
   return row.contacted / row.attempted;
 }
 
-function wholePercent(rate: number | null): string {
-  return rate === null ? "—" : `${Math.round(100 * rate)}%`;
+function wholePercent(rate: number): string {
+  return `${Math.round(100 * rate)}%`;
+}
+
+function optionRate(row: ZoneFunnelRow, questionId: string, optionId: string): number | null {
+  return row.contacted > 0 ? (row.responses[questionId]?.[optionId] ?? 0) / row.contacted : null;
 }
 
 // Color-scale domain for contact rate: door-knocking contact rates live
@@ -154,11 +158,11 @@ function ResultsIndex() {
   const aggregate = data ?? EMPTY_AGGREGATE;
 
   // Question picks (multi) show every selected question's options as
-  // count+rate columns; the map colors by the Metric dropdown, whose
+  // count+rate columns; the map colors by the Color-by pick, whose
   // entries are contact rate plus the selected questions' options — so
   // the "color by which option?" ambiguity is resolved by an explicit
   // pick. Fallbacks are derived: first question when nothing is picked,
-  // metric falls back to contact rate when its option leaves the set.
+  // Color-by falls back to contact rate when its option leaves the set.
   const { data: questions } = useQuery(questionsWithOptionsQuery());
   const questionList = questions ?? [];
   const [questionPicks, setQuestionPicks] = useState<string[]>([]);
@@ -238,29 +242,27 @@ function ResultsIndex() {
 
   const byZone = useMemo(() => new Map(aggregate.rows.map((r) => [r.zoneId, r])), [aggregate]);
 
-  const optionRate = (row: ZoneFunnelRow, questionId: string, optionId: string): number | null =>
-    row.contacted > 0 ? (row.responses[questionId]?.[optionId] ?? 0) / row.contacted : null;
-
-  // Map fill follows the metric dropdown on the same discrete bands as
-  // the table's badges, so a zone's fill and its badge agree.
+  // Map fill follows the Color-by pick on the same discrete bands as
+  // the table's badges, so a zone's fill and its badge agree. Keyed on
+  // the pick's ids — primitives — so the memo (and the map source
+  // feeding off it) holds steady across unrelated re-renders.
+  const metricQuestionId = metricColumn?.question.questionId;
+  const metricOptionId = metricColumn?.option.responseOptionId;
   const coloredPerimeters = useMemo(() => {
     if (!perimeters) return undefined;
+    // Domain-normalized fill position: the picked option's rate (0–100%
+    // domain) or contact rate on its 0–20% domain.
+    const tOf = (row: ZoneFunnelRow): number | null => {
+      if (metricQuestionId && metricOptionId)
+        return optionRate(row, metricQuestionId, metricOptionId);
+      const rate = rateOf(row);
+      return rate === null ? null : Math.min(rate / CONTACT_RATE_MAX, 1);
+    };
     return {
       ...perimeters,
       features: perimeters.features.map((f) => {
         const row = byZone.get(f.properties?.zoneId as string);
-        const t =
-          row === undefined
-            ? null
-            : metricColumn
-              ? optionRate(
-                  row,
-                  metricColumn.question.questionId,
-                  metricColumn.option.responseOptionId,
-                )
-              : rateOf(row) === null
-                ? null
-                : Math.min((rateOf(row) as number) / CONTACT_RATE_MAX, 1);
+        const t = row ? tOf(row) : null;
         return {
           ...f,
           properties: {
@@ -270,8 +272,7 @@ function ResultsIndex() {
         };
       }),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [perimeters, byZone, metricColumn]);
+  }, [perimeters, byZone, metricQuestionId, metricOptionId]);
 
   const fitBounds = useMemo(
     () => (coloredPerimeters ? bboxOfFeatures(coloredPerimeters.features) : null),
@@ -291,7 +292,7 @@ function ResultsIndex() {
     <EditorPage className={cn("h-[calc(100vh-3.5rem)]", shouldFade)}>
       <EditorHeader title="Results" subtitle="Question responses by zone">
         {/* Question picks (checkboxes) drive the option column groups;
-            the metric pick (contact rate or any selected question's
+            the Color-by pick (contact rate or any selected question's
             option) drives the map fill, falling back to contact rate
             when its option leaves the set. */}
         <DropdownMenu open={questionMenuOpen} onOpenChange={setQuestionMenuOpen}>
@@ -337,7 +338,7 @@ function ResultsIndex() {
           icon={<Icon name="paintbrush" className="size-3.5" />}
           label={
             metricColumn
-              ? `${metricColumn.question.name}: ${metricColumn.option.text}`
+              ? `${metricColumn.question.name} | ${metricColumn.option.text}`
               : "Contact rate"
           }
           value={metricColumn ? metricPick : "contact"}
@@ -347,7 +348,7 @@ function ResultsIndex() {
               value: c.option.responseOptionId,
               // Always question-qualified — an option label alone ("Yes")
               // doesn't say what the map would color by.
-              label: `${c.question.name}: ${c.option.text}`,
+              label: `${c.question.name} | ${c.option.text}`,
             })),
           ]}
           allLabel={null}
@@ -529,7 +530,7 @@ function ResultsIndex() {
                     <TableHead
                       key={c.option.responseOptionId}
                       className="truncate"
-                      title={`${c.question.name}: ${c.option.text}`}
+                      title={`${c.question.name} | ${c.option.text}`}
                     >
                       {c.option.text}
                     </TableHead>
@@ -537,9 +538,10 @@ function ResultsIndex() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {/* All-zones totals first — the funnel headline and the
-                    reading frame for the rows below. Not a selection
-                    target: it IS the no-selection state. */}
+                {/* All-zones totals first — the funnel headline, the
+                    reading frame for the rows below, and a selection
+                    target like any zone (highlights every zone on the
+                    map). */}
                 <ZoneRow
                   label={<span>All zones</span>}
                   row={totals}
@@ -603,17 +605,22 @@ function ResultsIndex() {
                     </button>
                   </span>
                   <span className="text-muted-foreground">
-                    Contacts: {wholePercent(rateOf(selectedRow))}
+                    Contacts: <RatePercent rate={rateOf(selectedRow)} rateMax={CONTACT_RATE_MAX} />
                   </span>
                   {answerColumns.map((c) => (
                     <span
                       key={c.option.responseOptionId}
                       className="truncate text-muted-foreground"
                     >
-                      {c.question.name}: {c.option.text}{" "}
-                      {wholePercent(
-                        optionRate(selectedRow, c.question.questionId, c.option.responseOptionId),
-                      )}
+                      {c.question.name} | {c.option.text}:{" "}
+                      <RatePercent
+                        rate={optionRate(
+                          selectedRow,
+                          c.question.questionId,
+                          c.option.responseOptionId,
+                        )}
+                        rateMax={1}
+                      />
                     </span>
                   ))}
                 </div>
@@ -727,6 +734,17 @@ function formatCanvassDay(day: string): string {
 // the map fills match exactly.
 function rateColor(t: number): string {
   return t <= 0.25 ? PINK : t <= 0.75 ? PURPLE : BLUE;
+}
+
+// The badge's scale as ink alone — corner readouts color the number
+// itself, no chip chrome.
+function RatePercent({ rate, rateMax }: { rate: number | null; rateMax: number }) {
+  if (rate === null) return <>—</>;
+  return (
+    <span className="badge-fg" style={tintStyle(rateColor(Math.min(rate / rateMax, 1)))}>
+      {wholePercent(rate)}
+    </span>
+  );
 }
 
 // `rateMax` sets the color domain only — the printed percent is always

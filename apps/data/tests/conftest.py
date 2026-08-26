@@ -4,6 +4,23 @@ from pathlib import Path
 import pytest
 
 import duckdb
+from src.duckdb import OPERATIONAL_PG_ALIAS
+
+
+@pytest.fixture()
+def operational_conn():
+    """In-memory DuckDB with a synthetic operational-Postgres catalog.
+
+    Endpoint SQL names operational tables through OPERATIONAL_PG_ALIAS;
+    attaching a memory catalog under that alias runs the exact
+    production SQL with no Postgres. Tests create the app.* tables they
+    need.
+    """
+    c = duckdb.connect()
+    c.execute(f"ATTACH ':memory:' AS {OPERATIONAL_PG_ALIAS}")
+    c.execute(f"CREATE SCHEMA {OPERATIONAL_PG_ALIAS}.app")
+    yield c
+    c.close()
 
 
 @pytest.fixture()

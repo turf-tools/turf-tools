@@ -1,12 +1,12 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { tintStyle } from "~/components/badge";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
 import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
-import { tintStyle } from "~/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { GREEN, RED, YELLOW } from "~/lib/palette";
 import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
@@ -177,6 +177,26 @@ function ProgressChip({ pct }: { pct: number | null }) {
   );
 }
 
+// The chip's scale as ink alone — corner readouts color the number
+// itself, no chip chrome.
+function ProgressPercent({ pct }: { pct: number | null }) {
+  if (pct === null) return <>—</>;
+  return (
+    <span className="badge-fg" style={tintStyle(progressColor(pct))}>
+      {pct}%
+    </span>
+  );
+}
+
+// Cell backgrounds carry hover and selection (same pill), so the end
+// caps can round.
+const zoneCell = (selectable: boolean, selected: boolean) =>
+  cn(
+    "truncate px-2 whitespace-nowrap",
+    selectable && "group-hover:bg-muted/50 first:rounded-l-md last:rounded-r-md",
+    selected && "bg-muted/50",
+  );
+
 type ProgressRow = {
   campaignId: string;
   zoneId: string | null;
@@ -231,16 +251,16 @@ function ProgressMap({
   // red/yellow/green thresholds as the turf board either way. The Cut
   // view drops uncut zones entirely; the All view keeps them with a
   // faint no-data fill.
-  const pctFor = (row: { turfs: number; used: number; people: number; attempted: number }) =>
-    metric === "turfs"
-      ? row.turfs > 0
-        ? Math.round((100 * row.used) / row.turfs)
-        : null
-      : row.people > 0
-        ? Math.round((100 * row.attempted) / row.people)
-        : null;
   const coloredPerimeters = useMemo(() => {
     if (!perimeters) return undefined;
+    const pctFor = (row: { turfs: number; used: number; people: number; attempted: number }) =>
+      metric === "turfs"
+        ? row.turfs > 0
+          ? Math.round((100 * row.used) / row.turfs)
+          : null
+        : row.people > 0
+          ? Math.round((100 * row.attempted) / row.people)
+          : null;
     const features = showAllZones
       ? perimeters.features
       : perimeters.features.filter((f) => byZone.has(f.properties?.zoneId as string));
@@ -258,8 +278,6 @@ function ProgressMap({
         };
       }),
     };
-    // pctFor closes over the metric pick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perimeters, byZone, showAllZones, metric]);
 
   const fitBounds = useMemo(
@@ -288,27 +306,29 @@ function ProgressMap({
 
   const allSelected = selectedZoneId === ALL_ZONES;
   const selected = !allSelected && selectedZoneId ? (byZone.get(selectedZoneId) ?? null) : null;
-  // All-zones selection aggregates the cut zones (same rule as the
-  // table's totals row).
+  // All-zones selection aggregates the campaign's cut rows — the
+  // table's totals-row accounting exactly, zoneless rows included.
   const cornerStats = allSelected
-    ? [...byZone.values()].reduce(
-        (t, r) => ({
-          people: t.people + r.people,
-          attempted: t.attempted + r.attempted,
-          turfs: t.turfs + r.turfs,
-          used: t.used + r.used,
-        }),
-        { people: 0, attempted: 0, turfs: 0, used: 0 },
-      )
+    ? data
+        .filter((r) => r.campaignId === campaignFilter)
+        .reduce(
+          (t, r) => ({
+            people: t.people + r.people,
+            attempted: t.attempted + r.attempted,
+            turfs: t.turfs + r.turfs,
+            used: t.used + r.used,
+          }),
+          { people: 0, attempted: 0, turfs: 0, used: 0 },
+        )
     : selected;
   const attemptedPct =
     cornerStats && cornerStats.people > 0
-      ? `${Math.round((100 * cornerStats.attempted) / cornerStats.people)}%`
-      : "—";
+      ? Math.round((100 * cornerStats.attempted) / cornerStats.people)
+      : null;
   const turfsUsedPct =
     cornerStats && cornerStats.turfs > 0
-      ? `${Math.round((100 * cornerStats.used) / cornerStats.turfs)}%`
-      : "—";
+      ? Math.round((100 * cornerStats.used) / cornerStats.turfs)
+      : null;
   // An uncut zone (clickable in the All view) has no rollup row; its
   // name rides the feature properties.
   const selectedUncutName =
@@ -364,8 +384,12 @@ function ProgressMap({
               </span>
               {cornerStats ? (
                 <>
-                  <span className="text-muted-foreground">Attempts: {attemptedPct}</span>
-                  <span className="text-muted-foreground">Turfs used: {turfsUsedPct}</span>
+                  <span className="text-muted-foreground">
+                    Attempts: <ProgressPercent pct={attemptedPct} />
+                  </span>
+                  <span className="text-muted-foreground">
+                    Turfs used: <ProgressPercent pct={turfsUsedPct} />
+                  </span>
                 </>
               ) : (
                 <span className="text-muted-foreground">No turfs cut</span>
@@ -443,6 +467,7 @@ function ProgressTable({
   const totalsTurfPct = totals.turfs > 0 ? Math.round((100 * totals.used) / totals.turfs) : null;
   const totalsPersonPct =
     totals.people > 0 ? Math.round((100 * totals.attempted) / totals.people) : null;
+  const totalsCell = zoneCell(true, selectedZoneId === ALL_ZONES);
 
   return (
     <Table
@@ -475,48 +500,39 @@ function ProgressTable({
             {/* All-zones totals first, matching Results — the reading
                 frame for the rows below, and a selection target like any
                 zone (highlights every zone on the map). */}
-            {(() => {
-              const totalsCell = cn(
-                "truncate px-2 whitespace-nowrap",
-                "group-hover:bg-muted/50 first:rounded-l-md last:rounded-r-md",
-                selectedZoneId === ALL_ZONES && "bg-muted/50",
-              );
-              return (
-                <TableRow
-                  className="group h-8 scroll-mt-10 cursor-pointer"
-                  onClick={() => onSelectZone(ALL_ZONES)}
-                >
-                  <TableCell className={totalsCell}>
-                    <span>All zones</span>
-                  </TableCell>
-                  <TableCell className={cn(totalsCell, "tabular-nums")}>
-                    {totals.people.toLocaleString()}
-                  </TableCell>
-                  <TableCell className={cn(totalsCell, "tabular-nums")}>
-                    {totals.doors.toLocaleString()}
-                  </TableCell>
-                  <TableCell className={totalsCell}>
-                    <span className="flex items-center gap-1.5">
-                      <ProgressChip pct={totalsPersonPct} />
-                      <span className="tabular-nums">{totals.attempted.toLocaleString()}</span>
-                    </span>
-                  </TableCell>
-                  <TableCell className={totalsCell}>
-                    <span className="flex items-center gap-1.5">
-                      <ProgressChip pct={totalsTurfPct} />
-                      <span className="tabular-nums">{totals.used.toLocaleString()}</span>
-                    </span>
-                  </TableCell>
-                  <TableCell className={cn(totalsCell, "tabular-nums")}>
-                    {totals.turfs > 0 ? (
-                      `${totals.turfs - totals.used} / ${totals.turfs}`
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })()}
+            <TableRow
+              className="group h-8 scroll-mt-10 cursor-pointer"
+              onClick={() => onSelectZone(ALL_ZONES)}
+            >
+              <TableCell className={totalsCell}>
+                <span>All zones</span>
+              </TableCell>
+              <TableCell className={cn(totalsCell, "tabular-nums")}>
+                {totals.people.toLocaleString()}
+              </TableCell>
+              <TableCell className={cn(totalsCell, "tabular-nums")}>
+                {totals.doors.toLocaleString()}
+              </TableCell>
+              <TableCell className={totalsCell}>
+                <span className="flex items-center gap-1.5">
+                  <ProgressChip pct={totalsPersonPct} />
+                  <span className="tabular-nums">{totals.attempted.toLocaleString()}</span>
+                </span>
+              </TableCell>
+              <TableCell className={totalsCell}>
+                <span className="flex items-center gap-1.5">
+                  <ProgressChip pct={totalsTurfPct} />
+                  <span className="tabular-nums">{totals.used.toLocaleString()}</span>
+                </span>
+              </TableCell>
+              <TableCell className={cn(totalsCell, "tabular-nums")}>
+                {totals.turfs > 0 ? (
+                  `${totals.turfs - totals.used} / ${totals.turfs}`
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+            </TableRow>
             {rows.map((r) => {
               // Turf-grain drives the Progress % (and the map): this is
               // the dispatch board, and person-grain overstates capacity
@@ -532,13 +548,7 @@ function ProgressTable({
                   : null;
               const selectable = r.zoneId != null;
               const selected = selectable && r.zoneId === selectedZoneId;
-              // Cell backgrounds carry hover and selection (same pill), so
-              // the end caps can round.
-              const cell = cn(
-                "truncate px-2 whitespace-nowrap",
-                selectable && "group-hover:bg-muted/50 first:rounded-l-md last:rounded-r-md",
-                selected && "bg-muted/50",
-              );
+              const cell = zoneCell(selectable, selected);
               return (
                 <TableRow
                   key={`${r.campaignId}:${r.zoneId ?? "none"}`}
