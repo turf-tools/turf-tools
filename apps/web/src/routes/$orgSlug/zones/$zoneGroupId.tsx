@@ -401,11 +401,14 @@ function ZoneGroupEditor() {
     if (!activeZoneId) return;
     if (renamingZoneId || overlaySegmentDropdown.open) return;
     const handler = (e: MouseEvent) => {
-      // Skip the second click of a double-click so dbl-click to rename
-      // doesn't deselect-then-reselect a second time (one visible flash
-      // from click 1 is what we want).
-      if (e.detail >= 2) return;
+      // Every click clears-and-reselects, rapid or paced (the blanket
+      // skip-on-double-click made the flash timing-dependent, reading as
+      // clicks not registering) — EXCEPT the second click of a dbl-click
+      // on a rename trigger, where a second flash right before the input
+      // swaps in reads as a glitch.
       const target = e.target as Node | null;
+      if (e.detail >= 2 && target instanceof Element && target.closest("[data-rename-trigger]"))
+        return;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;
       setActiveZoneId(null);
@@ -500,6 +503,7 @@ function ZoneGroupEditor() {
                           />
                         ) : (
                           <span
+                            data-rename-trigger
                             className="min-w-0 flex-1 truncate text-sm select-none"
                             onDoubleClick={(e) => {
                               e.stopPropagation();

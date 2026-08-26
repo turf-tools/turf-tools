@@ -44,6 +44,7 @@ const ICONS = [
   "menu",
   "minus",
   "more-horizontal",
+  "paintbrush",
   "panel-left-close",
   "panel-left-open",
   "pencil",

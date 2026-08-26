@@ -11,11 +11,8 @@ function Reports() {
   const shouldFade = useFadeOnce("/reports");
   return (
     <Page className={shouldFade}>
-      <EditorHeader title="Reports" />
-      <p className="text-sm text-muted-foreground">
-        Row-level exports of canvass data — contact history, survey responses, and walk activity as
-        downloadable tables.
-      </p>
+      <EditorHeader title="Reports" subtitle="Browse and export detailed results" />
+      <p className="text-sm text-muted-foreground">Coming soon</p>
     </Page>
   );
 }

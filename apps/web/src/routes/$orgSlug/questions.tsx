@@ -92,7 +92,7 @@ function QuestionsPage() {
 
   return (
     <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
-      <EditorHeader title="Questions">
+      <EditorHeader title="Questions" subtitle="Create and edit script components">
         <Filter
           icon={<Icon name="activity" className="size-3.5" />}
           label={statusLabel}

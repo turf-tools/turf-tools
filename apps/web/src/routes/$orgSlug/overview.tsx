@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { EditorHeader } from "~/components/editor-header";
 import { Page } from "~/components/page";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
@@ -30,9 +31,7 @@ function Overview() {
 
   return (
     <Page className={shouldFade}>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl italic font-extrabold tracking-wide">Overview</h1>
-      </div>
+      <EditorHeader title="Overview" subtitle="Everything at a glance" />
       {/* Gate on data so the numbers fade in once with real values rather than
           flashing 0 first — notably on org switch, where the org-scoped query
           key resolves a frame late. Keyed on orgSlug so the fade re-fires per org. */}

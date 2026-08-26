@@ -1,13 +1,12 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "~/components/button";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
 import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
-import { Pill } from "~/components/pill";
+import { tintStyle } from "~/components/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { GREEN, RED, YELLOW } from "~/lib/palette";
 import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
@@ -26,6 +25,10 @@ import { cn, revealZoneCard } from "~/lib/utils";
 function progressColor(pct: number) {
   return pct <= 25 ? RED : pct <= 75 ? YELLOW : GREEN;
 }
+
+// Page-level selection value for the totals row — the map itself only
+// ever sees a list of zone ids.
+const ALL_ZONES = "all";
 
 type ProgressSearch = {
   campaign: string | null;
@@ -63,6 +66,10 @@ function ProgressIndex() {
   const shouldFade = useFadeOnce("/progress");
   // Selection is shared: a map click highlights the zone's table row.
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  // Map fill metric — turf-grain by default (the dispatch signal),
+  // person-grain Attempted as the alternate lens (Results' Color-by
+  // pattern).
+  const [mapMetric, setMapMetric] = useState<"turfs" | "attempted">("turfs");
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
 
   // Selection can be made from the table, so the whole page is the
@@ -73,7 +80,6 @@ function ProgressIndex() {
   useEffect(() => {
     if (!selectedZoneId) return;
     const handler = (e: MouseEvent) => {
-      if (e.detail >= 2) return;
       const target = e.target as Node | null;
       if (!target) return;
       if (mapWrapperRef.current?.contains(target)) return;
@@ -95,7 +101,7 @@ function ProgressIndex() {
     // so the viewport height lands here — without it the map's flex-1
     // container collapses to zero.
     <EditorPage className={cn("h-[calc(100vh-3.5rem)]", shouldFade)}>
-      <EditorHeader title="Progress">
+      <EditorHeader title="Progress" subtitle="Turf completion by zone">
         <Filter
           icon={<Icon name="waypoints" className="size-3.5" />}
           label={zonesView === "all" ? "All zones" : "Cut zones"}
@@ -109,6 +115,19 @@ function ProgressIndex() {
           }
         />
         <Filter
+          icon={<Icon name="paintbrush" className="size-3.5" />}
+          label={mapMetric === "turfs" ? "Turfs used" : "Attempts"}
+          value={mapMetric}
+          options={[
+            { value: "turfs", label: "Turfs used" },
+            { value: "attempted", label: "Attempts" },
+          ]}
+          allLabel={null}
+          onChange={(next) => {
+            if (next === "turfs" || next === "attempted") setMapMetric(next);
+          }}
+        />
+        <Filter
           icon={<Icon name="megaphone" className="size-3.5" />}
           label={filterLabel}
           value={campaign}
@@ -117,24 +136,44 @@ function ProgressIndex() {
           onChange={(next) => void navigate({ search: (prev) => ({ ...prev, campaign: next }) })}
         />
       </EditorHeader>
-      <div className="flex min-h-0 flex-1 gap-6">
-        <div className="flex w-160 shrink-0 flex-col overflow-hidden">
-          <ProgressTable
-            campaignFilter={campaign}
-            showAllZones={zonesView === "all"}
-            selectedZoneId={selectedZoneId}
-            onSelectZone={setSelectedZoneId}
-          />
+      {/* Results' card-table-beside-map construction; no map collapse
+          here — this table never overflows horizontally. */}
+      <div className="flex min-h-0 flex-1 gap-4">
+        <div className="flex min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card">
+          <div className="min-h-0 flex-1 px-2 pt-2">
+            <ProgressTable
+              campaignFilter={campaign}
+              showAllZones={zonesView === "all"}
+              selectedZoneId={selectedZoneId}
+              onSelectZone={setSelectedZoneId}
+            />
+          </div>
         </div>
         <ProgressMap
           campaignFilter={campaign}
           showAllZones={zonesView === "all"}
+          metric={mapMetric}
           selectedZoneId={selectedZoneId}
           onSelectZone={setSelectedZoneId}
           wrapperRef={mapWrapperRef}
         />
       </div>
     </EditorPage>
+  );
+}
+
+// RYG percent chip in Results' rate-badge shape: content width, mono,
+// whole percent zero-padded to two digits; discrete progress colors
+// through the shared badge tint math.
+function ProgressChip({ pct }: { pct: number | null }) {
+  if (pct === null) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span
+      className="badge-tint rounded px-1.5 py-0.5 font-mono text-sm tabular-nums"
+      style={tintStyle(progressColor(pct))}
+    >
+      {String(pct).padStart(2, "0")}%
+    </span>
   );
 }
 
@@ -155,12 +194,14 @@ type ProgressRow = {
 function ProgressMap({
   campaignFilter,
   showAllZones,
+  metric,
   selectedZoneId,
   onSelectZone,
   wrapperRef,
 }: {
   campaignFilter: string | null;
   showAllZones: boolean;
+  metric: "turfs" | "attempted";
   selectedZoneId: string | null;
   onSelectZone: (zoneId: string | null) => void;
   wrapperRef: RefObject<HTMLDivElement | null>;
@@ -185,11 +226,19 @@ function ProgressMap({
     [data, campaignFilter],
   );
 
-  // Turf-grain (used/total), matching the table's colored Progress pill
-  // — the dispatch signal: red = turf still to hand out. Same discrete
-  // red/yellow/green thresholds as the turf board. The Cut view drops
-  // uncut zones entirely; the All view keeps them with a faint no-data
-  // fill.
+  // Fill follows the Color-by pick: turf-grain used/total (the dispatch
+  // signal, default) or person-grain attempted/people. Same discrete
+  // red/yellow/green thresholds as the turf board either way. The Cut
+  // view drops uncut zones entirely; the All view keeps them with a
+  // faint no-data fill.
+  const pctFor = (row: { turfs: number; used: number; people: number; attempted: number }) =>
+    metric === "turfs"
+      ? row.turfs > 0
+        ? Math.round((100 * row.used) / row.turfs)
+        : null
+      : row.people > 0
+        ? Math.round((100 * row.attempted) / row.people)
+        : null;
   const coloredPerimeters = useMemo(() => {
     if (!perimeters) return undefined;
     const features = showAllZones
@@ -199,7 +248,7 @@ function ProgressMap({
       ...perimeters,
       features: features.map((f) => {
         const row = byZone.get(f.properties?.zoneId as string);
-        const pct = row && row.turfs > 0 ? Math.round((100 * row.used) / row.turfs) : null;
+        const pct = row ? pctFor(row) : null;
         return {
           ...f,
           properties: {
@@ -209,7 +258,9 @@ function ProgressMap({
         };
       }),
     };
-  }, [perimeters, byZone, showAllZones]);
+    // pctFor closes over the metric pick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perimeters, byZone, showAllZones, metric]);
 
   const fitBounds = useMemo(
     () => (coloredPerimeters ? bboxOfFeatures(coloredPerimeters.features) : null),
@@ -220,7 +271,13 @@ function ProgressMap({
   // toggle, campaign switch) — a readout for an invisible shape reads
   // as a stuck state.
   useEffect(() => {
-    if (!showAllZones && selectedZoneId && !byZone.has(selectedZoneId)) onSelectZone(null);
+    if (
+      !showAllZones &&
+      selectedZoneId &&
+      selectedZoneId !== ALL_ZONES &&
+      !byZone.has(selectedZoneId)
+    )
+      onSelectZone(null);
   }, [showAllZones, selectedZoneId, byZone, onSelectZone]);
 
   useHotkey({
@@ -229,17 +286,37 @@ function ProgressMap({
     onMatch: () => onSelectZone(null),
   });
 
-  const percentOf = (row: { turfs: number; used: number }) =>
-    row.turfs > 0 ? `${Math.round((100 * row.used) / row.turfs)}%` : "—";
-  const selected = selectedZoneId ? (byZone.get(selectedZoneId) ?? null) : null;
+  const allSelected = selectedZoneId === ALL_ZONES;
+  const selected = !allSelected && selectedZoneId ? (byZone.get(selectedZoneId) ?? null) : null;
+  // All-zones selection aggregates the cut zones (same rule as the
+  // table's totals row).
+  const cornerStats = allSelected
+    ? [...byZone.values()].reduce(
+        (t, r) => ({
+          people: t.people + r.people,
+          attempted: t.attempted + r.attempted,
+          turfs: t.turfs + r.turfs,
+          used: t.used + r.used,
+        }),
+        { people: 0, attempted: 0, turfs: 0, used: 0 },
+      )
+    : selected;
+  const attemptedPct =
+    cornerStats && cornerStats.people > 0
+      ? `${Math.round((100 * cornerStats.attempted) / cornerStats.people)}%`
+      : "—";
+  const turfsUsedPct =
+    cornerStats && cornerStats.turfs > 0
+      ? `${Math.round((100 * cornerStats.used) / cornerStats.turfs)}%`
+      : "—";
   // An uncut zone (clickable in the All view) has no rollup row; its
   // name rides the feature properties.
   const selectedUncutName =
-    selectedZoneId && !selected
+    !allSelected && selectedZoneId && !selected
       ? ((perimeters?.features.find((f) => f.properties?.zoneId === selectedZoneId)?.properties
           ?.zoneName as string | undefined) ?? null)
       : null;
-  const hasSelection = Boolean(selected || selectedUncutName);
+  const hasSelection = Boolean(allSelected || selected || selectedUncutName);
 
   // Corner readout answers "what did I just click" without leaving the
   // map; the table's highlighted button is the linked echo with the
@@ -250,7 +327,18 @@ function ProgressMap({
       <MapView
         className="h-full"
         zonePerimeters={coloredPerimeters}
-        selectedZoneId={selectedZoneId}
+        selectedZoneIds={
+          allSelected
+            ? (perimeters?.features ?? [])
+                // Highlight only the drawn set: the Cut view omits
+                // uncut zones.
+                .filter((f) => showAllZones || byZone.has(f.properties?.zoneId as string))
+                .map((f) => f.properties?.zoneId as string | undefined)
+                .filter((id): id is string => !!id)
+            : selectedZoneId
+              ? [selectedZoneId]
+              : []
+        }
         onZoneClick={(zoneId) => {
           onSelectZone(zoneId);
           revealZoneCard(zoneId);
@@ -262,7 +350,9 @@ function ProgressMap({
           hasSelection ? (
             <div className="flex flex-col px-3 py-2">
               <span className="flex items-center gap-2">
-                <span className="font-semibold">{selected?.zoneName ?? selectedUncutName}</span>
+                <span className="font-semibold">
+                  {allSelected ? "All zones" : (selected?.zoneName ?? selectedUncutName)}
+                </span>
                 <button
                   type="button"
                   aria-label="Clear zone selection"
@@ -272,9 +362,14 @@ function ProgressMap({
                   <Icon name="x" className="size-3.5" />
                 </button>
               </span>
-              <span className="text-muted-foreground">
-                {selected ? percentOf(selected) : "No turfs cut"}
-              </span>
+              {cornerStats ? (
+                <>
+                  <span className="text-muted-foreground">Attempts: {attemptedPct}</span>
+                  <span className="text-muted-foreground">Turfs used: {turfsUsedPct}</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground">No turfs cut</span>
+              )}
             </div>
           ) : undefined
         }
@@ -331,111 +426,170 @@ function ProgressTable({
   );
   const rows = campaignFilter ? merged.filter((r) => r.campaignId === campaignFilter) : merged;
 
+  // Totals over CUT zones only — the number is "progress through our cut
+  // turf", so uncut zones' live-evaluated counts stay out even in the
+  // all-zones view.
+  const cut = rows.filter((r) => !r.inferred);
+  const totals = cut.reduce(
+    (t, r) => ({
+      people: t.people + r.people,
+      doors: t.doors + r.doors,
+      attempted: t.attempted + r.attempted,
+      turfs: t.turfs + r.turfs,
+      used: t.used + r.used,
+    }),
+    { people: 0, doors: 0, attempted: 0, turfs: 0, used: 0 },
+  );
+  const totalsTurfPct = totals.turfs > 0 ? Math.round((100 * totals.used) / totals.turfs) : null;
+  const totalsPersonPct =
+    totals.people > 0 ? Math.round((100 * totals.attempted) / totals.people) : null;
+
   return (
-    <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
-      <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
+    <Table
+      containerClassName="h-full overflow-y-auto"
+      className="table-fixed border-separate border-spacing-y-0.5 [&_tr>th:first-child]:pl-2 [&_tr>td:first-child]:pl-2"
+      style={{ width: "40rem" }}
+    >
+      {/* One uniform strip grid shared with Results: every row — header
+          or data — has the same h-8 pitch; this page's strips are just
+          [headers, zones...]. */}
+      <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-card [&_th]:h-8">
         <TableRow>
-          <TableHead>Zone</TableHead>
-          <TableHead className="w-26">People</TableHead>
-          <TableHead className="w-26">Doors</TableHead>
-          <TableHead className="w-24">Attempted</TableHead>
-          <TableHead className="w-24">Turfs used</TableHead>
-          <TableHead className="w-24">Turfs left</TableHead>
+          <TableHead style={{ width: "10rem" }}>Zone</TableHead>
+          <TableHead style={{ width: "5rem" }}>People</TableHead>
+          <TableHead style={{ width: "5rem" }}>Doors</TableHead>
+          <TableHead style={{ width: "7rem" }}>Attempts</TableHead>
+          <TableHead style={{ width: "7rem" }}>Turfs used</TableHead>
+          <TableHead style={{ width: "6rem" }}>Turfs left</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.length === 0 ? (
-          <TableRow className="h-10">
-            <TableCell colSpan={6}>
-              <Pill>
-                <span>No results</span>
-              </Pill>
+          <TableRow className="h-8">
+            <TableCell colSpan={6} className="px-2 text-muted-foreground">
+              No results
             </TableCell>
           </TableRow>
         ) : (
-          rows.map((r) => {
-            // Turf-grain drives the Progress % (and the map): this is
-            // the dispatch board, and person-grain overstates capacity
-            // once all turf is out but plateaued mid-walk. Person-grain
-            // "Attempted" (any outcome / cut people) rides along for
-            // the typical-completion glance.
-            const turfPct =
-              r.inferred || r.turfs === 0 ? null : Math.round((100 * r.used) / r.turfs);
-            const personPct = r.inferred
-              ? null
-              : r.people > 0
-                ? Math.round((100 * r.attempted) / r.people)
-                : null;
-            return (
-              <TableRow
-                key={`${r.campaignId}:${r.zoneId ?? "none"}`}
-                data-zone-card={r.zoneId ?? undefined}
-                // Sticky header overlays the container top; without the
-                // margin, upward scrollIntoView parks the row under it.
-                className="scroll-mt-10"
-              >
-                <TableCell>
-                  {r.zoneId != null ? (
-                    // Border carries the selected state both directions —
-                    // click here or on the map. Re-clicking the selected
-                    // zone flashes it (the outside-click mousedown clears,
-                    // this click re-selects) — a locating aid, same
-                    // mechanism as the zone editor's cards.
-                    <Button
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start",
-                        r.zoneId === selectedZoneId && "border-foreground dark:border-foreground",
-                      )}
-                      onClick={() => onSelectZone(r.zoneId)}
-                    >
-                      <span className="truncate">{r.zoneName ?? "—"}</span>
-                    </Button>
-                  ) : (
-                    <Pill className="min-w-0">
-                      <span className="truncate">—</span>
-                    </Pill>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Pill variant="number" className={cn("gap-1.5", r.inferred && "italic")}>
-                    <Icon name="user-round" className="size-3.5 shrink-0 text-foreground" />
+          <>
+            {/* All-zones totals first, matching Results — the reading
+                frame for the rows below, and a selection target like any
+                zone (highlights every zone on the map). */}
+            {(() => {
+              const totalsCell = cn(
+                "truncate px-2 whitespace-nowrap",
+                "group-hover:bg-muted/50 first:rounded-l-md last:rounded-r-md",
+                selectedZoneId === ALL_ZONES && "bg-muted/50",
+              );
+              return (
+                <TableRow
+                  className="group h-8 scroll-mt-10 cursor-pointer"
+                  onClick={() => onSelectZone(ALL_ZONES)}
+                >
+                  <TableCell className={totalsCell}>
+                    <span>All zones</span>
+                  </TableCell>
+                  <TableCell className={cn(totalsCell, "tabular-nums")}>
+                    {totals.people.toLocaleString()}
+                  </TableCell>
+                  <TableCell className={cn(totalsCell, "tabular-nums")}>
+                    {totals.doors.toLocaleString()}
+                  </TableCell>
+                  <TableCell className={totalsCell}>
+                    <span className="flex items-center gap-1.5">
+                      <ProgressChip pct={totalsPersonPct} />
+                      <span className="tabular-nums">{totals.attempted.toLocaleString()}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell className={totalsCell}>
+                    <span className="flex items-center gap-1.5">
+                      <ProgressChip pct={totalsTurfPct} />
+                      <span className="tabular-nums">{totals.used.toLocaleString()}</span>
+                    </span>
+                  </TableCell>
+                  <TableCell className={cn(totalsCell, "tabular-nums")}>
+                    {totals.turfs > 0 ? (
+                      `${totals.turfs - totals.used} / ${totals.turfs}`
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })()}
+            {rows.map((r) => {
+              // Turf-grain drives the Progress % (and the map): this is
+              // the dispatch board, and person-grain overstates capacity
+              // once all turf is out but plateaued mid-walk. Person-grain
+              // "Attempted" (any outcome / cut people) rides along for
+              // the typical-completion glance.
+              const turfPct =
+                r.inferred || r.turfs === 0 ? null : Math.round((100 * r.used) / r.turfs);
+              const personPct = r.inferred
+                ? null
+                : r.people > 0
+                  ? Math.round((100 * r.attempted) / r.people)
+                  : null;
+              const selectable = r.zoneId != null;
+              const selected = selectable && r.zoneId === selectedZoneId;
+              // Cell backgrounds carry hover and selection (same pill), so
+              // the end caps can round.
+              const cell = cn(
+                "truncate px-2 whitespace-nowrap",
+                selectable && "group-hover:bg-muted/50 first:rounded-l-md last:rounded-r-md",
+                selected && "bg-muted/50",
+              );
+              return (
+                <TableRow
+                  key={`${r.campaignId}:${r.zoneId ?? "none"}`}
+                  data-zone-card={r.zoneId ?? undefined}
+                  // Sticky header overlays the container top; without the
+                  // margin, upward scrollIntoView parks the row under it.
+                  className={cn("group h-8 scroll-mt-10", selectable && "cursor-pointer")}
+                  onClick={selectable ? () => onSelectZone(r.zoneId) : undefined}
+                >
+                  <TableCell className={cell}>
+                    <span className={cn("truncate", !selectable && "text-muted-foreground")}>
+                      {r.zoneName ?? "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell className={cn(cell, "tabular-nums", r.inferred && "italic")}>
                     {r.people.toLocaleString()}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill variant="number" className={cn("gap-1.5", r.inferred && "italic")}>
-                    <Icon name="door-closed" className="size-3.5 shrink-0 text-foreground" />
+                  </TableCell>
+                  <TableCell className={cn(cell, "tabular-nums", r.inferred && "italic")}>
                     {r.doors.toLocaleString()}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  <Pill
-                    variant="number"
-                    color={personPct !== null ? progressColor(personPct) : undefined}
-                  >
-                    {personPct !== null ? `${personPct}%` : null}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  {/* 0% tints red too — matching the map, where red is
+                  </TableCell>
+                  <TableCell className={cell}>
+                    {/* Badge leads, count follows — Results' cell pattern. */}
+                    <span className="flex items-center gap-1.5">
+                      <ProgressChip pct={personPct} />
+                      {!r.inferred ? (
+                        <span className="tabular-nums">{r.attempted.toLocaleString()}</span>
+                      ) : null}
+                    </span>
+                  </TableCell>
+                  <TableCell className={cell}>
+                    {/* 0% tints red too — matching the map, where red is
                       the work remaining. */}
-                  <Pill
-                    variant="number"
-                    color={turfPct !== null ? progressColor(turfPct) : undefined}
-                  >
-                    {turfPct !== null ? `${turfPct}%` : null}
-                  </Pill>
-                </TableCell>
-                <TableCell>
-                  {/* The dispatch number — the row's punchline. */}
-                  <Pill variant="number">
-                    {r.inferred ? null : `${r.turfs - r.used} / ${r.turfs}`}
-                  </Pill>
-                </TableCell>
-              </TableRow>
-            );
-          })
+                    <span className="flex items-center gap-1.5">
+                      <ProgressChip pct={turfPct} />
+                      {!r.inferred ? (
+                        <span className="tabular-nums">{r.used.toLocaleString()}</span>
+                      ) : null}
+                    </span>
+                  </TableCell>
+                  <TableCell className={cn(cell, "tabular-nums")}>
+                    {/* The dispatch number — the row's punchline. */}
+                    {r.inferred ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      `${r.turfs - r.used} / ${r.turfs}`
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </>
         )}
       </TableBody>
     </Table>

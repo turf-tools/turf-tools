@@ -39,6 +39,7 @@ export const ICON_NAMES = [
   "menu",
   "minus",
   "more-horizontal",
+  "paintbrush",
   "panel-left-close",
   "panel-left-open",
   "pencil",
