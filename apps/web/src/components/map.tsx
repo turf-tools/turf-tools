@@ -146,6 +146,9 @@ type MapProps = {
   cornerUpperRight?: ReactNode;
   // Upper-left counterpart.
   cornerUpperLeft?: ReactNode;
+  // Suppress every corner inset — for callers that shrink the map to a
+  // sliver, where the cards clip and their labels wrap illegibly.
+  insetsHidden?: boolean;
 };
 
 const DEFAULT_VIEW: Partial<ViewState> = {
@@ -242,6 +245,7 @@ export function Map({
   cornerLowerRight,
   cornerUpperRight,
   cornerUpperLeft,
+  insetsHidden,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
   const [streetsToggled, setStreetsToggled] = useState(false);
@@ -1064,7 +1068,7 @@ export function Map({
           `divide-y` puts a separator between rows, so the
           cornerLowerRight labels just need padding/gap, not their
           own border or background. */}
-      {!streetsAlwaysOn || cornerLowerRight ? (
+      {!insetsHidden && (!streetsAlwaysOn || cornerLowerRight) ? (
         <div
           className={
             "absolute right-3 bottom-3 z-20 flex flex-col items-stretch " +
@@ -1081,7 +1085,7 @@ export function Map({
         </div>
       ) : null}
 
-      {cornerUpperLeft ? (
+      {!insetsHidden && cornerUpperLeft ? (
         <div
           className={
             "absolute top-3 left-3 z-20 flex flex-col items-stretch " +
@@ -1094,7 +1098,7 @@ export function Map({
 
       {/* Upper-right inset — same card + edge offsets as the lower slots;
           positional, content supplied by the route. */}
-      {cornerUpperRight ? (
+      {!insetsHidden && cornerUpperRight ? (
         <div
           className={
             "absolute top-3 right-3 z-20 flex flex-col items-stretch " +

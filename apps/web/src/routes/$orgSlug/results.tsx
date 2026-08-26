@@ -70,6 +70,10 @@ function optionRate(row: ZoneFunnelRow, questionId: string, optionId: string): n
   return row.contacted > 0 ? (row.responses[questionId]?.[optionId] ?? 0) / row.contacted : null;
 }
 
+function answeredRate(row: ZoneFunnelRow, questionId: string): number | null {
+  return row.contacted > 0 ? (row.answered[questionId] ?? 0) / row.contacted : null;
+}
+
 // Color-scale domain for contact rate: door-knocking contact rates live
 // in 0–20% essentially universally, so a 0–100% scale washes every zone
 // into the bottom fifth. Answer rates stay 0–100%: options split a
@@ -176,23 +180,41 @@ function ResultsIndex() {
     q.options.filter(
       (o) => !o.archived || (totals.responses[q.questionId]?.[o.responseOptionId] ?? 0) > 0,
     );
-  const answerColumns = activeQuestions.flatMap((q) =>
-    visibleOptions(q).map((o) => ({ question: q, option: o })),
-  );
+  // One column per visible option; a question with none (open-ended,
+  // or every option archived with no in-scope answers) gets a single
+  // "Answered" completion column instead of vanishing when selected.
+  type AnswerColumn = {
+    question: (typeof questionList)[number];
+    option: (typeof questionList)[number]["options"][number] | null;
+  };
+  const answerColumns = activeQuestions.flatMap((q): AnswerColumn[] => {
+    const options = visibleOptions(q);
+    return options.length > 0
+      ? options.map((o) => ({ question: q, option: o }))
+      : [{ question: q, option: null }];
+  });
   // Group spans for the question header row above the option columns.
-  const questionGroups = activeQuestions
-    .map((q) => ({ question: q, span: visibleOptions(q).length }))
-    .filter((g) => g.span > 0);
+  const questionGroups = activeQuestions.map((q) => ({
+    question: q,
+    span: Math.max(visibleOptions(q).length, 1),
+  }));
   const [metricPick, setMetricPick] = useState<string>("contact");
-  const metricColumn = answerColumns.find((c) => c.option.responseOptionId === metricPick);
+  // Only real options can color the map — an Answered column's rate is
+  // completion, not persuasion.
+  const optionColumns = answerColumns.filter(
+    (c): c is AnswerColumn & { option: NonNullable<AnswerColumn["option"]> } => c.option !== null,
+  );
+  const metricColumn = optionColumns.find((c) => c.option.responseOptionId === metricPick);
 
-  const [mapHidden, setMapHidden] = useState(false);
+  const [mapCollapsed, setMapCollapsed] = useState(false);
   // Beside the map, the card sizes to the FIRST selected question's
   // columns (capped so three fit comfortably) and stays put — adding
   // further questions scrolls in-card instead of expanding, so the
   // split never shifts as picks accumulate.
+  // An Answered column counts as two option-widths: the question name
+  // above it needs the room real questions get from having 2+ options.
   const firstQuestionColumnCount = activeQuestions[0]
-    ? visibleOptions(activeQuestions[0]).length
+    ? visibleOptions(activeQuestions[0]).length || 2
     : 0;
   const cardRem = Math.min(23 + firstQuestionColumnCount * 7, 23 + 3 * 7);
 
@@ -258,9 +280,17 @@ function ResultsIndex() {
       const rate = rateOf(row);
       return rate === null ? null : Math.min(rate / CONTACT_RATE_MAX, 1);
     };
+    // Only walked zones are drawn, matching the table — "where else
+    // could we go" is Progress's question. A drawn zone can still lack
+    // the picked metric (no contacts under an option metric); it keeps
+    // a faint no-data fill.
+    const features = perimeters.features.filter((f) => {
+      const row = byZone.get(f.properties?.zoneId as string);
+      return row !== undefined && row.attempted > 0;
+    });
     return {
       ...perimeters,
-      features: perimeters.features.map((f) => {
+      features: features.map((f) => {
         const row = byZone.get(f.properties?.zoneId as string);
         const t = row ? tOf(row) : null;
         return {
@@ -344,7 +374,7 @@ function ResultsIndex() {
           value={metricColumn ? metricPick : "contact"}
           options={[
             { value: "contact", label: "Contact rate" },
-            ...answerColumns.map((c) => ({
+            ...optionColumns.map((c) => ({
               value: c.option.responseOptionId,
               // Always question-qualified — an option label alone ("Yes")
               // doesn't say what the map would color by.
@@ -395,14 +425,6 @@ function ResultsIndex() {
             void navigate({ search: (prev) => ({ ...prev, campaign: next ?? "all", day: null }) })
           }
         />
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label={mapHidden ? "Show map" : "Hide map"}
-          onClick={() => setMapHidden((h) => !h)}
-        >
-          <Icon name="map" className="size-3.5" />
-        </Button>
       </EditorHeader>
       {/* Chips live on their own row, appearing with the first filter
           and leaving with the last — the control row above never
@@ -470,18 +492,17 @@ function ResultsIndex() {
         {/* Reports' compact card table: rows are the selection surface
             (click selects on the map), the hover pill is the linked echo
             (a map click scrolls to the row and its highlight is the same
-            pill), and only walked zones appear — uncut zones can't have
-            attempts, and their zero rows are noise here (the map still
-            shows them with the faint no-data fill). The card always hugs
-            its table; the map absorbs whatever width remains. */}
+            pill), and only walked zones appear — table and map alike;
+            unwalked zones' zero rows are noise here. The card always
+            hugs its table; the map absorbs whatever width remains. */}
         <div
           className={cn(
             "flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-card",
-            mapHidden ? "flex-1" : "shrink-0",
+            mapCollapsed ? "flex-1" : "shrink-0",
           )}
           // +2px: the borders live inside the border-box width; without
           // them the table sits 2px short and grows a phantom scrollbar.
-          style={mapHidden ? undefined : { width: `calc(${cardRem}rem + 2px)` }}
+          style={mapCollapsed ? undefined : { width: `calc(${cardRem}rem + 2px)` }}
         >
           <div className="min-h-0 flex-1 px-2 pt-2">
             <Table
@@ -490,7 +511,9 @@ function ResultsIndex() {
               // list's gap-0.5 — adjacent hover pills get a hairline gap
               // instead of meeting flush.
               className="table-fixed border-separate border-spacing-y-0.5 [&_tr>th:first-child]:pl-2 [&_tr>td:first-child]:pl-2"
-              style={{ width: `${22 + answerColumns.length * 7}rem` }}
+              style={{
+                width: `${22 + answerColumns.reduce((n, c) => n + (c.option ? 7 : 14), 0)}rem`,
+              }}
             >
               {/* Fixed layout reads column widths from the FIRST header
                   row — which here is the colSpan question row — so the
@@ -500,7 +523,10 @@ function ResultsIndex() {
                 <col style={{ width: "5rem" }} />
                 <col style={{ width: "7rem" }} />
                 {answerColumns.map((c) => (
-                  <col key={c.option.responseOptionId} style={{ width: "7rem" }} />
+                  <col
+                    key={c.option?.responseOptionId ?? c.question.questionId}
+                    style={{ width: c.option ? "7rem" : "14rem" }}
+                  />
                 ))}
               </colgroup>
               <TableHeader className="[&_th]:sticky [&_th]:z-10 [&_th]:bg-card">
@@ -528,11 +554,11 @@ function ResultsIndex() {
                   <TableHead>Contacts</TableHead>
                   {answerColumns.map((c) => (
                     <TableHead
-                      key={c.option.responseOptionId}
+                      key={c.option?.responseOptionId ?? c.question.questionId}
                       className="truncate"
-                      title={`${c.question.name} | ${c.option.text}`}
+                      title={`${c.question.name} | ${c.option?.text ?? "Answered"}`}
                     >
-                      {c.option.text}
+                      {c.option?.text ?? "Answered"}
                     </TableHead>
                   ))}
                 </TableRow>
@@ -566,13 +592,21 @@ function ResultsIndex() {
             </Table>
           </div>
         </div>
-        <div ref={mapWrapperRef} className={cn("relative min-h-0 flex-1", mapHidden && "hidden")}>
+        {/* Collapsed = a slim live sliver, not unmounted — maplibre
+            auto-resizes both ways and the strip keeps the map present.
+            Sized to the caret button plus breathing room. */}
+        <div
+          ref={mapWrapperRef}
+          className={cn("relative min-h-0", mapCollapsed ? "w-12 shrink-0" : "flex-1")}
+        >
           <MapView
             className="h-full"
             zonePerimeters={coloredPerimeters}
             selectedZoneIds={
               selectedZoneId === ALL_ZONES
                 ? (perimeters?.features ?? [])
+                    // Highlight only the drawn set: walked zones.
+                    .filter((f) => (byZone.get(f.properties?.zoneId as string)?.attempted ?? 0) > 0)
                     .map((f) => f.properties?.zoneId as string | undefined)
                     .filter((id): id is string => !!id)
                 : selectedZoneId
@@ -586,6 +620,7 @@ function ResultsIndex() {
             onBackgroundClick={() => setSelectedZoneId(null)}
             fitBounds={fitBounds}
             loading={!coloredPerimeters}
+            insetsHidden={mapCollapsed}
             cornerUpperLeft={
               selectedRow ? (
                 // Percents only — the table row has the full treatment;
@@ -609,16 +644,20 @@ function ResultsIndex() {
                   </span>
                   {answerColumns.map((c) => (
                     <span
-                      key={c.option.responseOptionId}
+                      key={c.option?.responseOptionId ?? c.question.questionId}
                       className="truncate text-muted-foreground"
                     >
-                      {c.question.name} | {c.option.text}:{" "}
+                      {c.question.name} | {c.option?.text ?? "Answered"}:{" "}
                       <RatePercent
-                        rate={optionRate(
-                          selectedRow,
-                          c.question.questionId,
-                          c.option.responseOptionId,
-                        )}
+                        rate={
+                          c.option
+                            ? optionRate(
+                                selectedRow,
+                                c.question.questionId,
+                                c.option.responseOptionId,
+                              )
+                            : answeredRate(selectedRow, c.question.questionId)
+                        }
                         rateMax={1}
                       />
                     </span>
@@ -627,6 +666,17 @@ function ResultsIndex() {
               ) : undefined
             }
           />
+          {/* The caret rides the map's upper-right: it points where the
+              edge will go, and in the sliver it is the whole surface. */}
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={mapCollapsed ? "Expand map" : "Collapse map"}
+            onClick={() => setMapCollapsed((c) => !c)}
+            className="absolute top-2 right-2 z-10"
+          >
+            <Icon name={mapCollapsed ? "chevron-left" : "chevron-right"} className="size-3.5" />
+          </Button>
         </div>
       </div>
     </EditorPage>
@@ -653,7 +703,8 @@ function ZoneRow({
   row: ZoneFunnelRow;
   columns: ReadonlyArray<{
     question: { questionId: string };
-    option: { responseOptionId: string };
+    // Null = the question's single "Answered" completion column.
+    option: { responseOptionId: string } | null;
   }>;
 }) {
   const contactRate = rateOf(row);
@@ -681,10 +732,12 @@ function ZoneRow({
         </span>
       </TableCell>
       {columns.map((c) => {
-        const n = row.responses[c.question.questionId]?.[c.option.responseOptionId] ?? 0;
+        const n = c.option
+          ? (row.responses[c.question.questionId]?.[c.option.responseOptionId] ?? 0)
+          : (row.answered[c.question.questionId] ?? 0);
         const rate = row.contacted > 0 ? n / row.contacted : null;
         return (
-          <TableCell key={c.option.responseOptionId} className={cell}>
+          <TableCell key={c.option?.responseOptionId ?? c.question.questionId} className={cell}>
             <span className="flex items-center gap-1.5">
               <RateBadge rate={rate} rateMax={1} />
               <span className="tabular-nums">{n.toLocaleString()}</span>
@@ -704,6 +757,7 @@ function sumRows(rows: ZoneFunnelRow[]): ZoneFunnelRow {
     attempted: 0,
     contacted: 0,
     responses: {},
+    answered: {},
   };
   for (const r of rows) {
     out.attempted += r.attempted;
@@ -711,6 +765,9 @@ function sumRows(rows: ZoneFunnelRow[]): ZoneFunnelRow {
     for (const [qid, opts] of Object.entries(r.responses)) {
       const q = (out.responses[qid] ??= {});
       for (const [oid, n] of Object.entries(opts)) q[oid] = (q[oid] ?? 0) + n;
+    }
+    for (const [qid, n] of Object.entries(r.answered)) {
+      out.answered[qid] = (out.answered[qid] ?? 0) + n;
     }
   }
   return out;

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 from src.canvass_events import (
+    answered_sql,
     assemble_zone_rows,
     canvass_days_sql,
     event_scope,
@@ -31,8 +32,12 @@ DAY2_NOON = "2026-08-24 16:00:00+00"
 TZ = "America/New_York"
 
 
-def _payload(outcome: str | None, **responses: list[str]) -> str:
-    body: dict = {"responses": {q: {"optionIds": opts} for q, opts in responses.items()}}
+def _payload(outcome: str | None, **responses: list[str] | str) -> str:
+    # A string answer is open-ended text; a list is option picks.
+    def encode(v: list[str] | str) -> dict:
+        return {"text": v} if isinstance(v, str) else {"optionIds": v}
+
+    body: dict = {"responses": {q: encode(v) for q, v in responses.items()}}
     if outcome is not None:
         body["outcome"] = outcome
     return json.dumps(body)
@@ -63,15 +68,16 @@ def _seed(conn) -> None:
         ("p1", "turf1", 2, DAY1_NOON, _payload("not_home")),
         # p2: canvassed in camp1, later not_home in camp2 (cross-campaign
         # supersession when no campaign scope is given).
-        ("p2", "turf1", 3, DAY1_NOON, _payload("canvassed", q1=["no"], q2=["a", "b"])),
+        ("p2", "turf1", 3, DAY1_NOON, _payload("canvassed", q1=["no"], q2=["a", "b"], qt="Julian")),
         ("p2", "turf3", 10, DAY2_NOON, _payload("not_home")),
         # p3: canvassed day 1, cleared day 2.
         ("p3", "turf1", 4, DAY1_NOON, _payload("canvassed", q1=["yes"])),
         ("p3", "turf1", 11, DAY2_NOON, _payload(None)),
         # p4: the only touch on zone 2.
         ("p4", "turf2", 6, DAY2_NOON, _payload("not_home")),
-        # p5: late-evening ET event that lands on day 1, not day 2.
-        ("p5", "turf1", 7, DAY1_LATE, _payload("canvassed")),
+        # p5: late-evening ET event that lands on day 1, not day 2; its
+        # empty text answer is not an answer.
+        ("p5", "turf1", 7, DAY1_LATE, _payload("canvassed", qt="")),
         # p6: has an event but is not in the population table.
         ("p6", "turf1", 8, DAY1_NOON, _payload("canvassed")),
     ]
@@ -135,6 +141,20 @@ def test_population_where_narrows_the_join(operational_conn) -> None:
     assert stages == {"z1": (1, 1)}
 
 
+def test_answered_counts_any_content(operational_conn) -> None:
+    _seed(operational_conn)
+    scope = event_scope("testorg", ["camp1"])
+    cte = latest_results_cte("persons", "", scope.event_filters)
+    rows = operational_conn.execute(answered_sql(cte), scope.event_params).fetchall()
+    answered: dict = {}
+    for zone_id, question_id, n in rows:
+        answered.setdefault(zone_id, {})[question_id] = n
+    # Option picks and non-empty text both count as answered; p5's empty
+    # text does not, and superseded/cleared answers are gone with their
+    # events.
+    assert answered == {"z1": {"q1": 1, "q2": 1, "qt": 1}}
+
+
 def test_canvass_days_bucket_in_display_timezone(operational_conn) -> None:
     _seed(operational_conn)
     # Day list rides the base filters only — a date filter must not
@@ -148,7 +168,8 @@ def test_assemble_zone_rows_zero_fills_and_keeps_publish_names() -> None:
     zone_rows = [("z1", "Zone One RENAMED"), ("z2", "Zone Two"), ("z3", "Zone Three")]
     stage_rows = [("z1", "Zone One", 3, 2)]
     response_rows = [("z1", "q1", "no", 1), ("zX", "q1", "no", 9)]
-    rows = assemble_zone_rows(zone_rows, stage_rows, response_rows)
+    answered_rows = [("z1", "qt", 2), ("zX", "qt", 9)]
+    rows = assemble_zone_rows(zone_rows, stage_rows, response_rows, answered_rows)
     assert [r["zoneName"] for r in rows] == ["Zone One", "Zone Three", "Zone Two"]
     walked = rows[0]
     # The publish-time stamp wins over the zone's current name.
@@ -158,5 +179,6 @@ def test_assemble_zone_rows_zero_fills_and_keeps_publish_names() -> None:
         "attempted": 3,
         "contacted": 2,
         "responses": {"q1": {"no": 1}},
+        "answered": {"qt": 2},
     }
     assert all(r["attempted"] == 0 and r["responses"] == {} for r in rows[1:])

@@ -9,6 +9,9 @@ export type ZoneFunnelRow = {
   contacted: number;
   // questionId → optionId → count, among the contacted.
   responses: Record<string, Record<string, number>>;
+  // questionId → count of contacted who answered at all (non-empty
+  // options or text) — the completion stat for open-ended questions.
+  answered: Record<string, number>;
 };
 
 export type ResultsAggregate = {

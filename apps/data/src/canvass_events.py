@@ -124,6 +124,28 @@ def responses_sql(cte: str) -> str:
     )
 
 
+def answered_sql(cte: str) -> str:
+    """Per-zone count of contacted people who answered each question at
+    all — non-empty optionIds or text. The completion stat for questions
+    whose answers aren't option counts (open-ended)."""
+    return (
+        cte
+        + """
+        SELECT zone_id, q.question_id, count(*) AS n
+        FROM joined,
+             UNNEST(json_keys(responses)) AS q(question_id)
+        WHERE outcome = 'canvassed'
+          AND (
+            len(CAST(json_extract(responses,
+                '$."' || q.question_id || '".optionIds') AS VARCHAR[])) > 0
+            OR coalesce(json_extract_string(responses,
+                '$."' || q.question_id || '".text'), '') <> ''
+          )
+        GROUP BY 1, 2
+        """
+    )
+
+
 def canvass_days_sql(base_filters: list[str]) -> str:
     """Distinct canvass days in the display timezone, newest first.
     Binds [tz, *base_params]."""
@@ -143,9 +165,11 @@ def assemble_zone_rows(
     zone_rows: list[tuple[Any, ...]],
     stage_rows: list[tuple[Any, ...]],
     response_rows: list[tuple[Any, ...]],
+    answered_rows: list[tuple[Any, ...]],
 ) -> list[dict[str, Any]]:
-    """Merge the zone list with the stage and response aggregates: every
-    zone gets a row (zeros when unwalked), sorted by name."""
+    """Merge the zone list with the stage, response, and answered
+    aggregates: every zone gets a row (zeros when unwalked), sorted by
+    name."""
 
     def empty_row(zone_id: str | None, zone_name: str | None) -> dict[str, Any]:
         return {
@@ -154,6 +178,7 @@ def assemble_zone_rows(
             "attempted": 0,
             "contacted": 0,
             "responses": {},
+            "answered": {},
         }
 
     by_zone: dict[str | None, dict[str, Any]] = {}
@@ -174,4 +199,9 @@ def assemble_zone_rows(
         if zone is None:
             continue
         zone["responses"].setdefault(question_id, {})[option_id] = n
+    for zone_id, question_id, n in answered_rows:
+        zone = by_zone.get(zone_id)
+        if zone is None:
+            continue
+        zone["answered"][question_id] = n
     return sorted(by_zone.values(), key=lambda r: r["zoneName"] or "")

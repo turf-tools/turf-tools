@@ -19,6 +19,7 @@ from starlette.background import BackgroundTask
 import duckdb
 from src import timing
 from src.canvass_events import (
+    answered_sql,
     assemble_zone_rows,
     canvass_days_sql,
     event_scope,
@@ -954,10 +955,11 @@ async def results_aggregate(req: _ResultsAggregateRequest):
             day_rows = conn.execute(canvass_days_sql(scope.base_filters), [req.tz, *scope.base_params]).fetchall()
             stage_rows = conn.execute(stages_sql(joined), params).fetchall()
             response_rows = conn.execute(responses_sql(joined), params).fetchall()
+            answered_rows = conn.execute(answered_sql(joined), params).fetchall()
 
         return {
             "days": [r[0] for r in day_rows],
-            "rows": assemble_zone_rows(zone_rows, stage_rows, response_rows),
+            "rows": assemble_zone_rows(zone_rows, stage_rows, response_rows, answered_rows),
         }
 
     return await run_query(work)
