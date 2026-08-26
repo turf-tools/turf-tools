@@ -67,7 +67,7 @@ function ProgressIndex() {
   // Selection is shared: a map click highlights the zone's table row.
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   // Map fill metric — turf-grain by default (the dispatch signal),
-  // person-grain Attempted as the alternate lens (Results' Color-by
+  // person-grain Attempts as the alternate lens (Results' Color-by
   // pattern).
   const [mapMetric, setMapMetric] = useState<"turfs" | "attempted">("turfs");
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
@@ -75,7 +75,7 @@ function ProgressIndex() {
   // Selection can be made from the table, so the whole page is the
   // selection surface (zone-editor convention): clicking chrome outside
   // the map clears. Firing on mousedown is also what makes re-clicking a
-  // zone button flash its map outline — clear here, re-select on click.
+  // zone row flash its map outline — clear here, re-select on click.
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selectedZoneId) return;
@@ -339,7 +339,7 @@ function ProgressMap({
   const hasSelection = Boolean(allSelected || selected || selectedUncutName);
 
   // Corner readout answers "what did I just click" without leaving the
-  // map; the table's highlighted button is the linked echo with the
+  // map; the table's highlighted row is the linked echo with the
   // full numbers. Selection-only — an idle default would flash through
   // every reselect (the outside-click mousedown clears first).
   return (
@@ -534,11 +534,11 @@ function ProgressTable({
               </TableCell>
             </TableRow>
             {rows.map((r) => {
-              // Turf-grain drives the Progress % (and the map): this is
-              // the dispatch board, and person-grain overstates capacity
-              // once all turf is out but plateaued mid-walk. Person-grain
-              // "Attempted" (any outcome / cut people) rides along for
-              // the typical-completion glance.
+              // Turf-grain drives the Progress % (and the map's default
+              // fill): this is the dispatch board, and person-grain
+              // overstates capacity once all turf is out but plateaued
+              // mid-walk. Person-grain "Attempts" (any outcome / cut
+              // people) rides along for the typical-completion glance.
               const turfPct =
                 r.inferred || r.turfs === 0 ? null : Math.round((100 * r.used) / r.turfs);
               const personPct = r.inferred

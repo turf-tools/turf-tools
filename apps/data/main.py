@@ -914,8 +914,8 @@ async def results_aggregate(req: _ResultsAggregateRequest):
     Reduces the event log to the latest result per person (by sequence)
     across the selected campaigns — within the date window when one is
     given — then joins the population (criteria over persons; empty =
-    everyone) and aggregates the funnel stages per zone,
-    plus per-question option counts among the contacted.
+    everyone) and aggregates the funnel stages per zone, plus
+    per-question option and answered counts among the contacted.
     """
 
     def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
@@ -930,8 +930,8 @@ async def results_aggregate(req: _ResultsAggregateRequest):
         joined = latest_results_cte(persons, where, scope.event_filters)
 
         # Zones of the scoped campaigns' groups — every zone gets a row
-        # (zeros when unwalked), so a map click always has a full funnel
-        # to show. Archived campaigns stay in: their results are history,
+        # (zeros when unwalked); which rows to surface is the client's
+        # call. Archived campaigns stay in: their results are history,
         # not noise.
         zone_filters = ["o.slug = ?"]
         zone_params: list = [req.org_slug]

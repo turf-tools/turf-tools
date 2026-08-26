@@ -123,7 +123,7 @@ function ResultsIndex() {
   // Selection can be made from the table, so the whole page is the
   // selection surface (zone-editor convention, same as Progress):
   // clicking chrome outside the map clears. Firing on mousedown is also
-  // what makes re-clicking a zone button flash its map outline.
+  // what makes re-clicking a zone row flash its map outline.
   const mapWrapperRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selectedZoneId) return;
@@ -309,8 +309,8 @@ function ResultsIndex() {
     [coloredPerimeters],
   );
 
-  // The all-zones row is a selection target like any zone: every zone
-  // highlights on the map, the corner shows the aggregate.
+  // The all-zones row is a selection target like any zone: the whole
+  // drawn set highlights on the map, the corner shows the aggregate.
   const selectedRow =
     selectedZoneId === ALL_ZONES
       ? totals

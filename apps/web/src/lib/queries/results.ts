@@ -3,7 +3,7 @@ import type { Filter } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
 // Flat conditions: each chip is one leaf AND'd onto the everyone-
-// baseline — `narrow`, or `remove` when negated ("is not").
+// baseline — `narrow`, or `remove` when negated ("Exclude").
 export type Condition = { filter: Filter; negated: boolean };
 
 export function conditionsToCriteria(conditions: Condition[]) {
