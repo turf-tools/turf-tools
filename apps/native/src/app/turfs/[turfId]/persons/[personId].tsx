@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Ban, Check, Pencil, Scroll, X } from "lucide-react-native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -355,9 +355,11 @@ export default function PersonScreen() {
     return () => sub.remove();
   }, []);
 
-  // Last-resort commit: leaving the screen (back gesture, list nav) with
-  // anything uncommitted must not drop answers.
-  useEffect(() => () => flushPendingRef.current(), []);
+  // Last-resort commit: losing focus (back gesture, list nav, or a screen
+  // pushed on top — settings, progress) with anything uncommitted must not
+  // drop answers, and surfaces reading the event log while this screen is
+  // covered must see them.
+  useFocusEffect(useCallback(() => () => flushPendingRef.current(), []));
 
   const handleListPress = () => {
     setOpenSheet(true);
