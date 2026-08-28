@@ -1,10 +1,20 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { atom } from "jotai";
 
-export type ActiveTurf = { host: string; turfId: string };
+// walkId is the sign-out recorded at bind, stamped onto every event.
+// Absent on bindings persisted before the stamp existed.
+export type ActiveTurf = { host: string; turfId: string; walkId?: string };
 
 const STORAGE_KEY = "active-turf";
 const internal = atom<ActiveTurf | null>(null);
+
+// Survives the unbind: the debounced last result can flush during the
+// unbind teardown, after the atom is already null — the walk stamp falls
+// back to this so that event still attributes to the walk it belongs to.
+let lastBound: ActiveTurf | null = null;
+export function lastBoundTurf(): ActiveTurf | null {
+  return lastBound;
+}
 
 // The (host, turfId) pair that scopes everything the app does. Writes mirror
 // to AsyncStorage so the binding survives app restart; clearing (set to null)
@@ -13,6 +23,7 @@ export const activeTurfAtom = atom(
   (get) => get(internal),
   (_get, set, next: ActiveTurf | null) => {
     set(internal, next);
+    if (next !== null) lastBound = next;
     if (next === null) void AsyncStorage.removeItem(STORAGE_KEY);
     else void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   },

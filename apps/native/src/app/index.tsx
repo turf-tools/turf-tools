@@ -58,12 +58,13 @@ export default function LandingScreen() {
   // who may hand the same turf to someone else. Throws on failure so
   // callers refuse the bind.
   const openWalk = async (turfId: string) => {
-    if (!canvasser) return;
-    await client.walks.open({
+    if (!canvasser) return undefined;
+    const { walkId } = await client.walks.open({
       turfId,
       canvasserName: canvasser.name,
       canvasserPhone: canvasser.phone ?? undefined,
     });
+    return walkId;
   };
 
   const goToTurf = (turfId: string) => {
@@ -129,8 +130,8 @@ export default function LandingScreen() {
         router.push("/canvasser");
         return;
       }
-      await openWalk(turf.turfId);
-      setActiveTurf({ host: hostValue, turfId: turf.turfId });
+      const walkId = await openWalk(turf.turfId);
+      setActiveTurf({ host: hostValue, turfId: turf.turfId, walkId });
       goToTurf(turf.turfId);
       // Navigated away — the label resets via the focus effect on return.
       inFlightRef.current = false;

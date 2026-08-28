@@ -44,6 +44,7 @@ export const appendResult = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
+      walkId: z.string().uuid().optional(),
       personId: z.string().optional(),
       doorId: z.string().optional(),
       buildingId: z.string().optional(),
@@ -62,6 +63,7 @@ export const appendResult = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
+        walkId: input.walkId,
         canvasserId: input.canvasserId,
         canvasserName: input.canvasserName,
         canvasserPhone: input.canvasserPhone,
@@ -82,6 +84,7 @@ export const appendNote = mut
   .input(
     z.object({
       turfId: z.string().uuid(),
+      walkId: z.string().uuid().optional(),
       personId: z.string().optional(),
       doorId: z.string().optional(),
       buildingId: z.string().optional(),
@@ -100,6 +103,7 @@ export const appendNote = mut
       .values({
         clientEventId: input.clientEventId,
         turfId: input.turfId,
+        walkId: input.walkId,
         canvasserId: input.canvasserId,
         canvasserName: input.canvasserName,
         canvasserPhone: input.canvasserPhone,

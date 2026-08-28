@@ -9,6 +9,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { turfs } from "./turfs";
+import { walks } from "./walks";
 
 // Append-only event log for canvass results. Two kinds:
 //   - "result": the complete current disposition of an entity (outcome +
@@ -27,6 +28,10 @@ import { turfs } from "./turfs";
 // canvasserName and cavasserPhone are stamped by the client.
 // Any future verification service can join on phone.
 //
+// walkId is the sign-out the event happened under, stamped by the client
+// at bind time. Null from pre-stamp clients — imputable from walks by
+// (turf, phone, open-interval).
+//
 // createdAt is CLIENT time (when it happened in the field); receivedAt is
 // server time (when the server ingested it). The canonical ordering key is
 // sequence. canvasserId is the universal canvasser identity (no FK — it
@@ -40,6 +45,7 @@ export const canvassEvents = app.table(
     turfId: uuid()
       .notNull()
       .references(() => turfs.turfId),
+    walkId: uuid().references(() => walks.walkId),
     canvasserId: text(),
     canvasserName: text(),
     canvasserPhone: text(),

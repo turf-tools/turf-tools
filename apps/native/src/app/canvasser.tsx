@@ -71,12 +71,12 @@ export default function CanvasserScreen() {
     // sheet stays up for a retry.
     setSaving(true);
     try {
-      await client.walks.open({
+      const { walkId } = await client.walks.open({
         turfId: pendingOpen.turfId,
         canvasserName: next.name,
         canvasserPhone: next.phone,
       });
-      setActiveTurf(pendingOpen);
+      setActiveTurf({ ...pendingOpen, walkId });
       setPendingOpen(null);
       void openTurf(pendingOpen.turfId).catch(() => {
         Alert.alert(

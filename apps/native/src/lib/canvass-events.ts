@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getDefaultStore } from "jotai";
 import { useCallback, useEffect, useState } from "react";
 import type { CanvassEventPayload, ResponseValue } from "@turf-tools/db/schema";
+import { activeTurfAtom, lastBoundTurf } from "@/lib/atoms/active-turf";
 import { canvasserAtom } from "@/lib/atoms/canvasser";
 import { syncIntervalAtom } from "@/lib/atoms/sync";
 import { FixedReactNativeOnlineDetector } from "@/lib/online-detector";
@@ -22,6 +23,7 @@ type CanvassEvent = {
   sequence: number;
   clientEventId: string | null;
   turfId: string;
+  walkId: string | null;
   canvasserId: string | null;
   canvasserName: string | null;
   canvasserPhone: string | null;
@@ -127,6 +129,7 @@ async function appendEventToServer(turfId: string, event: CanvassEvent) {
   const payload = event.payload as unknown as CanvassEventPayload;
   const base = {
     turfId,
+    walkId: event.walkId ?? undefined,
     personId: event.personId ?? undefined,
     doorId: event.doorId ?? undefined,
     buildingId: event.buildingId ?? undefined,
@@ -168,25 +171,32 @@ function createTurfContext(turfId: string): TurfContext {
     },
   });
 
-  const buildEvent = (params: RecordEventParams) => ({
-    // Placeholder values — server assigns sequence. canvasserId stays null
-    // (reserved); attribution is the client-claimed `canvasser` stamp, read
-    // from the device identity at record time so mid-shift edits in Settings
-    // apply to subsequent events.
-    sequence: 0,
-    canvasserId: null,
-    canvasserName: getDefaultStore().get(canvasserAtom)?.name ?? null,
-    canvasserPhone: getDefaultStore().get(canvasserAtom)?.phone ?? null,
-    clientEventId: crypto.randomUUID(),
-    turfId,
-    personId: params.personId ?? null,
-    doorId: params.doorId ?? null,
-    buildingId: params.buildingId ?? null,
-    kind: params.kind,
-    payload: params.payload as Record<string, unknown>,
-    inputType: "mobile",
-    createdAt: new Date().toISOString(),
-  });
+  const buildEvent = (params: RecordEventParams) => {
+    // Walk stamp: the live binding at record time (or the last binding,
+    // for a flush that lands mid-unbind), guarded on turfId so a stale
+    // context for another turf can't claim the walk.
+    const active = getDefaultStore().get(activeTurfAtom) ?? lastBoundTurf();
+    return {
+      // Placeholder values — server assigns sequence. canvasserId stays null
+      // (reserved); attribution is the client-claimed `canvasser` stamp, read
+      // from the device identity at record time so mid-shift edits in Settings
+      // apply to subsequent events.
+      sequence: 0,
+      canvasserId: null,
+      canvasserName: getDefaultStore().get(canvasserAtom)?.name ?? null,
+      canvasserPhone: getDefaultStore().get(canvasserAtom)?.phone ?? null,
+      clientEventId: crypto.randomUUID(),
+      turfId,
+      walkId: active?.turfId === turfId ? (active.walkId ?? null) : null,
+      personId: params.personId ?? null,
+      doorId: params.doorId ?? null,
+      buildingId: params.buildingId ?? null,
+      kind: params.kind,
+      payload: params.payload as Record<string, unknown>,
+      inputType: "mobile",
+      createdAt: new Date().toISOString(),
+    };
+  };
 
   const recordEvent = executor.createOfflineAction({
     mutationFnName: "appendEvent",
