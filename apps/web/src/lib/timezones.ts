@@ -14,6 +14,14 @@ export function isDisplayTimezone(value: string): value is DisplayTimezone {
   return TIMEZONE_OPTIONS.some((o) => o.value === value);
 }
 
+// "2026-08-23" → "Aug 23, 2026". Split manually — Date parsing would
+// re-interpret the day in UTC and shift it across midnight.
+export function formatCanvassDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  const months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+  return `${months[(m ?? 1) - 1]} ${d}, ${y}`;
+}
+
 // Detect the browser's IANA timezone and map it to one of the four options.
 // Exact match wins; otherwise fall back to the closest US zone by current
 // UTC offset. Phoenix/Honolulu/etc. land on Mountain or Pacific.

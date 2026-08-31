@@ -7,7 +7,7 @@ import { EditorHeader } from "~/components/editor-header";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Pill } from "~/components/pill";
-import { formatDate } from "~/lib/format";
+import { formatDate, formatPersonName } from "~/lib/format";
 import type { ManifestFieldDef } from "~/lib/manifest";
 import type { PersonDetail, PersonHit } from "~/rpc/web/persons";
 import {
@@ -275,7 +275,7 @@ function ResultsPanel({
                   )}
                 >
                   <span className="truncate">
-                    {toTitleCase([hit.first_name, hit.last_name].filter(Boolean).join(" ")) || "—"}
+                    {formatPersonName(hit.first_name, null, hit.last_name) || "—"}
                   </span>
                   <span className="truncate">
                     {[toTitleCase(hit.address_line_1), hit.address_line_2]
@@ -461,10 +461,11 @@ function DetailHeader({
   defByColumn: Map<string, ManifestFieldDef>;
 }) {
   const name =
-    toTitleCase(
-      [person.first_name, person.middle_name, person.last_name, person.name_suffix]
-        .filter(Boolean)
-        .join(" "),
+    formatPersonName(
+      toText(person.first_name),
+      toText(person.middle_name),
+      toText(person.last_name),
+      toText(person.name_suffix),
     ) || "Unknown";
   // Street only — city / county / ZIP live in the location block below. Only
   // line 1 gets title-cased; line 2 (apartment, e.g. "4R") is left verbatim.

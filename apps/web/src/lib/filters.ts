@@ -182,6 +182,16 @@ export const SYSTEM_TOP_SECTION: ReadonlyArray<FilterDef> = [
   { kind: "all", key: "all", label: "Everyone" },
 ];
 
+// Person-level outcomes with display labels — the filter values below and
+// any surface printing a raw outcome share these.
+export const CANVASS_OUTCOME_OPTIONS = [
+  { value: "canvassed", label: "Canvassed" },
+  { value: "not_home", label: "Not home" },
+  { value: "deceased", label: "Deceased" },
+  { value: "hostile", label: "Hostile" },
+  { value: "moved", label: "Moved" },
+];
+
 export const SYSTEM_BOTTOM_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
   // Canvass history — prior results read back from canvass_events. Only
   // person-level outcomes are exposed (door/building dispositions like
@@ -191,13 +201,7 @@ export const SYSTEM_BOTTOM_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
       kind: "canvass-outcome",
       key: "canvass_outcome",
       label: "Canvass Outcome",
-      values: [
-        { value: "canvassed", label: "Canvassed" },
-        { value: "not_home", label: "Not home" },
-        { value: "deceased", label: "Deceased" },
-        { value: "hostile", label: "Hostile" },
-        { value: "moved", label: "Moved" },
-      ],
+      values: CANVASS_OUTCOME_OPTIONS,
     },
     { kind: "canvass-response", key: "canvass_response", label: "Canvass Response" },
   ],

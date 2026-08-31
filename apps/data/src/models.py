@@ -109,3 +109,28 @@ class Person(BaseModel):
     state: str
     zip5: str
     zip4: str | None = None
+
+
+# The exported columns, in order, under their own names — the Person contract
+# above as it survives assembly. No half_code: assembly consumes it into
+# canonical address_line_1 ("123 1/2 MAIN ST"). Required-contract columns are
+# always selected, so genuine pipeline drift fails loudly; the contract-optional
+# four are included only when the version's table has them. Dataset-specific
+# columns are not exported. Shared by /segments/export and the /reports/*
+# exports.
+EXPORT_COLUMNS = [
+    "external_id",
+    "external_id_type",
+    "first_name",
+    "middle_name",
+    "last_name",
+    "name_suffix",
+    "address_line_1",
+    "address_line_2",
+    "city",
+    "state",
+    "zip5",
+    "zip4",
+]
+# `| None = None` on Person — an importer may omit these columns entirely.
+EXPORT_OPTIONAL = {"middle_name", "name_suffix", "address_line_2", "zip4"}

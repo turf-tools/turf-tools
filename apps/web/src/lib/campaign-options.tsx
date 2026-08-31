@@ -22,6 +22,16 @@ export function campaignFilterOptions(campaigns: ReadonlyArray<CampaignRow>) {
   );
 }
 
+// Resolve a campaign search param to a concrete scope: "all" and null
+// both mean all campaigns, but null floats to the default so new
+// campaigns take over without being pinned in the URL.
+export function scopedCampaignId(
+  param: string | null,
+  campaigns: ReadonlyArray<Omit<CampaignRow, "name">>,
+): string | null {
+  return param === "all" ? null : (param ?? defaultCampaignId(campaigns));
+}
+
 // Newest-created active campaign, falling back to newest archived — the
 // default scope for pages that always show exactly one campaign.
 export function defaultCampaignId(

@@ -22,3 +22,24 @@ export const GRAY = schemeObservable10[9]!;
 
 // Scheme order, for index-based assignment (zone fills).
 export const PALETTE = [BLUE, YELLOW, RED, TEAL, GREEN, PINK, PURPLE, LIGHT_BLUE, BROWN, GRAY];
+
+// Status trio thresholds shared by the turf board, Progress, and Reports:
+// red = barely started, yellow = underway, green = mostly done.
+export function progressColor(pct: number) {
+  return pct <= 25 ? RED : pct <= 75 ? YELLOW : GREEN;
+}
+
+// Discrete 3-band magnitude scale — pink → purple → blue: the one
+// Observable10 hue-chain that avoids the RYG status hues entirely
+// (green/yellow mean done/underway next door on Progress), falls
+// monotonically in CIELAB lightness ("darker = more" actually orders),
+// and rotates through adjacent hues. Same banding rule as the RYG trio.
+export function rateColor(t: number) {
+  return t <= 0.25 ? PINK : t <= 0.75 ? PURPLE : BLUE;
+}
+
+// Color-scale domain for contact rate: door-knocking contact rates live
+// in 0-20% essentially universally, so a 0-100% scale washes everything
+// into the bottom band. Shared by Results and Reports so a given rate
+// reads as the same color everywhere.
+export const CONTACT_RATE_MAX = 0.2;

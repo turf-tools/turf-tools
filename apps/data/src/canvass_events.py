@@ -1,11 +1,14 @@
 """Read path over the canvass event log (app.canvass_events).
 
-One reduction rule shared by every reporting surface: the latest result
-per person, by event sequence, within the requested scope — so funnel
-stages, response counts, and row extracts reconcile by construction.
-Builders name operational Postgres through OPERATIONAL_PG_ALIAS, so
-tests attach a synthetic in-memory catalog under the same alias and run
-the exact production SQL.
+Two reduction rules shared by every reporting surface, both "latest
+result by event sequence within the requested scope": per person (the
+current-state grain behind funnel stages and response counts) and per
+(person, walk) (the attempt grain behind the row-level reports). The
+person grain is the attempt grain reduced once more, so counts derived
+from either reconcile by construction. Builders name operational
+Postgres through OPERATIONAL_PG_ALIAS, so tests attach a synthetic
+in-memory catalog under the same alias and run the exact production
+SQL.
 """
 
 from __future__ import annotations
@@ -142,6 +145,108 @@ def answered_sql(cte: str) -> str:
                 '$."' || q.question_id || '".text'), '') <> ''
           )
         GROUP BY 1, 2
+        """
+    )
+
+
+def attempts_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
+    """WITH block reducing events to attempts — the latest result per
+    (person, walk) — joined to the conditioned population. Events
+    without a walk_id (pre-stamp clients) group by canvass day in the
+    display timezone instead. A person whose scope-wide latest result
+    is a clear contributes no attempts: a clear means the record was a
+    mistake, erasing attempt history too, so attempt-derived counts
+    match the person grain by construction. Queries built on it bind
+    the event params, then the fallback tz, then the criteria params."""
+    return f"""
+        WITH attempt_latest AS (
+            SELECT * FROM (
+                SELECT
+                    e.person_id,
+                    e.walk_id::VARCHAR AS walk_id,
+                    e.canvasser_name,
+                    e.canvasser_phone,
+                    json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') AS outcome,
+                    json_extract(CAST(e.payload AS VARCHAR), '$.responses') AS responses,
+                    t.zone_id::VARCHAR AS zone_id,
+                    t.zone_name,
+                    t.name AS turf_name,
+                    c.name AS campaign,
+                    c.organization_id,
+                    e.created_at,
+                    e.sequence,
+                    first_value(json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome'))
+                        OVER (PARTITION BY e.person_id ORDER BY e.sequence DESC)
+                        AS current_outcome
+                FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+                JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                    ON o.organization_id = c.organization_id
+                WHERE {" AND ".join(event_filters)}
+                QUALIFY row_number() OVER (
+                    PARTITION BY e.person_id, coalesce(
+                        e.walk_id::VARCHAR,
+                        ((e.created_at AT TIME ZONE ?)::DATE)::VARCHAR)
+                    ORDER BY e.sequence DESC
+                ) = 1
+            )
+        ),
+        attempt_pop AS (
+            SELECT external_id FROM {persons_fqn} {where}
+        ),
+        attempts AS (
+            SELECT a.* FROM attempt_latest a
+            JOIN attempt_pop p ON p.external_id = a.person_id
+            WHERE a.outcome IS NOT NULL AND a.current_outcome IS NOT NULL
+        )
+    """
+
+
+def walk_stats_sql(cte: str) -> str:
+    """Per-walk tallies over the attempt grain (attempts are already
+    outcome-bearing, so attempted = row count). Walkless attempts from
+    pre-stamp clients have no walk to attribute to and are absent; walk
+    rows and their sign-out lookups join in at the endpoint, so
+    sign-outs with no attempts zero-fill there. Activity timestamps
+    come back as UTC ISO strings (display-tz formatting is the
+    endpoint's job)."""
+    return (
+        cte
+        + """
+        SELECT
+            walk_id,
+            count(*) AS attempted,
+            count(*) FILTER (WHERE outcome = 'canvassed') AS contacted,
+            min(created_at)::VARCHAR AS first_activity,
+            max(created_at)::VARCHAR AS last_activity
+        FROM attempts
+        WHERE walk_id IS NOT NULL
+        GROUP BY walk_id
+        """
+    )
+
+
+def canvasser_stats_sql(cte: str) -> str:
+    """Per-canvasser tallies over the attempt grain. Identity is the
+    claimed attestation — phone where present, else name — and the
+    display name is the most recently claimed one. Everything derives
+    from attempts, so a canvasser exists only with ≥1 attempt and
+    sign-outs with no attempts don't count as walks."""
+    return (
+        cte
+        + """
+        SELECT
+            coalesce(canvasser_phone, canvasser_name) AS canvasser_key,
+            arg_max(canvasser_name, sequence) AS canvasser_name,
+            arg_max(canvasser_phone, sequence) AS canvasser_phone,
+            count(DISTINCT walk_id) AS walks,
+            count(*) AS attempted,
+            count(*) FILTER (WHERE outcome = 'canvassed') AS contacted,
+            min(created_at)::VARCHAR AS first_active,
+            max(created_at)::VARCHAR AS last_active
+        FROM attempts
+        GROUP BY 1
         """
     )
 
