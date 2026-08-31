@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 from src.canvass_events import (
     EventScope,
     attempts_cte,
-    base_events_sql,
     canvass_days_sql,
     canvasser_stats_sql,
     event_scope,
@@ -46,8 +45,6 @@ class ReportCtx:
     person_cols: list[str]
     id_cols: list[str]
     scope: EventScope
-    # Materialized base-events relation — the request's one Postgres scan.
-    base: str
 
 
 def build_ctx(
@@ -66,9 +63,6 @@ def build_ctx(
     # and address rather than external ids.
     id_cols = [c for c in voter_cols if c in ("external_id", "external_id_type")]
     person_cols = [c for c in voter_cols if c not in ("external_id", "external_id_type")]
-    scope = event_scope(org_slug, campaign_ids, day=day, tz=tz)
-    with timed("query"):
-        base = materialize(conn, "base_events", base_events_sql(scope.base_filters), scope.base_params)
     return ReportCtx(
         org_slug=org_slug,
         campaign_ids=campaign_ids,
@@ -78,8 +72,7 @@ def build_ctx(
         voter_cols=voter_cols,
         person_cols=person_cols,
         id_cols=id_cols,
-        scope=scope,
-        base=base,
+        scope=event_scope(org_slug, campaign_ids, day=day, tz=tz),
     )
 
 
@@ -108,23 +101,21 @@ def _shared_cols(ctx: ReportCtx) -> str:
 
 
 def _event_days(ctx: ReportCtx) -> tuple[str, list]:
-    return canvass_days_sql(ctx.base), [ctx.tz]
+    return canvass_days_sql(ctx.scope.base_filters), [ctx.tz, *ctx.scope.base_params]
 
 
-def _materialize_attempts(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx, dated: bool = True) -> str:
-    """Reduce the materialized base events to the attempt grain, into a
-    temp table every later statement reads by the returned name. `dated`
-    applies the request's date window; walks passes False — a walk is a
-    single outing, so the day chip filters sign-out days, not its
-    stats."""
-    date_filters = ctx.scope.date_filters if dated else []
-    date_params = ctx.scope.date_params if dated else []
+def _materialize_attempts(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx, scope: EventScope | None = None) -> str:
+    """One event-log reduction per request: the attempt grain lands in a
+    temp table every later statement reads by the returned name, instead
+    of each re-running the Postgres scan and persons join as a CTE
+    prefix."""
+    scope = scope or ctx.scope
     with timed("query"):
         return materialize(
             conn,
             "attempts",
-            f"{attempts_cte(ctx.persons, '', ctx.base, date_filters)} SELECT * FROM attempts",
-            [*date_params, ctx.tz],
+            f"{attempts_cte(ctx.persons, '', scope.event_filters)} SELECT * FROM attempts",
+            [*scope.event_params, ctx.tz],
         )
 
 
@@ -426,6 +417,7 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     them, and the Canvassers report already counts walks this way. A
     walk is a single outing, so its tallies are its own: the day chip
     filters the sign-out day, not the stats window."""
+    walk_scope = event_scope(ctx.org_slug, ctx.campaign_ids)
     walk_filters = ["o.slug = ?"]
     walk_params: list = [ctx.org_slug]
     if ctx.campaign_ids:
@@ -436,7 +428,7 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     if ctx.day:
         day_filter = "AND (w.opened_at AT TIME ZONE ?)::DATE = ?::DATE"
         day_params = [ctx.tz, ctx.day]
-    attempts = _materialize_attempts(conn, ctx, dated=False)
+    attempts = _materialize_attempts(conn, ctx, walk_scope)
     body_sql = f"""
         WITH stats AS ({walk_stats_sql(attempts)}),
         walk_rows AS (

@@ -33,7 +33,10 @@ export const reportRowsQuery = (
         ...(day ? { day, tz } : {}),
         ...(sort ? { sort: sort.key, dir: sort.dir } : {}),
       }),
-    staleTime: 30_000,
+    // Report data moves only when canvass events sync in; a 5-minute
+    // freshness bound keeps tab-backs from re-running the heavyweight
+    // query (progressTargetsQuery's convention).
+    staleTime: 5 * 60_000,
     // Same-kind scope/sort/page changes swap data in place (the panel
     // dims via isPlaceholderData while the swap is in flight); a kind
     // switch is a different table entirely, so it gets a clean load

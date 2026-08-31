@@ -23,17 +23,15 @@ from src.duckdb import OPERATIONAL_PG_ALIAS
 
 @dataclass
 class EventScope:
-    """Event-log WHERE fragments, split by where they apply: `base` (org
-    + campaigns, `e.`-prefixed) scopes the one Postgres scan that
-    materializes the base relation; `date` (unprefixed) narrows the
-    reductions over that relation. The day list derives from the base
-    relation and must ignore date filters — the picker's options would
-    otherwise collapse to the current pick."""
+    """Event-log WHERE fragments, split in two: `base` (org + campaigns)
+    feeds the canvass-day list, which must ignore date filters — the
+    picker's options would otherwise collapse to the current pick;
+    `event` adds the date window for the reduction itself."""
 
     base_filters: list[str]
     base_params: list[Any]
-    date_filters: list[str]
-    date_params: list[Any]
+    event_filters: list[str]
+    event_params: list[Any]
 
 
 def event_scope(
@@ -49,64 +47,44 @@ def event_scope(
     if campaign_ids:
         base_filters.append("c.campaign_id::VARCHAR IN (SELECT unnest(?))")
         base_params.append(list(campaign_ids))
-    date_filters: list[str] = []
-    date_params: list[Any] = []
+    event_filters = [*base_filters]
+    event_params: list[Any] = [*base_params]
     if start:
-        date_filters.append("created_at >= ?::TIMESTAMPTZ")
-        date_params.append(start)
+        event_filters.append("e.created_at >= ?::TIMESTAMPTZ")
+        event_params.append(start)
     if end:
-        date_filters.append("created_at <= ?::TIMESTAMPTZ")
-        date_params.append(end)
+        event_filters.append("e.created_at <= ?::TIMESTAMPTZ")
+        event_params.append(end)
     if day:
         # Day boundaries in the display timezone so DST can't shift them.
-        date_filters.append("(created_at AT TIME ZONE ?)::DATE = ?::DATE")
-        date_params.extend([tz, day])
-    return EventScope(base_filters, base_params, date_filters, date_params)
+        event_filters.append("(e.created_at AT TIME ZONE ?)::DATE = ?::DATE")
+        event_params.extend([tz, day])
+    return EventScope(base_filters, base_params, event_filters, event_params)
 
 
-def base_events_sql(base_filters: list[str]) -> str:
-    """The one Postgres scan per request: scoped result events joined to
-    their place lookups, with payload fields extracted. Both reductions
-    and the day list derive from its materialization. Binds the base
-    params."""
-    return f"""
-        SELECT
-            e.person_id,
-            e.walk_id::VARCHAR AS walk_id,
-            e.canvasser_name,
-            e.canvasser_phone,
-            json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') AS outcome,
-            json_extract(CAST(e.payload AS VARCHAR), '$.responses') AS responses,
-            t.zone_id::VARCHAR AS zone_id,
-            t.zone_name,
-            t.name AS turf_name,
-            c.name AS campaign,
-            c.organization_id,
-            e.created_at,
-            e.sequence
-        FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
-        JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
-        JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
-        JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
-            ON o.organization_id = c.organization_id
-        WHERE {" AND ".join(base_filters)}
-    """
-
-
-def latest_results_cte(persons_fqn: str, where: str, rel: str, date_filters: list[str]) -> str:
-    """WITH block reducing the base relation `rel` to each person's
-    latest result within the date window, joined to the conditioned
-    population (`where` over `persons_fqn`; empty = everyone). Queries
-    built on it bind the date params first, then the criteria params."""
-    date_where = f"WHERE {' AND '.join(date_filters)}" if date_filters else ""
+def latest_results_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
+    """WITH block reducing events to each person's latest result, joined
+    to the conditioned population (`where` over `persons_fqn`; empty =
+    everyone). Queries built on it bind the event params first, then the
+    criteria params."""
     return f"""
         WITH latest AS (
             SELECT * FROM (
-                SELECT person_id, outcome, responses, zone_id, zone_name, sequence
-                FROM {rel}
-                {date_where}
+                SELECT
+                    e.person_id,
+                    json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') AS outcome,
+                    json_extract(CAST(e.payload AS VARCHAR), '$.responses') AS responses,
+                    t.zone_id::VARCHAR AS zone_id,
+                    t.zone_name,
+                    e.sequence
+                FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+                JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                    ON o.organization_id = c.organization_id
+                WHERE {" AND ".join(event_filters)}
                 QUALIFY row_number() OVER (
-                    PARTITION BY person_id ORDER BY sequence DESC
+                    PARTITION BY e.person_id ORDER BY e.sequence DESC
                 ) = 1
             )
         ),
@@ -167,32 +145,46 @@ def answered_sql(rel: str) -> str:
         """
 
 
-def attempts_cte(persons_fqn: str, where: str, rel: str, date_filters: list[str]) -> str:
-    """WITH block reducing the base relation `rel` to attempts — the
-    latest result per (person, walk) within the date window — joined to
-    the conditioned population. Events without a walk_id (pre-stamp
-    clients) group by canvass day in the display timezone instead. A
-    person whose scope-wide latest result is a clear contributes no
-    attempts: a clear means the record was a mistake, erasing attempt
-    history too, so attempt-derived counts match the person grain by
-    construction. Queries built on it bind the date params, then the
-    fallback tz, then the criteria params."""
-    date_where = f"WHERE {' AND '.join(date_filters)}" if date_filters else ""
+def attempts_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
+    """WITH block reducing events to attempts — the latest result per
+    (person, walk) — joined to the conditioned population. Events
+    without a walk_id (pre-stamp clients) group by canvass day in the
+    display timezone instead. A person whose scope-wide latest result
+    is a clear contributes no attempts: a clear means the record was a
+    mistake, erasing attempt history too, so attempt-derived counts
+    match the person grain by construction. Queries built on it bind
+    the event params, then the fallback tz, then the criteria params."""
     return f"""
         WITH attempt_latest AS (
             SELECT * FROM (
                 SELECT
-                    b.*,
-                    first_value(outcome)
-                        OVER (PARTITION BY person_id ORDER BY sequence DESC)
+                    e.person_id,
+                    e.walk_id::VARCHAR AS walk_id,
+                    e.canvasser_name,
+                    e.canvasser_phone,
+                    json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') AS outcome,
+                    json_extract(CAST(e.payload AS VARCHAR), '$.responses') AS responses,
+                    t.zone_id::VARCHAR AS zone_id,
+                    t.zone_name,
+                    t.name AS turf_name,
+                    c.name AS campaign,
+                    c.organization_id,
+                    e.created_at,
+                    e.sequence,
+                    first_value(json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome'))
+                        OVER (PARTITION BY e.person_id ORDER BY e.sequence DESC)
                         AS current_outcome
-                FROM {rel} b
-                {date_where}
+                FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+                JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                    ON o.organization_id = c.organization_id
+                WHERE {" AND ".join(event_filters)}
                 QUALIFY row_number() OVER (
-                    PARTITION BY person_id, coalesce(
-                        walk_id,
-                        ((created_at AT TIME ZONE ?)::DATE)::VARCHAR)
-                    ORDER BY sequence DESC
+                    PARTITION BY e.person_id, coalesce(
+                        e.walk_id::VARCHAR,
+                        ((e.created_at AT TIME ZONE ?)::DATE)::VARCHAR)
+                    ORDER BY e.sequence DESC
                 ) = 1
             )
         ),
@@ -250,13 +242,17 @@ def canvasser_stats_sql(rel: str) -> str:
         """
 
 
-def canvass_days_sql(rel: str) -> str:
-    """Distinct canvass days in the display timezone over the base
-    relation (date-unfiltered by construction), newest first. Binds
-    [tz]."""
+def canvass_days_sql(base_filters: list[str]) -> str:
+    """Distinct canvass days in the display timezone, newest first.
+    Binds [tz, *base_params]."""
     return f"""
-        SELECT DISTINCT ((created_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
-        FROM {rel}
+        SELECT DISTINCT ((e.created_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
+        FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+        JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+        JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+        JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+            ON o.organization_id = c.organization_id
+        WHERE {" AND ".join(base_filters)}
         ORDER BY day DESC
     """
 

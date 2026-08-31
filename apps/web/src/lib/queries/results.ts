@@ -29,7 +29,9 @@ export const resultsAggregateQuery = (
         ...(day ? { day, tz } : {}),
         ...(conditions.length > 0 ? { criteria: conditionsToCriteria(conditions) } : {}),
       }),
-    staleTime: 30_000,
+    // Same heavyweight event reduction as reports; the same 5-minute
+    // freshness bound keeps tab-backs silent.
+    staleTime: 5 * 60_000,
     // Filter/scope changes swap data in place — no suspension, no flash.
     placeholderData: keepPreviousData,
   });
