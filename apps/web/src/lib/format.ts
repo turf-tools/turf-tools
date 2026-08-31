@@ -1,3 +1,22 @@
+import { toTitleCase } from "./utils";
+
+// Display name: "First M Last Suffix" — a middle name collapses to its
+// bare initial when present, nothing otherwise. Shared by lookup (list +
+// detail), the segment list view, and reports so names render the same
+// everywhere.
+export function formatPersonName(
+  first: string | null | undefined,
+  middle: string | null | undefined,
+  last: string | null | undefined,
+  suffix?: string | null,
+): string {
+  const trimmed = middle?.trim();
+  const initial = trimmed ? trimmed[0]?.toUpperCase() : null;
+  return [toTitleCase(first), initial, toTitleCase(last), toTitleCase(suffix)]
+    .filter(Boolean)
+    .join(" ");
+}
+
 // Formatters shared across the admin UI. Keep date output compact so it
 // fits cleanly inside a Pill (MM/DD/YY).
 export function formatDate(value: Date | string | null | undefined, timezone: string) {

@@ -13,7 +13,7 @@ import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
 import { Page } from "~/components/page";
 import { tintStyle } from "~/components/badge";
-import { BLUE, GREEN, RED, YELLOW } from "~/lib/palette";
+import { BLUE, progressColor } from "~/lib/palette";
 import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
@@ -52,10 +52,6 @@ type WalkRow = WalksPayload["walks"][number];
 // phone into the attestation sheet; short enough that a failed handoff
 // clears while the lead is still at the table.
 const PENDING_MS = 2 * 60_000;
-
-function progressColor(pct: number) {
-  return pct <= 25 ? RED : pct <= 75 ? YELLOW : GREEN;
-}
 
 export const Route = createFileRoute("/$orgSlug/turfs/")({
   validateSearch: (search): TurfsSearch => ({

@@ -21,16 +21,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "~/components/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import { emptyFilterFor, type FilterDef, filterKey, isActiveFilter } from "~/lib/filters";
-import { BLUE, PINK, PURPLE } from "~/lib/palette";
+import { CONTACT_RATE_MAX, rateColor } from "~/lib/palette";
 import { bboxOfFeatures } from "~/lib/geometry";
 import { useFilterCatalog } from "~/lib/manifest";
-import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
+import { campaignFilterOptions, scopedCampaignId } from "~/lib/campaign-options";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { type Condition, resultsAggregateQuery } from "~/lib/queries/results";
 import { zonePerimetersQuery } from "~/lib/queries/zones";
 import { segmentsListQuery } from "~/lib/queries/segments";
-import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
+import { DEFAULT_DISPLAY_TIMEZONE, formatCanvassDay } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
 import { useZoneSelection } from "~/lib/use-zone-selection";
@@ -43,14 +43,6 @@ type ResultsSearch = {
   campaign: string | null;
   day: string | null;
 };
-
-// Resolve the search param to a concrete scope: null = all campaigns.
-function scopedCampaignId(
-  param: string | null,
-  campaigns: ReadonlyArray<{ campaignId: string; createdAt: string | Date; isArchived: boolean }>,
-): string | null {
-  return param === "all" ? null : (param ?? defaultCampaignId(campaigns));
-}
 
 const EMPTY_AGGREGATE = { days: [], rows: [] } as ResultsAggregate;
 
@@ -74,12 +66,6 @@ function optionRate(row: ZoneFunnelRow, questionId: string, optionId: string): n
 function answeredRate(row: ZoneFunnelRow, questionId: string): number | null {
   return row.contacted > 0 ? (row.answered[questionId] ?? 0) / row.contacted : null;
 }
-
-// Color-scale domain for contact rate: door-knocking contact rates live
-// in 0–20% essentially universally, so a 0–100% scale washes every zone
-// into the bottom fifth. Answer rates stay 0–100%: options split a
-// population that sums to one.
-const CONTACT_RATE_MAX = 0.2;
 
 export const Route = createFileRoute("/$orgSlug/results")({
   validateSearch: (search): ResultsSearch => ({
@@ -763,26 +749,6 @@ function sumRows(rows: ZoneFunnelRow[]): ZoneFunnelRow {
     }
   }
   return out;
-}
-
-// "2026-08-23" → "Aug 23, 2026". Split manually — Date parsing would
-// re-interpret the day in UTC and shift it across midnight.
-function formatCanvassDay(day: string): string {
-  const [y, m, d] = day.split("-").map(Number);
-  const months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
-  return `${months[(m ?? 1) - 1]} ${d}, ${y}`;
-}
-
-// Discrete 3-band magnitude scale — pink → purple → blue: the one
-// Observable10 hue-chain that avoids the RYG status hues entirely
-// (green/yellow mean done/underway next door on Progress), falls
-// monotonically in CIELAB lightness with even ~12 L* steps ("darker =
-// more" actually orders), and rotates through adjacent hues (magenta →
-// violet → blue). Same banding rule as Progress's RYG (breaks at 25%
-// and 75% of the metric's domain); badges ride the shared tint math and
-// the map fills match exactly.
-function rateColor(t: number): string {
-  return t <= 0.25 ? PINK : t <= 0.75 ? PURPLE : BLUE;
 }
 
 // The badge's scale as ink alone — corner readouts color the number

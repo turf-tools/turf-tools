@@ -8,7 +8,7 @@ import { Filter } from "~/components/filter";
 import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { GREEN, RED, YELLOW } from "~/lib/palette";
+import { progressColor } from "~/lib/palette";
 import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
 import { bboxOfFeatures } from "~/lib/geometry";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
@@ -20,12 +20,6 @@ import { useZoneSelection } from "~/lib/use-zone-selection";
 import { campaignSegmentsVersion } from "~/lib/segment-refs";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn, revealZoneCard } from "~/lib/utils";
-
-// Same thresholds as the turfs board so a given percent reads as the
-// same color everywhere.
-function progressColor(pct: number) {
-  return pct <= 25 ? RED : pct <= 75 ? YELLOW : GREEN;
-}
 
 // Page-level selection value for the totals row — the map itself only
 // ever sees a list of zone ids.
