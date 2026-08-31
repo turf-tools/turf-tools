@@ -178,8 +178,11 @@ def test_sort_and_day_scope(conn) -> None:
     attempts = [r["attempts"] for r in _by_col(result)]
     assert attempts == sorted(attempts, reverse=True)
     day1 = _preview(conn, "attempts", day="2026-08-23")
-    # Day 1: p1, p2, p3 (its clear is day 2), p5, p7 x2, p8 — not p4.
-    assert day1["total"] == 7
+    # Day 1: p1, p2, p5, p7 x2, p8 — not p4 (day 2). Not p3 either: its
+    # day-2 clear erases absolutely — a clear edits the turf's shared
+    # record, so a mistaken attempt stays erased in historical day views
+    # rather than resurrecting when the window predates the clear.
+    assert day1["total"] == 6
     assert day1["days"] == ["2026-08-24", "2026-08-23"]
 
 

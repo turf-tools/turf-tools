@@ -150,10 +150,15 @@ def attempts_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
     (person, walk) — joined to the conditioned population. Events
     without a walk_id (pre-stamp clients) group by canvass day in the
     display timezone instead. A person whose scope-wide latest result
-    is a clear contributes no attempts: a clear means the record was a
-    mistake, erasing attempt history too, so attempt-derived counts
-    match the person grain by construction. Queries built on it bind
-    the event params, then the fallback tz, then the criteria params."""
+    is a clear contributes no attempts: a clear is an edit to the
+    turf's shared canvass record — the record was a mistake, erasing
+    attempt history too — so attempt-derived counts match the person
+    grain by construction. Callers pass date-free scope filters: the
+    reduction is global per campaign scope, and date selection happens
+    afterward on the reduced attempts, so a clear erases everywhere
+    rather than resurrecting in historical day views. Queries built on
+    it bind the event params, then the fallback tz, then the criteria
+    params."""
     return f"""
         WITH attempt_latest AS (
             SELECT * FROM (
@@ -240,6 +245,18 @@ def canvasser_stats_sql(rel: str) -> str:
         FROM {rel}
         GROUP BY 1
         """
+
+
+def attempt_days_sql(rel: str) -> str:
+    """Distinct attempt days over a materialized attempt-grain relation,
+    newest first — the reports day picker. Days whose only activity was
+    later cleared or superseded list nothing and are deliberately
+    absent. Binds [tz]."""
+    return f"""
+        SELECT DISTINCT ((created_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
+        FROM {rel}
+        ORDER BY day DESC
+    """
 
 
 def canvass_days_sql(base_filters: list[str]) -> str:
