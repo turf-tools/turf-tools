@@ -12,6 +12,7 @@ import * as webTurfs from "./web/turfs";
 import * as webUsers from "./web/users";
 import * as webWalks from "./web/walks";
 import * as progress from "./web/progress";
+import * as reports from "./web/reports";
 import * as results from "./web/results";
 import * as zoneGroups from "./web/zone-groups";
 import * as zones from "./web/zones";
@@ -111,6 +112,9 @@ export const webRouter = {
     forOrg: progress.forOrg,
     byZone: progress.byZone,
     targets: progress.targets,
+  },
+  reports: {
+    rows: reports.rows,
   },
   results: {
     aggregate: results.aggregate,

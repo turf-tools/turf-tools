@@ -49,9 +49,11 @@ from src.duckdb import (
 )
 from src.import_job import fail_interrupted_versions, import_dataset_version
 from src.job_runner import JobManager
+from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
 from src.quickwit import search as quickwit_search
+from src.reports import SPECS, build_ctx, export_copy, preview
 from src.settings import get_settings
 from src.tables import (
     QUERYABLE_TABLES,
@@ -726,30 +728,6 @@ class _SegmentExportRequest(_WireBaseModel):
     format: str = "csv"
 
 
-# The exported columns, in order, under their own names — the Person contract
-# (models.py) as it survives assembly. No half_code: assembly consumes it into
-# canonical address_line_1 ("123 1/2 MAIN ST"). Required-contract columns are
-# always selected, so genuine pipeline drift fails loudly; the contract-optional
-# four are included only when the version's table has them. Dataset-specific
-# columns are not exported.
-_EXPORT_COLUMNS = [
-    "external_id",
-    "external_id_type",
-    "first_name",
-    "middle_name",
-    "last_name",
-    "name_suffix",
-    "address_line_1",
-    "address_line_2",
-    "city",
-    "state",
-    "zip5",
-    "zip4",
-]
-# `| None = None` on Person — an importer may omit these columns entirely.
-_EXPORT_OPTIONAL = {"middle_name", "name_suffix", "address_line_2", "zip4"}
-
-
 class _ZonePerimetersRequest(_WireBaseModel):
     org_slug: str = Field(validation_alias="orgSlug")
     zone_group_ids: list[str] = Field(validation_alias="zoneGroupIds")
@@ -965,6 +943,91 @@ async def results_aggregate(req: _ResultsAggregateRequest):
     return await run_query(work)
 
 
+class _ReportRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    campaign_ids: list[str] | None = Field(default=None, validation_alias="campaignIds")
+    day: str | None = None
+    tz: str = "America/New_York"
+    format: str = "preview"
+    offset: int = Field(default=0, ge=0)
+    # Sort key from the report's allowlist; unknown keys fall back to
+    # the default recency order.
+    sort: str | None = None
+    dir: str = "asc"
+
+
+async def _report_response(kind: str, req: _ReportRequest):
+    """Shared body of the five /reports/* routes: build the kind's spec
+    (src.reports) and render a preview page or stream a csv/parquet
+    export the same way /segments/export does."""
+    if req.format not in ("preview", "csv", "parquet"):
+        raise HTTPException(status_code=400, detail="format must be 'preview', 'csv', or 'parquet'.")
+
+    suffix = ".parquet" if req.format == "parquet" else ".csv"
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any] | tuple[str, int]:
+        attach_operational_postgres(conn, settings)
+        version, _catalog = query_context(conn, req.org_slug)
+        persons = resolve("{persons_geocoded}", version.schema)
+        ctx = build_ctx(conn, persons, req.org_slug, req.campaign_ids, req.day, req.tz)
+        spec = SPECS[kind](conn, ctx)
+        if req.format == "preview":
+            return preview(conn, kind, spec, req.offset, req.sort, req.dir)
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="report-export-")
+        os.close(fd)
+        try:
+            return tmp_path, export_copy(conn, spec, req.sort, req.dir, tmp_path, req.format)
+        except Exception:
+            with suppress(OSError):
+                os.remove(tmp_path)
+            raise
+
+    result = await run_query(work)
+    if isinstance(result, dict):
+        return result
+    tmp_path, row_count = result
+    media = "application/octet-stream" if req.format == "parquet" else "text/csv"
+    return FileResponse(
+        tmp_path,
+        media_type=media,
+        filename=f"report{suffix}",
+        background=BackgroundTask(os.remove, tmp_path),
+        headers={"X-Export-Rows": str(row_count)},
+    )
+
+
+@app.post("/reports/people")
+async def reports_people(req: _ReportRequest):
+    """One row per attempted person's current state, with attempt
+    rollups and generated question columns."""
+    return await _report_response("people", req)
+
+
+@app.post("/reports/attempts")
+async def reports_attempts(req: _ReportRequest):
+    """One row per attempt (latest result per person and walk), with the
+    attempt's snapshot pivoted into question columns."""
+    return await _report_response("attempts", req)
+
+
+@app.post("/reports/responses")
+async def reports_responses(req: _ReportRequest):
+    """One row per answer per canvassed attempt — the history grain."""
+    return await _report_response("responses", req)
+
+
+@app.post("/reports/walks")
+async def reports_walks(req: _ReportRequest):
+    """One row per sign-out, tallies from its stamped attempts."""
+    return await _report_response("walks", req)
+
+
+@app.post("/reports/canvassers")
+async def reports_canvassers(req: _ReportRequest):
+    """One row per claimed attestation with at least one attempt."""
+    return await _report_response("canvassers", req)
+
+
 @app.post("/segments/export")
 async def segments_export(req: _SegmentExportRequest):
     """Stream a segment's matched persons as CSV or Parquet.
@@ -989,7 +1052,7 @@ async def segments_export(req: _SegmentExportRequest):
         persons_columns = {row[0] for row in conn.execute(describe_sql).fetchall()}
         # Skip only optional-and-absent; a missing required column stays in the
         # SELECT and fails loudly at bind time.
-        select_cols = ", ".join(c for c in _EXPORT_COLUMNS if c in persons_columns or c not in _EXPORT_OPTIONAL)
+        select_cols = ", ".join(c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL)
         select_sql = resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
 
         fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
