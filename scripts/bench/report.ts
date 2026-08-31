@@ -9,11 +9,9 @@
 //   pnpm bench:report --label main         # only columns with this label
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import chalk from "chalk";
 import meow from "meow";
-import type { ResultRow } from "./bench";
+import { type ResultRow, RESULTS_FILE } from "./lib";
 
 const cli = meow(
   `
@@ -28,8 +26,6 @@ const cli = meow(
     },
   },
 );
-
-const RESULTS_FILE = resolve(dirname(fileURLToPath(import.meta.url)), "results", "results.jsonl");
 
 let lines: string[];
 try {

@@ -21,6 +21,7 @@ from src import timing
 from src.canvass_events import (
     answered_sql,
     assemble_zone_rows,
+    base_events_sql,
     canvass_days_sql,
     event_scope,
     latest_results_cte,
@@ -43,6 +44,7 @@ from src.duckdb import (
     OPERATIONAL_PG_ALIAS,
     attach_operational_postgres,
     get_connection,
+    materialize,
     query_cursor,
     refresh_s3_secret_on_shared_connection,
     s3_secret_expires,
@@ -905,7 +907,6 @@ async def results_aggregate(req: _ResultsAggregateRequest):
         persons = resolve("{persons_geocoded}", version.schema)
 
         scope = event_scope(req.org_slug, req.campaign_ids, req.start, req.end, req.day, req.tz)
-        joined = latest_results_cte(persons, where, scope.event_filters)
 
         # Zones of the scoped campaigns' groups — every zone gets a row
         # (zeros when unwalked); which rows to surface is the client's
@@ -928,12 +929,20 @@ async def results_aggregate(req: _ResultsAggregateRequest):
             zone_params,
         ).fetchall()
 
-        params = scope.event_params + where_params
         with timed("query"):
-            day_rows = conn.execute(canvass_days_sql(scope.base_filters), [req.tz, *scope.base_params]).fetchall()
-            stage_rows = conn.execute(stages_sql(joined), params).fetchall()
-            response_rows = conn.execute(responses_sql(joined), params).fetchall()
-            answered_rows = conn.execute(answered_sql(joined), params).fetchall()
+            # One Postgres event scan per request; the reduction, the day
+            # list, and the aggregates all read the materialized relations.
+            base = materialize(conn, "base_events", base_events_sql(scope.base_filters), scope.base_params)
+            joined = materialize(
+                conn,
+                "joined",
+                f"{latest_results_cte(persons, where, base, scope.date_filters)} SELECT * FROM joined",
+                scope.date_params + where_params,
+            )
+            day_rows = conn.execute(canvass_days_sql(base), [req.tz]).fetchall()
+            stage_rows = conn.execute(stages_sql(joined)).fetchall()
+            response_rows = conn.execute(responses_sql(joined)).fetchall()
+            answered_rows = conn.execute(answered_sql(joined)).fetchall()
 
         return {
             "days": [r[0] for r in day_rows],

@@ -18,6 +18,7 @@ from src.canvass_events import (
     answered_sql,
     assemble_zone_rows,
     attempts_cte,
+    base_events_sql,
     canvass_days_sql,
     canvasser_stats_sql,
     event_scope,
@@ -26,7 +27,7 @@ from src.canvass_events import (
     stages_sql,
     walk_stats_sql,
 )
-from src.duckdb import OPERATIONAL_PG_ALIAS
+from src.duckdb import OPERATIONAL_PG_ALIAS, materialize
 
 APP = f"{OPERATIONAL_PG_ALIAS}.app"
 
@@ -114,15 +115,41 @@ def _seed_attempt_extras(conn) -> None:
     conn.executemany("INSERT INTO persons VALUES (?)", [["p7"], ["p8"]])
 
 
+def _materialize_base(conn, scope) -> str:
+    return materialize(conn, "base_events", base_events_sql(scope.base_filters), scope.base_params)
+
+
+def _materialize_joined(conn, scope, where: str = "", where_params: list | None = None) -> str:
+    """The production shape: one Postgres scan into a base temp table,
+    reduce it into another, aggregate from that."""
+    base = _materialize_base(conn, scope)
+    return materialize(
+        conn,
+        "joined",
+        latest_results_cte("persons", where, base, scope.date_filters) + "SELECT * FROM joined",
+        [*scope.date_params, *(where_params or [])],
+    )
+
+
+def _materialize_attempts(conn, scope) -> str:
+    base = _materialize_base(conn, scope)
+    return materialize(
+        conn,
+        "attempts",
+        attempts_cte("persons", "", base, scope.date_filters) + "SELECT * FROM attempts",
+        [*scope.date_params, TZ],
+    )
+
+
 def _stages(conn, scope, where: str = "", where_params: list | None = None) -> dict:
-    cte = latest_results_cte("persons", where, scope.event_filters)
-    rows = conn.execute(stages_sql(cte), [*scope.event_params, *(where_params or [])]).fetchall()
+    joined = _materialize_joined(conn, scope, where, where_params)
+    rows = conn.execute(stages_sql(joined)).fetchall()
     return {zone_id: (att, con) for zone_id, _name, att, con in rows}
 
 
 def _responses(conn, scope) -> dict:
-    cte = latest_results_cte("persons", "", scope.event_filters)
-    rows = conn.execute(responses_sql(cte), scope.event_params).fetchall()
+    joined = _materialize_joined(conn, scope)
+    rows = conn.execute(responses_sql(joined)).fetchall()
     out: dict = {}
     for zone_id, question_id, option_id, n in rows:
         out.setdefault(zone_id, {}).setdefault(question_id, {})[option_id] = n
@@ -130,10 +157,11 @@ def _responses(conn, scope) -> dict:
 
 
 def _attempts(conn, scope, where: str = "", where_params: list | None = None) -> dict:
-    cte = attempts_cte("persons", where, scope.event_filters)
+    base = _materialize_base(conn, scope)
     rows = conn.execute(
-        cte + "SELECT person_id, walk_id, outcome FROM attempts ORDER BY person_id, sequence",
-        [*scope.event_params, TZ, *(where_params or [])],
+        attempts_cte("persons", where, base, scope.date_filters)
+        + "SELECT person_id, walk_id, outcome FROM attempts ORDER BY person_id, sequence",
+        [*scope.date_params, TZ, *(where_params or [])],
     ).fetchall()
     out: dict = {}
     for person_id, walk_id, outcome in rows:
@@ -145,8 +173,8 @@ def test_walk_stats_group_the_attempt_grain(operational_conn) -> None:
     _seed(operational_conn)
     _seed_attempt_extras(operational_conn)
     scope = event_scope("testorg", ["camp1"])
-    cte = attempts_cte("persons", "", scope.event_filters)
-    rows = operational_conn.execute(walk_stats_sql(cte), [*scope.event_params, TZ]).fetchall()
+    rel = _materialize_attempts(operational_conn, scope)
+    rows = operational_conn.execute(walk_stats_sql(rel)).fetchall()
     stats = {walk_id: (att, con) for walk_id, att, con, _first, _last in rows}
     # p8's walkless attempts have no walk to attribute to; p3's history
     # is clear-erased before it can count toward w1.
@@ -157,8 +185,8 @@ def test_canvasser_stats_derive_from_attempts(operational_conn) -> None:
     _seed(operational_conn)
     _seed_attempt_extras(operational_conn)
     scope = event_scope("testorg", ["camp1"])
-    cte = attempts_cte("persons", "", scope.event_filters)
-    rows = operational_conn.execute(canvasser_stats_sql(cte), [*scope.event_params, TZ]).fetchall()
+    rel = _materialize_attempts(operational_conn, scope)
+    rows = operational_conn.execute(canvasser_stats_sql(rel)).fetchall()
     stats = {key: (name, walks, att, con) for key, name, _phone, walks, att, con, _first, _last in rows}
     # Walkless attempts still count as attempts but not as walks; the
     # identity key is the claimed phone.
@@ -256,8 +284,8 @@ def test_population_where_narrows_the_join(operational_conn) -> None:
 def test_answered_counts_any_content(operational_conn) -> None:
     _seed(operational_conn)
     scope = event_scope("testorg", ["camp1"])
-    cte = latest_results_cte("persons", "", scope.event_filters)
-    rows = operational_conn.execute(answered_sql(cte), scope.event_params).fetchall()
+    joined = _materialize_joined(operational_conn, scope)
+    rows = operational_conn.execute(answered_sql(joined)).fetchall()
     answered: dict = {}
     for zone_id, question_id, n in rows:
         answered.setdefault(zone_id, {})[question_id] = n
@@ -272,7 +300,8 @@ def test_canvass_days_bucket_in_display_timezone(operational_conn) -> None:
     # Day list rides the base filters only — a date filter must not
     # collapse the picker's options.
     scope = event_scope("testorg", ["camp1"], day="2026-08-23", tz=TZ)
-    rows = operational_conn.execute(canvass_days_sql(scope.base_filters), [TZ, *scope.base_params]).fetchall()
+    base = _materialize_base(operational_conn, scope)
+    rows = operational_conn.execute(canvass_days_sql(base), [TZ]).fetchall()
     assert [r[0] for r in rows] == ["2026-08-24", "2026-08-23"]
 
 

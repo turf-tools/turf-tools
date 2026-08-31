@@ -262,6 +262,16 @@ def refresh_s3_secret_on_shared_connection(settings: Settings) -> None:
 OPERATIONAL_PG_ALIAS = "operational_pg"
 
 
+def materialize(conn: duckdb.DuckDBPyConnection, name: str, sql: str, params: list | None = None) -> str:
+    """Run `sql` once into a temp table and return its name, so call
+    sites thread the relation from creation to the statements that read
+    it. Temp schemas are per-cursor (verified: isolated between cursors,
+    allowed on read-only connections), so the table lives exactly as
+    long as the request and concurrent requests can't collide."""
+    conn.execute(f"CREATE OR REPLACE TEMP TABLE {name} AS {sql}", params or [])
+    return name
+
+
 def attach_operational_postgres(conn: duckdb.DuckDBPyConnection, settings: Settings) -> None:
     """Install + load DuckDB's `postgres` extension and ATTACH the operational
     Postgres database under `OPERATIONAL_PG_ALIAS`.
