@@ -930,17 +930,20 @@ async def results_aggregate(req: _ResultsAggregateRequest):
 
         with timed("query"):
             # One event-log reduction per request; the aggregates read it
-            # by the returned name.
-            joined = materialize(
-                conn,
-                "joined",
-                f"{latest_results_cte(persons, where, scope.event_filters)} SELECT * FROM joined",
-                scope.event_params + where_params,
-            )
-            day_rows = conn.execute(canvass_days_sql(scope.base_filters), [req.tz, *scope.base_params]).fetchall()
-            stage_rows = conn.execute(stages_sql(joined)).fetchall()
-            response_rows = conn.execute(responses_sql(joined)).fetchall()
-            answered_rows = conn.execute(answered_sql(joined)).fetchall()
+            # by the returned name. Sub-phases decompose Server-Timing.
+            with timed("reduce"):
+                joined = materialize(
+                    conn,
+                    "joined",
+                    f"{latest_results_cte(persons, where, scope.event_filters)} SELECT * FROM joined",
+                    scope.event_params + where_params,
+                )
+            with timed("days"):
+                day_rows = conn.execute(canvass_days_sql(scope.base_filters), [req.tz, *scope.base_params]).fetchall()
+            with timed("aggregate"):
+                stage_rows = conn.execute(stages_sql(joined)).fetchall()
+                response_rows = conn.execute(responses_sql(joined)).fetchall()
+                answered_rows = conn.execute(answered_sql(joined)).fetchall()
 
         return {
             "days": [r[0] for r in day_rows],

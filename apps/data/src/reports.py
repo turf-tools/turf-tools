@@ -111,7 +111,7 @@ def _materialize_attempts(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> st
     prefix. Always the full campaign scope — date selection happens on
     the reduced attempts (see attempts_cte), and the day picker reads
     this relation."""
-    with timed("query"):
+    with timed("query"), timed("reduce"):
         return materialize(
             conn,
             "attempts",
@@ -125,7 +125,7 @@ def _dated_attempts(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx, attempts: s
     a cheap temp-to-temp cut, not a re-reduction."""
     if not ctx.day:
         return attempts
-    with timed("query"):
+    with timed("query"), timed("dated"):
         return materialize(
             conn,
             "attempts_dated",
@@ -146,17 +146,18 @@ def _question_pivot(
     and `responses`). Org-pinned: a foreign question id in a payload
     never becomes a column. Returns the pivot CTEs, the quoted column
     refs to splice into the report SELECT, and the display labels."""
-    question_ids = [
-        r[0]
-        for r in conn.execute(
-            chain_sql
-            + f"""
-            SELECT DISTINCT q.question_id
-            FROM {rel}, UNNEST(json_keys(responses)) AS q(question_id)
-            """,
-            chain_params,
-        ).fetchall()
-    ]
+    with timed("pivot"):
+        question_ids = [
+            r[0]
+            for r in conn.execute(
+                chain_sql
+                + f"""
+                SELECT DISTINCT q.question_id
+                FROM {rel}, UNNEST(json_keys(responses)) AS q(question_id)
+                """,
+                chain_params,
+            ).fetchall()
+        ]
     questions: list[tuple[str, str]] = []
     if question_ids:
         questions = conn.execute(
@@ -670,15 +671,20 @@ def preview(
 ) -> dict[str, Any]:
     with timed("query"):
         # The composed report runs once; count, page, and summary read the
-        # materialized rows instead of re-running the chain.
-        report = materialize(conn, "report_rows", f"{spec.body_sql} SELECT * FROM report", spec.params)
-        total_row = conn.execute(f"SELECT count(*) FROM {report}").fetchone()
-        rows = conn.execute(
-            f"SELECT {_select_list(spec)} FROM {report} {_order_sql(spec, sort, dir_)}"
-            f" LIMIT {PAGE_ROWS} OFFSET {int(offset)}"
-        ).fetchall()
-        day_rows = conn.execute(spec.days_sql, spec.days_params).fetchall()
-        summary = _summary(conn, kind, report)
+        # materialized rows instead of re-running the chain. Sub-phases
+        # decompose the query budget in Server-Timing.
+        with timed("report"):
+            report = materialize(conn, "report_rows", f"{spec.body_sql} SELECT * FROM report", spec.params)
+        with timed("page"):
+            total_row = conn.execute(f"SELECT count(*) FROM {report}").fetchone()
+            rows = conn.execute(
+                f"SELECT {_select_list(spec)} FROM {report} {_order_sql(spec, sort, dir_)}"
+                f" LIMIT {PAGE_ROWS} OFFSET {int(offset)}"
+            ).fetchall()
+        with timed("days"):
+            day_rows = conn.execute(spec.days_sql, spec.days_params).fetchall()
+        with timed("summary"):
+            summary = _summary(conn, kind, report)
     return {
         "columns": spec.columns,
         "rows": [list(r) for r in rows],
