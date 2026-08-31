@@ -166,7 +166,7 @@ function ReportsIndex() {
 
   return (
     <EditorPage className={cn("h-[calc(100vh-3.5rem)]", shouldFade)}>
-      <EditorHeader title="Reports">
+      <EditorHeader title="Reports" subtitle="Browse and export detailed records">
         {/* No population filters here: segment-sense conditions on a row
             report read ambiguously (rows vs universe). Filters, when they
             come, filter rows — Date is the only one so far; add more only
