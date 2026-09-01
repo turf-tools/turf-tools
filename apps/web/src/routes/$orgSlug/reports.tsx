@@ -12,11 +12,14 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
 import { Icon } from "~/components/icon";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { ReportCard } from "~/components/report-card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { CANVASS_OUTCOME_OPTIONS } from "~/lib/filters";
 import { campaignFilterOptions, scopedCampaignId } from "~/lib/campaign-options";
+import { hasPermission } from "~/lib/permissions";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { REPORT_PAGE_ROWS, type ReportSort, reportRowsQuery } from "~/lib/queries/reports";
 import { tintStyle } from "~/components/badge";
 import { formatPersonName } from "~/lib/format";
@@ -70,7 +73,13 @@ export const Route = createFileRoute("/$orgSlug/reports")({
   loader: async ({ context: { queryClient, session }, deps }) => {
     const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
     // The default scope is derived from the campaigns list, so it loads first.
-    const campaigns = await queryClient.fetchQuery(campaignsListQuery());
+    const [manifest, campaigns] = await Promise.all([
+      queryClient.fetchQuery(manifestQuery()),
+      queryClient.fetchQuery(campaignsListQuery()),
+    ]);
+    // No active dataset → the report endpoint only errors; the gate
+    // renders the no-dataset modal instead.
+    if (!manifest) return;
     const campaignId = scopedCampaignId(deps.campaign, campaigns);
     await queryClient.fetchQuery(
       reportRowsQuery(
@@ -83,8 +92,25 @@ export const Route = createFileRoute("/$orgSlug/reports")({
       ),
     );
   },
-  component: ReportsIndex,
+  component: ReportsGate,
 });
+
+// Gate, not an inline early-return: the page's queries would fire (and
+// error) before a return between hooks could stop them.
+function ReportsGate() {
+  const { orgSlug } = Route.useParams();
+  const { role } = Route.useRouteContext();
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  if (!manifest)
+    return (
+      <NoActiveDataset
+        entity="reports"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  return <ReportsIndex />;
+}
 
 function ReportsIndex() {
   const { orgSlug } = Route.useParams();

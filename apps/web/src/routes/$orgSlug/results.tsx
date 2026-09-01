@@ -17,6 +17,7 @@ import { Filter } from "~/components/filter";
 import { FilterValueEditor } from "~/components/filter-editors";
 import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Popover, PopoverContent, PopoverTrigger } from "~/components/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
@@ -25,7 +26,9 @@ import { CONTACT_RATE_MAX, rateColor } from "~/lib/palette";
 import { bboxOfFeatures } from "~/lib/geometry";
 import { useFilterCatalog } from "~/lib/manifest";
 import { campaignFilterOptions, scopedCampaignId } from "~/lib/campaign-options";
+import { hasPermission } from "~/lib/permissions";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { type Condition, resultsAggregateQuery } from "~/lib/queries/results";
 import { zonePerimetersQuery } from "~/lib/queries/zones";
@@ -74,7 +77,13 @@ export const Route = createFileRoute("/$orgSlug/results")({
   loader: async ({ context: { queryClient, session }, deps }) => {
     const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
     // The default scope is derived from the campaigns list, so it loads first.
-    const campaigns = await queryClient.fetchQuery(campaignsListQuery());
+    const [manifest, campaigns] = await Promise.all([
+      queryClient.fetchQuery(manifestQuery()),
+      queryClient.fetchQuery(campaignsListQuery()),
+    ]);
+    // No active dataset → the aggregate endpoint only errors; the gate
+    // renders the no-dataset modal instead.
+    if (!manifest) return;
     const campaignId = scopedCampaignId(deps.campaign, campaigns);
     await Promise.all([
       queryClient.fetchQuery(
@@ -84,8 +93,25 @@ export const Route = createFileRoute("/$orgSlug/results")({
       queryClient.fetchQuery(questionsWithOptionsQuery()),
     ]);
   },
-  component: ResultsIndex,
+  component: ResultsGate,
 });
+
+// Gate, not an inline early-return: the page's suspense queries would fire
+// (and error) before a return between hooks could stop them.
+function ResultsGate() {
+  const { orgSlug } = Route.useParams();
+  const { role } = Route.useRouteContext();
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  if (!manifest)
+    return (
+      <NoActiveDataset
+        entity="results"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  return <ResultsIndex />;
+}
 
 function ResultsIndex() {
   const { campaign: campaignParam, day: dayFilter } = Route.useSearch();

@@ -7,11 +7,14 @@ import { EditorPage } from "~/components/editor-page";
 import { Filter } from "~/components/filter";
 import { Icon } from "~/components/icon";
 import { Map as MapView } from "~/components/map";
+import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { progressColor } from "~/lib/palette";
 import { campaignFilterOptions, defaultCampaignId } from "~/lib/campaign-options";
 import { bboxOfFeatures } from "~/lib/geometry";
+import { hasPermission } from "~/lib/permissions";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { progressByZoneQuery, progressTargetsQuery } from "~/lib/queries/progress";
 import { zonePerimetersQuery } from "~/lib/queries/zones";
 import { segmentsListQuery } from "~/lib/queries/segments";
@@ -37,8 +40,14 @@ export const Route = createFileRoute("/$orgSlug/progress")({
   }),
   loaderDeps: ({ search }) => ({ zones: search.zones, campaign: search.campaign }),
   loader: async ({ context: { queryClient }, deps }) => {
-    const [campaigns, , segments] = await Promise.all([
+    const [manifest, campaigns] = await Promise.all([
+      queryClient.fetchQuery(manifestQuery()),
       queryClient.fetchQuery(campaignsListQuery()),
+    ]);
+    // No active dataset → the progress endpoints only error; the gate
+    // renders the no-dataset modal instead.
+    if (!manifest) return;
+    const [, segments] = await Promise.all([
       queryClient.fetchQuery(progressByZoneQuery()),
       deps.zones === "all" ? queryClient.fetchQuery(segmentsListQuery()) : null,
     ]);
@@ -52,8 +61,25 @@ export const Route = createFileRoute("/$orgSlug/progress")({
       );
     }
   },
-  component: ProgressIndex,
+  component: ProgressGate,
 });
+
+// Gate, not an inline early-return: the page's suspense queries would fire
+// (and error) before a return between hooks could stop them.
+function ProgressGate() {
+  const { orgSlug } = Route.useParams();
+  const { role } = Route.useRouteContext();
+  const { data: manifest } = useSuspenseQuery(manifestQuery());
+  if (!manifest)
+    return (
+      <NoActiveDataset
+        entity="progress"
+        orgSlug={orgSlug}
+        canManage={hasPermission(role, "datasets.manage")}
+      />
+    );
+  return <ProgressIndex />;
+}
 
 function ProgressIndex() {
   const { campaign: campaignFilter, zones: zonesView } = Route.useSearch();
