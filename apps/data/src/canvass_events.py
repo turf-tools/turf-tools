@@ -1,9 +1,11 @@
 """Read path over the canvass event log (app.canvass_events).
 
 Two reduction rules shared by every reporting surface, both "latest
-result by event sequence within the requested scope": per person (the
-current-state grain behind funnel stages and response counts) and per
-(person, walk) (the attempt grain behind the row-level reports). The
+result by event sequence": per person within the requested date window
+(the current-state grain behind funnel stages and response counts) and
+per (person, walk) over the full campaign scope (the attempt grain
+behind the row-level reports; date filters select among the reduced
+attempts). The
 person grain is the attempt grain reduced once more, so counts derived
 from either reconcile by construction. The `*_cte` builders produce the
 reduction; the aggregate builders read a materialized relation by name
@@ -24,9 +26,10 @@ from src.duckdb import OPERATIONAL_PG_ALIAS
 @dataclass
 class EventScope:
     """Event-log WHERE fragments, split in two: `base` (org + campaigns)
-    feeds the canvass-day list, which must ignore date filters — the
-    picker's options would otherwise collapse to the current pick;
-    `event` adds the date window for the reduction itself."""
+    scopes the attempt-grain reduction, which is deliberately date-free
+    — the day chip selects among reduced attempts afterward; `event`
+    adds the date window for the Results person-grain reduction, whose
+    question is "latest result within this window"."""
 
     base_filters: list[str]
     base_params: list[Any]
