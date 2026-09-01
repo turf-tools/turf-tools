@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 from src.canvass_events import (
     EventScope,
+    attempt_days_sql,
     attempts_cte,
-    canvass_days_sql,
     canvasser_stats_sql,
     event_scope,
     walk_stats_sql,
 )
-from src.duckdb import OPERATIONAL_PG_ALIAS
+from src.duckdb import OPERATIONAL_PG_ALIAS, materialize
 from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL
 from src.timing import timed
 
@@ -79,7 +79,8 @@ def build_ctx(
 @dataclass
 class ReportSpec:
     """One report's composed SQL and its presentation contract. body_sql
-    ends with a `report` CTE; params bind it in text order."""
+    reads the `attempts` temp table its builder materialized and ends
+    with a `report` CTE; params bind it in text order."""
 
     body_sql: str
     params: list
@@ -99,8 +100,38 @@ def _shared_cols(ctx: ReportCtx) -> str:
     return ", ".join(f"p.{c}" for c in ctx.voter_cols)
 
 
-def _event_days(ctx: ReportCtx) -> tuple[str, list]:
-    return canvass_days_sql(ctx.scope.base_filters), [ctx.tz, *ctx.scope.base_params]
+def _event_days(attempts: str, tz: str) -> tuple[str, list]:
+    return attempt_days_sql(attempts), [tz]
+
+
+def _materialize_attempts(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> str:
+    """One event-log reduction per request: the attempt grain lands in a
+    temp table every later statement reads by the returned name, instead
+    of each re-running the Postgres scan and persons join as a CTE
+    prefix. Always the full campaign scope — date selection happens on
+    the reduced attempts (see attempts_cte), and the day picker reads
+    this relation."""
+    with timed("query"), timed("reduce"):
+        return materialize(
+            conn,
+            "attempts",
+            f"{attempts_cte(ctx.persons, '', ctx.scope.base_filters)} SELECT * FROM attempts",
+            [*ctx.scope.base_params, ctx.tz],
+        )
+
+
+def _dated_attempts(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx, attempts: str) -> str:
+    """The day chip selects among finished attempts by their timestamp —
+    a cheap temp-to-temp cut, not a re-reduction."""
+    if not ctx.day:
+        return attempts
+    with timed("query"), timed("dated"):
+        return materialize(
+            conn,
+            "attempts_dated",
+            f"SELECT * FROM {attempts} WHERE (created_at AT TIME ZONE ?)::DATE = ?::DATE",
+            [ctx.tz, ctx.day],
+        )
 
 
 def _question_pivot(
@@ -115,17 +146,18 @@ def _question_pivot(
     and `responses`). Org-pinned: a foreign question id in a payload
     never becomes a column. Returns the pivot CTEs, the quoted column
     refs to splice into the report SELECT, and the display labels."""
-    question_ids = [
-        r[0]
-        for r in conn.execute(
-            chain_sql
-            + f"""
-            SELECT DISTINCT q.question_id
-            FROM {rel}, UNNEST(json_keys(responses)) AS q(question_id)
-            """,
-            chain_params,
-        ).fetchall()
-    ]
+    with timed("pivot"):
+        question_ids = [
+            r[0]
+            for r in conn.execute(
+                chain_sql
+                + f"""
+                SELECT DISTINCT q.question_id
+                FROM {rel}, UNNEST(json_keys(responses)) AS q(question_id)
+                """,
+                chain_params,
+            ).fetchall()
+        ]
     questions: list[tuple[str, str]] = []
     if question_ids:
         questions = conn.execute(
@@ -200,20 +232,16 @@ def people_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     """One row per attempted person's current state — the latest
     attempt's snapshot, so this and the attempt grain reconcile — with
     attempt-count rollups and generated question columns."""
-    cte = attempts_cte(ctx.persons, "", ctx.scope.event_filters)
-    chain = (
-        cte
-        + """,
-        current AS (
-            SELECT * FROM attempts
+    attempts_all = _materialize_attempts(conn, ctx)
+    attempts = _dated_attempts(conn, ctx, attempts_all)
+    chain = f"""
+        WITH current AS (
+            SELECT * FROM {attempts}
             QUALIFY row_number() OVER (
                 PARTITION BY person_id ORDER BY sequence DESC
             ) = 1
         )"""
-    )
-    pivot_cte, pivot_cols, question_columns = _question_pivot(
-        conn, ctx.org_slug, chain, [*ctx.scope.event_params, ctx.tz], "current", "person_id"
-    )
+    pivot_cte, pivot_cols, question_columns = _question_pivot(conn, ctx.org_slug, chain, [], "current", "person_id")
     body_sql = (
         chain
         + pivot_cte
@@ -224,7 +252,7 @@ def people_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
                    count(*) FILTER (WHERE outcome = 'canvassed') AS contacts,
                    strftime(max(created_at) FILTER (WHERE outcome = 'canvassed')
                        AT TIME ZONE ?, '%Y-%m-%d %H:%M') AS last_contact_at
-            FROM attempts GROUP BY person_id
+            FROM {attempts} GROUP BY person_id
         ),
         {_pop_cols_sql(ctx)},
         report AS (
@@ -241,14 +269,14 @@ def people_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
             LEFT JOIN qp ON qp.pivot_key = cur.person_id
         )"""
     )
-    days_sql, days_params = _event_days(ctx)
+    days_sql, days_params = _event_days(attempts_all, ctx.tz)
     # No turf/zone: they'd be the latest attempt's — event detail, not
     # person state (the Attempts report answers "where"). Campaign stays:
     # in the all-campaigns view it labels which pass's truth — and which
     # script's answers — the row carries.
     return ReportSpec(
         body_sql=body_sql,
-        params=[*ctx.scope.event_params, ctx.tz, ctx.tz, ctx.tz],
+        params=[ctx.tz, ctx.tz],
         columns=[
             *ctx.person_cols,
             "attempts",
@@ -279,15 +307,13 @@ def people_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
 def attempts_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     """One row per attempt, with the attempt's own snapshot pivoted into
     the generated question columns."""
-    cte = attempts_cte(ctx.persons, "", ctx.scope.event_filters)
-    pivot_cte, pivot_cols, question_columns = _question_pivot(
-        conn, ctx.org_slug, cte, [*ctx.scope.event_params, ctx.tz], "attempts", "sequence"
-    )
+    attempts_all = _materialize_attempts(conn, ctx)
+    attempts = _dated_attempts(conn, ctx, attempts_all)
+    pivot_cte, pivot_cols, question_columns = _question_pivot(conn, ctx.org_slug, "", [], attempts, "sequence")
     body_sql = (
-        cte
+        f"WITH {_pop_cols_sql(ctx)}"
         + pivot_cte
         + f""",
-        {_pop_cols_sql(ctx)},
         report AS (
             SELECT {_shared_cols(ctx)},
                    a.outcome, a.canvasser_name AS canvasser{pivot_cols},
@@ -295,15 +321,15 @@ def attempts_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec
                        AS attempted_at,
                    a.turf_name AS turf, a.zone_name AS zone, a.campaign,
                    a.walk_id, a.created_at, a.sequence
-            FROM attempts a
+            FROM {attempts} a
             JOIN pop_cols p ON p.external_id = a.person_id
             LEFT JOIN qp ON qp.pivot_key = a.sequence
         )"""
     )
-    days_sql, days_params = _event_days(ctx)
+    days_sql, days_params = _event_days(attempts_all, ctx.tz)
     return ReportSpec(
         body_sql=body_sql,
-        params=[*ctx.scope.event_params, ctx.tz, ctx.tz],
+        params=[ctx.tz],
         columns=[
             "attempted_at",
             "outcome",
@@ -333,14 +359,13 @@ def attempts_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec
 def responses_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     """One row per answer per canvassed attempt — the history grain.
     Question labels are pinned to the event's own org."""
-    cte = attempts_cte(ctx.persons, "", ctx.scope.event_filters)
-    body_sql = (
-        cte
-        + f""",
-        answer_rows AS (
+    attempts_all = _materialize_attempts(conn, ctx)
+    attempts = _dated_attempts(conn, ctx, attempts_all)
+    body_sql = f"""
+        WITH answer_rows AS (
             SELECT a.*, q.question_id, o.option_id,
                    CAST(NULL AS VARCHAR) AS text_answer
-            FROM attempts a,
+            FROM {attempts} a,
                  UNNEST(json_keys(a.responses)) AS q(question_id),
                  UNNEST(CAST(json_extract(a.responses,
                      '$."' || q.question_id || '".optionIds') AS VARCHAR[])) AS o(option_id)
@@ -348,7 +373,7 @@ def responses_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpe
             UNION ALL
             SELECT a.*, q.question_id, CAST(NULL AS VARCHAR),
                    json_extract_string(a.responses, '$."' || q.question_id || '".text')
-            FROM attempts a, UNNEST(json_keys(a.responses)) AS q(question_id)
+            FROM {attempts} a, UNNEST(json_keys(a.responses)) AS q(question_id)
             WHERE a.outcome = 'canvassed'
               AND coalesce(json_extract_string(a.responses,
                   '$."' || q.question_id || '".text'), '') <> ''
@@ -372,11 +397,10 @@ def responses_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpe
             LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.response_options ro
                 ON ro.response_option_id::VARCHAR = ar.option_id
         )"""
-    )
-    days_sql, days_params = _event_days(ctx)
+    days_sql, days_params = _event_days(attempts_all, ctx.tz)
     return ReportSpec(
         body_sql=body_sql,
-        params=[*ctx.scope.event_params, ctx.tz, ctx.tz],
+        params=[ctx.tz],
         columns=[
             *ctx.person_cols,
             "question",
@@ -412,7 +436,6 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     them, and the Canvassers report already counts walks this way. A
     walk is a single outing, so its tallies are its own: the day chip
     filters the sign-out day, not the stats window."""
-    walk_scope = event_scope(ctx.org_slug, ctx.campaign_ids)
     walk_filters = ["o.slug = ?"]
     walk_params: list = [ctx.org_slug]
     if ctx.campaign_ids:
@@ -423,11 +446,9 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     if ctx.day:
         day_filter = "AND (w.opened_at AT TIME ZONE ?)::DATE = ?::DATE"
         day_params = [ctx.tz, ctx.day]
-    cte = attempts_cte(ctx.persons, "", walk_scope.event_filters)
-    body_sql = (
-        cte
-        + f""",
-        stats AS ({walk_stats_sql("")}),
+    attempts = _materialize_attempts(conn, ctx)
+    body_sql = f"""
+        WITH stats AS ({walk_stats_sql(attempts)}),
         walk_rows AS (
             SELECT w.walk_id, w.canvasser_name, w.opened_at, w.closed_at,
                    t.turf_code, t.name AS turf, t.zone_name AS zone,
@@ -456,7 +477,6 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
             FROM walk_rows wr
             JOIN stats st ON st.walk_id = wr.walk_id
         )"""
-    )
     days_sql = f"""
         SELECT DISTINCT ((w.opened_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
         FROM {OPERATIONAL_PG_ALIAS}.app.walks w
@@ -473,15 +493,7 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     """
     return ReportSpec(
         body_sql=body_sql,
-        params=[
-            *walk_scope.event_params,
-            ctx.tz,
-            *walk_params,
-            *day_params,
-            ctx.tz,
-            ctx.tz,
-            ctx.tz,
-        ],
+        params=[*walk_params, *day_params, ctx.tz, ctx.tz, ctx.tz],
         columns=[
             "turf",
             "turf_code",
@@ -520,11 +532,10 @@ def walks_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
 
 def canvassers_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSpec:
     """One row per claimed attestation with ≥1 attempt."""
-    cte = attempts_cte(ctx.persons, "", ctx.scope.event_filters)
-    body_sql = (
-        cte
-        + f""",
-        stats AS ({canvasser_stats_sql("")}),
+    attempts_all = _materialize_attempts(conn, ctx)
+    attempts = _dated_attempts(conn, ctx, attempts_all)
+    body_sql = f"""
+        WITH stats AS ({canvasser_stats_sql(attempts)}),
         report AS (
             SELECT canvasser_name AS canvasser, walks,
                    attempted AS attempts, contacted AS contacts,
@@ -536,11 +547,10 @@ def canvassers_spec(conn: duckdb.DuckDBPyConnection, ctx: ReportCtx) -> ReportSp
                    canvasser_phone AS phone, first_active, last_active
             FROM stats
         )"""
-    )
-    days_sql, days_params = _event_days(ctx)
+    days_sql, days_params = _event_days(attempts_all, ctx.tz)
     return ReportSpec(
         body_sql=body_sql,
-        params=[*ctx.scope.event_params, ctx.tz, ctx.tz, ctx.tz],
+        params=[ctx.tz, ctx.tz],
         columns=[
             "canvasser",
             "walks",
@@ -575,32 +585,37 @@ SPECS = {
 }
 
 
-def _select_sql(spec: ReportSpec, sort: str | None, dir_: str) -> str:
+def _order_sql(spec: ReportSpec, sort: str | None, dir_: str) -> str:
     # User sort leads (allowlisted keys only — nothing user-typed lands
     # in the SQL text); the default order stays as tiebreak so paging is
     # deterministic under equal keys.
     if sort and sort in spec.sortable:
         direction = "DESC" if dir_ == "desc" else "ASC"
         keys = ", ".join(f"{c} {direction} NULLS LAST" for c in spec.sortable[sort])
-        order_sql = f"ORDER BY {keys}, {spec.default_order}"
-    else:
-        order_sql = f"ORDER BY {spec.default_order}"
+        return f"ORDER BY {keys}, {spec.default_order}"
+    return f"ORDER BY {spec.default_order}"
+
+
+def _select_list(spec: ReportSpec) -> str:
     # Column names are quoted: generated question columns carry free
     # text; plain lowercase aliases are unaffected.
-    select_list = ", ".join('"' + c.replace('"', '""') + '"' for c in spec.columns)
-    return spec.body_sql + f"SELECT {select_list} FROM report {order_sql}"
+    return ", ".join('"' + c.replace('"', '""') + '"' for c in spec.columns)
 
 
-def _summary(conn: duckdb.DuckDBPyConnection, kind: str, spec: ReportSpec) -> dict[str, Any]:
+def _select_sql(spec: ReportSpec, sort: str | None, dir_: str) -> str:
+    return spec.body_sql + f"SELECT {_select_list(spec)} FROM report {_order_sql(spec, sort, dir_)}"
+
+
+def _summary(conn: duckdb.DuckDBPyConnection, kind: str, rel: str) -> dict[str, Any]:
+    """Aggregates over `rel`, the materialized report rows, so the
+    summary always groups the same rows as the table."""
     if kind == "walks":
         w = conn.execute(
-            spec.body_sql
-            + """
+            f"""
             SELECT count(DISTINCT canvasser), count(DISTINCT turf_code),
                    coalesce(sum(attempts), 0), coalesce(sum(contacts), 0)
-            FROM report
-            """,
-            spec.params,
+            FROM {rel}
+            """
         ).fetchone()
         return {
             "canvassers": int(w[0]) if w else 0,
@@ -610,13 +625,11 @@ def _summary(conn: duckdb.DuckDBPyConnection, kind: str, spec: ReportSpec) -> di
         }
     if kind == "canvassers":
         c = conn.execute(
-            spec.body_sql
-            + """
+            f"""
             SELECT count(*), coalesce(sum(walks), 0),
                    coalesce(sum(attempts), 0), coalesce(sum(contacts), 0)
-            FROM report
-            """,
-            spec.params,
+            FROM {rel}
+            """
         ).fetchone()
         return {
             "canvassers": int(c[0]) if c else 0,
@@ -625,16 +638,12 @@ def _summary(conn: duckdb.DuckDBPyConnection, kind: str, spec: ReportSpec) -> di
             "contacts": int(c[3]) if c else 0,
         }
     if kind == "responses":
-        people_row = conn.execute(
-            spec.body_sql + "SELECT count(DISTINCT external_id) FROM report", spec.params
-        ).fetchone()
+        people_row = conn.execute(f"SELECT count(DISTINCT external_id) FROM {rel}").fetchone()
         question_rows = conn.execute(
-            spec.body_sql
-            + """
-            SELECT question, count(*) FROM report
+            f"""
+            SELECT question, count(*) FROM {rel}
             GROUP BY question ORDER BY min(question_created), question
-            """,
-            spec.params,
+            """
         ).fetchall()
         return {
             "people": int(people_row[0]) if people_row else 0,
@@ -644,13 +653,11 @@ def _summary(conn: duckdb.DuckDBPyConnection, kind: str, spec: ReportSpec) -> di
     # last_outcome); their headline counts differ (contacted people vs
     # distinct people attempted).
     outcome_col = "last_outcome" if kind == "people" else "outcome"
-    outcome_rows = conn.execute(
-        spec.body_sql + f"SELECT {outcome_col}, count(*) FROM report GROUP BY 1", spec.params
-    ).fetchall()
+    outcome_rows = conn.execute(f"SELECT {outcome_col}, count(*) FROM {rel} GROUP BY 1").fetchall()
     outcomes = {(o or "none"): int(n) for o, n in outcome_rows}
     if kind == "people":
         return {"outcomes": outcomes}
-    people_row = conn.execute(spec.body_sql + "SELECT count(DISTINCT external_id) FROM report", spec.params).fetchone()
+    people_row = conn.execute(f"SELECT count(DISTINCT external_id) FROM {rel}").fetchone()
     return {"people": int(people_row[0]) if people_row else 0, "outcomes": outcomes}
 
 
@@ -663,13 +670,21 @@ def preview(
     dir_: str,
 ) -> dict[str, Any]:
     with timed("query"):
-        total_row = conn.execute(spec.body_sql + "SELECT count(*) FROM report", spec.params).fetchone()
-        rows = conn.execute(
-            _select_sql(spec, sort, dir_) + f" LIMIT {PAGE_ROWS} OFFSET {int(offset)}",
-            spec.params,
-        ).fetchall()
-        day_rows = conn.execute(spec.days_sql, spec.days_params).fetchall()
-        summary = _summary(conn, kind, spec)
+        # The composed report runs once; count, page, and summary read the
+        # materialized rows instead of re-running the chain. Sub-phases
+        # decompose the query budget in Server-Timing.
+        with timed("report"):
+            report = materialize(conn, "report_rows", f"{spec.body_sql} SELECT * FROM report", spec.params)
+        with timed("page"):
+            total_row = conn.execute(f"SELECT count(*) FROM {report}").fetchone()
+            rows = conn.execute(
+                f"SELECT {_select_list(spec)} FROM {report} {_order_sql(spec, sort, dir_)}"
+                f" LIMIT {PAGE_ROWS} OFFSET {int(offset)}"
+            ).fetchall()
+        with timed("days"):
+            day_rows = conn.execute(spec.days_sql, spec.days_params).fetchall()
+        with timed("summary"):
+            summary = _summary(conn, kind, report)
     return {
         "columns": spec.columns,
         "rows": [list(r) for r in rows],

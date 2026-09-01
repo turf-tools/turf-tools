@@ -1,14 +1,18 @@
 """Read path over the canvass event log (app.canvass_events).
 
 Two reduction rules shared by every reporting surface, both "latest
-result by event sequence within the requested scope": per person (the
-current-state grain behind funnel stages and response counts) and per
-(person, walk) (the attempt grain behind the row-level reports). The
+result by event sequence": per person within the requested date window
+(the current-state grain behind funnel stages and response counts) and
+per (person, walk) over the full campaign scope (the attempt grain
+behind the row-level reports; date filters select among the reduced
+attempts). The
 person grain is the attempt grain reduced once more, so counts derived
-from either reconcile by construction. Builders name operational
-Postgres through OPERATIONAL_PG_ALIAS, so tests attach a synthetic
-in-memory catalog under the same alias and run the exact production
-SQL.
+from either reconcile by construction. The `*_cte` builders produce the
+reduction; the aggregate builders read a materialized relation by name
+(src.duckdb.materialize), so each request reduces the log once.
+Builders name operational Postgres through OPERATIONAL_PG_ALIAS, so
+tests attach a synthetic in-memory catalog under the same alias and run
+the exact production SQL.
 """
 
 from __future__ import annotations
@@ -22,9 +26,10 @@ from src.duckdb import OPERATIONAL_PG_ALIAS
 @dataclass
 class EventScope:
     """Event-log WHERE fragments, split in two: `base` (org + campaigns)
-    feeds the canvass-day list, which must ignore date filters — the
-    picker's options would otherwise collapse to the current pick;
-    `event` adds the date window for the reduction itself."""
+    scopes the attempt-grain reduction, which is deliberately date-free
+    — the day chip selects among reduced attempts afterward; `event`
+    adds the date window for the Results person-grain reduction, whose
+    question is "latest result within this window"."""
 
     base_filters: list[str]
     base_params: list[Any]
@@ -95,47 +100,42 @@ def latest_results_cte(persons_fqn: str, where: str, event_filters: list[str]) -
     """
 
 
-def stages_sql(cte: str) -> str:
-    """Per-zone funnel stages over the reduced events."""
-    return (
-        cte
-        + """
+def stages_sql(rel: str) -> str:
+    """Per-zone funnel stages over `rel`, a materialized latest-result
+    relation (see `latest_results_cte` + `materialize`)."""
+    return f"""
         SELECT
             zone_id,
             any_value(zone_name) AS zone_name,
             count(*) FILTER (WHERE outcome IS NOT NULL) AS attempted,
             count(*) FILTER (WHERE outcome = 'canvassed') AS contacted
-        FROM joined
+        FROM {rel}
         GROUP BY zone_id
         """
-    )
 
 
-def responses_sql(cte: str) -> str:
-    """Per-zone option counts among the contacted."""
-    return (
-        cte
-        + """
+def responses_sql(rel: str) -> str:
+    """Per-zone option counts among the contacted, over a materialized
+    latest-result relation."""
+    return f"""
         SELECT zone_id, q.question_id, o.option_id, count(*) AS n
-        FROM joined,
+        FROM {rel},
              UNNEST(json_keys(responses)) AS q(question_id),
              UNNEST(CAST(json_extract(responses,
                  '$."' || q.question_id || '".optionIds') AS VARCHAR[])) AS o(option_id)
         WHERE outcome = 'canvassed'
         GROUP BY 1, 2, 3
         """
-    )
 
 
-def answered_sql(cte: str) -> str:
+def answered_sql(rel: str) -> str:
     """Per-zone count of contacted people who answered each question at
     all — non-empty optionIds or text. The completion stat for questions
-    whose answers aren't option counts (open-ended)."""
-    return (
-        cte
-        + """
+    whose answers aren't option counts (open-ended). Reads a materialized
+    latest-result relation."""
+    return f"""
         SELECT zone_id, q.question_id, count(*) AS n
-        FROM joined,
+        FROM {rel},
              UNNEST(json_keys(responses)) AS q(question_id)
         WHERE outcome = 'canvassed'
           AND (
@@ -146,7 +146,6 @@ def answered_sql(cte: str) -> str:
           )
         GROUP BY 1, 2
         """
-    )
 
 
 def attempts_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
@@ -154,10 +153,15 @@ def attempts_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
     (person, walk) — joined to the conditioned population. Events
     without a walk_id (pre-stamp clients) group by canvass day in the
     display timezone instead. A person whose scope-wide latest result
-    is a clear contributes no attempts: a clear means the record was a
-    mistake, erasing attempt history too, so attempt-derived counts
-    match the person grain by construction. Queries built on it bind
-    the event params, then the fallback tz, then the criteria params."""
+    is a clear contributes no attempts: a clear is an edit to the
+    turf's shared canvass record — the record was a mistake, erasing
+    attempt history too — so attempt-derived counts match the person
+    grain by construction. Callers pass date-free scope filters: the
+    reduction is global per campaign scope, and date selection happens
+    afterward on the reduced attempts, so a clear erases everywhere
+    rather than resurrecting in historical day views. Queries built on
+    it bind the event params, then the fallback tz, then the criteria
+    params."""
     return f"""
         WITH attempt_latest AS (
             SELECT * FROM (
@@ -203,39 +207,35 @@ def attempts_cte(persons_fqn: str, where: str, event_filters: list[str]) -> str:
     """
 
 
-def walk_stats_sql(cte: str) -> str:
-    """Per-walk tallies over the attempt grain (attempts are already
+def walk_stats_sql(rel: str) -> str:
+    """Per-walk tallies over `rel`, a materialized attempt-grain relation
+    (see `attempts_cte` + `materialize`; attempts are already
     outcome-bearing, so attempted = row count). Walkless attempts from
     pre-stamp clients have no walk to attribute to and are absent; walk
     rows and their sign-out lookups join in at the endpoint, so
     sign-outs with no attempts zero-fill there. Activity timestamps
     come back as UTC ISO strings (display-tz formatting is the
     endpoint's job)."""
-    return (
-        cte
-        + """
+    return f"""
         SELECT
             walk_id,
             count(*) AS attempted,
             count(*) FILTER (WHERE outcome = 'canvassed') AS contacted,
             min(created_at)::VARCHAR AS first_activity,
             max(created_at)::VARCHAR AS last_activity
-        FROM attempts
+        FROM {rel}
         WHERE walk_id IS NOT NULL
         GROUP BY walk_id
         """
-    )
 
 
-def canvasser_stats_sql(cte: str) -> str:
-    """Per-canvasser tallies over the attempt grain. Identity is the
-    claimed attestation — phone where present, else name — and the
-    display name is the most recently claimed one. Everything derives
-    from attempts, so a canvasser exists only with ≥1 attempt and
-    sign-outs with no attempts don't count as walks."""
-    return (
-        cte
-        + """
+def canvasser_stats_sql(rel: str) -> str:
+    """Per-canvasser tallies over a materialized attempt-grain relation.
+    Identity is the claimed attestation — phone where present, else name
+    — and the display name is the most recently claimed one. Everything
+    derives from attempts, so a canvasser exists only with ≥1 attempt
+    and sign-outs with no attempts don't count as walks."""
+    return f"""
         SELECT
             coalesce(canvasser_phone, canvasser_name) AS canvasser_key,
             arg_max(canvasser_name, sequence) AS canvasser_name,
@@ -245,10 +245,21 @@ def canvasser_stats_sql(cte: str) -> str:
             count(*) FILTER (WHERE outcome = 'canvassed') AS contacted,
             min(created_at)::VARCHAR AS first_active,
             max(created_at)::VARCHAR AS last_active
-        FROM attempts
+        FROM {rel}
         GROUP BY 1
         """
-    )
+
+
+def attempt_days_sql(rel: str) -> str:
+    """Distinct attempt days over a materialized attempt-grain relation,
+    newest first — the reports day picker. Days whose only activity was
+    later cleared or superseded list nothing and are deliberately
+    absent. Binds [tz]."""
+    return f"""
+        SELECT DISTINCT ((created_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
+        FROM {rel}
+        ORDER BY day DESC
+    """
 
 
 def canvass_days_sql(base_filters: list[str]) -> str:

@@ -18,11 +18,19 @@
 //   pnpm bench --org <slug> --scenario steps-narrow --scenario burst
 //   pnpm bench --org <slug> --extra my-scenarios.json      # e.g. custom fields
 
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import chalk from "chalk";
 import meow from "meow";
+import {
+  type Measurement,
+  type ResultRow,
+  RESULTS_FILE,
+  appendRow,
+  checkHealth,
+  parseServerTiming,
+  printRow,
+  toRow as toSharedRow,
+} from "./lib";
 import { SCENARIOS, type Criteria, type Scenario } from "./scenarios";
 
 const cli = meow(
@@ -62,46 +70,6 @@ const ENDPOINTS = {
 } as const;
 type Endpoint = keyof typeof ENDPOINTS;
 
-type Measurement = {
-  wallMs: number;
-  bytes: number;
-  phases: Record<string, number>; // parsed Server-Timing (query, total, …)
-};
-
-export type ResultRow = {
-  ts: string;
-  env: string;
-  label: string;
-  org: string;
-  url: string;
-  scenario: string;
-  endpoint: string; // count | cascade | points | batch (burst wall)
-  iterations: number;
-  coldMs: number;
-  warmMs: number; // median wall of warm iterations
-  phases: Record<string, number>; // median warm server phases
-  bytes: number;
-};
-
-const RESULTS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "results");
-const RESULTS_FILE = resolve(RESULTS_DIR, "results.jsonl");
-
-function parseServerTiming(header: string | null): Record<string, number> {
-  const phases: Record<string, number> = {};
-  if (!header) return phases;
-  for (const part of header.split(",")) {
-    const m = part.trim().match(/^([\w-]+);dur=([\d.]+)$/);
-    if (m) phases[m[1]!] = Number(m[2]);
-  }
-  return phases;
-}
-
-function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
-}
-
 async function measure(endpoint: Endpoint, criteria: Criteria): Promise<Measurement> {
   const t0 = performance.now();
   const res = await fetch(`${url}${ENDPOINTS[endpoint]}`, {
@@ -122,50 +90,8 @@ async function measure(endpoint: Endpoint, criteria: Criteria): Promise<Measurem
   };
 }
 
-// Median of each phase across warm iterations, keyed by phase name.
-function medianPhases(measurements: Measurement[]): Record<string, number> {
-  const keys = new Set(measurements.flatMap((m) => Object.keys(m.phases)));
-  const out: Record<string, number> = {};
-  for (const key of keys) {
-    const vals = measurements.map((m) => m.phases[key]).filter((v): v is number => v != null);
-    if (vals.length) out[key] = median(vals);
-  }
-  return out;
-}
-
-function toRow(scenario: string, endpoint: string, all: Measurement[]): ResultRow {
-  const warm = all.length > 1 ? all.slice(1) : all;
-  return {
-    ts: new Date().toISOString(),
-    env,
-    label,
-    org,
-    url,
-    scenario,
-    endpoint,
-    iterations: all.length,
-    coldMs: all[0]!.wallMs,
-    warmMs: median(warm.map((m) => m.wallMs)),
-    phases: medianPhases(warm),
-    bytes: all[all.length - 1]!.bytes,
-  };
-}
-
-const fmtMs = (ms: number | undefined) => (ms == null ? chalk.gray("—") : `${ms.toFixed(0)}ms`);
-const fmtBytes = (b: number) =>
-  b >= 1_000_000 ? `${(b / 1_000_000).toFixed(1)}MB` : `${(b / 1_000).toFixed(1)}kB`;
-
-function printRow(row: ResultRow) {
-  const phases = row.phases;
-  console.log(
-    `  ${row.endpoint.padEnd(8)}` +
-      ` warm ${chalk.bold(fmtMs(row.warmMs).padStart(8))}` +
-      `  cold ${fmtMs(row.coldMs).padStart(8)}` +
-      `  query ${fmtMs(phases.query).padStart(8)}` +
-      `  server ${fmtMs(phases.total).padStart(8)}` +
-      `  ${fmtBytes(row.bytes).padStart(8)}`,
-  );
-}
+const toRow = (scenario: string, endpoint: string, all: Measurement[]) =>
+  toSharedRow({ env, label, org, url }, scenario, endpoint, all);
 
 async function runScenario(scenario: Scenario): Promise<ResultRow[]> {
   const endpoints = Object.keys(ENDPOINTS) as Endpoint[];
@@ -191,11 +117,7 @@ async function runScenario(scenario: Scenario): Promise<ResultRow[]> {
 }
 
 async function main() {
-  const health = await fetch(`${url}/healthcheck`).catch(() => null);
-  if (!health?.ok) {
-    console.error(chalk.red(`no data server at ${url} — is it running / tunneled?`));
-    process.exit(1);
-  }
+  await checkHealth(url);
 
   let scenarios = [...SCENARIOS];
   if (cli.flags.extra) {
@@ -213,14 +135,13 @@ async function main() {
     `${chalk.bold(env)} (${url}) org=${org} label=${chalk.bold(label)} iterations=${iterations}\n`,
   );
 
-  mkdirSync(RESULTS_DIR, { recursive: true });
   for (const scenario of scenarios) {
     console.log(`${chalk.cyan(scenario.name)} — ${chalk.gray(scenario.description)}`);
     try {
       const rows = await runScenario(scenario);
       for (const row of rows) {
         printRow(row);
-        appendFileSync(RESULTS_FILE, JSON.stringify(row) + "\n");
+        appendRow(row);
       }
     } catch (err) {
       console.log(`  ${chalk.red("failed")}: ${err instanceof Error ? err.message : String(err)}`);
