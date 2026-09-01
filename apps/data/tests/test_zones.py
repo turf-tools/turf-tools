@@ -6,7 +6,12 @@ from __future__ import annotations
 import json
 
 import duckdb
-from src.zones import flatten_zone_keys, perimeter_union_sql, zone_target_counts_sql
+from src.zones import (
+    flatten_zone_keys,
+    perimeter_union_sql,
+    zone_perimeter_geojson,
+    zone_target_counts_sql,
+)
 
 
 def test_flatten_zone_keys_pairs_ids_with_keys() -> None:
@@ -49,7 +54,7 @@ def test_zone_target_counts_apply_criteria_where() -> None:
     assert {z: (people, doors) for z, people, doors in rows} == {"z1": (2, 2)}
 
 
-def test_perimeter_union_seals_sliver_gaps() -> None:
+def _boundaries_conn() -> duckdb.DuckDBPyConnection:
     c = duckdb.connect()
     c.install_extension("spatial")
     c.load_extension("spatial")
@@ -61,6 +66,11 @@ def test_perimeter_union_seals_sliver_gaps() -> None:
         ('a', ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))')),
         ('b', ST_GeomFromText('POLYGON((1.00005 0, 2 0, 2 1, 1.00005 1, 1.00005 0))'))"""
     )
+    return c
+
+
+def test_perimeter_union_seals_sliver_gaps() -> None:
+    c = _boundaries_conn()
     # Control: the plain union keeps the crack — two disjoint polygons.
     plain = c.execute("SELECT ST_GeometryType(ST_Union_Agg(ST_MakeValid(geom))) FROM boundaries").fetchone()
     assert plain is not None and plain[0] == "MULTIPOLYGON"
@@ -68,3 +78,12 @@ def test_perimeter_union_seals_sliver_gaps() -> None:
     assert row is not None
     sealed = json.loads(row[0])
     assert sealed["type"] == "Polygon"
+
+
+def test_zone_perimeter_geojson_memoizes_across_connections() -> None:
+    zone_perimeter_geojson.cache_clear()
+    first = zone_perimeter_geojson(_boundaries_conn(), "boundaries", ("a", "b"))
+    assert first is not None and json.loads(first)["type"] == "Polygon"
+    # A connection with no boundaries table proves the hit runs no SQL.
+    bare = duckdb.connect()
+    assert zone_perimeter_geojson(bare, "boundaries", ("a", "b")) == first

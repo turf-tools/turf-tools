@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from src.cache import singleflight_lru
+
+if TYPE_CHECKING:
+    import duckdb
+
 # Boundary polygons are simplified per feature at seed time, so adjacent
 # shapes disagree along shared edges by up to the simplification
 # tolerance (0.0001°) — a plain union inherits that as slivers and
@@ -33,6 +40,23 @@ def zone_target_counts_sql(persons_fqn: str, key_expr: str, where: str) -> str:
         {where}
         GROUP BY zk.zone_id
     """
+
+
+PERIMETER_CACHE_BYTES = 32 * 2**20
+
+
+@singleflight_lru(
+    PERIMETER_CACHE_BYTES,
+    sizeof=lambda v: len(v) if v else 1,
+    key=lambda conn, boundary_fqn, keys: (boundary_fqn, keys),
+)
+def zone_perimeter_geojson(conn: duckdb.DuckDBPyConnection, boundary_fqn: str, keys: tuple[str, ...]) -> str | None:
+    """One zone's sealed perimeter as a GeoJSON string, memoized. The
+    result is pure in (boundary table, key set) — the FQN's schema
+    carries the dataset version — so entries never go stale. Callers
+    pass keys sorted so equal sets share an entry."""
+    row = conn.execute(perimeter_union_sql(boundary_fqn), [list(keys)]).fetchone()
+    return row[0] if row is not None else None
 
 
 def perimeter_union_sql(boundary_fqn: str) -> str:

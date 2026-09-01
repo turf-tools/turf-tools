@@ -65,7 +65,7 @@ from src.tables import (
     table_fqn,
 )
 from src.timing import timed
-from src.zones import flatten_zone_keys, perimeter_union_sql, zone_target_counts_sql
+from src.zones import flatten_zone_keys, zone_perimeter_geojson, zone_target_counts_sql
 
 logger = logging.getLogger("uvicorn")
 
@@ -738,11 +738,11 @@ class _ZonePerimetersRequest(_WireBaseModel):
 async def zone_perimeters(req: _ZonePerimetersRequest):
     """One unioned polygon per zone, as a GeoJSON FeatureCollection.
 
-    Unions each zone's boundary polygons with GEOS (ST_Union_Agg) — robust
-    on shared edges, unlike the client-side martinez union whose sliver
-    output flickered triangles at some zooms. Zone definitions come from
-    operational Postgres; geometry from the active version's boundary
-    tables.
+    Unions each zone's boundary polygons with GEOS (ST_Union_Agg), robust
+    on shared edges. Zone definitions come from operational Postgres;
+    geometry from the active version's boundary tables. Unions are
+    memoized per (boundary table, key set), so only new or edited zones
+    pay the GEOS cost.
     """
 
     def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
@@ -770,8 +770,8 @@ async def zone_perimeters(req: _ZonePerimetersRequest):
                 if not keys:
                     continue
                 fqn = table_fqn(schema, key_group)
-                row = conn.execute(perimeter_union_sql(fqn), [keys]).fetchone()
-                if row is None or row[0] is None:
+                geojson = zone_perimeter_geojson(conn, fqn, tuple(sorted(keys)))
+                if geojson is None:
                     continue
                 features.append(
                     {
@@ -781,7 +781,7 @@ async def zone_perimeters(req: _ZonePerimetersRequest):
                             "zoneName": name,
                             "zoneGroupId": zone_group_id,
                         },
-                        "geometry": json.loads(row[0]),
+                        "geometry": json.loads(geojson),
                     }
                 )
         return {"type": "FeatureCollection", "features": features}
