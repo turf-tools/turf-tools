@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import { and, asc, eq, inArray, isNull, sql } from "@turf-tools/db";
-import { scriptSteps, questions, responseOptions } from "@turf-tools/db/schema";
+import { scriptSteps, questions, responseOptions, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
 
@@ -154,6 +154,53 @@ export const getById = pub
     return { ...question, options };
   });
 
+// One-shot freshness probe for the remove/archive gates — fetched on click
+// (staleTime 0) so the warn/block decision never acts on a stale cache.
+export const liveUsage = pub
+  .input(z.object({ questionId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ questionId: questions.questionId })
+      .from(questions)
+      .where(
+        and(
+          eq(questions.questionId, input.questionId),
+          eq(questions.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+
+    const [used, live, gating] = await Promise.all([
+      context.db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(scriptSteps)
+        .where(eq(scriptSteps.questionId, input.questionId)),
+      // Active turfs whose stamped script includes this question — removals
+      // here change what canvassers in those turfs see.
+      context.db
+        .select({ count: sql<number>`count(distinct ${turfs.turfId})::int` })
+        .from(scriptSteps)
+        .innerJoin(turfs, and(eq(turfs.scriptId, scriptSteps.scriptId), eq(turfs.status, "active")))
+        .where(eq(scriptSteps.questionId, input.questionId)),
+      // Options some step's visibility is conditioned on — archiving them
+      // (or the whole question) is blocked.
+      context.db
+        .selectDistinct({ responseOptionId: responseOptions.responseOptionId })
+        .from(scriptSteps)
+        .innerJoin(
+          responseOptions,
+          eq(scriptSteps.showIfOptionId, responseOptions.responseOptionId),
+        )
+        .where(eq(responseOptions.questionId, input.questionId)),
+    ]);
+
+    return {
+      usedCount: used[0]?.count ?? 0,
+      liveTurfCount: live[0]?.count ?? 0,
+      gatingOptionIds: gating.map((g) => g.responseOptionId),
+    };
+  });
+
 export const create = pub
   .input(
     z.object({
@@ -232,6 +279,21 @@ export const archive = pub
         ),
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+
+    // Blocked while any step's visibility is conditioned on one of this
+    // question's options — archiving would delete the controlling step and
+    // leave the condition dangling.
+    const dependent = await context.db
+      .select({ scriptStepId: scriptSteps.scriptStepId })
+      .from(scriptSteps)
+      .innerJoin(responseOptions, eq(scriptSteps.showIfOptionId, responseOptions.responseOptionId))
+      .where(eq(responseOptions.questionId, input.questionId))
+      .limit(1);
+    if (dependent.length > 0)
+      throw new ORPCError("CONFLICT", {
+        message:
+          "Another script step depends on one of this question's options being selected. Remove that condition from the script first.",
+      });
 
     // Snapshot the set of affected script ids before deleting so the
     // client can target invalidations precisely (no broad-prefix nukes).
@@ -323,6 +385,20 @@ export const removeResponseOption = pub
         ),
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+
+    // Blocked while any step's visibility is conditioned on this option — the
+    // condition must be removed in the script editor first.
+    const dependent = await context.db
+      .select({ scriptStepId: scriptSteps.scriptStepId })
+      .from(scriptSteps)
+      .where(eq(scriptSteps.showIfOptionId, input.responseOptionId))
+      .limit(1);
+    if (dependent.length > 0)
+      throw new ORPCError("CONFLICT", {
+        message:
+          "Another script step depends on this option being selected. Remove that condition from the script first.",
+      });
+
     // Soft-delete: canvass responses + segment filters reference this option id
     // and must stay resolvable.
     await context.db

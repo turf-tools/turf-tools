@@ -32,6 +32,7 @@ import {
   ResponseTypePicker,
 } from "~/components/question-editor-parts";
 import { scriptDetailQuery, scriptsListQuery } from "~/lib/queries/scripts";
+import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import {
   seedQuestionDetail,
   questionDetailQuery,
@@ -169,6 +170,64 @@ function ScriptEditor() {
     },
   });
 
+  // Step removal is gated: blocked while another step's visibility depends on
+  // the step's question, confirmed when the script is live in published turfs,
+  // immediate otherwise. Snapshot state is split from `open` so the dialog
+  // keeps its body during the close animation.
+  const [stepRemoveGate, setStepRemoveGate] = useState<StepRemoveGate>({ kind: "blocked" });
+  const [stepRemoveOpen, setStepRemoveOpen] = useState(false);
+
+  // Computed from the live step list + cached question options so it tracks
+  // condition edits instantly; the server guard backstops a cold detail cache.
+  const stepGatesOthers = (step: ScriptStepRow): boolean => {
+    if (!step.questionId) return false;
+    const detail = queryClient.getQueryData<{ options: { responseOptionId: string }[] }>([
+      "question",
+      step.questionId,
+    ]);
+    if (!detail) return false;
+    const optionIds = new Set(detail.options.map((o) => o.responseOptionId));
+    return displaySteps.some(
+      (s) =>
+        s.scriptStepId !== step.scriptStepId &&
+        s.showIfOptionId !== null &&
+        optionIds.has(s.showIfOptionId),
+    );
+  };
+
+  const handleRemoveStep = async (step: ScriptStepRow) => {
+    // The dependency check is local (live step list + cached options), so the
+    // blocked case never waits on the network.
+    if (stepGatesOthers(step)) {
+      setStepRemoveGate({ kind: "blocked" });
+      setStepRemoveOpen(true);
+      return;
+    }
+    let liveTurfCount: number;
+    try {
+      const res = await queryClient.fetchQuery({
+        queryKey: ["script-live-turfs", scriptId],
+        queryFn: () => client.scripts.countLiveTurfs({ scriptId }),
+        staleTime: 0,
+      });
+      liveTurfCount = res.count;
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (liveTurfCount > 0) {
+      setStepRemoveGate({
+        kind: "confirm",
+        scriptStepId: step.scriptStepId,
+        stepType: step.stepType,
+        turfCount: liveTurfCount,
+      });
+      setStepRemoveOpen(true);
+    } else {
+      removeStep.mutate(step.scriptStepId);
+    }
+  };
+
   const removeStep = useMutation({
     mutationFn: (scriptStepId: string) => client.scripts.removeStep({ scriptId, scriptStepId }),
     onMutate: (scriptStepId) => {
@@ -182,7 +241,6 @@ function ScriptEditor() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["questions"] });
-      // The server clears conditions that pointed at the removed question.
       void queryClient.invalidateQueries({ queryKey: ["script", scriptId] });
     },
   });
@@ -346,7 +404,7 @@ function ScriptEditor() {
                   number={idx + 1}
                   step={step}
                   earlierSteps={displaySteps.slice(0, idx)}
-                  onRemove={() => removeStep.mutate(step.scriptStepId)}
+                  onRemove={() => handleRemoveStep(step)}
                   onChangeText={(text) =>
                     updateText.mutate({ scriptStepId: step.scriptStepId, text })
                   }
@@ -369,7 +427,70 @@ function ScriptEditor() {
         error={createAndAddQuestion.error?.message ?? null}
         onSubmit={(name, responseType) => createAndAddQuestion.mutate({ name, responseType })}
       />
+      <RemoveStepDialog
+        open={stepRemoveOpen}
+        onOpenChange={setStepRemoveOpen}
+        gate={stepRemoveGate}
+        onConfirm={() => {
+          if (stepRemoveGate.kind === "confirm") removeStep.mutate(stepRemoveGate.scriptStepId);
+          setStepRemoveOpen(false);
+        }}
+      />
     </>
+  );
+}
+
+type StepRemoveGate =
+  | { kind: "blocked" }
+  | { kind: "confirm"; scriptStepId: string; stepType: string; turfCount: number };
+
+function RemoveStepDialog({
+  open,
+  onOpenChange,
+  gate,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  gate: StepRemoveGate;
+  onConfirm: () => void;
+}) {
+  useConfirmHotkey({ open: open && gate.kind === "confirm", disabled: false, onConfirm });
+  const isQuestion = gate.kind === "confirm" && gate.stepType === "question";
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        {gate.kind === "blocked" ? (
+          <>
+            <DialogTitle>Can't remove question</DialogTitle>
+            <DialogDescription>
+              Another script step depends on one of this question's options being selected. Remove
+              that condition from the script first.
+            </DialogDescription>
+            <div className="mt-2 flex justify-end">
+              <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogTitle>Confirm remove?</DialogTitle>
+            <DialogDescription>
+              This script is used in{" "}
+              <span className="font-bold text-foreground">{gate.turfCount}</span> published turf
+              {gate.turfCount === 1 ? "" : "s"}. Removing this {isQuestion ? "question" : "text"}{" "}
+              will hide it for canvassers
+              {isQuestion ? ", but existing responses will be preserved" : ""}.
+            </DialogDescription>
+            <div className="mt-2 flex justify-end gap-2">
+              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+              <Button variant="destructive" onClick={onConfirm}>
+                Remove {isQuestion ? "question" : "text"}
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

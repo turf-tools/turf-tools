@@ -5,8 +5,16 @@ import { motion, Reorder, useDragControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "~/components/dialog";
 import { Input } from "~/components/input";
 import { questionDetailQuery } from "~/lib/queries/questions";
+import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
@@ -173,6 +181,9 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     },
   });
 
+  const [removeGate, setRemoveGate] = useState<RemoveGate>({ kind: "blocked" });
+  const [removeGateOpen, setRemoveGateOpen] = useState(false);
+
   const removeOption = useMutation({
     mutationFn: (responseOptionId: string) =>
       client.questions.removeResponseOption({ questionId, responseOptionId }),
@@ -255,6 +266,37 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
 
   if (!question) return null;
 
+  // Removal is gated on a click-time freshness probe: blocked while a step's
+  // visibility depends on the option, confirmed when the question is live in
+  // published turfs, immediate otherwise. Snapshot state is split from `open`
+  // so the dialog keeps its body during the close animation.
+  const handleRemove = async (opt: ResponseOption) => {
+    let usage: Awaited<ReturnType<typeof client.questions.liveUsage>>;
+    try {
+      usage = await queryClient.fetchQuery({
+        queryKey: ["question-live-usage", questionId],
+        queryFn: () => client.questions.liveUsage({ questionId }),
+        staleTime: 0,
+      });
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (usage.gatingOptionIds.includes(opt.responseOptionId)) {
+      setRemoveGate({ kind: "blocked" });
+      setRemoveGateOpen(true);
+    } else if (usage.liveTurfCount > 0) {
+      setRemoveGate({
+        kind: "confirm",
+        responseOptionId: opt.responseOptionId,
+        turfCount: usage.liveTurfCount,
+      });
+      setRemoveGateOpen(true);
+    } else {
+      removeOption.mutate(opt.responseOptionId);
+    }
+  };
+
   // Open-ended questions have no options — canvassers type the answer.
   if (question.responseType === "open_ended") {
     return (
@@ -284,7 +326,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
                   text,
                 })
               }
-              onRemove={() => removeOption.mutate(opt.responseOptionId)}
+              onRemove={() => handleRemove(opt)}
               onDragEnd={handleOptionsDragEnd}
               isNew={!isPreExisting(opt.responseOptionId)}
             />
@@ -315,7 +357,69 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
         </Button>
         <span aria-hidden className="w-6 shrink-0" />
       </motion.div>
+      <RemoveOptionDialog
+        open={removeGateOpen}
+        onOpenChange={setRemoveGateOpen}
+        gate={removeGate}
+        onConfirm={() => {
+          if (removeGate.kind === "confirm") removeOption.mutate(removeGate.responseOptionId);
+          setRemoveGateOpen(false);
+        }}
+      />
     </div>
+  );
+}
+
+type RemoveGate =
+  | { kind: "blocked" }
+  | { kind: "confirm"; responseOptionId: string; turfCount: number };
+
+function RemoveOptionDialog({
+  open,
+  onOpenChange,
+  gate,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  gate: RemoveGate;
+  onConfirm: () => void;
+}) {
+  useConfirmHotkey({ open: open && gate.kind === "confirm", disabled: false, onConfirm });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        {gate.kind === "blocked" ? (
+          <>
+            <DialogTitle>Can't archive option</DialogTitle>
+            <DialogDescription>
+              Another script step depends on this option being selected. Remove that condition from
+              the script first.
+            </DialogDescription>
+            <div className="mt-2 flex justify-end">
+              <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogTitle>Confirm archive?</DialogTitle>
+            <DialogDescription>
+              This option is used in{" "}
+              <span className="font-bold text-foreground">{gate.turfCount}</span> published turf
+              {gate.turfCount === 1 ? "" : "s"}. Archiving will hide it, but existing responses will
+              be preserved.
+            </DialogDescription>
+            <div className="mt-2 flex justify-end gap-2">
+              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+              <Button onClick={onConfirm}>
+                <Icon name="archive" />
+                Archive option
+              </Button>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

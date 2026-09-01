@@ -182,6 +182,38 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
   });
 
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  // Click-time freshness probe drives the gate; snapshotted so the dialog
+  // keeps its body during the close animation.
+  const [archivePrompt, setArchivePrompt] = useState<{
+    gatesSteps: boolean;
+    usedCount: number;
+    liveTurfCount: number;
+  } | null>(null);
+
+  const requestArchive = async () => {
+    let usage: Awaited<ReturnType<typeof client.questions.liveUsage>>;
+    try {
+      usage = await queryClient.fetchQuery({
+        queryKey: ["question-live-usage", question.questionId],
+        queryFn: () => client.questions.liveUsage({ questionId: question.questionId }),
+        staleTime: 0,
+      });
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (usage.gatingOptionIds.length > 0 || usage.usedCount > 0) {
+      setArchivePrompt({
+        gatesSteps: usage.gatingOptionIds.length > 0,
+        usedCount: usage.usedCount,
+        liveTurfCount: usage.liveTurfCount,
+      });
+      setArchiveDialogOpen(true);
+    } else {
+      archive.mutate();
+    }
+  };
+
   const meta = RESPONSE_TYPE_META[question.responseType] ?? {
     label: question.responseType,
     color: GRAY,
@@ -222,13 +254,7 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
           <RowMenu
             archived={archived}
             onEdit={onEdit}
-            onArchive={() => {
-              if (question.usedCount > 0) {
-                setArchiveDialogOpen(true);
-              } else {
-                archive.mutate();
-              }
-            }}
+            onArchive={() => void requestArchive()}
             onUnarchive={() => unarchive.mutate()}
           />
         </TableCell>
@@ -237,7 +263,9 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
         open={archiveDialogOpen}
         onOpenChange={setArchiveDialogOpen}
         questionName={question.name}
-        usedCount={question.usedCount}
+        usedCount={archivePrompt?.usedCount ?? question.usedCount}
+        liveTurfCount={archivePrompt?.liveTurfCount ?? 0}
+        gatesSteps={archivePrompt?.gatesSteps ?? false}
         pending={archive.isPending}
         onConfirm={() => {
           archive.mutate(undefined, { onSuccess: () => setArchiveDialogOpen(false) });
@@ -291,6 +319,8 @@ function ArchiveQuestionDialog({
   onOpenChange,
   questionName,
   usedCount,
+  liveTurfCount,
+  gatesSteps,
   pending,
   onConfirm,
 }: {
@@ -298,25 +328,49 @@ function ArchiveQuestionDialog({
   onOpenChange: (open: boolean) => void;
   questionName: string;
   usedCount: number;
+  liveTurfCount: number;
+  gatesSteps: boolean;
   pending: boolean;
   onConfirm: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Archive question?</DialogTitle>
-        <DialogDescription>
-          <span className="font-medium text-foreground">{questionName}</span> is used in{" "}
-          <span className="font-bold text-foreground">{usedCount}</span> script step
-          {usedCount === 1 ? "" : "s"}. Archiving removes it from those scripts. Historical
-          responses keep their reference.
-        </DialogDescription>
-        <div className="mt-2 flex justify-end gap-2">
-          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-          <Button variant="destructive" onClick={onConfirm} loading={pending}>
-            Archive
-          </Button>
-        </div>
+        {gatesSteps ? (
+          <>
+            <DialogTitle>Can't archive question</DialogTitle>
+            <DialogDescription>
+              Another script step depends on one of this question's options being selected. Remove
+              that condition from the script first.
+            </DialogDescription>
+            <div className="mt-2 flex justify-end">
+              <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+            </div>
+          </>
+        ) : (
+          <>
+            <DialogTitle>Archive question?</DialogTitle>
+            <DialogDescription>
+              <span className="font-medium text-foreground">{questionName}</span> is used in{" "}
+              <span className="font-bold text-foreground">{usedCount}</span> script step
+              {usedCount === 1 ? "" : "s"}
+              {liveTurfCount > 0 ? (
+                <>
+                  {" "}
+                  and <span className="font-bold text-foreground">{liveTurfCount}</span> published
+                  turf{liveTurfCount === 1 ? "" : "s"}
+                </>
+              ) : null}
+              . Archiving removes it from those scripts. Historical responses keep their reference.
+            </DialogDescription>
+            <div className="mt-2 flex justify-end gap-2">
+              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+              <Button variant="destructive" onClick={onConfirm} loading={pending}>
+                Archive
+              </Button>
+            </div>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

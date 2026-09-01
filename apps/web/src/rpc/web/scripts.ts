@@ -60,6 +60,28 @@ export const getById = pub
     return { ...script, steps: stepRows };
   });
 
+// One-shot freshness probe for the step-removal gate — fetched on click
+// (staleTime 0) so the confirm decision never acts on a stale cache.
+export const countLiveTurfs = pub
+  .input(z.object({ scriptId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ scriptId: scripts.scriptId })
+      .from(scripts)
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    const rows = await context.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(turfs)
+      .where(and(eq(turfs.scriptId, input.scriptId), eq(turfs.status, "active")));
+    return { count: rows[0]?.count ?? 0 };
+  });
+
 // Create an empty script. Steps are added via the editor.
 export const create = pub
   .input(z.object({ name: z.string().min(1) }))
@@ -353,35 +375,47 @@ export const removeStep = pub
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
     await context.db.transaction(async (tx) => {
-      const removed = await tx
+      const target = await tx
+        .select({ questionId: scriptSteps.questionId })
+        .from(scriptSteps)
+        .where(
+          and(
+            eq(scriptSteps.scriptStepId, input.scriptStepId),
+            eq(scriptSteps.scriptId, input.scriptId),
+          ),
+        );
+      const questionId = target[0]?.questionId;
+      // Blocked while another step's visibility is conditioned on this
+      // question's options — the condition must be removed first.
+      if (questionId) {
+        const dependent = await tx
+          .select({ scriptStepId: scriptSteps.scriptStepId })
+          .from(scriptSteps)
+          .innerJoin(
+            responseOptions,
+            eq(scriptSteps.showIfOptionId, responseOptions.responseOptionId),
+          )
+          .where(
+            and(
+              eq(scriptSteps.scriptId, input.scriptId),
+              eq(responseOptions.questionId, questionId),
+            ),
+          )
+          .limit(1);
+        if (dependent.length > 0)
+          throw new ORPCError("CONFLICT", {
+            message:
+              "Another script step depends on one of this question's options being selected. Remove that condition from the script first.",
+          });
+      }
+      await tx
         .delete(scriptSteps)
         .where(
           and(
             eq(scriptSteps.scriptStepId, input.scriptStepId),
             eq(scriptSteps.scriptId, input.scriptId),
           ),
-        )
-        .returning({ questionId: scriptSteps.questionId });
-      // Conditions pointing at the removed question's options now have no
-      // controller in this script — clear them so those steps show again.
-      const questionId = removed[0]?.questionId;
-      if (questionId) {
-        await tx
-          .update(scriptSteps)
-          .set({ showIfOptionId: null })
-          .where(
-            and(
-              eq(scriptSteps.scriptId, input.scriptId),
-              inArray(
-                scriptSteps.showIfOptionId,
-                tx
-                  .select({ id: responseOptions.responseOptionId })
-                  .from(responseOptions)
-                  .where(eq(responseOptions.questionId, questionId)),
-              ),
-            ),
-          );
-      }
+        );
     });
     return { ok: true as const };
   });
