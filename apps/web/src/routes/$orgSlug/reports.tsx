@@ -626,10 +626,10 @@ const CONTACT_RATE_COLUMN: DisplayColumn = {
       ? undefined
       : tintStyle(rateColor(Math.min(Number(r.contact_rate) / 100 / CONTACT_RATE_MAX, 1))),
 };
+// UUID columns: sized to hold a full 36-char UUID at text-sm.
 const WALK_ID_COLUMN: DisplayColumn = {
   label: "Walk ID",
-  width: 13,
-  numeric: true,
+  width: 22,
   value: (r) => text(r.walk_id),
 };
 
@@ -668,8 +668,8 @@ const DISPLAY_COLUMNS: Record<ReportKind, DisplayColumn[]> = {
     ZONE_COLUMN,
     CAMPAIGN_COLUMN,
     ...PERSON_ID_COLUMNS,
-    { label: "Question ID", width: 13, numeric: true, value: (r) => text(r.question_id) },
-    { label: "Response option ID", width: 13, numeric: true, value: (r) => text(r.option_id) },
+    { label: "Question ID", width: 22, value: (r) => text(r.question_id) },
+    { label: "Response option ID", width: 22, value: (r) => text(r.option_id) },
   ],
   attempts: [
     stampColumn("Attempted at", "attempted_at"),
