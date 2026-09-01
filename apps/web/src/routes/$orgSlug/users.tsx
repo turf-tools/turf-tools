@@ -396,6 +396,7 @@ function InviteDialog({
     // Errors render inline in the dialog; skip the global error status.
     meta: { errorHandled: true },
     onSuccess: (_data, toInvite) => {
+      onOpenChange(false);
       void queryClient.invalidateQueries({ queryKey: ["users"] });
       const emailed = toInvite.filter((r) => r.sendEmail).length;
       notify.success(
@@ -403,7 +404,6 @@ function InviteDialog({
           ? `Sent ${emailed} invite${emailed === 1 ? "" : "s"}`
           : `Added ${toInvite.length} user${toInvite.length === 1 ? "" : "s"}`,
       );
-      onOpenChange(false);
     },
   });
   // isSuccess keeps the spinner up while the dialog animates closed —

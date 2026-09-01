@@ -638,7 +638,7 @@ export function Cutter({
         onOpenChange={(next) => {
           // Block close-while-pending so click-outside doesn't strand the
           // user wondering whether the publish landed.
-          if (publishMutation.isPending) return;
+          if (publishMutation.isPending || publishMutation.isSuccess) return;
           setPublishOpen(next);
         }}
       >
