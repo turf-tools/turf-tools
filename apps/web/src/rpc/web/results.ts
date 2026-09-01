@@ -48,8 +48,7 @@ export const aggregate = pub
 
 export type ZonePerimeters = GeoJSON.FeatureCollection;
 
-// Server-side GEOS zone unions — robust geometry, unlike the client-side
-// martinez union (see apps/data /zones/perimeters).
+// Server-side GEOS zone unions (see apps/data /zones/perimeters).
 export const perimeters = pub
   .input(z.object({ zoneGroupIds: z.array(z.string().uuid()).min(1) }))
   .handler(async ({ context, input }): Promise<ZonePerimeters> => {
