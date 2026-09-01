@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 
+import duckdb
 from src.dsl.compile import (
     CriteriaError,
     boundary_key_expr_for,
@@ -132,12 +133,11 @@ def test_age_range_with_both_bounds() -> None:
         None,
         params,
     )
-    # Compiled SQL is messy by necessity (try_strptime + age + extract);
-    # what matters is the structure and the param order.
-    assert "try_strptime(date_of_birth" in where
-    assert ">= ?" in where
-    assert "<= ?" in where
-    assert params == [18, 64]
+    # Bounds compile to string comparisons against constant-folded
+    # cutoffs; the max bound binds max+1 (born after that cutoff).
+    assert where.count("date_of_birth <=") == 1
+    assert where.count("date_of_birth >") == 1
+    assert params == [18, 65]
 
 
 def test_age_range_min_only() -> None:
@@ -148,8 +148,8 @@ def test_age_range_min_only() -> None:
         None,
         params,
     )
-    assert ">= ?" in where
-    assert "<= ?" not in where
+    assert "date_of_birth <=" in where
+    assert "date_of_birth >" not in where.replace("date_of_birth <=", "")
     assert params == [18]
 
 
@@ -161,9 +161,37 @@ def test_age_range_max_only() -> None:
         None,
         params,
     )
-    assert ">= ?" not in where
-    assert "<= ?" in where
-    assert params == [64]
+    assert "date_of_birth >" in where
+    assert "date_of_birth <=" not in where
+    assert params == [65]
+
+
+def test_age_range_matches_calendar_age_semantics() -> None:
+    """The string-comparison clause selects exactly the rows the direct
+    age computation would, across every birthdate incl. Feb 29."""
+    conn = duckdb.connect()
+    # Through today only: a future birthdate can't occur in imported data
+    # (the importer digit-validates DOBs), and the clause excludes any
+    # such row — a negative age satisfies no bound.
+    conn.execute(
+        "CREATE TABLE p AS SELECT strftime(d, '%Y-%m-%d') AS date_of_birth "
+        "FROM generate_series(DATE '1900-01-01', current_date, INTERVAL 1 DAY) t(d)"
+    )
+    for lo, hi in [(18, 64), (18, None), (None, 64), (0, 0), (25, 25)]:
+        params: list = []
+        where = criteria_to_where(
+            CATALOG,
+            _narrow(AgeRangeFilter(kind="age-range", key="date_of_birth", min=lo, max=hi)),
+            None,
+            params,
+        )
+        age = "extract(year from age(current_date, try_strptime(date_of_birth, '%Y-%m-%d')::DATE))"
+        old_parts = ([f"{age} >= {lo}"] if lo is not None else []) + ([f"{age} <= {hi}"] if hi is not None else [])
+        diff = conn.execute(
+            f"SELECT count(*) FROM p {where.replace('WHERE', 'WHERE (')} ) != ({' AND '.join(old_parts)})",
+            params,
+        ).fetchone()
+        assert diff is not None and diff[0] == 0, f"bounds ({lo}, {hi}) diverge"
 
 
 def test_all_filter_compiles_to_match_all() -> None:

@@ -376,15 +376,20 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
     if f.min is None and f.max is None:
         return ""
     expr = f.key
-    dob = f"try_strptime({expr}, '%Y-%m-%d')::DATE"
-    age_years = f"extract(year from age(current_date, {dob}))"
+    # Age bounds compare the ISO date string against a birthdate cutoff
+    # DuckDB folds to a constant — import guarantees YYYY-MM-DD or NULL,
+    # so lexicographic order is chronological and the per-row work is one
+    # string comparison. `- to_years` clamps Feb 29 consistently with
+    # calendar-age semantics (see the equivalence test).
+    cutoff = "strftime(current_date - to_years(CAST(? AS INTEGER)), '%Y-%m-%d')"
     parts: list[str] = []
     if f.min is not None:
-        parts.append(f"{age_years} >= ?")
+        parts.append(f"{expr} <= {cutoff}")
         params.append(f.min)
     if f.max is not None:
-        parts.append(f"{age_years} <= ?")
-        params.append(f.max)
+        # age <= max ⇔ born after the (max+1)-year cutoff.
+        parts.append(f"{expr} > {cutoff}")
+        params.append(f.max + 1)
     return f"({' AND '.join(parts)})"
 
 
