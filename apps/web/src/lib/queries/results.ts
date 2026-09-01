@@ -1,4 +1,4 @@
-import { keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import type { Filter } from "~/lib/filters";
 import { client } from "~/rpc/client";
 
@@ -32,6 +32,4 @@ export const resultsAggregateQuery = (
     // Same heavyweight event reduction as reports; the same 5-minute
     // freshness bound keeps tab-backs silent.
     staleTime: 5 * 60_000,
-    // Filter/scope changes swap data in place — no suspension, no flash.
-    placeholderData: keepPreviousData,
   });

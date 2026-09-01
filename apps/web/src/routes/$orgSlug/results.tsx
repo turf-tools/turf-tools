@@ -1,6 +1,6 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useDeferredValue, useMemo, useRef, useState } from "react";
 import { tintStyle } from "~/components/badge";
 import { Button } from "~/components/button";
 import {
@@ -35,7 +35,7 @@ import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
 import { useZoneSelection } from "~/lib/use-zone-selection";
 import { cn, revealZoneCard } from "~/lib/utils";
-import type { ResultsAggregate, ZoneFunnelRow } from "~/rpc/web/results";
+import type { ZoneFunnelRow } from "~/rpc/web/results";
 
 type ResultsSearch = {
   // Campaign id, "all", or null = default (newest active campaign) — so
@@ -43,8 +43,6 @@ type ResultsSearch = {
   campaign: string | null;
   day: string | null;
 };
-
-const EMPTY_AGGREGATE = { days: [], rows: [] } as ResultsAggregate;
 
 // Page-level selection value for the totals row — the map itself only
 // ever sees a list of zone ids.
@@ -124,15 +122,21 @@ function ResultsIndex() {
 
   // Only leaves with values constrain anything — a just-added empty
   // chip changes nothing until edited, so it triggers no refetch.
-  const activeFilters = filters.filter((c) => isActiveFilter(c.filter));
-  // Plain useQuery: suspense would ignore keepPreviousData and unmount
-  // the page (and the map, mid-teardown) on every key change. The loader
-  // prefetches the unfiltered scope, so data is present on first paint;
-  // the empty fallback only covers transient states.
-  const { data } = useQuery(
-    resultsAggregateQuery(campaignFilter ? [campaignFilter] : null, dayFilter, tz, activeFilters),
+  const activeFilters = useMemo(() => filters.filter((c) => isActiveFilter(c.filter)), [filters]);
+  // Suspense keyed on a DEFERRED copy of the chips: a chip edit re-renders
+  // instantly (the editor inputs read `filters`), while the query suspends
+  // only in the deferred background render — React holds the committed
+  // tree, so the map never unmounts and old numbers stand until new ones
+  // land. Campaign/day live in the URL, so the loader has those keys
+  // fetched before the navigation commits; a stale tab-back suspends
+  // inside the router transition and holds the previous page.
+  const deferredFilters = useDeferredValue(activeFilters);
+  const { data: aggregate } = useSuspenseQuery(
+    resultsAggregateQuery(campaignFilter ? [campaignFilter] : null, dayFilter, tz, deferredFilters),
   );
-  const aggregate = data ?? EMPTY_AGGREGATE;
+  // Serialized compare: `filters` state churn re-creates the array without
+  // changing the key (e.g. adding an empty chip) — no dim for those.
+  const filtersStale = JSON.stringify(deferredFilters) !== JSON.stringify(activeFilters);
 
   // Question picks (multi) show every selected question's options as
   // count+rate columns; the map colors by the Color-by pick, whose
@@ -140,8 +144,7 @@ function ResultsIndex() {
   // the "color by which option?" ambiguity is resolved by an explicit
   // pick. Fallbacks are derived: first question when nothing is picked,
   // Color-by falls back to contact rate when its option leaves the set.
-  const { data: questions } = useQuery(questionsWithOptionsQuery());
-  const questionList = questions ?? [];
+  const { data: questionList } = useSuspenseQuery(questionsWithOptionsQuery());
   const [questionPicks, setQuestionPicks] = useState<string[]>([]);
   const [questionMenuOpen, setQuestionMenuOpen] = useState(false);
   const pickedQuestions = questionList.filter((q) => questionPicks.includes(q.questionId));
@@ -475,7 +478,14 @@ function ResultsIndex() {
           // them the table sits 2px short and grows a phantom scrollbar.
           style={mapCollapsed ? undefined : { width: `calc(${cardRem}rem + 2px)` }}
         >
-          <div className="min-h-0 flex-1 px-2 pt-2">
+          {/* Dim while old data stands in for an edited chip set — the
+              reports/segments stale convention. */}
+          <div
+            className={cn(
+              "min-h-0 flex-1 px-2 pt-2 transition-opacity",
+              filtersStale && "opacity-60",
+            )}
+          >
             <Table
               containerClassName="h-full overflow-x-auto overflow-y-auto"
               // border-spacing-y is the table version of the lookup
