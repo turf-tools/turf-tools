@@ -7,7 +7,9 @@
 //
 // styles.css mirrors RED and GREEN as --palette-red / --palette-green
 // for the --destructive / --success tokens — keep them in sync.
-import { schemeObservable10 } from "d3-scale-chromatic";
+import { hcl } from "d3-color";
+import { interpolateHcl, interpolateLab, piecewise } from "d3-interpolate";
+import { interpolateYlOrRd, schemeObservable10 } from "d3-scale-chromatic";
 
 export const BLUE = schemeObservable10[0]!;
 export const YELLOW = schemeObservable10[1]!;
@@ -36,6 +38,26 @@ export function progressColor(pct: number) {
 // and rotates through adjacent hues. Same banding rule as the RYG trio.
 export function rateColor(t: number) {
   return t <= 0.25 ? PINK : t <= 0.75 ? PURPLE : BLUE;
+}
+
+// Sequential ramp for the segment overlay: YlOrRd's lightness and
+// chroma curves (the carefully optimized part — what makes hot spots
+// legible) with the hue curve replaced by a path through the palette's
+// warm family, gold → red → brick, so the overlay feels related to
+// the categorical zone colors it flips against. The hue path's
+// anchors are derived: palette yellow lightened (it's ~10 L* darker
+// than YlOrRd's same zone), red pulled toward brick for the dark
+// half. Inverted in dark mode (deep brick low → cream high) so high
+// values stay the most visible end of the ramp on a dark basemap.
+const YELLOW_ANCHOR = interpolateLab(YELLOW, "#ffffff")(0.3);
+const PALE_YELLOW = interpolateLab(YELLOW_ANCHOR, "#ffffff")(0.68);
+const BRICK = interpolateLab(RED, "#401104")(0.4);
+const DEEP_BRICK = interpolateLab(RED, "#401104")(0.78);
+const WARM_HUES = piecewise(interpolateHcl, [PALE_YELLOW, YELLOW_ANCHOR, RED, BRICK, DEEP_BRICK]);
+export function segmentRamp(t: number, isDark = false): string {
+  const u = isDark ? 1 - t : t;
+  const base = hcl(interpolateYlOrRd(u));
+  return hcl(hcl(WARM_HUES(u)).h, base.c, base.l).formatHex();
 }
 
 // Color-scale domain for contact rate: door-knocking contact rates live

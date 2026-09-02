@@ -26,7 +26,8 @@ import { segmentRefsVersion } from "~/lib/segment-refs";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useHotkey } from "~/lib/use-hotkey";
 import { cn, revealZoneCard } from "~/lib/utils";
-import { colorFor, interpolateRamp } from "~/lib/zone-colors";
+import { segmentRamp } from "~/lib/palette";
+import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/zones/$zoneGroupId")({
@@ -47,10 +48,10 @@ export const Route = createFileRoute("/$orgSlug/zones/$zoneGroupId")({
 
 function ZoneGroupEditor() {
   const queryClient = useQueryClient();
+  const isDark = useAtomValue(darkAtom);
   const { orgSlug, zoneGroupId } = Route.useParams();
   // The zones index redirects back here next visit.
   useRememberSelection(orgSlug, "zones", zoneGroupId);
-  const isDark = useAtomValue(darkAtom);
 
   const { data: zoneGroups } = useSuspenseQuery(zoneGroupsQuery());
   const activeGroup = zoneGroups.find((g) => g.zoneGroupId === zoneGroupId) ?? null;
@@ -279,8 +280,8 @@ function ZoneGroupEditor() {
     renameZoneMutation.mutate({ zoneId, name: next });
   };
 
-  // Two coloring modes: no overlay → zone hue per key; overlay on → YlOrRd
-  // heatmap on doors with sqrt scaling.
+  // Two coloring modes: no overlay → zone hue per key; overlay on →
+  // warm palette ramp on doors with sqrt scaling.
   const overlayActive = showSegmentCounts && !!overlayCounts;
 
   // Overlay on but counts still in flight (fresh toggle or segment switch):
@@ -301,7 +302,7 @@ function ZoneGroupEditor() {
       const out: Record<string, string> = {};
       for (const [key, c] of Object.entries(overlayCountsByKey)) {
         const t = max === 0 ? 0 : Math.sqrt(c.doors / max);
-        out[key] = interpolateRamp(t, isDark);
+        out[key] = segmentRamp(t, isDark);
       }
       return out;
     }
@@ -349,7 +350,7 @@ function ZoneGroupEditor() {
       doors[zone.zoneId] = d;
       people[zone.zoneId] = p;
       const t = zone.keys.length > 0 ? tSum / zone.keys.length : 0;
-      colors[zone.zoneId] = interpolateRamp(t, isDark);
+      colors[zone.zoneId] = segmentRamp(t, isDark);
     }
     return { doors, people, colors };
   }, [overlayCountsByKey, zones, isDark]);

@@ -5,21 +5,10 @@
 // zone editor (per-key fills) and the campaign editor (per-zone
 // perimeter fills) so the same zone reads the same color across
 // both surfaces.
-import { interpolateYlOrRd } from "d3-scale-chromatic";
 import { GRAY, PALETTE } from "~/lib/palette";
 
 const ZONE_COLORS = PALETTE.filter((c) => c !== GRAY);
 
 export function colorFor(i: number): string {
   return ZONE_COLORS[i % ZONE_COLORS.length]!;
-}
-
-// Sequential ramp for the segment-counts overlay. Classic
-// ColorBrewer YlOrRd via d3-scale-chromatic — perceptually-uniform
-// warm ramp that reads unambiguously as "low → high" without
-// having to share hue family with the categorical above. Inverted
-// in dark mode (dark red low → pale yellow high) so high values
-// stay the most visible end of the ramp on a dark basemap.
-export function interpolateRamp(t: number, isDark = false): string {
-  return interpolateYlOrRd(isDark ? 1 - t : t);
 }
