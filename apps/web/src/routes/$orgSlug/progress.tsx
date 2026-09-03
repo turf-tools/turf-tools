@@ -576,7 +576,7 @@ function ProgressTable({
                   onClick={selectable ? () => onSelectZone(r.zoneId) : undefined}
                 >
                   <TableCell className={cell}>
-                    <span className={cn("truncate", !selectable && "text-muted-foreground")}>
+                    <span className="truncate">
                       {/* Null zone = turf cut against the whole segment. */}
                       {r.zoneName ?? "Full segment"}
                     </span>
