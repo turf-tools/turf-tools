@@ -176,6 +176,8 @@ function ResultsIndex() {
   const pickedQuestions = questionList.filter((q) => questionPicks.includes(q.questionId));
   const activeQuestions = pickedQuestions.length > 0 ? pickedQuestions : questionList.slice(0, 1);
   const totals = sumRows(aggregate.rows);
+  // The aggregate zero-fills a row per zone; only walked zones render.
+  const walkedRows = aggregate.rows.filter((r) => r.attempted > 0);
   // Archived options stay visible while they carry answers in scope —
   // archive hides options from pickers, never from history.
   const visibleOptions = (q: (typeof questionList)[number]) =>
@@ -571,33 +573,44 @@ function ResultsIndex() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {/* All-zones totals first — the funnel headline, the
-                    reading frame for the rows below, and a selection
-                    target like any zone (highlights every zone on the
-                    map). */}
-                <ZoneRow
-                  label={<span>All zones</span>}
-                  row={totals}
-                  columns={answerColumns}
-                  selected={selectedZoneId === ALL_ZONES}
-                  onSelect={() => select(ALL_ZONES)}
-                />
-                {aggregate.rows
-                  .filter((r) => r.attempted > 0)
-                  .map((r) => {
-                    const zoneId = r.zoneId;
-                    return (
-                      <ZoneRow
-                        key={zoneId ?? "none"}
-                        label={<span className="truncate">{r.zoneName ?? "—"}</span>}
-                        zoneId={zoneId}
-                        selected={zoneId != null && zoneId === selectedZoneId}
-                        onSelect={zoneId != null ? () => select(zoneId) : undefined}
-                        row={r}
-                        columns={answerColumns}
-                      />
-                    );
-                  })}
+                {walkedRows.length === 0 ? (
+                  <TableRow className="h-8">
+                    <TableCell
+                      colSpan={3 + answerColumns.length}
+                      className="px-2 text-muted-foreground"
+                    >
+                      No results
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  <>
+                    {/* All-zones totals first — the funnel headline, the
+                        reading frame for the rows below, and a selection
+                        target like any zone (highlights every zone on the
+                        map). */}
+                    <ZoneRow
+                      label={<span>All zones</span>}
+                      row={totals}
+                      columns={answerColumns}
+                      selected={selectedZoneId === ALL_ZONES}
+                      onSelect={() => select(ALL_ZONES)}
+                    />
+                    {walkedRows.map((r) => {
+                      const zoneId = r.zoneId;
+                      return (
+                        <ZoneRow
+                          key={zoneId ?? "none"}
+                          label={<span className="truncate">{r.zoneName ?? "Full segment"}</span>}
+                          zoneId={zoneId}
+                          selected={zoneId != null && zoneId === selectedZoneId}
+                          onSelect={zoneId != null ? () => select(zoneId) : undefined}
+                          row={r}
+                          columns={answerColumns}
+                        />
+                      );
+                    })}
+                  </>
+                )}
               </TableBody>
             </Table>
           </div>

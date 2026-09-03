@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { client } from "~/rpc/client";
+import type { ZonePerimeters } from "~/rpc/web/results";
 
 export const zoneGroupsQuery = () =>
   queryOptions({
@@ -28,10 +29,14 @@ export function zonePerimetersVersion(
 // edits fold `zonePerimetersVersion` into it so shape changes re-key
 // immediately; pages that don't pass one accept staleTime-bounded
 // staleness.
+// An empty group list resolves locally — the RPC rejects it, and there
+// are no shapes to fetch.
 export const zonePerimetersQuery = (zoneGroupIds: string[], version = "") =>
   queryOptions({
     queryKey: ["zone-perimeters", [...zoneGroupIds].sort(), version] as const,
-    queryFn: () => client.results.perimeters({ zoneGroupIds }),
+    queryFn: (): Promise<ZonePerimeters> =>
+      zoneGroupIds.length > 0
+        ? client.results.perimeters({ zoneGroupIds })
+        : Promise.resolve({ type: "FeatureCollection", features: [] }),
     staleTime: 5 * 60_000,
-    enabled: zoneGroupIds.length > 0,
   });

@@ -623,7 +623,12 @@ const TURF_COLUMN: DisplayColumn = {
   numeric: true,
   value: (r) => text(r.turf),
 };
-const ZONE_COLUMN: DisplayColumn = { label: "Zone", width: 8, value: (r) => text(r.zone) };
+// Null zone = turf cut against the whole segment.
+const ZONE_COLUMN: DisplayColumn = {
+  label: "Zone",
+  width: 8,
+  value: (r) => (r.zone == null || r.zone === "" ? "Full segment" : String(r.zone)),
+};
 const CAMPAIGN_COLUMN: DisplayColumn = {
   label: "Campaign",
   width: 10,

@@ -577,7 +577,8 @@ function ProgressTable({
                 >
                   <TableCell className={cell}>
                     <span className={cn("truncate", !selectable && "text-muted-foreground")}>
-                      {r.zoneName ?? "—"}
+                      {/* Null zone = turf cut against the whole segment. */}
+                      {r.zoneName ?? "Full segment"}
                     </span>
                   </TableCell>
                   <TableCell className={cn(cell, "tabular-nums", r.inferred && "italic")}>
