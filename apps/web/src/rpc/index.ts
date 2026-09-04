@@ -119,6 +119,7 @@ export const webRouter = {
   },
   results: {
     aggregate: results.aggregate,
+    eventsVersion: results.eventsVersion,
     perimeters: results.perimeters,
   },
   turfDrafts: {

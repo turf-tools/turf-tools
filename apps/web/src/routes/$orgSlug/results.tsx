@@ -30,7 +30,11 @@ import { hasPermission } from "~/lib/permissions";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
-import { type Condition, resultsAggregateQuery } from "~/lib/queries/results";
+import {
+  type Condition,
+  resultsAggregateQuery,
+  resultsEventsVersionQuery,
+} from "~/lib/queries/results";
 import {
   zoneGroupsPerimetersVersion,
   zoneGroupsQuery,
@@ -105,13 +109,15 @@ export const Route = createFileRoute("/$orgSlug/results")({
     // renders the no-dataset modal instead.
     if (!manifest) return;
     const campaignId = scopedCampaignId(deps.campaign, campaigns);
-    await Promise.all([
-      queryClient.fetchQuery(
-        resultsAggregateQuery(campaignId ? [campaignId] : null, deps.day, tz, []),
-      ),
+    // The aggregate's key folds the events-version stamp, so it loads first.
+    const [{ version }] = await Promise.all([
+      queryClient.fetchQuery(resultsEventsVersionQuery(campaignId ? [campaignId] : null)),
       // Question/option selectors paint with real labels on first render.
       queryClient.fetchQuery(questionsWithOptionsQuery()),
     ]);
+    await queryClient.fetchQuery(
+      resultsAggregateQuery(campaignId ? [campaignId] : null, deps.day, tz, [], version),
+    );
   },
   component: ResultsGate,
 });
@@ -177,8 +183,34 @@ function ResultsIndex() {
   // fetched before the navigation commits; a stale tab-back suspends
   // inside the router transition and holds the previous page.
   const deferredFilters = useDeferredValue(activeFilters);
+  // The events-version stamp rides the same deferral: when new events
+  // land (native sync — no web mutation to signal from), the version
+  // bump re-keys the aggregate in the background render, so fresh
+  // numbers arrive without a fallback flash.
+  const { data: eventsVersion } = useSuspenseQuery(
+    resultsEventsVersionQuery(campaignFilter ? [campaignFilter] : null),
+  );
+  // Campaign, day, and version defer as ONE unit: the aggregate key must
+  // change atomically — wholly old (cached) or wholly new (loader-
+  // prefetched). A mixed key (new campaign, old version) exists in no
+  // cache, and suspending on it drops the page to the route fallback.
+  const aggregateScope = useMemo(
+    () => ({
+      campaignIds: campaignFilter ? [campaignFilter] : null,
+      day: dayFilter,
+      version: eventsVersion.version,
+    }),
+    [campaignFilter, dayFilter, eventsVersion.version],
+  );
+  const deferredScope = useDeferredValue(aggregateScope);
   const { data: aggregate } = useSuspenseQuery(
-    resultsAggregateQuery(campaignFilter ? [campaignFilter] : null, dayFilter, tz, deferredFilters),
+    resultsAggregateQuery(
+      deferredScope.campaignIds,
+      deferredScope.day,
+      tz,
+      deferredFilters,
+      deferredScope.version,
+    ),
   );
   // Serialized compare: `filters` state churn re-creates the array without
   // changing the key (e.g. adding an empty chip) — no dim for those.

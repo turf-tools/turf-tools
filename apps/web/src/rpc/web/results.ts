@@ -1,6 +1,29 @@
+import { and, eq, inArray, sql } from "@turf-tools/db";
+import { campaigns, canvassEvents, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
+
+// Cheap freshness probe for the event-log reductions: the newest event
+// sequence in scope. Events arrive from outside the web client (native
+// sync), so report pages fold this into their cache keys — the
+// heavyweight aggregate refetches only when events actually changed.
+export const eventsVersion = pub
+  .input(z.object({ campaignIds: z.array(z.string().uuid()).nullish() }))
+  .handler(async ({ context, input }): Promise<{ version: string }> => {
+    const rows = await context.db
+      .select({ latest: sql<string | null>`max(${canvassEvents.sequence})::text` })
+      .from(canvassEvents)
+      .innerJoin(turfs, eq(canvassEvents.turfId, turfs.turfId))
+      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
+      .where(
+        and(
+          eq(campaigns.organizationId, context.organizationId),
+          ...(input.campaignIds?.length ? [inArray(campaigns.campaignId, input.campaignIds)] : []),
+        ),
+      );
+    return { version: rows[0]?.latest ?? "0" };
+  });
 
 export type ZoneFunnelRow = {
   zoneId: string | null;
