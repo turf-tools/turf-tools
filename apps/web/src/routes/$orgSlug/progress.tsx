@@ -16,8 +16,16 @@ import { hasPermission } from "~/lib/permissions";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { progressByZoneQuery, progressTargetsQuery } from "~/lib/queries/progress";
-import { zonePerimetersQuery } from "~/lib/queries/zones";
-import { segmentsListQuery } from "~/lib/queries/segments";
+import {
+  zoneGroupsPerimetersVersion,
+  zoneGroupsQuery,
+  zonePerimetersQuery,
+} from "~/lib/queries/zones";
+import {
+  segmentPerimetersQuery,
+  segmentPerimetersVersion,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
 import { useHotkey } from "~/lib/use-hotkey";
 import { useZoneSelection } from "~/lib/use-zone-selection";
 import { campaignSegmentsVersion } from "~/lib/segment-refs";
@@ -27,6 +35,14 @@ import { cn, revealZoneCard } from "~/lib/utils";
 // Page-level selection value for the totals row — the map itself only
 // ever sees a list of zone ids.
 const ALL_ZONES = "all";
+
+// Zoneless campaigns: the null-zone row and the segment outline share
+// this selection id, so fills, clicks, and row highlights line up.
+function segmentSentinelFor(
+  c: { zoneGroupId: string | null; segmentId: string | null } | undefined,
+): string | null {
+  return c && !c.zoneGroupId && c.segmentId ? `segment:${c.segmentId}` : null;
+}
 
 type ProgressSearch = {
   campaign: string | null;
@@ -245,19 +261,58 @@ function ProgressMap({
   const { data } = useSuspenseQuery(progressByZoneQuery());
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
 
-  // Zone shapes for the selected campaign's group.
+  // Zone shapes for the selected campaign's group; for a zoneless
+  // campaign, the segment's own outline stands in as one "Full segment"
+  // shape keyed by the sentinel.
   const scopeCampaign = campaigns.find((c) => c.campaignId === campaignFilter);
   const zoneGroupIds = scopeCampaign?.zoneGroupId ? [scopeCampaign.zoneGroupId] : [];
-  const { data: perimeters } = useQuery(zonePerimetersQuery(zoneGroupIds));
+  const segmentSentinel = segmentSentinelFor(scopeCampaign);
+  // Both perimeter queries wait for their stamp inputs, so an outline
+  // never fetches under a blank stamp and refetches a beat later.
+  const { data: manifestRow } = useSuspenseQuery(manifestQuery());
+  const { data: zoneGroupRows } = useQuery(zoneGroupsQuery());
+  const { data: segments } = useQuery(segmentsListQuery());
+  const { data: zonePerims } = useQuery({
+    ...zonePerimetersQuery(
+      zoneGroupIds,
+      zoneGroupsPerimetersVersion(manifestRow?.versionId, zoneGroupIds, zoneGroupRows),
+    ),
+    enabled: zoneGroupIds.length === 0 || zoneGroupRows !== undefined,
+  });
+  const segmentIds = segmentSentinel && scopeCampaign?.segmentId ? [scopeCampaign.segmentId] : [];
+  const { data: segmentPerims } = useQuery({
+    ...segmentPerimetersQuery(
+      segmentIds,
+      segmentPerimetersVersion(
+        manifestRow?.versionId,
+        scopeCampaign ? [scopeCampaign] : [],
+        segments,
+      ),
+    ),
+    enabled: segmentIds.length === 0 || segments !== undefined,
+  });
+  const perimeters = useMemo<GeoJSON.FeatureCollection | undefined>(() => {
+    if (!zonePerims || !segmentPerims) return undefined;
+    return {
+      ...zonePerims,
+      features: [
+        ...zonePerims.features,
+        ...segmentPerims.features.map((f) => ({
+          ...f,
+          properties: { zoneId: `segment:${f.properties?.segmentId}`, zoneName: "Full segment" },
+        })),
+      ],
+    };
+  }, [zonePerims, segmentPerims]);
 
   const byZone = useMemo(
     () =>
       new Map(
         data
-          .filter((r) => r.campaignId === campaignFilter && r.zoneId)
-          .map((r) => [r.zoneId as string, r]),
+          .filter((r) => r.campaignId === campaignFilter && (r.zoneId || segmentSentinel))
+          .map((r) => [(r.zoneId ?? segmentSentinel) as string, r]),
       ),
-    [data, campaignFilter],
+    [data, campaignFilter, segmentSentinel],
   );
 
   // Fill follows the Color-by pick: turf-grain used/total (the dispatch
@@ -388,7 +443,11 @@ function ProgressMap({
             <div className="flex flex-col px-3 py-2">
               <span className="flex items-center gap-2">
                 <span className="font-semibold">
-                  {cornerAll ? "All zones" : (selected?.zoneName ?? selectedUncutName)}
+                  {cornerAll
+                    ? "All zones"
+                    : selected
+                      ? (selected.zoneName ?? "Full segment")
+                      : selectedUncutName}
                 </span>
                 <button
                   type="button"
@@ -438,6 +497,7 @@ function ProgressTable({
   // request for a finished pass is a history view).
   const { data: segments } = useQuery({ ...segmentsListQuery(), enabled: showAllZones });
   const scoped = campaigns.filter((c) => c.campaignId === campaignFilter);
+  const segmentSentinel = segmentSentinelFor(scoped[0]);
   const { data: targetsData } = useQuery({
     ...progressTargetsQuery(campaignFilter ?? "", campaignSegmentsVersion(scoped, segments)),
     enabled: showAllZones && segments !== undefined && campaignFilter !== null,
@@ -563,17 +623,18 @@ function ProgressTable({
                 : r.people > 0
                   ? Math.round((100 * r.attempted) / r.people)
                   : null;
-              const selectable = r.zoneId != null;
-              const selected = selectable && r.zoneId === selectedZoneId;
+              const rowZoneId = r.zoneId ?? segmentSentinel;
+              const selectable = rowZoneId != null;
+              const selected = selectable && rowZoneId === selectedZoneId;
               const cell = zoneCell(selectable, selected);
               return (
                 <TableRow
                   key={`${r.campaignId}:${r.zoneId ?? "none"}`}
-                  data-zone-card={r.zoneId ?? undefined}
+                  data-zone-card={rowZoneId ?? undefined}
                   // Sticky header overlays the container top; without the
                   // margin, upward scrollIntoView parks the row under it.
                   className={cn("group h-8 scroll-mt-10", selectable && "cursor-pointer")}
-                  onClick={selectable ? () => onSelectZone(r.zoneId) : undefined}
+                  onClick={selectable ? () => onSelectZone(rowZoneId) : undefined}
                 >
                   <TableCell className={cell}>
                     <span className="truncate">
