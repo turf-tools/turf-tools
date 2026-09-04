@@ -48,18 +48,16 @@ export const getById = pub
     return rows[0] ?? null;
   });
 
-// Create a campaign with optional initial bindings. The New
-// Campaign modal exposes the three FK selectors so users can pick
-// segment/zone-group/script up front; if any is omitted the
-// campaign is created with that binding null and the user can set
-// it later via `update`.
+// Create a campaign. The zone group is the one optional binding —
+// omitted, the campaign is zoneless and turfs cut against the whole
+// segment.
 export const create = pub
   .input(
     z.object({
       name: z.string().min(1),
-      segmentId: z.string().uuid().nullish(),
+      segmentId: z.string().uuid(),
       zoneGroupId: z.string().uuid().nullish(),
-      scriptId: z.string().uuid().nullish(),
+      scriptId: z.string().uuid(),
     }),
   )
   .handler(async ({ context, input }) => {
@@ -74,9 +72,9 @@ export const create = pub
         organizationId: context.organizationId,
         datasetId,
         name: input.name,
-        segmentId: input.segmentId ?? null,
+        segmentId: input.segmentId,
         zoneGroupId: input.zoneGroupId ?? null,
-        scriptId: input.scriptId ?? null,
+        scriptId: input.scriptId,
         createdBy: context.user.id,
       })
       .returning(campaignSelect);
@@ -109,16 +107,16 @@ export const rename = pub
     return { ok: true as const };
   });
 
-// Bind/unbind a campaign's foreign keys. Each FK is independently
-// optional — pass null to clear a binding, undefined to leave it.
+// Rebind a campaign. Undefined leaves a binding untouched; null clears
+// the zone group (→ zoneless), the only binding that can be removed.
 // Used by the dropdown commits in the campaign editor.
 export const update = pub
   .input(
     z.object({
       campaignId: z.string().uuid(),
-      segmentId: z.string().uuid().nullable().optional(),
+      segmentId: z.string().uuid().optional(),
       zoneGroupId: z.string().uuid().nullable().optional(),
-      scriptId: z.string().uuid().nullable().optional(),
+      scriptId: z.string().uuid().optional(),
     }),
   )
   .handler(async ({ context, input }) => {

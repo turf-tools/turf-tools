@@ -321,13 +321,7 @@ function ResultsIndex() {
   // set, keyed `segment:<id>` — matching the per-segment rows the
   // aggregate emits for null-zone turfs.
   const segmentIds = useMemo(
-    () => [
-      ...new Set(
-        scopeCampaigns
-          .filter((c) => !c.zoneGroupId && c.segmentId)
-          .map((c) => c.segmentId as string),
-      ),
-    ],
+    () => [...new Set(scopeCampaigns.filter((c) => !c.zoneGroupId).map((c) => c.segmentId))],
     [scopeCampaigns],
   );
   // Both perimeter queries wait for their stamp inputs, so an outline

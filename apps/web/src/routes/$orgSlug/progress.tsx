@@ -39,9 +39,9 @@ const ALL_ZONES = "all";
 // Zoneless campaigns: the null-zone row and the segment outline share
 // this selection id, so fills, clicks, and row highlights line up.
 function segmentSentinelFor(
-  c: { zoneGroupId: string | null; segmentId: string | null } | undefined,
+  c: { zoneGroupId: string | null; segmentId: string } | undefined,
 ): string | null {
-  return c && !c.zoneGroupId && c.segmentId ? `segment:${c.segmentId}` : null;
+  return c && !c.zoneGroupId ? `segment:${c.segmentId}` : null;
 }
 
 type ProgressSearch = {

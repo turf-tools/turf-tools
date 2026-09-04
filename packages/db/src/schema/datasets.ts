@@ -67,7 +67,9 @@ export const datasetVersions = app.table(
     // import job alongside the status flip.
     error: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-    createdBy: uuid().references(() => users.id),
+    createdBy: uuid()
+      .notNull()
+      .references(() => users.id),
     // Soft-hide from the Data list; versions are never deleted (published turfs
     // reference them).
     archivedAt: timestamp({ withTimezone: true }),

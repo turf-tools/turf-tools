@@ -59,5 +59,7 @@ export const customFieldUploads = app.table("custom_field_uploads", {
   skippedCount: integer(),
   matchedCount: integer(),
   createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-  createdBy: uuid().references(() => users.id),
+  createdBy: uuid()
+    .notNull()
+    .references(() => users.id),
 });

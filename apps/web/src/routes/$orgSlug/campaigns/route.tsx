@@ -152,14 +152,12 @@ function CampaignsLayout() {
   // above) — same lookup pattern the campaign view uses.
   const prefetchCampaignViewData = async (target: {
     campaignId: string;
-    segmentId: string | null;
+    segmentId: string;
     zoneGroupId: string | null;
   }) => {
     const zgs = await queryClient.fetchQuery(zoneGroupsQuery());
     const nextZoneGroup = zgs.find((g) => g.zoneGroupId === target.zoneGroupId) ?? null;
-    const nextSegment = target.segmentId
-      ? (segments.find((s) => s.segmentId === target.segmentId) ?? null)
-      : null;
+    const nextSegment = segments.find((s) => s.segmentId === target.segmentId) ?? null;
     const nextCriteria = nextSegment?.criteria ?? null;
     const nextZones = target.zoneGroupId
       ? await queryClient.fetchQuery(zonesQuery(target.zoneGroupId))
@@ -303,9 +301,9 @@ function CampaignsLayout() {
   const updateCampaignMutation = useMutation({
     mutationFn: (input: {
       campaignId: string;
-      segmentId?: string | null;
+      segmentId?: string;
       zoneGroupId?: string | null;
-      scriptId?: string | null;
+      scriptId?: string;
     }) => client.campaigns.update(input),
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: ["campaign", input.campaignId] });
@@ -349,7 +347,7 @@ function CampaignsLayout() {
   // Pending patch + draft count snapshotted at Save-click time, used by
   // the zone-change confirm dialog. Non-null state == confirm is open.
   const [pendingZoneChange, setPendingZoneChange] = useState<{
-    patch: { segmentId: string | null; zoneGroupId: string | null; scriptId: string | null };
+    patch: { segmentId: string; zoneGroupId: string | null; scriptId: string };
     draftCount: number;
   } | null>(null);
   // Archiving is the terminal act for a campaign (no warning dialog) —
@@ -449,9 +447,9 @@ function CampaignsLayout() {
   // the confirm dialog when there are.
   const commitConfigure = async (
     patch: {
-      segmentId: string | null;
+      segmentId: string;
       zoneGroupId: string | null;
-      scriptId: string | null;
+      scriptId: string;
     },
     opts: { clearDrafts: boolean },
   ) => {
@@ -485,9 +483,9 @@ function CampaignsLayout() {
   };
 
   const saveConfigure = async (patch: {
-    segmentId: string | null;
+    segmentId: string;
     zoneGroupId: string | null;
-    scriptId: string | null;
+    scriptId: string;
   }) => {
     if (!activeCampaignId) return;
     const zoneGroupChanged = patch.zoneGroupId !== (campaign?.zoneGroupId ?? null);
@@ -1027,11 +1025,7 @@ function ConfigureDialog({
   zoneGroupOptions: ReadonlyArray<SelectOption>;
   scriptOptions: ReadonlyArray<SelectOption>;
   pending: boolean;
-  onSubmit: (patch: {
-    segmentId: string | null;
-    zoneGroupId: string | null;
-    scriptId: string | null;
-  }) => void;
+  onSubmit: (patch: { segmentId: string; zoneGroupId: string | null; scriptId: string }) => void;
 }) {
   const [segmentId, setSegmentId] = useState(currentSegmentId);
   const [zoneGroupId, setZoneGroupId] = useState(currentZoneGroupId);
@@ -1065,6 +1059,9 @@ function ConfigureDialog({
               onOpenChange(false);
               return;
             }
+            // Segment and script have no "none" option — null only means
+            // the fields seeded before the campaign loaded.
+            if (segmentId === null || scriptId === null) return;
             onSubmit({ segmentId, zoneGroupId, scriptId });
           }}
           className="mt-2 flex flex-col gap-3"

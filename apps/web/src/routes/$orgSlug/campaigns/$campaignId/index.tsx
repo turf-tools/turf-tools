@@ -181,7 +181,7 @@ function CampaignEditor() {
   // criteria edits and dataset flips re-key immediately.
   const { data: segmentPerimeter } = useQuery(
     segmentPerimetersQuery(
-      campaign?.segmentId && !campaign.zoneGroupId ? [campaign.segmentId] : [],
+      campaign && !campaign.zoneGroupId ? [campaign.segmentId] : [],
       segmentPerimetersVersion(manifestRow?.versionId, campaign ? [campaign] : [], segments),
     ),
   );
@@ -261,8 +261,7 @@ function CampaignEditor() {
 
   // Selection id for the zoneless full-segment shape — shared between
   // the map feature and the sidebar row so click/highlight round-trips.
-  const segmentZoneId =
-    !campaign?.zoneGroupId && campaign?.segmentId ? `segment:${campaign.segmentId}` : null;
+  const segmentZoneId = campaign && !campaign.zoneGroupId ? `segment:${campaign.segmentId}` : null;
 
   // Server perimeters decorated with each zone's list-position color, so
   // map fills match the sidebar swatches. The zoneless branch reads only
@@ -315,21 +314,16 @@ function CampaignEditor() {
   // bindings (no `isPlaceholderData` from a previous binding).
   const ready = (() => {
     if (!campaign) return false;
-    const s = !!campaign.segmentId;
-    const z = !!campaign.zoneGroupId;
-    if (s) {
-      // The segments list is loader-prefetched and rerendered via
-      // useSuspenseQuery, so `activeSegment` is always fresh — no
-      // separate staleness gate needed for the segment binding.
-      if (!activeSegment) return false;
-      // Points fire as soon as we have a segment, zoned or not.
-      if (!pointsBuffer || pointsStale) return false;
-    }
-    if (z) {
+    // The segments list is loader-prefetched and rerendered via
+    // useSuspenseQuery, so `activeSegment` is always fresh — no
+    // separate staleness gate needed for the segment binding.
+    if (!activeSegment) return false;
+    if (!pointsBuffer || pointsStale) return false;
+    if (campaign.zoneGroupId) {
       if (!zones || zonesStale) return false;
       if (!zonePerimeters) return false;
       if (!perKeyCounts || countsStale) return false;
-    } else if (s) {
+    } else {
       // Zoneless: header totals come from segmentTotals instead of
       // per-zone aggregation.
       if (!segmentTotals) return false;
@@ -623,8 +617,7 @@ function FullSegmentRow({
   selected: boolean;
   counts: { doors: number; people: number } | null;
   turfStats: { drafts: number; published: number; active: number } | null;
-  // Optional only because segmentId is nullable in the schema — the UI
-  // never creates a segmentless campaign.
+  // Absent only when the campaign detail is missing (not-found edge).
   onSelect?: () => void;
   onCut: () => void;
 }) {
