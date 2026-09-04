@@ -48,9 +48,10 @@ export const turfs = app.table(
     // time (not derived through the segment, which stores no version), so the
     // historical record stays accurate across dataset updates. Dataset
     // versions are immutable and retained forever, so the FK enforces that
-    // a version a turf references can't be deleted. Nullable until set at
-    // publish.
-    datasetVersionId: uuid().references(() => datasetVersions.datasetVersionId),
+    // a version a turf references can't be deleted.
+    datasetVersionId: uuid()
+      .notNull()
+      .references(() => datasetVersions.datasetVersionId),
     // Source zone (the cutter scope) and its parent group — see the
     // FK-vs-stamp note above. Null when the campaign has no zone group
     // (cut against the full segment).
@@ -59,27 +60,25 @@ export const turfs = app.table(
     // The zone as it was at publish time. Zones are mutable working
     // state, so these stamps are what keep by-zone grouping, labels,
     // and map rendering stable after a zone is renamed, redrawn, or
-    // deleted. All null on zoneless turfs and on turfs published
-    // before the columns existed.
+    // deleted. Null on zoneless turfs.
     zoneName: text(),
     zoneKeys: jsonb().$type<string[]>(),
     scriptId: uuid()
       .notNull()
       .references(() => scripts.scriptId),
     name: text().notNull(),
-    turfCode: text(),
+    turfCode: text().notNull(),
     // The segment criteria as they were at publish time. `segmentId` is a
     // live reference to an editable row, so this snapshot is the only
     // durable record of the recipe that produced the turf's membership.
-    // Null on turfs published before the column existed.
-    criteria: jsonb(),
+    criteria: jsonb().notNull(),
     status: text().$type<TurfStatus>().notNull().default("active"),
-    geometry: jsonb().$type<GeoJsonPolygon>(),
+    geometry: jsonb().$type<GeoJsonPolygon>().notNull(),
     // [lng, lat] per building — slim publish-time projection so map
     // reads never detoast the full turf_data payload.
-    buildingCoords: jsonb().$type<[number, number][]>(),
-    doorCount: integer(),
-    personCount: integer(),
+    buildingCoords: jsonb().$type<[number, number][]>().notNull(),
+    doorCount: integer().notNull(),
+    personCount: integer().notNull(),
     createdBy: uuid()
       .notNull()
       .references(() => users.id),

@@ -773,7 +773,7 @@ function ZoneMapDialog({
     let points: { deltas: Float32Array; origin: [number, number] } | null = null;
     let pointColors: Uint8Array | null = null;
     if (zoneData && bounds) {
-      const coordsByTurf = new Map(zoneData.map((r) => [r.turfId, r.buildingCoords ?? []]));
+      const coordsByTurf = new Map(zoneData.map((r) => [r.turfId, r.buildingCoords]));
       let total = 0;
       for (const t of turfs) total += (coordsByTurf.get(t.turfId) ?? []).length;
       const origin: [number, number] = [
@@ -873,7 +873,7 @@ function TurfMapDialog({
     const origin: [number, number] = b
       ? [mercatorX((b[0] + b[2]) / 2), mercatorY((b[1] + b[3]) / 2)]
       : [0, 0];
-    const coords = data.buildingCoords ?? [];
+    const coords = data.buildingCoords;
     const deltas = new Float32Array(coords.length * 2);
     coords.forEach(([lng, lat], i) => {
       deltas[i * 2] = mercatorX(lng) - origin[0];
@@ -1237,7 +1237,7 @@ function TurfCard({
           />
         </button>
         <span className={cn(badge, "ml-[4px] bg-muted font-mono tabular-nums")}>
-          {turf.turfCode ?? "—"}
+          {turf.turfCode}
         </span>
         <span className="flex-1" />
         {/* Row-level map: just this turf — boundary + building dots —
@@ -1487,7 +1487,7 @@ function TurfsTable({
                   onClick={() => onShowQr(t)}
                 >
                   <Icon name="qr-code" className="size-3.5" />
-                  <span className="font-mono tabular-nums">{t.turfCode ?? "—"}</span>
+                  <span className="font-mono tabular-nums">{t.turfCode}</span>
                 </Button>
               </TableCell>
               <TableCell>
