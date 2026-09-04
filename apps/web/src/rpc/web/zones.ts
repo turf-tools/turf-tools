@@ -1,8 +1,17 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, desc, eq } from "@turf-tools/db";
+import { and, asc, desc, eq, type Db } from "@turf-tools/db";
 import { zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webPub as pub } from "../context";
+
+// Zone writes bump the parent group's updatedAt — the change signal
+// report pages fold into their perimeter cache keys.
+async function touchZoneGroup(db: Db, zoneGroupId: string) {
+  await db
+    .update(zoneGroups)
+    .set({ updatedAt: new Date() })
+    .where(eq(zoneGroups.zoneGroupId, zoneGroupId));
+}
 
 const zoneSelect = {
   zoneId: zones.zoneId,
@@ -61,7 +70,7 @@ export const updateKeys = pub
   .handler(async ({ context, input }) => {
     // Org check via parent zone group.
     const owned = await context.db
-      .select({ zoneId: zones.zoneId })
+      .select({ zoneId: zones.zoneId, zoneGroupId: zones.zoneGroupId })
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
@@ -74,6 +83,7 @@ export const updateKeys = pub
       .update(zones)
       .set({ keys: input.keys, updatedAt: new Date() })
       .where(eq(zones.zoneId, input.zoneId));
+    await touchZoneGroup(context.db, owned[0]!.zoneGroupId);
     return { ok: true as const };
   });
 
@@ -87,7 +97,7 @@ export const rename = pub
   )
   .handler(async ({ context, input }) => {
     const owned = await context.db
-      .select({ zoneId: zones.zoneId })
+      .select({ zoneId: zones.zoneId, zoneGroupId: zones.zoneGroupId })
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
@@ -98,6 +108,7 @@ export const rename = pub
       .update(zones)
       .set({ name: input.name, updatedAt: new Date() })
       .where(eq(zones.zoneId, input.zoneId));
+    await touchZoneGroup(context.db, owned[0]!.zoneGroupId);
     return { ok: true as const };
   });
 
@@ -138,6 +149,7 @@ export const create = pub
         createdBy: context.user.id,
       })
       .returning();
+    await touchZoneGroup(context.db, input.zoneGroupId);
     return rows[0]!;
   });
 
@@ -179,7 +191,7 @@ export const remove = pub
   .input(z.object({ zoneId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
-      .select({ zoneId: zones.zoneId })
+      .select({ zoneId: zones.zoneId, zoneGroupId: zones.zoneGroupId })
       .from(zones)
       .innerJoin(zoneGroups, eq(zones.zoneGroupId, zoneGroups.zoneGroupId))
       .where(
@@ -187,6 +199,7 @@ export const remove = pub
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone not found" });
     await context.db.delete(zones).where(eq(zones.zoneId, input.zoneId));
+    await touchZoneGroup(context.db, owned[0]!.zoneGroupId);
     return { ok: true as const };
   });
 
@@ -206,5 +219,6 @@ export const removeAllInGroup = pub
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
     await context.db.delete(zones).where(eq(zones.zoneGroupId, input.zoneGroupId));
+    await touchZoneGroup(context.db, input.zoneGroupId);
     return { ok: true as const };
   });

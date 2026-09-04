@@ -24,13 +24,26 @@ export function zonePerimetersVersion(
   return JSON.stringify([datasetVersionId, zones?.map((z) => [z.zoneId, z.keys])]);
 }
 
+// Coarse stamp for pages that don't hold zones lists (Progress/Results):
+// the scoped groups' updatedAt — bumped by every zone write — plus the
+// boundary dataset version. The campaign editor keeps the finer
+// keys-based `zonePerimetersVersion` above.
+export function zoneGroupsPerimetersVersion(
+  datasetVersionId: string | undefined,
+  zoneGroupIds: string[],
+  groups: ReadonlyArray<{ zoneGroupId: string; updatedAt: string | Date }> | undefined,
+): string {
+  const byId = groups ? new Map(groups.map((g) => [g.zoneGroupId, g])) : undefined;
+  return JSON.stringify([
+    datasetVersionId,
+    [...zoneGroupIds].sort().map((id) => [id, byId?.get(id)?.updatedAt ?? null]),
+  ]);
+}
+
 // Server-side GEOS zone unions (see apps/data /zones/perimeters).
-// `version` is an optional cache-busting stamp: pages that watch zone
-// edits fold `zonePerimetersVersion` into it so shape changes re-key
-// immediately; pages that don't pass one accept staleTime-bounded
-// staleness.
-// An empty group list resolves locally — the RPC rejects it, and there
-// are no shapes to fetch.
+// `version` folds one of the stamps above so zone edits and dataset
+// flips re-key. An empty group list resolves locally — the RPC rejects
+// it, and there are no shapes to fetch.
 export const zonePerimetersQuery = (zoneGroupIds: string[], version = "") =>
   queryOptions({
     queryKey: ["zone-perimeters", [...zoneGroupIds].sort(), version] as const,

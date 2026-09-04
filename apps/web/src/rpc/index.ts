@@ -68,6 +68,7 @@ export const webRouter = {
     countCascade: segments.countCascade,
     sample: segments.sample,
     countByKey: segments.countByKey,
+    perimeters: segments.perimeters,
     listBuildings: segments.listBuildings,
   },
   persons: {

@@ -1,7 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import { getCurrentOrgSlug } from "~/lib/current-route";
 import { criteriaTouchesLiveData, type Criteria } from "~/lib/filters";
-import { segmentRefsVersion, type SegmentRefRow } from "~/lib/segment-refs";
+import {
+  campaignSegmentsVersion,
+  segmentRefsVersion,
+  type SegmentRefRow,
+} from "~/lib/segment-refs";
 import { client } from "~/rpc/client";
 
 export type SegmentCriteria = NonNullable<
@@ -45,6 +49,32 @@ export const segmentCountsQuery = (criteria: Criteria, segments: SegmentRows) =>
     ] as const,
     queryFn: () => client.segments.count({ criteria }),
     staleTime: liveAwareStaleTime(criteria, segments),
+  });
+
+// Version stamp for segmentPerimetersQuery: the scoped campaigns' segment
+// graph (updatedAt over the ref closure) plus the boundary dataset
+// version — the inputs that change outlines. The mutation side patches
+// `updatedAt` in the segment caches, so edits re-key immediately.
+export function segmentPerimetersVersion(
+  datasetVersionId: string | undefined,
+  campaigns: ReadonlyArray<{ segmentId: string | null }>,
+  segments: SegmentRows,
+): string {
+  return JSON.stringify([datasetVersionId, campaignSegmentsVersion(campaigns, segments)]);
+}
+
+// Server-side GEOS full-segment unions (see apps/data /segments/perimeter),
+// for zoneless campaigns. One feature per segment, `properties.segmentId`;
+// segments past the server's key guard contribute none. An empty id list
+// resolves locally — the RPC rejects it, and there are no shapes to fetch.
+export const segmentPerimetersQuery = (segmentIds: string[], version = "") =>
+  queryOptions({
+    queryKey: ["segment-perimeters", [...segmentIds].sort(), version] as const,
+    queryFn: (): Promise<GeoJSON.FeatureCollection> =>
+      segmentIds.length > 0
+        ? client.segments.perimeters({ segmentIds })
+        : Promise.resolve({ type: "FeatureCollection", features: [] }),
+    staleTime: 5 * 60_000,
   });
 
 export type SegmentPoints = {

@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+import duckdb
 from src.cache import singleflight_lru
-
-if TYPE_CHECKING:
-    import duckdb
 
 # Boundary polygons are simplified per feature at seed time, so adjacent
 # shapes disagree along shared edges by up to the simplification
@@ -43,6 +39,26 @@ def zone_target_counts_sql(persons_fqn: str, key_expr: str, where: str) -> str:
 
 
 PERIMETER_CACHE_BYTES = 32 * 2**20
+
+# Segment perimeters skip the union past this many keys: a segment that
+# wide has no meaningful outline, and the GEOS cost grows to seconds
+# (~15s city-wide) with a multi-MB result.
+MAX_PERIMETER_KEYS = 1000
+
+
+def boundary_key_counts(conn: duckdb.DuckDBPyConnection, fqns: dict[str, str]) -> dict[str, int]:
+    """Rows per boundary table, by key group; unseeded tables are dropped.
+    Key count orders key groups by granularity — finer partitions have
+    more keys."""
+    counts: dict[str, int] = {}
+    for key_group, fqn in fqns.items():
+        try:
+            row = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()
+        except duckdb.Error:
+            continue
+        if row is not None:
+            counts[key_group] = int(row[0])
+    return counts
 
 
 @singleflight_lru(

@@ -65,7 +65,13 @@ from src.tables import (
     table_fqn,
 )
 from src.timing import timed
-from src.zones import flatten_zone_keys, zone_perimeter_geojson, zone_target_counts_sql
+from src.zones import (
+    MAX_PERIMETER_KEYS,
+    boundary_key_counts,
+    flatten_zone_keys,
+    zone_perimeter_geojson,
+    zone_target_counts_sql,
+)
 
 logger = logging.getLogger("uvicorn")
 
@@ -785,6 +791,53 @@ async def zone_perimeters(req: _ZonePerimetersRequest):
                     }
                 )
         return {"type": "FeatureCollection", "features": features}
+
+    return await run_query(work)
+
+
+class _SegmentPerimeterRequest(_WireBaseModel):
+    criteria: Criteria = Criteria()
+    org_slug: str = Field(validation_alias="orgSlug")
+
+
+@app.post("/segments/perimeter")
+async def segment_perimeter(req: _SegmentPerimeterRequest):
+    """A segment's sealed outline as a single-feature FeatureCollection.
+
+    Unions the boundary polygons of every key the criteria's voters fall
+    in, over the finest key group the dataset carries (most keys = finest
+    partition). Shares the zone-perimeter union and its memo. Empty when
+    the dataset has no seeded key group, no voters match, or the segment
+    spans more than MAX_PERIMETER_KEYS keys — callers render points only.
+    """
+    empty = {"type": "FeatureCollection", "features": []}
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        version, catalog = query_context(conn, req.org_slug)
+        schema = version.schema
+        counts = boundary_key_counts(conn, {kg: table_fqn(schema, kg) for kg in catalog.key_groups})
+        if not counts:
+            return empty
+        key_group = max(counts, key=lambda kg: counts[kg])
+        group_expr = boundary_key_expr_for(catalog, key_group)
+        criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
+        params: list = []
+        where = criteria_to_where(catalog, criteria, None, params)
+        sql = resolve(
+            f"SELECT DISTINCT {group_expr} AS key FROM {{persons_geocoded}} {where}",
+            schema,
+        )
+        with timed("query"):
+            keys = sorted(r[0] for r in conn.execute(sql, params).fetchall() if r[0] is not None)
+            if not keys or len(keys) > MAX_PERIMETER_KEYS:
+                return empty
+            geojson = zone_perimeter_geojson(conn, table_fqn(schema, key_group), tuple(keys))
+        if geojson is None:
+            return empty
+        return {
+            "type": "FeatureCollection",
+            "features": [{"type": "Feature", "properties": {}, "geometry": json.loads(geojson)}],
+        }
 
     return await run_query(work)
 

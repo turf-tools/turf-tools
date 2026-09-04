@@ -7,6 +7,7 @@ import json
 
 import duckdb
 from src.zones import (
+    boundary_key_counts,
     flatten_zone_keys,
     perimeter_union_sql,
     zone_perimeter_geojson,
@@ -78,6 +79,17 @@ def test_perimeter_union_seals_sliver_gaps() -> None:
     assert row is not None
     sealed = json.loads(row[0])
     assert sealed["type"] == "Polygon"
+
+
+def test_boundary_key_counts_orders_granularity_and_drops_unseeded() -> None:
+    c = duckdb.connect()
+    c.execute("CREATE TABLE eds (key VARCHAR)")
+    c.execute("INSERT INTO eds VALUES ('a'), ('b'), ('c')")
+    c.execute("CREATE TABLE zips (key VARCHAR)")
+    c.execute("INSERT INTO zips VALUES ('z')")
+    counts = boundary_key_counts(c, {"eds": "eds", "zips": "zips", "blocks": "missing"})
+    assert counts == {"eds": 3, "zips": 1}
+    assert max(counts, key=lambda kg: counts[kg]) == "eds"
 
 
 def test_zone_perimeter_geojson_memoizes_across_connections() -> None:

@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, isNull, ne, sql, type Db } from "@turf-tools/db";
+import { and, asc, eq, inArray, isNull, ne, sql, type Db } from "@turf-tools/db";
 import { campaigns, segments, turfDrafts, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
 import type { Criteria } from "~/lib/filters";
@@ -411,6 +411,42 @@ export const sample = pub
       orgSlug: context.orgSlug,
       limit: input.limit ?? 100,
     });
+  });
+
+export type SegmentPerimeters = GeoJSON.FeatureCollection;
+
+// One sealed outline per segment (single feature, `properties.segmentId`),
+// unioned server-side from the finest boundary key group — the
+// full-segment analogue of results.perimeters for zoneless campaigns.
+// A segment past the data server's key guard contributes no feature;
+// callers render points only.
+export const perimeters = pub
+  .input(z.object({ segmentIds: z.array(z.string().uuid()).min(1) }))
+  .handler(async ({ context, input }): Promise<SegmentPerimeters> => {
+    const rows = await context.db
+      .select({ segmentId: segments.segmentId, criteria: segments.criteria })
+      .from(segments)
+      .where(
+        and(
+          eq(segments.organizationId, context.organizationId),
+          inArray(segments.segmentId, input.segmentIds),
+        ),
+      );
+    const collections = await Promise.all(
+      rows.map(async (row) => ({
+        segmentId: row.segmentId,
+        fc: await dataPostJson<GeoJSON.FeatureCollection>("/segments/perimeter", {
+          criteria: row.criteria,
+          orgSlug: context.orgSlug,
+        }),
+      })),
+    );
+    return {
+      type: "FeatureCollection",
+      features: collections.flatMap(({ segmentId, fc }) =>
+        fc.features.map((f) => ({ ...f, properties: { ...f.properties, segmentId } })),
+      ),
+    };
   });
 
 // Per-key counts for the campaign editor's heatmap overlay. `keyGroup`
