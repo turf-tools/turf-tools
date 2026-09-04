@@ -108,6 +108,7 @@ export const webRouter = {
   },
   walks: {
     listForOrg: webWalks.listForOrg,
+    archive: webWalks.archive,
   },
   progress: {
     forOrg: progress.forOrg,

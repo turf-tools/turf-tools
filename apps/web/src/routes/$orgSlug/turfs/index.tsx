@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import type { Feature, FeatureCollection } from "geojson";
 import { useAtomValue } from "jotai";
@@ -18,6 +18,7 @@ import { Pill } from "~/components/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import { formatMonthDay, formatTime } from "~/lib/format";
+import { DialogError } from "~/components/callout";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { progressQuery } from "~/lib/queries/progress";
 import { turfMapDataQuery, turfsListQuery, zoneMapDataQuery } from "~/lib/queries/turfs";
@@ -347,13 +348,18 @@ type WalkSummary = {
   pending: boolean;
 };
 
+// Open and recent enough to still be the same outing — the board's
+// live horizon.
+function walkIsLive(w: WalkRow) {
+  return !w.closedAt && Date.now() - new Date(w.openedAt).getTime() < WALK_LIVE_MS;
+}
+
 function summarize(walks: WalkRow[], scannedAt: Date | string | undefined): WalkSummary {
   const names: string[] = [];
   const activeNames: string[] = [];
   for (const w of walks) {
     if (!names.includes(w.canvasserName)) names.push(w.canvasserName);
-    const isActive = !w.closedAt && Date.now() - new Date(w.openedAt).getTime() < WALK_LIVE_MS;
-    if (isActive && !activeNames.includes(w.canvasserName)) activeNames.push(w.canvasserName);
+    if (walkIsLive(w) && !activeNames.includes(w.canvasserName)) activeNames.push(w.canvasserName);
   }
   const live = activeNames.length > 0;
   let pending = false;
@@ -935,6 +941,7 @@ function WalksDialog({
   const { session } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
   const summaries = useWalkSummaries(campaignId);
+  const { archiveWalk, error } = useArchiveWalk();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* pb offsets the last table row's internal height so the visual
@@ -946,18 +953,28 @@ function WalksDialog({
               Turf {turfLabel(turf.name)} {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
             <DialogCloseX />
-            {/* Scrolls past 10 rows instead of pushing the dialog past the
-                viewport (it's centered, so overflow clips at both ends). */}
+            {/* Scrolls instead of pushing the dialog past the viewport
+                (it's centered, so overflow clips at both ends). */}
             {(() => {
               const walks = summaries(turf.turfId).walks;
               return (
                 <div
-                  className={cn("overflow-y-auto", walks.length > 10 && "max-h-[min(60vh,420px)]")}
+                  className={cn(
+                    // overflow-y forces x-clipping too; margin+padding widen
+                    // the clip box past the ✕ overhang without changing the
+                    // table width.
+                    "-mr-[8px] max-h-[min(calc(100dvh-8rem),392px)] overflow-y-auto pr-[8px]",
+                  )}
                 >
-                  <WalkTable walks={walks} tz={tz} />
+                  <WalkTable walks={walks} tz={tz} onArchive={archiveWalk} />
                 </div>
               );
             })()}
+            {error ? (
+              <div className="mt-1 mb-2">
+                <DialogError error={error} />
+              </div>
+            ) : null}
           </>
         ) : null}
       </DialogContent>
@@ -1036,7 +1053,35 @@ function ProgressPill({ pct }: { pct: number | null }) {
 // End column: audit detail that doesn't earn its width (Walked + the
 // live badge carry the story). table-fixed so a marathon name truncates
 // instead of scrunching the time column.
-function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
+// Archive a walk, with a self-clearing error for the refusal case.
+function useArchiveWalk() {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!error) return;
+    const id = setTimeout(() => setError(null), 4_000);
+    return () => clearTimeout(id);
+  }, [error]);
+  const archive = useMutation({
+    mutationFn: (walkId: string) => client.walks.archive({ walkId }),
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["walks"] });
+    },
+    onError: (e) => setError(e.message),
+  });
+  return { archiveWalk: (walkId: string) => archive.mutate(walkId), error };
+}
+
+function WalkTable({
+  walks,
+  tz,
+  onArchive,
+}: {
+  walks: WalkRow[];
+  tz: string;
+  onArchive: (walkId: string) => void;
+}) {
   if (walks.length === 0) {
     return <div className="py-2 text-sm text-muted-foreground">No walks yet</div>;
   }
@@ -1046,6 +1091,7 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
         <tr className="text-left text-muted-foreground">
           <th className="h-8 w-20 md:w-42 font-normal">Walked</th>
           <th className="h-8 font-normal">Canvasser</th>
+          <th className="h-8 w-14 font-normal" />
         </tr>
       </thead>
       <tbody>
@@ -1078,6 +1124,27 @@ function WalkTable({ walks, tz }: { walks: WalkRow[]; tz: string }) {
               ) : (
                 <span className="block truncate">{w.canvasserName}</span>
               )}
+            </td>
+            <td className="h-9">
+              <span className="flex items-center justify-end gap-1">
+                {walkIsLive(w) ? (
+                  <Icon
+                    name="radio"
+                    className="size-4 shrink-0 text-muted-foreground [stroke-width:2.5]"
+                  />
+                ) : null}
+                {/* -mr overhangs the hover wash so the glyph sits on the
+                    column edge (the name button's -ml trick). */}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="-mr-[8px]"
+                  aria-label="Remove sign-out"
+                  onClick={() => onArchive(w.walkId)}
+                >
+                  <Icon name="x" className="size-4 text-muted-foreground [stroke-width:2.5]" />
+                </Button>
+              </span>
             </td>
           </tr>
         ))}
@@ -1161,6 +1228,7 @@ function TurfCard({
   onShowTurfMap: (turf: TurfRow) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { archiveWalk, error: archiveError } = useArchiveWalk();
   const { pending } = summary;
 
   const badge = "flex h-7 items-center gap-1 rounded-md px-2 text-sm";
@@ -1267,7 +1335,12 @@ function TurfCard({
       </div>
       {expanded ? (
         <div className="px-3 pt-2 pb-3" onClick={(e) => e.stopPropagation()}>
-          <WalkTable walks={summary.walks} tz={tz} />
+          <WalkTable walks={summary.walks} tz={tz} onArchive={archiveWalk} />
+          {archiveError ? (
+            <div className="mt-2">
+              <DialogError error={archiveError} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -30,6 +30,10 @@ export const walks = app.table(
     canvasserPhone: text(),
     openedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
     closedAt: timestamp({ withTimezone: true }),
+    // Lead-declared "this sign-out doesn't count" (test open, wrong-zone
+    // scan). Only ever stamped on event-less walks; the board re-checks at
+    // read time, so a walk whose events arrive late shows despite it.
+    archivedAt: timestamp({ withTimezone: true }),
   },
   (t) => [
     index("walks_turf_id").on(t.turfId),
