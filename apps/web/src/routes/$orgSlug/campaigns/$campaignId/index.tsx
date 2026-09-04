@@ -259,6 +259,11 @@ function CampaignEditor() {
     return { drafts, active, published };
   }, [turfStats]);
 
+  // Selection id for the zoneless full-segment shape — shared between
+  // the map feature and the sidebar row so click/highlight round-trips.
+  const segmentZoneId =
+    !campaign?.zoneGroupId && campaign?.segmentId ? `segment:${campaign.segmentId}` : null;
+
   // Server perimeters decorated with each zone's list-position color, so
   // map fills match the sidebar swatches. The zoneless branch reads only
   // the segment outline — never rawPerimeters, whose stale shapes would
@@ -267,13 +272,13 @@ function CampaignEditor() {
     if (!campaign?.zoneGroupId) {
       // Zoneless: the segment's own outline as one neutral shape under
       // the points (no `color` falls through to the layer's theme gray).
-      if (!campaign?.segmentId || !segmentPerimeter) return undefined;
+      if (!segmentZoneId || !segmentPerimeter) return undefined;
       return {
         type: "FeatureCollection",
         features: segmentPerimeter.features.map((f) => ({
           ...f,
           properties: {
-            zoneId: `segment:${campaign.segmentId}`,
+            zoneId: segmentZoneId,
             name: "Full segment",
             opacity: 0.2,
           },
@@ -292,7 +297,7 @@ function CampaignEditor() {
         return [{ ...f, properties: { zoneId, name: f.properties?.zoneName, color } }];
       }),
     };
-  }, [zones, rawPerimeters, campaign?.zoneGroupId, campaign?.segmentId, segmentPerimeter]);
+  }, [zones, rawPerimeters, campaign?.zoneGroupId, segmentZoneId, segmentPerimeter]);
 
   // Prefer zone perimeters for the fit when we have them (matches the
   // visible boundary on the map). Fall back to the points cloud for
@@ -402,6 +407,7 @@ function CampaignEditor() {
               : null
           }
           segmentName={activeSegment?.name ?? null}
+          segmentZoneId={segmentZoneId}
           scriptName={activeScript?.name ?? null}
           zoneGroupName={activeZoneGroup?.name ?? null}
           onSelect={setSelectedZoneId}
@@ -476,6 +482,7 @@ function ZonesList({
   totals,
   fullSegmentCounts,
   segmentName,
+  segmentZoneId,
   scriptName,
   zoneGroupName,
   onSelect,
@@ -493,6 +500,7 @@ function ZonesList({
   } | null;
   fullSegmentCounts: { doors: number; people: number } | null;
   segmentName: string | null;
+  segmentZoneId: string | null;
   scriptName: string | null;
   zoneGroupName: string | null;
   onSelect: (zoneId: string) => void;
@@ -510,12 +518,15 @@ function ZonesList({
       {zoneless ? (
         <FullSegmentRow
           campaignId={campaignId}
+          zoneId={segmentZoneId}
+          selected={segmentZoneId !== null && segmentZoneId === selectedZoneId}
           counts={fullSegmentCounts}
           // Zoneless turfs land under the empty-string key in
           // statsForCampaign — see the sentinel comment there. Once stats
           // resolve, a missing entry means "no turfs yet": zeros, not null,
           // so the drafts pill still shows 0.
           turfStats={turfStats ? (turfStats[""] ?? { drafts: 0, published: 0, active: 0 }) : null}
+          onSelect={segmentZoneId !== null ? () => onSelect(segmentZoneId) : undefined}
           onCut={() => onCut(null)}
         />
       ) : (
@@ -600,19 +611,43 @@ function Stat({ label, value }: { label: string; value: number | null }) {
 
 function FullSegmentRow({
   campaignId,
+  zoneId,
+  selected,
   counts,
   turfStats,
+  onSelect,
   onCut,
 }: {
   campaignId: string;
+  zoneId: string | null;
+  selected: boolean;
   counts: { doors: number; people: number } | null;
   turfStats: { drafts: number; published: number; active: number } | null;
+  // Optional only because segmentId is nullable in the schema — the UI
+  // never creates a segmentless campaign.
+  onSelect?: () => void;
   onCut: () => void;
 }) {
   return (
     <div
+      data-zone-card={zoneId ?? undefined}
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onClick={onSelect}
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect();
+              }
+            }
+          : undefined
+      }
       className={cn(
-        "flex flex-col gap-1.5 rounded-md border border-border bg-card p-2 pl-3 text-left",
+        "flex flex-col gap-1.5 rounded-md border bg-card p-2 pl-3 text-left",
+        selected ? "border-foreground" : "border-border",
+        onSelect && !selected && "hover:border-muted-foreground",
       )}
     >
       {/* Keyed by campaignId — matches the ZoneRow pattern so pills
@@ -663,7 +698,14 @@ function FullSegmentRow({
             </Pill>
           </Fragment>
         ) : null}
-        <Button variant="outline" className="ml-auto h-[31px]" onClick={onCut}>
+        <Button
+          variant="outline"
+          className="ml-auto h-[31px]"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCut();
+          }}
+        >
           <Icon name="scissors" />
           Cut
         </Button>
