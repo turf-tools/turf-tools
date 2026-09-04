@@ -31,8 +31,16 @@ import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { type Condition, resultsAggregateQuery } from "~/lib/queries/results";
-import { zonePerimetersQuery } from "~/lib/queries/zones";
-import { segmentsListQuery } from "~/lib/queries/segments";
+import {
+  zoneGroupsPerimetersVersion,
+  zoneGroupsQuery,
+  zonePerimetersQuery,
+} from "~/lib/queries/zones";
+import {
+  segmentPerimetersQuery,
+  segmentPerimetersVersion,
+  segmentsListQuery,
+} from "~/lib/queries/segments";
 import { DEFAULT_DISPLAY_TIMEZONE, formatCanvassDay } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
@@ -50,6 +58,18 @@ type ResultsSearch = {
 // Page-level selection value for the totals row — the map itself only
 // ever sees a list of zone ids.
 const ALL_ZONES = "all";
+
+// Rows key like their map features: zone id, or the segment sentinel
+// for full-segment rows.
+function rowKey(r: ZoneFunnelRow): string | null {
+  return r.zoneId ?? (r.segmentId ? `segment:${r.segmentId}` : null);
+}
+
+// Full-segment rows wear their segment's name in every scope, so the
+// same region never changes label between views.
+function regionLabel(r: ZoneFunnelRow): string {
+  return r.zoneName ?? r.segmentName ?? "Full segment";
+}
 
 function rateOf(row: ZoneFunnelRow): number | null {
   if (row.attempted === 0) return null;
@@ -258,15 +278,59 @@ function ResultsIndex() {
 
   // Zone shapes for every zone group the scoped campaigns reference —
   // archived campaigns included: their results are history, not noise.
-  const scopeCampaigns = campaignFilter
-    ? campaigns.filter((c) => c.campaignId === campaignFilter)
-    : campaigns;
+  const scopeCampaigns = useMemo(
+    () => (campaignFilter ? campaigns.filter((c) => c.campaignId === campaignFilter) : campaigns),
+    [campaigns, campaignFilter],
+  );
   const zoneGroupIds = [
     ...new Set(scopeCampaigns.map((c) => c.zoneGroupId).filter((id): id is string => !!id)),
   ];
-  const { data: perimeters } = useQuery(zonePerimetersQuery(zoneGroupIds));
+  // Zoneless campaigns: each segment's outline stands in for its zone
+  // set, keyed `segment:<id>` — matching the per-segment rows the
+  // aggregate emits for null-zone turfs.
+  const segmentIds = useMemo(
+    () => [
+      ...new Set(
+        scopeCampaigns
+          .filter((c) => !c.zoneGroupId && c.segmentId)
+          .map((c) => c.segmentId as string),
+      ),
+    ],
+    [scopeCampaigns],
+  );
+  // Both perimeter queries wait for their stamp inputs, so an outline
+  // never fetches under a blank stamp and refetches a beat later.
+  const { data: manifestRow } = useSuspenseQuery(manifestQuery());
+  const { data: zoneGroupRows } = useQuery(zoneGroupsQuery());
+  const { data: zonePerims } = useQuery({
+    ...zonePerimetersQuery(
+      zoneGroupIds,
+      zoneGroupsPerimetersVersion(manifestRow?.versionId, zoneGroupIds, zoneGroupRows),
+    ),
+    enabled: zoneGroupIds.length === 0 || zoneGroupRows !== undefined,
+  });
+  const { data: segmentPerims } = useQuery({
+    ...segmentPerimetersQuery(
+      segmentIds,
+      segmentPerimetersVersion(manifestRow?.versionId, scopeCampaigns, allSegments),
+    ),
+    enabled: segmentIds.length === 0 || allSegments !== undefined,
+  });
+  const perimeters = useMemo<GeoJSON.FeatureCollection | undefined>(() => {
+    if (!zonePerims || !segmentPerims) return undefined;
+    return {
+      ...zonePerims,
+      features: [
+        ...zonePerims.features,
+        ...segmentPerims.features.map((f) => ({
+          ...f,
+          properties: { zoneId: `segment:${f.properties?.segmentId}`, zoneName: "Full segment" },
+        })),
+      ],
+    };
+  }, [zonePerims, segmentPerims]);
 
-  const byZone = useMemo(() => new Map(aggregate.rows.map((r) => [r.zoneId, r])), [aggregate]);
+  const byZone = useMemo(() => new Map(aggregate.rows.map((r) => [rowKey(r), r])), [aggregate]);
 
   // Map fill follows the Color-by pick on the same discrete bands as
   // the table's badges, so a zone's fill and its badge agree. Keyed on
@@ -586,8 +650,8 @@ function ResultsIndex() {
                   <>
                     {/* All-zones totals first — the funnel headline, the
                         reading frame for the rows below, and a selection
-                        target like any zone (highlights every zone on the
-                        map). */}
+                        target like any zone (highlights every drawn
+                        shape). */}
                     <ZoneRow
                       label={<span>All zones</span>}
                       row={totals}
@@ -596,14 +660,14 @@ function ResultsIndex() {
                       onSelect={() => select(ALL_ZONES)}
                     />
                     {walkedRows.map((r) => {
-                      const zoneId = r.zoneId;
+                      const key = rowKey(r);
                       return (
                         <ZoneRow
-                          key={zoneId ?? "none"}
-                          label={<span className="truncate">{r.zoneName ?? "Full segment"}</span>}
-                          zoneId={zoneId}
-                          selected={zoneId != null && zoneId === selectedZoneId}
-                          onSelect={zoneId != null ? () => select(zoneId) : undefined}
+                          key={key ?? "none"}
+                          label={<span className="truncate">{regionLabel(r)}</span>}
+                          zoneId={key}
+                          selected={key != null && key === selectedZoneId}
+                          onSelect={key != null ? () => select(key) : undefined}
                           row={r}
                           columns={answerColumns}
                         />
@@ -651,7 +715,7 @@ function ResultsIndex() {
                 <div className="flex flex-col px-3 py-2">
                   <span className="flex items-center gap-2">
                     <span className="truncate font-semibold">
-                      {cornerZoneId === ALL_ZONES ? "All zones" : cornerRow.zoneName}
+                      {cornerZoneId === ALL_ZONES ? "All zones" : regionLabel(cornerRow)}
                     </span>
                     <button
                       type="button"
@@ -781,6 +845,8 @@ function sumRows(rows: ZoneFunnelRow[]): ZoneFunnelRow {
   const out: ZoneFunnelRow = {
     zoneId: null,
     zoneName: null,
+    segmentId: null,
+    segmentName: null,
     attempted: 0,
     contacted: 0,
     responses: {},

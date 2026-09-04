@@ -54,8 +54,10 @@ def _seed(conn) -> None:
     conn.execute(
         f"""CREATE TABLE {APP}.turfs (
             turf_id VARCHAR, campaign_id VARCHAR, zone_id VARCHAR, zone_name VARCHAR,
-            name VARCHAR, turf_code VARCHAR, person_count INT, door_count INT)"""
+            name VARCHAR, turf_code VARCHAR, person_count INT, door_count INT,
+            segment_id VARCHAR)"""
     )
+    conn.execute(f"CREATE TABLE {APP}.segments (segment_id VARCHAR, name VARCHAR)")
     conn.execute(
         f"""CREATE TABLE {APP}.canvass_events (
             kind VARCHAR, person_id VARCHAR, turf_id VARCHAR, walk_id VARCHAR,
@@ -68,10 +70,11 @@ def _seed(conn) -> None:
     conn.execute(f"INSERT INTO {APP}.campaigns VALUES ('camp1', 'org1', 'Camp One'), ('camp2', 'org1', 'Camp Two')")
     conn.execute(
         f"""INSERT INTO {APP}.turfs VALUES
-            ('turf1', 'camp1', 'z1', 'Zone One', 'Turf One', 'T1', 10, 5),
-            ('turf2', 'camp1', 'z2', 'Zone Two', 'Turf Two', 'T2', 8, 4),
-            ('turf3', 'camp2', 'z9', 'Zone Nine', 'Turf Nine', 'T9', 6, 3)"""
+            ('turf1', 'camp1', 'z1', 'Zone One', 'Turf One', 'T1', 10, 5, 'seg1'),
+            ('turf2', 'camp1', 'z2', 'Zone Two', 'Turf Two', 'T2', 8, 4, 'seg1'),
+            ('turf3', 'camp2', 'z9', 'Zone Nine', 'Turf Nine', 'T9', 6, 3, 'seg2')"""
     )
+    conn.execute(f"INSERT INTO {APP}.segments VALUES ('seg1', 'Segment One'), ('seg2', 'Segment Two')")
     events = [
         # p1: canvassed then superseded by not_home on the same day (and
         # the same walk — one attempt).
@@ -136,15 +139,16 @@ def _materialize_attempts(conn, scope) -> str:
 def _stages(conn, scope, where: str = "", where_params: list | None = None) -> dict:
     joined = _materialize_joined(conn, scope, where, where_params)
     rows = conn.execute(stages_sql(joined)).fetchall()
-    return {zone_id: (att, con) for zone_id, _name, att, con in rows}
+    # Zoned rows key by zone; zoneless rows by their segment.
+    return {zone_id or segment_id: (att, con) for zone_id, segment_id, _zone_name, _segment_name, att, con in rows}
 
 
 def _responses(conn, scope) -> dict:
     joined = _materialize_joined(conn, scope)
     rows = conn.execute(responses_sql(joined)).fetchall()
     out: dict = {}
-    for zone_id, question_id, option_id, n in rows:
-        out.setdefault(zone_id, {}).setdefault(question_id, {})[option_id] = n
+    for zone_id, segment_id, question_id, option_id, n in rows:
+        out.setdefault(zone_id or segment_id, {}).setdefault(question_id, {})[option_id] = n
     return out
 
 
@@ -278,7 +282,7 @@ def test_answered_counts_any_content(operational_conn) -> None:
     joined = _materialize_joined(operational_conn, scope)
     rows = operational_conn.execute(answered_sql(joined)).fetchall()
     answered: dict = {}
-    for zone_id, question_id, n in rows:
+    for zone_id, _segment_id, question_id, n in rows:
         answered.setdefault(zone_id, {})[question_id] = n
     # Option picks and non-empty text both count as answered; p5's empty
     # text does not, and superseded/cleared answers are gone with their
@@ -295,11 +299,36 @@ def test_canvass_days_bucket_in_display_timezone(operational_conn) -> None:
     assert [r[0] for r in rows] == ["2026-08-24", "2026-08-23"]
 
 
+def test_zoneless_rows_split_per_segment(operational_conn) -> None:
+    _seed(operational_conn)
+    # Zoneless turfs (null zone) on two different segments — one row per
+    # segment, not one collapsed null row.
+    operational_conn.execute(
+        f"""INSERT INTO {APP}.turfs VALUES
+            ('turfA', 'camp1', NULL, NULL, 'Turf A', 'TA', 4, 2, 'seg1'),
+            ('turfB', 'camp2', NULL, NULL, 'Turf B', 'TB', 4, 2, 'seg2')"""
+    )
+    events = [
+        ("p9", "turfA", "wC", "Jer", "+1", 30, DAY1_NOON, _payload("canvassed")),
+        ("p10", "turfB", "wD", "Os", "+2", 31, DAY1_NOON, _payload("not_home")),
+    ]
+    operational_conn.executemany(f"INSERT INTO {APP}.canvass_events VALUES ('result', ?, ?, ?, ?, ?, ?, ?, ?)", events)
+    operational_conn.executemany("INSERT INTO persons VALUES (?)", [["p9"], ["p10"]])
+    joined = _materialize_joined(operational_conn, event_scope("testorg", None))
+    rows = operational_conn.execute(stages_sql(joined)).fetchall()
+    zoneless = {
+        segment_id: (segment_name, att, con)
+        for zone_id, segment_id, _zn, segment_name, att, con in rows
+        if zone_id is None
+    }
+    assert zoneless == {"seg1": ("Segment One", 1, 1), "seg2": ("Segment Two", 1, 0)}
+
+
 def test_assemble_zone_rows_zero_fills_and_keeps_publish_names() -> None:
     zone_rows = [("z1", "Zone One RENAMED"), ("z2", "Zone Two"), ("z3", "Zone Three")]
-    stage_rows = [("z1", "Zone One", 3, 2)]
-    response_rows = [("z1", "q1", "no", 1), ("zX", "q1", "no", 9)]
-    answered_rows = [("z1", "qt", 2), ("zX", "qt", 9)]
+    stage_rows = [("z1", None, "Zone One", None, 3, 2)]
+    response_rows = [("z1", None, "q1", "no", 1), ("zX", None, "q1", "no", 9)]
+    answered_rows = [("z1", None, "qt", 2), ("zX", None, "qt", 9)]
     rows = assemble_zone_rows(zone_rows, stage_rows, response_rows, answered_rows)
     assert [r["zoneName"] for r in rows] == ["Zone One", "Zone Three", "Zone Two"]
     walked = rows[0]
@@ -307,9 +336,25 @@ def test_assemble_zone_rows_zero_fills_and_keeps_publish_names() -> None:
     assert walked == {
         "zoneId": "z1",
         "zoneName": "Zone One",
+        "segmentId": None,
+        "segmentName": None,
         "attempted": 3,
         "contacted": 2,
         "responses": {"q1": {"no": 1}},
         "answered": {"qt": 2},
     }
     assert all(r["attempted"] == 0 and r["responses"] == {} for r in rows[1:])
+
+
+def test_assemble_zone_rows_keys_zoneless_by_segment() -> None:
+    stage_rows = [
+        (None, "segA", None, "Segment A", 2, 1),
+        (None, "segB", None, "Segment B", 5, 3),
+    ]
+    response_rows = [(None, "segA", "q1", "yes", 1)]
+    rows = assemble_zone_rows([], stage_rows, response_rows, [])
+    assert [(r["segmentId"], r["segmentName"], r["attempted"]) for r in rows] == [
+        ("segA", "Segment A", 2),
+        ("segB", "Segment B", 5),
+    ]
+    assert rows[0]["responses"] == {"q1": {"yes": 1}}

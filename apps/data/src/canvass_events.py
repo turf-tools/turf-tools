@@ -79,12 +79,15 @@ def latest_results_cte(persons_fqn: str, where: str, event_filters: list[str]) -
                     json_extract(CAST(e.payload AS VARCHAR), '$.responses') AS responses,
                     t.zone_id::VARCHAR AS zone_id,
                     t.zone_name,
+                    t.segment_id::VARCHAR AS segment_id,
+                    s.name AS segment_name,
                     e.sequence
                 FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
                 JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
                 JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
                 JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
                     ON o.organization_id = c.organization_id
+                LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.segments s ON s.segment_id = t.segment_id
                 WHERE {" AND ".join(event_filters)}
                 QUALIFY row_number() OVER (
                     PARTITION BY e.person_id ORDER BY e.sequence DESC
@@ -100,17 +103,25 @@ def latest_results_cte(persons_fqn: str, where: str, event_filters: list[str]) -
     """
 
 
+# Zoned rows group by zone alone (a zone shared across campaigns stays
+# one row); zoneless (null-zone) rows split per segment, so disjoint
+# full-segment campaigns don't collapse into one row.
+REGION_SEGMENT_EXPR = "CASE WHEN zone_id IS NULL THEN segment_id END"
+
+
 def stages_sql(rel: str) -> str:
-    """Per-zone funnel stages over `rel`, a materialized latest-result
+    """Per-region funnel stages over `rel`, a materialized latest-result
     relation (see `latest_results_cte` + `materialize`)."""
     return f"""
         SELECT
             zone_id,
+            {REGION_SEGMENT_EXPR} AS segment_id,
             any_value(zone_name) AS zone_name,
+            any_value(CASE WHEN zone_id IS NULL THEN segment_name END) AS segment_name,
             count(*) FILTER (WHERE outcome IS NOT NULL) AS attempted,
             count(*) FILTER (WHERE outcome = 'canvassed') AS contacted
         FROM {rel}
-        GROUP BY zone_id
+        GROUP BY 1, 2
         """
 
 
@@ -118,13 +129,14 @@ def responses_sql(rel: str) -> str:
     """Per-zone option counts among the contacted, over a materialized
     latest-result relation."""
     return f"""
-        SELECT zone_id, q.question_id, o.option_id, count(*) AS n
+        SELECT zone_id, {REGION_SEGMENT_EXPR} AS segment_id,
+               q.question_id, o.option_id, count(*) AS n
         FROM {rel},
              UNNEST(json_keys(responses)) AS q(question_id),
              UNNEST(CAST(json_extract(responses,
                  '$."' || q.question_id || '".optionIds') AS VARCHAR[])) AS o(option_id)
         WHERE outcome = 'canvassed'
-        GROUP BY 1, 2, 3
+        GROUP BY 1, 2, 3, 4
         """
 
 
@@ -134,7 +146,7 @@ def answered_sql(rel: str) -> str:
     whose answers aren't option counts (open-ended). Reads a materialized
     latest-result relation."""
     return f"""
-        SELECT zone_id, q.question_id, count(*) AS n
+        SELECT zone_id, {REGION_SEGMENT_EXPR} AS segment_id, q.question_id, count(*) AS n
         FROM {rel},
              UNNEST(json_keys(responses)) AS q(question_id)
         WHERE outcome = 'canvassed'
@@ -144,7 +156,7 @@ def answered_sql(rel: str) -> str:
             OR coalesce(json_extract_string(responses,
                 '$."' || q.question_id || '".text'), '') <> ''
           )
-        GROUP BY 1, 2
+        GROUP BY 1, 2, 3
         """
 
 
@@ -285,39 +297,48 @@ def assemble_zone_rows(
 ) -> list[dict[str, Any]]:
     """Merge the zone list with the stage, response, and answered
     aggregates: every zone gets a row (zeros when unwalked), sorted by
-    name."""
+    name. Rows key on (zone_id, segment_id) — segment_id is set only for
+    null-zone rows, one per full-segment campaign's segment."""
 
-    def empty_row(zone_id: str | None, zone_name: str | None) -> dict[str, Any]:
+    def empty_row(
+        zone_id: str | None,
+        zone_name: str | None,
+        segment_id: str | None = None,
+        segment_name: str | None = None,
+    ) -> dict[str, Any]:
         return {
             "zoneId": zone_id,
             "zoneName": zone_name,
+            "segmentId": segment_id,
+            "segmentName": segment_name,
             "attempted": 0,
             "contacted": 0,
             "responses": {},
             "answered": {},
         }
 
-    by_zone: dict[str | None, dict[str, Any]] = {}
+    by_region: dict[tuple[str | None, str | None], dict[str, Any]] = {}
     for zone_id, zone_name in zone_rows:
-        by_zone[zone_id] = empty_row(zone_id, zone_name)
-    for zone_id, zone_name, att, con in stage_rows:
-        entry = by_zone.setdefault(zone_id, empty_row(zone_id, zone_name))
+        by_region[(zone_id, None)] = empty_row(zone_id, zone_name)
+    for zone_id, segment_id, zone_name, segment_name, att, con in stage_rows:
+        entry = by_region.setdefault((zone_id, segment_id), empty_row(zone_id, zone_name, segment_id, segment_name))
         entry.update(
             {
                 # Prefer the publish-time stamp over the zone's current name.
                 "zoneName": zone_name,
+                "segmentName": segment_name,
                 "attempted": att,
                 "contacted": con,
             }
         )
-    for zone_id, question_id, option_id, n in response_rows:
-        zone = by_zone.get(zone_id)
-        if zone is None:
+    for zone_id, segment_id, question_id, option_id, n in response_rows:
+        region = by_region.get((zone_id, segment_id))
+        if region is None:
             continue
-        zone["responses"].setdefault(question_id, {})[option_id] = n
-    for zone_id, question_id, n in answered_rows:
-        zone = by_zone.get(zone_id)
-        if zone is None:
+        region["responses"].setdefault(question_id, {})[option_id] = n
+    for zone_id, segment_id, question_id, n in answered_rows:
+        region = by_region.get((zone_id, segment_id))
+        if region is None:
             continue
-        zone["answered"][question_id] = n
-    return sorted(by_zone.values(), key=lambda r: r["zoneName"] or "")
+        region["answered"][question_id] = n
+    return sorted(by_region.values(), key=lambda r: r["zoneName"] or r["segmentName"] or "")

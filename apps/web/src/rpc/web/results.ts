@@ -5,6 +5,10 @@ import { webPub as pub } from "../context";
 export type ZoneFunnelRow = {
   zoneId: string | null;
   zoneName: string | null;
+  // Set only on null-zone rows: the full-segment campaign's segment.
+  // Zoneless rows split per segment server-side.
+  segmentId: string | null;
+  segmentName: string | null;
   attempted: number;
   contacted: number;
   // questionId → optionId → count, among the contacted.
