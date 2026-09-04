@@ -27,6 +27,8 @@ import {
 import { scriptsListQuery } from "~/lib/queries/scripts";
 import {
   segmentCountsQuery,
+  segmentPerimetersQuery,
+  segmentPerimetersVersion,
   segmentsListQuery,
   type SegmentCriteria,
 } from "~/lib/queries/segments";
@@ -174,6 +176,16 @@ function CampaignEditor() {
     enabled: !!campaign?.zoneGroupId && !!zones && !zonesStale,
   });
 
+  // Full-segment outline for zoneless campaigns — the segment analogue
+  // of the zone perimeters above, version-stamped the same way so
+  // criteria edits and dataset flips re-key immediately.
+  const { data: segmentPerimeter } = useQuery(
+    segmentPerimetersQuery(
+      campaign?.segmentId && !campaign.zoneGroupId ? [campaign.segmentId] : [],
+      segmentPerimetersVersion(manifestRow?.versionId, campaign ? [campaign] : [], segments),
+    ),
+  );
+
   const keyFilter = useMemo(
     () => deriveKeyFilter(activeZoneGroup, zones),
     [activeZoneGroup, zones],
@@ -248,11 +260,26 @@ function CampaignEditor() {
   }, [turfStats]);
 
   // Server perimeters decorated with each zone's list-position color, so
-  // map fills match the sidebar swatches. Bails when zoneless — without
-  // the guard a zoned→zoneless switch flashes the previous campaign's
-  // polygons.
+  // map fills match the sidebar swatches. The zoneless branch reads only
+  // the segment outline — never rawPerimeters, whose stale shapes would
+  // flash on a zoned→zoneless switch.
   const zonePerimeters = useMemo<FeatureCollection | undefined>(() => {
-    if (!campaign?.zoneGroupId) return undefined;
+    if (!campaign?.zoneGroupId) {
+      // Zoneless: the segment's own outline as one neutral shape under
+      // the points (no `color` falls through to the layer's theme gray).
+      if (!campaign?.segmentId || !segmentPerimeter) return undefined;
+      return {
+        type: "FeatureCollection",
+        features: segmentPerimeter.features.map((f) => ({
+          ...f,
+          properties: {
+            zoneId: `segment:${campaign.segmentId}`,
+            name: "Full segment",
+            opacity: 0.2,
+          },
+        })),
+      };
+    }
     if (!zones || !rawPerimeters) return undefined;
     // globalThis: the Map *component* import shadows the built-in here.
     const colorByZone = new globalThis.Map(zones.map((z, idx) => [z.zoneId, colorFor(idx)]));
@@ -265,13 +292,16 @@ function CampaignEditor() {
         return [{ ...f, properties: { zoneId, name: f.properties?.zoneName, color } }];
       }),
     };
-  }, [zones, rawPerimeters, campaign?.zoneGroupId]);
+  }, [zones, rawPerimeters, campaign?.zoneGroupId, campaign?.segmentId, segmentPerimeter]);
 
   // Prefer zone perimeters for the fit when we have them (matches the
   // visible boundary on the map). Fall back to the points cloud for
   // zoneless campaigns so the map still lands somewhere sensible.
   const fitBounds = useMemo(() => {
-    if (zonePerimeters) return bboxOfFeatures(zonePerimeters.features);
+    // A guard-skipped segment perimeter is an empty collection (null
+    // bbox) — the points cloud still frames the map.
+    const perimeterBounds = zonePerimeters ? bboxOfFeatures(zonePerimeters.features) : null;
+    if (perimeterBounds) return perimeterBounds;
     if (pointsBuffer) return bboxOfMercDeltas(pointsBuffer);
     return null;
   }, [zonePerimeters, pointsBuffer]);
@@ -298,6 +328,8 @@ function CampaignEditor() {
       // Zoneless: header totals come from segmentTotals instead of
       // per-zone aggregation.
       if (!segmentTotals) return false;
+      // Outline before curtain-drop, or the fit jumps when it lands.
+      if (!segmentPerimeter) return false;
     }
     return true;
   })();
