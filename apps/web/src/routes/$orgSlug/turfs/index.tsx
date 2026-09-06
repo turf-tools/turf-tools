@@ -854,7 +854,7 @@ function ZoneMapDialog({
               streetsAlwaysOn
               onBadgeClick={onSelectTurf}
             />
-            <label className="mt-2.5 flex w-fit cursor-pointer items-center gap-3 text-sm">
+            <label className="mt-2.5 -mb-0.5 flex w-fit cursor-pointer items-center gap-3 text-sm">
               <span>Color by progress</span>
               <Switch checked={byProgress} onCheckedChange={setByProgress} />
             </label>
