@@ -15,6 +15,7 @@ import { Page } from "~/components/page";
 import { tintStyle } from "~/components/badge";
 import { BLUE, progressColor } from "~/lib/palette";
 import { Pill } from "~/components/pill";
+import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import { formatMonthDay, formatTime } from "~/lib/format";
@@ -713,6 +714,9 @@ function QrDialog({
   );
 }
 
+// Outline weight shared by the zone and single-turf map dialogs.
+const TURF_LINE_WIDTH = 1;
+
 type ZoneMapGroup = {
   campaignId: string;
   zoneId: string | null;
@@ -721,9 +725,10 @@ type ZoneMapGroup = {
 };
 
 // A group's turfs on a map — geometry, number badges, and building
-// dots, colored by the app palette in row order. Scoped to one
-// (campaign, region) by construction, so overlapping campaigns can't
-// collide here the way they can in the full map view.
+// dots, colored by the app palette in row order, or by the board's
+// progress colors on toggle. Scoped to one (campaign, region) by
+// construction, so overlapping campaigns can't collide here the way
+// they can in the full map view.
 function ZoneMapDialog({
   group,
   open,
@@ -736,6 +741,9 @@ function ZoneMapDialog({
   onSelectTurf: (turfId: string) => void;
 }) {
   const isDark = useAtomValue(darkAtom);
+  const [byProgress, setByProgress] = useState(false);
+  const summaries = useWalkSummaries(group?.campaignId ?? null);
+  const progressByTurf = useProgressByTurf(group?.campaignId ?? null);
   const { data: zoneData } = useQuery({
     ...zoneMapDataQuery(group?.campaignId ?? "", group?.zoneId ?? null),
     enabled: group !== null,
@@ -743,25 +751,32 @@ function ZoneMapDialog({
 
   const { shapes, labels, bounds, points, pointColors } = useMemo(() => {
     const turfs = group?.turfs ?? [];
+    // The board's badge rule; null = neutral (theme gray).
+    const progressFill = (t: TurfRow): string | null => {
+      const s = summaries(t.turfId);
+      if (s.live || s.pending) return BLUE;
+      const pct = progressPct(progressByTurf?.get(t.turfId) ?? 0, t.personCount);
+      return pct !== null && pct > 0 ? progressColor(pct) : null;
+    };
+    // Palette mode is index-based, so a turf keeps the color the
+    // cutter's point clouds gave it while it was drawn.
+    const fillFor = (t: TurfRow, i: number) => (byProgress ? progressFill(t) : colorFor(i));
     const geometryByTurf = new Map((zoneData ?? []).map((g) => [g.turfId, g.geometry]));
     const shapeFeatures: Feature[] = [];
     const labelFeatures: Feature[] = [];
     turfs.forEach((t, i) => {
       const geometry = geometryByTurf.get(t.turfId);
       if (!geometry) return;
-      // Index-based palette assignment, so a turf keeps the color the
-      // cutter's point clouds gave it while it was drawn.
+      const color = fillFor(t, i);
       const feature: Feature = {
         type: "Feature",
         geometry,
         properties: {
           zoneId: t.turfId,
-          color: colorFor(i),
-          // Solid same-hue outline; the fill stays light enough that
-          // the dots read on top of it — the dots carry the density
-          // now, the fill just claims area.
-          lineColor: colorFor(i),
-          opacity: 0.4,
+          lineWidth: TURF_LINE_WIDTH,
+          lineOpacity: 1,
+          // Light fills so the dots read on top; neutral matches the single-turf view.
+          ...(color ? { color, lineColor: color, opacity: 0.4 } : { opacity: 0.2 }),
         },
       };
       shapeFeatures.push(feature);
@@ -790,8 +805,11 @@ function ZoneMapDialog({
       const colors = new Uint8Array(total * 3);
       let k = 0;
       turfs.forEach((t, i) => {
-        const [r, g, b] = parseHexRgb(colorFor(i)).map((c) =>
-          Math.round(base + (c - base) * HUE_SHARE),
+        const color = fillFor(t, i);
+        const [r, g, b] = (
+          color
+            ? parseHexRgb(color).map((c) => Math.round(base + (c - base) * HUE_SHARE))
+            : [base, base, base]
         ) as [number, number, number];
         for (const [lng, lat] of coordsByTurf.get(t.turfId) ?? []) {
           deltas[k * 2] = mercatorX(lng) - origin[0];
@@ -813,14 +831,14 @@ function ZoneMapDialog({
       points,
       pointColors,
     };
-  }, [group, zoneData, isDark]);
+  }, [group, zoneData, isDark, byProgress, summaries, progressByTurf]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] md:w-[720px] md:max-w-[720px]">
         {group ? (
           <>
-            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic">
+            <DialogTitle className="mb-2.5 pr-10 text-sm leading-tight font-normal tracking-normal text-foreground italic">
               {group.name}
             </DialogTitle>
             <DialogCloseX />
@@ -836,6 +854,10 @@ function ZoneMapDialog({
               streetsAlwaysOn
               onBadgeClick={onSelectTurf}
             />
+            <label className="mt-2.5 flex w-fit cursor-pointer items-center gap-3 text-sm">
+              <span>Color by progress</span>
+              <Switch checked={byProgress} onCheckedChange={setByProgress} />
+            </label>
           </>
         ) : null}
       </DialogContent>
@@ -866,11 +888,11 @@ function TurfMapDialog({
       return { shapes: undefined, points: null, bounds: null };
     }
     // Neutral fill (no `color` property falls through to the layer's
-    // theme gray), heavier outline via the selected-zone state.
+    // theme gray), solid outline at the turf maps' shared weight.
     const feature: Feature = {
       type: "Feature",
       geometry: data.geometry,
-      properties: { zoneId: turf.turfId, opacity: 0.2 },
+      properties: { zoneId: turf.turfId, opacity: 0.2, lineWidth: TURF_LINE_WIDTH, lineOpacity: 1 },
     };
     const b = bboxOfFeatures([feature]);
     // fp64 origin at the bbox center + fp32 deltas — the same split the
@@ -897,7 +919,7 @@ function TurfMapDialog({
       <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] md:w-[720px] md:max-w-[720px]">
         {turf ? (
           <>
-            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
+            <DialogTitle className="mb-2.5 pr-10 text-sm leading-tight font-normal tracking-normal text-foreground italic tabular-nums">
               Turf {turfLabel(turf.name)}
               {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
@@ -909,7 +931,6 @@ function TurfMapDialog({
               fitBounds={bounds}
               loading={!data}
               loadingSpinner
-              selectedZoneId={turf.turfId}
               streetsAlwaysOn
             />
           </>
@@ -949,7 +970,7 @@ function WalksDialog({
       <DialogContent className="max-w-[85vw] pb-3 md:max-w-md">
         {turf ? (
           <>
-            <DialogTitle className="text-sm font-normal tracking-normal text-foreground italic tabular-nums">
+            <DialogTitle className="mb-2.5 pr-10 text-sm leading-tight font-normal tracking-normal text-foreground italic tabular-nums">
               Turf {turfLabel(turf.name)} {regionName(turf) ? ` — ${regionName(turf)}` : ""}
             </DialogTitle>
             <DialogCloseX />
