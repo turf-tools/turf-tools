@@ -146,6 +146,8 @@ type MapProps = {
   cornerUpperRight?: ReactNode;
   // Upper-left counterpart.
   cornerUpperLeft?: ReactNode;
+  // Lower-left counterpart.
+  cornerLowerLeft?: ReactNode;
   // Suppress every corner inset — for callers that shrink the map to a
   // sliver, where the cards clip and their labels wrap illegibly.
   insetsHidden?: boolean;
@@ -245,6 +247,7 @@ export function Map({
   cornerLowerRight,
   cornerUpperRight,
   cornerUpperLeft,
+  cornerLowerLeft,
   insetsHidden,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
@@ -916,17 +919,24 @@ export function Map({
                   ["get", "lineColor"],
                   isDark ? "hsl(0, 0%, 95%)" : "hsl(0, 0%, 5%)",
                 ],
-                // Thin and faded by default; the selected zone gets
-                // the heavier stroke at full opacity so it reads as
-                // the active one without disrupting the others.
-                "line-width": ["case", ["==", ["feature-state", "selected"], true], 1.5, 0.75],
+                // Per-feature `lineWidth` / `lineOpacity` overrides, like
+                // `lineColor`; otherwise thin and faded, selected zone heavier.
+                "line-width": [
+                  "coalesce",
+                  ["get", "lineWidth"],
+                  ["case", ["==", ["feature-state", "selected"], true], 1.5, 0.75],
+                ],
                 "line-opacity": [
-                  "case",
-                  ["==", ["feature-state", "selected"], true],
-                  1,
-                  ["!=", ["get", "lineColor"], null],
-                  1,
-                  0.5,
+                  "coalesce",
+                  ["get", "lineOpacity"],
+                  [
+                    "case",
+                    ["==", ["feature-state", "selected"], true],
+                    1,
+                    ["!=", ["get", "lineColor"], null],
+                    1,
+                    0.5,
+                  ],
                 ],
               }}
             />
@@ -1093,6 +1103,17 @@ export function Map({
           }
         >
           {cornerUpperLeft}
+        </div>
+      ) : null}
+
+      {!insetsHidden && cornerLowerLeft ? (
+        <div
+          className={
+            "absolute bottom-3 left-3 z-20 flex flex-col items-stretch " +
+            "rounded-md border border-border bg-background text-sm"
+          }
+        >
+          {cornerLowerLeft}
         </div>
       ) : null}
 
