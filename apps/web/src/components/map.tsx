@@ -148,6 +148,10 @@ type MapProps = {
   cornerUpperLeft?: ReactNode;
   // Lower-left counterpart.
   cornerLowerLeft?: ReactNode;
+  // Symbol fade-in/out duration (ms); MapLibre keys symbols on their
+  // text, so 0 lets a label's text change in place instead of
+  // cross-fading the whole badge.
+  fadeDuration?: number;
   // Suppress every corner inset — for callers that shrink the map to a
   // sliver, where the cards clip and their labels wrap illegibly.
   insetsHidden?: boolean;
@@ -248,6 +252,7 @@ export function Map({
   cornerUpperRight,
   cornerUpperLeft,
   cornerLowerLeft,
+  fadeDuration,
   insetsHidden,
 }: MapProps) {
   const isDark = useAtomValue(darkAtom);
@@ -771,6 +776,7 @@ export function Map({
         initialViewState={{ ...DEFAULT_VIEW, ...initialViewState }}
         mapStyle={getMaptilerStyleUrl(isDark)}
         attributionControl={false}
+        fadeDuration={fadeDuration}
         style={{ width: "100%", height: "100%" }}
         // Every map stays north-up and flat: no rotation, no pitch.
         // touchZoomRotate={false} would kill pinch zoom too, so only its

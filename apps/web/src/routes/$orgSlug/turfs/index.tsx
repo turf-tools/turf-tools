@@ -725,10 +725,10 @@ type ZoneMapGroup = {
 };
 
 // A group's turfs on a map — geometry, number badges, and building
-// dots, colored by the app palette in row order, or by the board's
-// progress colors on toggle. Scoped to one (campaign, region) by
-// construction, so overlapping campaigns can't collide here the way
-// they can in the full map view.
+// dots, colored by the app palette in row order. "Show progress" swaps
+// in the board's progress colors and percentages. Scoped to one
+// (campaign, region) by construction, so overlapping campaigns can't
+// collide here the way they can in the full map view.
 function ZoneMapDialog({
   group,
   open,
@@ -741,7 +741,7 @@ function ZoneMapDialog({
   onSelectTurf: (turfId: string) => void;
 }) {
   const isDark = useAtomValue(darkAtom);
-  const [byProgress, setByProgress] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
   const summaries = useWalkSummaries(group?.campaignId ?? null);
   const progressByTurf = useProgressByTurf(group?.campaignId ?? null);
   const { data: zoneData } = useQuery({
@@ -751,16 +751,19 @@ function ZoneMapDialog({
 
   const { shapes, labels, bounds, points, pointColors } = useMemo(() => {
     const turfs = group?.turfs ?? [];
+    const pctFor = (t: TurfRow) =>
+      progressPct(progressByTurf?.get(t.turfId) ?? 0, t.personCount) ?? 0;
     // The board's badge rule; null = neutral (theme gray).
     const progressFill = (t: TurfRow): string | null => {
       const s = summaries(t.turfId);
       if (s.live || s.pending) return BLUE;
-      const pct = progressPct(progressByTurf?.get(t.turfId) ?? 0, t.personCount);
-      return pct !== null && pct > 0 ? progressColor(pct) : null;
+      const pct = pctFor(t);
+      return pct > 0 ? progressColor(pct) : null;
     };
     // Palette mode is index-based, so a turf keeps the color the
     // cutter's point clouds gave it while it was drawn.
-    const fillFor = (t: TurfRow, i: number) => (byProgress ? progressFill(t) : colorFor(i));
+    const fillFor = (t: TurfRow, i: number) => (showProgress ? progressFill(t) : colorFor(i));
+    const labelFor = (t: TurfRow) => (showProgress ? `${pctFor(t)}%` : turfLabel(t.name));
     const geometryByTurf = new Map((zoneData ?? []).map((g) => [g.turfId, g.geometry]));
     const shapeFeatures: Feature[] = [];
     const labelFeatures: Feature[] = [];
@@ -780,7 +783,7 @@ function ZoneMapDialog({
         },
       };
       shapeFeatures.push(feature);
-      labelFeatures.push(labelPoint(feature, turfLabel(t.name)));
+      labelFeatures.push(labelPoint(feature, labelFor(t)));
     });
     const bounds = bboxOfFeatures(shapeFeatures);
 
@@ -831,7 +834,7 @@ function ZoneMapDialog({
       points,
       pointColors,
     };
-  }, [group, zoneData, isDark, byProgress, summaries, progressByTurf]);
+  }, [group, zoneData, isDark, showProgress, summaries, progressByTurf]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -852,11 +855,12 @@ function ZoneMapDialog({
               loading={!zoneData}
               loadingSpinner
               streetsAlwaysOn
+              fadeDuration={0}
               onBadgeClick={onSelectTurf}
             />
             <label className="mt-2.5 -mb-0.5 flex w-fit cursor-pointer items-center gap-3 text-sm">
-              <span>Color by progress</span>
-              <Switch checked={byProgress} onCheckedChange={setByProgress} />
+              <span>Show progress</span>
+              <Switch checked={showProgress} onCheckedChange={setShowProgress} />
             </label>
           </>
         ) : null}
