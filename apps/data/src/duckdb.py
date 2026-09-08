@@ -126,7 +126,9 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     os.makedirs(spill_dir, exist_ok=True)
     conn.execute(f"SET temp_directory = '{_sql_str(spill_dir)}'")
 
-    ro = ", READ_ONLY" if read_only else ""
+    # Writers migrate the catalog label on attach; readers cannot, and the
+    # lifespan RW init lands before the shared RO connection attaches.
+    mode = ", READ_ONLY" if read_only else ", AUTOMATIC_MIGRATION true"
     _attach_ducklake(
         conn,
         "ducklake",
@@ -136,7 +138,7 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
         local_data_dir=LOCAL_DATA_DIR,
         bucket=settings.storage.bucket,
         prefix=settings.ducklake_prefix,
-        read_only_opt=ro,
+        mode_opt=mode,
     )
     _attach_ducklake(
         conn,
@@ -147,7 +149,7 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
         local_data_dir=LOCAL_DUCKLAKE_GEO_DATA_DIR,
         bucket=settings.storage.bucket,
         prefix=settings.ducklake_geo_prefix,
-        read_only_opt=ro,
+        mode_opt=mode,
     )
 
     conn.execute("USE ducklake")
@@ -164,7 +166,7 @@ def _attach_ducklake(
     local_data_dir: str,
     bucket: str,
     prefix: str,
-    read_only_opt: str,
+    mode_opt: str,
 ) -> None:
     """Attach one DuckLake catalog. Catalog backend (Postgres vs local DuckDB
     file) and storage (S3 vs local dir) are independent axes:
@@ -183,7 +185,7 @@ def _attach_ducklake(
         Path(local_data_dir).mkdir(exist_ok=True)
 
     if not pg_url:
-        conn.execute(f"ATTACH 'ducklake:{local_catalog}' AS {alias} (DATA_PATH '{data_path}'{read_only_opt})")
+        conn.execute(f"ATTACH 'ducklake:{local_catalog}' AS {alias} (DATA_PATH '{data_path}'{mode_opt})")
         return
 
     conn.install_extension("postgres")
@@ -192,7 +194,7 @@ def _attach_ducklake(
     conn.execute(f"CREATE SCHEMA IF NOT EXISTS _meta_{alias}.{meta_schema}")
     conn.execute(f"DETACH _meta_{alias}")
     schema_opt = f", META_SCHEMA '{meta_schema}'"
-    conn.execute(f"ATTACH 'ducklake:postgres:{pg_url}' AS {alias} (DATA_PATH '{data_path}'{schema_opt}{read_only_opt})")
+    conn.execute(f"ATTACH 'ducklake:postgres:{pg_url}' AS {alias} (DATA_PATH '{data_path}'{schema_opt}{mode_opt})")
 
 
 def _s3_path(bucket: str, prefix: str) -> str:
