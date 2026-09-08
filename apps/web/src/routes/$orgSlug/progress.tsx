@@ -191,8 +191,8 @@ function ProgressIndex() {
 }
 
 // RYG percent chip in Results' rate-badge shape: content width, mono,
-// whole percent zero-padded to two digits; discrete progress colors
-// through the shared badge tint math.
+// whole percent; discrete progress colors through the shared badge tint
+// math.
 function ProgressChip({ pct }: { pct: number | null }) {
   if (pct === null) return <span className="text-muted-foreground">—</span>;
   return (
@@ -200,7 +200,7 @@ function ProgressChip({ pct }: { pct: number | null }) {
       className="badge-tint rounded px-1.5 py-0.5 font-mono text-sm tabular-nums"
       style={tintStyle(progressColor(pct))}
     >
-      {String(pct).padStart(2, "0")}%
+      {pct}%
     </span>
   );
 }

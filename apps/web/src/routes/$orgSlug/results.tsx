@@ -904,9 +904,7 @@ function RatePercent({ rate, rateMax }: { rate: number | null; rateMax: number }
 }
 
 // `rateMax` sets the color domain only — the printed percent is always
-// the true rate. Whole percent, zero-padded to two digits — every badge
-// is the same width, so the column of badges reads as its own tabular
-// structure.
+// the true rate, printed as a whole percent.
 function RateBadge({ rate, rateMax }: { rate: number | null; rateMax: number }) {
   if (rate === null) return <span className="text-muted-foreground">—</span>;
   return (
@@ -914,7 +912,7 @@ function RateBadge({ rate, rateMax }: { rate: number | null; rateMax: number }) 
       className="badge-tint rounded px-1.5 py-0.5 font-mono text-sm tabular-nums"
       style={tintStyle(rateColor(Math.min(rate / rateMax, 1)))}
     >
-      {String(Math.round(100 * rate)).padStart(2, "0")}%
+      {Math.round(100 * rate)}%
     </span>
   );
 }
