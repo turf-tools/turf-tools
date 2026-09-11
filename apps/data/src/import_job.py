@@ -22,6 +22,7 @@ from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, qu
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
+from src.importers.base import ImportFilter  # noqa: TC001 — pydantic resolves the payload annotation at runtime
 from src.importers.registry import get_importer
 from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContext, job
 from src.quickwit import ensure_index, persons_index_id
@@ -39,6 +40,8 @@ class ImportDatasetVersionPayload(BaseModel):
     # Org that initiated the import — auto-activated onto the new version when it
     # has no active one.
     organization_id: str
+    # The dataset's fixed row filter (see `ImportFilter`); None imports everything.
+    filter: ImportFilter | None = None
 
 
 async def _mark_version_failed(dataset_version_id: str, error: str) -> None:
@@ -158,9 +161,13 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 2)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
-        persons_validated = importer.load(payload.source, schema, conn, progress)
+        persons_validated = importer.load(payload.source, schema, conn, progress, payload.filter)
         decoded = conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()
         log.write(f"Decoded {decoded[0]:,} people from source" if decoded else "Source decoded")
+        if decoded is not None and decoded[0] == 0 and payload.filter is not None:
+            # A slice that matches nothing is almost always a wrong value; fail
+            # loudly rather than land an empty version.
+            raise ValueError(f"The import filter on {payload.filter.column} matched no rows in the source.")
         result = dr.execute(final_vars=_FINAL_VARS, inputs={"persons_validated": persons_validated, **dag_inputs})
         log.write("Geocoding pipeline complete")
 

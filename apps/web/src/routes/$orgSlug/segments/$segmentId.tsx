@@ -29,6 +29,7 @@ import {
   segmentSampleQuery,
   segmentsListQuery,
 } from "~/lib/queries/segments";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { AddStepMenu, FilterValueEditor } from "~/components/filter-editors";
 import { useFilterCatalog } from "~/lib/manifest";
@@ -70,6 +71,10 @@ function SegmentEditor() {
   // segment-ref filter editor reads this both to populate its dropdown
   // and to detect cycles transitively.
   const { data: allSegments } = useQuery(segmentsListQuery());
+  // Open on the active version's extent (a sliced dataset frames its slice);
+  // null falls back to the map's default view.
+  const { data: manifestData } = useQuery(manifestQuery());
+  const fitBounds = manifestData?.bounds ?? null;
 
   const stepsRaw = (activeSegmentDetail?.criteria as Criteria | null)?.steps ?? [];
   const stepsIdRef = useRef<string[]>([]);
@@ -322,6 +327,7 @@ function SegmentEditor() {
                 className="h-full"
                 points={stablePointsRef.current}
                 loading={pointsLoading && !stablePointsRef.current}
+                fitBounds={fitBounds}
               />
             ) : view === "list" ? (
               <SamplePanel

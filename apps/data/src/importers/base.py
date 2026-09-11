@@ -123,6 +123,20 @@ class Manifest(_CamelModel):
     fields: list[list[FieldDef]]
 
 
+class ImportFilter(_CamelModel):
+    """Row filter applied at import, fixed on the dataset like its importer.
+    `column` is a decoded source column the importer allowlists in
+    `FILTER_COLUMNS`; rows whose value isn't in `values` are dropped before
+    transform, so every version of the dataset is the same slice."""
+
+    column: str
+    values: list[str]
+
+
+class InvalidImportFilterError(ValueError):
+    """The filter names a column the importer doesn't allow. Message is user-facing."""
+
+
 class Progress(Protocol):
     """What `load` reports against — a step counter shared with the DAG. `advance`
     is called once per load stage; the job sizes the total from `PROGRESS_STEPS`
@@ -178,6 +192,9 @@ class Importer(Protocol):
     # Number of times `load` calls `progress.advance()`, so the job can size the
     # progress total (these stages + the DAG's nodes) before running.
     PROGRESS_STEPS: int
+    # Decoded source columns an `ImportFilter` may name. Mirrored by the web's
+    # importer entry so the dialog only offers these.
+    FILTER_COLUMNS: frozenset[str]
 
     def manifest(self) -> Manifest: ...
 
@@ -187,4 +204,5 @@ class Importer(Protocol):
         schema: str,
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
+        filter: ImportFilter | None = None,
     ) -> TableRef: ...

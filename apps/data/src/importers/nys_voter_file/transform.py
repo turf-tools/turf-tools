@@ -12,6 +12,11 @@ which are filterable. There is no catch-all JSON blob.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.importers.base import ImportFilter
+
 # NYS raw → canonical mappings used by the SQL CASE expressions below.
 # Keys are NYS-specific codes; values are cross-state canonical labels.
 
@@ -89,29 +94,21 @@ def _iso_date_sql(col: str) -> str:
 
 def nys_sboe_transformation_query(
     source_table: str,
-    county_codes: list[str] | None = None,
-    zip5_filter: list[str] | None = None,
+    filter: ImportFilter | None = None,
 ) -> str:
     """SQL transformation from NYS SBOE raw voter file → Person schema.
 
     Args:
         source_table: fully-qualified `persons_raw` table the query reads from,
             aliased to ``raw`` so the column expressions below resolve.
-        county_codes: optional list of NYS BOE county codes (e.g. ``['31']``
-            for Manhattan). When provided, the query restricts to those
-            counties and to active voters (status = 'A').
-        zip5_filter: optional list of residential ZIP5 codes to keep. Used to
-            scope dev runs to a small geographic slice.
+        filter: optional row filter (`raw.<column> IN (values)`), the dataset's
+            fixed import slice. The column must already be allowlisted by the
+            importer; values are compared as the file's own text.
     """
-    where_clauses = []
-    if county_codes:
-        joined = ", ".join(f"'{c}'" for c in county_codes)
-        where_clauses.append(f"raw.county_code IN ({joined})")
-        where_clauses.append("raw.status = 'A'")
-    if zip5_filter:
-        joined = ", ".join(f"'{z}'" for z in zip5_filter)
-        where_clauses.append(f"raw.res_zip5 IN ({joined})")
-    where = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+    where = ""
+    if filter and filter.values:
+        joined = ", ".join("'" + v.replace("'", "''") + "'" for v in filter.values)
+        where = f"WHERE raw.{filter.column} IN ({joined})"
 
     enrollment_sql = _enrollment_case_sql()
 
