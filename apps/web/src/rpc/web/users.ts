@@ -90,12 +90,23 @@ export const invite = webMut
       });
     }
 
-    const name = input.name ?? displayEmail.split("@")[0]!;
-    const inserted = await context.db
-      .insert(users)
-      .values({ email, displayEmail, name })
-      .returning({ id: users.id });
-    const userId = inserted[0]!.id;
+    // Users are deployment-wide (one row per email, shared across orgs), so a
+    // member of another org is reused rather than re-created.
+    const [existingUser] = await context.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email));
+    let userId: string;
+    if (existingUser) {
+      userId = existingUser.id;
+    } else {
+      const name = input.name ?? displayEmail.split("@")[0]!;
+      const inserted = await context.db
+        .insert(users)
+        .values({ email, displayEmail, name })
+        .returning({ id: users.id });
+      userId = inserted[0]!.id;
+    }
     await context.db.insert(memberships).values({
       userId,
       organizationId: context.organizationId,
