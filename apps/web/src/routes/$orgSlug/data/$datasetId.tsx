@@ -743,9 +743,7 @@ function FieldsCard({
               ))}
             </div>
           </>
-        ) : (
-          <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">No imported dataset</div>
-        )}
+        ) : null}
       </div>
       {hasArchived ? (
         <div className="flex items-center justify-between border-t border-border px-3 py-2.5">
