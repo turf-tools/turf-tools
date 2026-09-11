@@ -8,9 +8,14 @@ import {
   organizations,
 } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { AVAILABLE_IMPORTERS } from "~/lib/importers";
+import { AVAILABLE_IMPORTERS, importFilterFields } from "~/lib/importers";
 import type { Manifest } from "~/lib/manifest";
 import { webPub as pub } from "../context";
+
+const importFilterSchema = z.object({
+  column: z.string().min(1),
+  values: z.array(z.string().min(1)).min(1),
+});
 
 // Machine identity from the display name — becomes the DuckLake schema prefix
 // (`<slug>_v<n>`). Lowercase alphanumeric + underscores.
@@ -37,6 +42,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       name: datasets.name,
       slug: datasets.slug,
       importer: datasets.importer,
+      importFilter: datasets.importFilter,
       versionId: datasetVersions.datasetVersionId,
       versionNumber: datasetVersions.versionNumber,
       status: datasetVersions.status,
@@ -297,12 +303,21 @@ export const create = pub
       name: z.string().min(1),
       importer: z.enum(AVAILABLE_IMPORTERS.map((i) => i.name) as [string, ...string[]]),
       sourceUri: z.string().min(1),
+      importFilter: importFilterSchema.nullish(),
     }),
   )
   .handler(async ({ context, input }) => {
     const base = slugify(input.name);
     if (!base)
       throw new ORPCError("BAD_REQUEST", { message: "Name must contain letters or numbers." });
+    const importFilter = input.importFilter ?? null;
+    if (
+      importFilter &&
+      !importFilterFields(input.importer).some((f) => f.column === importFilter.column)
+    )
+      throw new ORPCError("BAD_REQUEST", {
+        message: "That filter field isn't available for this dataset type.",
+      });
 
     // A duplicate name *within the org* almost certainly means "update the
     // existing dataset", so reject with that pointer. Name reuse across orgs
@@ -341,7 +356,7 @@ export const create = pub
     return context.db.transaction(async (tx) => {
       const [ds] = await tx
         .insert(datasets)
-        .values({ slug, name: input.name, importer: input.importer })
+        .values({ slug, name: input.name, importer: input.importer, importFilter })
         .returning({ datasetId: datasets.datasetId });
       await tx
         .insert(datasetOrganizations)
@@ -365,6 +380,7 @@ export const create = pub
           dataset_version_id: version!.datasetVersionId,
           source: input.sourceUri,
           organization_id: context.organizationId,
+          filter: importFilter,
         },
       });
       return { datasetId: ds!.datasetId };
@@ -382,7 +398,7 @@ export const update = pub
     return context.db.transaction(async (tx) => {
       // Must be a dataset the org is granted.
       const [grant] = await tx
-        .select({ datasetId: datasets.datasetId })
+        .select({ datasetId: datasets.datasetId, importFilter: datasets.importFilter })
         .from(datasets)
         .innerJoin(datasetOrganizations, eq(datasetOrganizations.datasetId, datasets.datasetId))
         .where(
@@ -467,6 +483,8 @@ export const update = pub
           dataset_version_id: version!.datasetVersionId,
           source: input.sourceUri,
           organization_id: context.organizationId,
+          // The dataset's fixed slice — every version imports the same one.
+          filter: grant.importFilter,
         },
       });
       return { versionId: version!.datasetVersionId };
@@ -481,6 +499,7 @@ export const manifest = pub.input(z.object({}).optional()).handler(async ({ cont
     .select({
       manifest: datasetVersions.manifest,
       versionId: datasetVersions.datasetVersionId,
+      derivedMetadata: datasetVersions.derivedMetadata,
     })
     .from(organizations)
     .innerJoin(
@@ -491,7 +510,12 @@ export const manifest = pub.input(z.object({}).optional()).handler(async ({ cont
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  return { manifest: row.manifest as Manifest, versionId: row.versionId };
+  return {
+    manifest: row.manifest as Manifest,
+    versionId: row.versionId,
+    // Rides with the manifest: same version, same lifetime.
+    bounds: row.derivedMetadata?.bounds ?? null,
+  };
 });
 
 // Flattened field list from a ready version's manifest — the Data page's

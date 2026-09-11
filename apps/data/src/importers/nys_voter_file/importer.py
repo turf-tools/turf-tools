@@ -15,7 +15,7 @@ import os
 from typing import TYPE_CHECKING
 
 import duckdb
-from src.importers.base import SourceUnreadableError, redact_source
+from src.importers.base import ImportFilter, InvalidImportFilterError, SourceUnreadableError, redact_source
 from src.importers.nys_voter_file.decode import decode_txt_to_table
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 from src.importers.nys_voter_file.transform import nys_sboe_transformation_query
@@ -54,23 +54,15 @@ def register_voting_history_udf(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 class NysVoterFileImporter:
-    """Curated importer for the NYS statewide voter file. Implements `Importer`.
-
-    NYS-specific scoping (county filter, dev ZIP5 slice) is instance config so
-    `load` stays source-agnostic.
-    """
+    """Curated importer for the NYS statewide voter file. Implements `Importer`."""
 
     name = "nys_voter_file"
     PROGRESS_STEPS = 3  # decode, transform, parse+validate
-
-    def __init__(
-        self,
-        *,
-        county_codes: list[str] | None = None,
-        zip5_filter: list[str] | None = None,
-    ) -> None:
-        self._county_codes = county_codes
-        self._zip5_filter = zip5_filter
+    # Geographic slices worth fixing a dataset to. Election district is left
+    # out: it's only unique within a county.
+    FILTER_COLUMNS = frozenset(
+        {"congressional_district", "assembly_district", "senate_district", "county_code", "res_zip5"}
+    )
 
     def manifest(self) -> Manifest:
         return NYS_MANIFEST
@@ -81,6 +73,7 @@ class NysVoterFileImporter:
         schema: str,
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
+        filter: ImportFilter | None = None,
     ) -> TableRef:
         """Decode/read `source` → transform → parse voting history → validate.
         Returns the `persons_validated` TableRef the shared pipeline reads from.
@@ -89,6 +82,10 @@ class NysVoterFileImporter:
         # would otherwise *deadlock* the fixed-width decode: the transcode feeder
         # can't open the file, so it never opens the FIFO's write end and
         # `read_csv` blocks forever. Fail fast instead. (`://` = object-storage key.)
+        if filter is not None and filter.column not in self.FILTER_COLUMNS:
+            raise InvalidImportFilterError(
+                f"Import filter column {filter.column!r} is not available for this dataset type."
+            )
         source = os.path.expanduser(source)
         if "://" not in source and not os.path.exists(source):
             raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
@@ -116,11 +113,7 @@ class NysVoterFileImporter:
         # 2. Transform to the canonical Person schema (raw NYS codes → canonical
         #    labels, address assembly, etc.). `voter_history` rides through as a
         #    transient raw column for step 3.
-        query = nys_sboe_transformation_query(
-            source_table=raw_fqn,
-            county_codes=self._county_codes,
-            zip5_filter=self._zip5_filter,
-        )
+        query = nys_sboe_transformation_query(source_table=raw_fqn, filter=filter)
         conn.execute(f"CREATE OR REPLACE TABLE {transformed_fqn} AS {query}")
         progress.advance()
 

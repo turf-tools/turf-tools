@@ -13,7 +13,7 @@ import {
 } from "~/components/dialog";
 import { Input } from "~/components/input";
 import { Rail, useShowArchived } from "~/components/rail";
-import { AVAILABLE_IMPORTERS } from "~/lib/importers";
+import { AVAILABLE_IMPORTERS, importFilterFields } from "~/lib/importers";
 import { hasPermission } from "~/lib/permissions";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -235,6 +235,11 @@ function CreateDatasetDialog({
   const [name, setName] = useState("");
   const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
   const [source, setSource] = useState("");
+  // Optional fixed slice, like type: a field of the selected importer plus the
+  // values to keep, as the file's own codes in comma-separated text, parsed on
+  // submit.
+  const [filterColumn, setFilterColumn] = useState<string | null>(null);
+  const [filterText, setFilterText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showDuplicate, setShowDuplicate] = useState(false);
 
@@ -245,14 +250,36 @@ function CreateDatasetDialog({
       setName("");
       setImporter(AVAILABLE_IMPORTERS[0].name);
       setSource("");
+      setFilterColumn(null);
+      setFilterText("");
       setError(null);
       setShowDuplicate(false);
     }
   }
 
+  const filterFields = importFilterFields(importer);
+  const filterField = filterFields.find((f) => f.column === filterColumn) ?? null;
+  const parsedFilterValues = Array.from(
+    new Set(
+      filterText
+        .split(/[,\s]+/)
+        .map((t) => t.trim())
+        .filter(Boolean),
+    ),
+  );
+  const importFilter =
+    filterField && parsedFilterValues.length > 0
+      ? { column: filterField.column, values: parsedFilterValues }
+      : null;
+
   const create = useMutation({
     mutationFn: () =>
-      client.datasets.create({ name: name.trim(), importer, sourceUri: source.trim() }),
+      client.datasets.create({
+        name: name.trim(),
+        importer,
+        sourceUri: source.trim(),
+        importFilter,
+      }),
     onSuccess: (res) => {
       onCreated(res.datasetId);
       onOpenChange(false);
@@ -266,15 +293,18 @@ function CreateDatasetDialog({
   // typing toward "Voter File 2026" passes through "Voter File", and warning
   // on a name that was never going to be submitted is noise.
   const duplicate = takenNames.some((n) => n.trim().toLowerCase() === name.trim().toLowerCase());
-  const valid = name.trim().length > 0 && source.trim().length > 0;
+  const valid =
+    name.trim().length > 0 &&
+    source.trim().length > 0 &&
+    (filterField == null || importFilter != null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>Import dataset</DialogTitle>
         <DialogDescription>
-          Import a source file as a new dataset. Type is fixed after creation; use updates
-          afterwards to get newer versions.
+          Import a source file as a new dataset. Dataset type is fixed after creation, as are any
+          optional filters. Use updates afterwards to get newer versions.
         </DialogDescription>
         <form
           onSubmit={(e) => {
@@ -317,7 +347,11 @@ function CreateDatasetDialog({
                   <button
                     type="button"
                     key={imp.name}
-                    onClick={() => setImporter(imp.name)}
+                    onClick={() => {
+                      setImporter(imp.name);
+                      setFilterColumn(null);
+                      setFilterText("");
+                    }}
                     disabled={pending}
                     className={cn(
                       "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
@@ -343,6 +377,45 @@ function CreateDatasetDialog({
             />
             <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
           </div>
+          {filterFields.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Filter</label>
+              <div className="flex flex-wrap gap-1.5">
+                {[{ column: null, label: "None" }, ...filterFields].map((f) => {
+                  const sel = filterColumn === f.column;
+                  return (
+                    <button
+                      type="button"
+                      key={f.column ?? "none"}
+                      onClick={() => {
+                        setError(null);
+                        setFilterColumn(f.column);
+                        setFilterText("");
+                      }}
+                      disabled={pending}
+                      className={cn(
+                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+                        sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {filterField ? (
+                <Input
+                  value={filterText}
+                  onChange={(e) => {
+                    setError(null);
+                    setFilterText(e.target.value);
+                  }}
+                  placeholder="single or comma-separated"
+                  disabled={pending}
+                />
+              ) : null}
+            </div>
+          ) : null}
           {error ? <DialogError error={error} /> : null}
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>

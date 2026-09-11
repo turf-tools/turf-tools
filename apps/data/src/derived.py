@@ -28,7 +28,21 @@ def compute_derived_metadata(conn: duckdb.DuckDBPyConnection, geocoded_fqn: str,
     elections = _read_elections(conn, geocoded_fqn, manifest)
     if elections is not None:
         derived["elections"] = elections
+    bounds = _read_bounds(conn, geocoded_fqn)
+    if bounds is not None:
+        derived["bounds"] = bounds
     return derived
+
+
+def _read_bounds(conn: duckdb.DuckDBPyConnection, geocoded_fqn: str) -> list[float] | None:
+    """`[west, south, east, north]` over the version's geocoded persons — the
+    frame maps open on. None when nothing geocoded."""
+    row = conn.execute(
+        f"SELECT min(longitude), min(latitude), max(longitude), max(latitude) FROM {geocoded_fqn}"
+    ).fetchone()
+    if row is None or any(v is None for v in row):
+        return None
+    return [float(v) for v in row]
 
 
 def _read_elections(

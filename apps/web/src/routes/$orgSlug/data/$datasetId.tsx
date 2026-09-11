@@ -38,7 +38,7 @@ import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDateTime } from "~/lib/format";
-import { importerLabel } from "~/lib/importers";
+import { importerLabel, importFilterLabel } from "~/lib/importers";
 import { useRememberSelection } from "~/lib/last-selected";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
 import type { CustomFieldType } from "@turf-tools/db/schema";
@@ -134,7 +134,13 @@ function DatasetPage() {
   return (
     <DatasetEditor
       key={datasetId}
-      dataset={{ datasetId, name: first.name, importer: first.importer, versions }}
+      dataset={{
+        datasetId,
+        name: first.name,
+        importer: first.importer,
+        importFilter: first.importFilter,
+        versions,
+      }}
       orgSlug={orgSlug}
       timezone={timezone}
     />
@@ -146,7 +152,13 @@ function DatasetEditor({
   orgSlug,
   timezone,
 }: {
-  dataset: { datasetId: string; name: string; importer: string; versions: VersionRow[] };
+  dataset: {
+    datasetId: string;
+    name: string;
+    importer: string;
+    importFilter: VersionRow["importFilter"];
+    versions: VersionRow[];
+  };
   orgSlug: string;
   timezone: string;
 }) {
@@ -294,6 +306,8 @@ function DatasetEditor({
         onOpenChange={setUpdateOpen}
         datasetId={dataset.datasetId}
         datasetName={dataset.name}
+        importer={dataset.importer}
+        importFilter={dataset.importFilter}
         hasReadyVersion={readyVersionId != null}
         onUpdated={() => void queryClient.invalidateQueries({ queryKey: ["datasets"] })}
       />
@@ -321,6 +335,8 @@ function DatasetEditor({
         <FieldsCard
           fields={fields}
           baseFields={baseFields}
+          importer={dataset.importer}
+          importFilter={dataset.importFilter}
           hasImport={readyVersionId != null}
           onSelect={(f) => {
             setFieldTarget(f);
@@ -614,11 +630,15 @@ type FieldRow = {
 function FieldsCard({
   fields,
   baseFields,
+  importer,
+  importFilter,
   hasImport,
   onSelect,
 }: {
   fields: FieldRow[];
   baseFields: Array<{ label: string; kind: string }>;
+  importer: string;
+  importFilter: VersionRow["importFilter"];
   // False until a version finishes importing — fields don't exist yet.
   hasImport: boolean;
   onSelect: (f: FieldRow) => void;
@@ -640,6 +660,23 @@ function FieldsCard({
     // header text (border + pt-3 lands 3px below the th's centered text).
     <div className="-mt-[3px] flex min-h-0 w-80 shrink-0 flex-col rounded-md border border-border bg-card">
       <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Dataset info</div>
+        <div className="flex flex-col gap-1 p-2 pt-1 pb-3">
+          {[
+            { label: "Type", value: importerLabel(importer) },
+            { label: "Filter", value: importFilterLabel(importer, importFilter) },
+          ]
+            .filter((r) => r.value)
+            .map((r) => (
+              <div
+                key={r.label}
+                className="flex items-center justify-between gap-2 rounded-md px-1.5"
+              >
+                <span className="shrink-0 text-sm">{r.label}</span>
+                <span className="min-w-0 truncate text-sm text-muted-foreground">{r.value}</span>
+              </div>
+            ))}
+        </div>
         {sorted.length > 0 ? (
           <div className="px-3.5 pt-3 pb-1 text-sm text-muted-foreground">Custom fields</div>
         ) : null}
@@ -926,6 +963,8 @@ function UpdateDialog({
   onOpenChange,
   datasetId,
   datasetName,
+  importer,
+  importFilter,
   hasReadyVersion,
   onUpdated,
 }: {
@@ -933,9 +972,12 @@ function UpdateDialog({
   onOpenChange: (open: boolean) => void;
   datasetId: string;
   datasetName: string;
+  importer: string;
+  importFilter: VersionRow["importFilter"];
   hasReadyVersion: boolean;
   onUpdated: () => void;
 }) {
+  const filterLabel = importFilterLabel(importer, importFilter);
   const [source, setSource] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -976,7 +1018,9 @@ function UpdateDialog({
               Imports <span className="font-medium text-foreground">{datasetName}</span>. It becomes
               available once the import finishes.
             </>
-          )}
+          )}{" "}
+          Type {importerLabel(importer)}
+          {filterLabel ? <>, filtered to {filterLabel}</> : null}.
         </DialogDescription>
         <form
           onSubmit={(e) => {

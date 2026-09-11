@@ -21,13 +21,19 @@ export const datasets = app.table(
     // "nys_voter_file"). Fixed at creation — every version is the same kind of
     // data — and resolved to a class through the data-side importer registry.
     importer: text().notNull(),
-    // Pure identity: name + importer + slug, shared across all its versions.
+    // Optional row filter every version's import applies (`column IN values`
+    // over the importer's decoded source columns). Fixed at creation like
+    // `importer`, so a dataset is always the same slice of its source.
+    importFilter: jsonb().$type<ImportFilter>(),
+    // Pure identity: name + importer + slug + filter, shared across all its versions.
     // Which version is *live* is the org's concern (`organizations.activeDatasetVersionId`),
     // not the dataset's — a version can be active for one org and not another.
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("datasets_slug").on(t.slug)],
 );
+
+export type ImportFilter = { column: string; values: string[] };
 
 export type DatasetVersionStatus = "importing" | "ready" | "failed";
 
@@ -40,6 +46,9 @@ export type DatasetVersionStatus = "importing" | "ready" | "failed";
 export type DerivedMetadata = {
   rowCount?: number;
   elections?: { value: string; label: string; bit?: number }[];
+  // `[west, south, east, north]` of the geocoded persons — the frame maps
+  // open on. Absent on versions imported before it was derived.
+  bounds?: [number, number, number, number];
 };
 
 // An immutable, retained version of a dataset. Never deleted, so any pinned
@@ -56,7 +65,7 @@ export const datasetVersions = app.table(
     versionNumber: integer().notNull(),
     manifest: jsonb(),
     // Derived-once-at-import cache (see `DerivedMetadata`); read like `manifest`.
-    // Holds `rowCount` + `elections`.
+    // Holds `rowCount`, `elections`, and `bounds`.
     derivedMetadata: jsonb().$type<DerivedMetadata>(),
     sourceUri: text(),
     // Coarse import progress (step / total), shown as a % while `importing`.

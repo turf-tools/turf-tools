@@ -20,6 +20,7 @@ from src.dags import (
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import NullProgress
+from src.importers.base import ImportFilter
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
@@ -345,10 +346,13 @@ def seed_persons() -> None:
         print(f"  Voter ZIP5 filter (dev scope): {settings.voter_zip5_filter}")
 
     # Import the voter file (source → persons_validated) outside Hamilton, then
-    # run the shared pipeline from that seam. Fixture is already NYC-only so no
-    # county filter; `voter_zip5_filter` scopes dev runs to a small slice.
-    importer = NysVoterFileImporter(zip5_filter=settings.voter_zip5_filter)
-    persons_validated = importer.load(source, args.schema, conn, NullProgress())
+    # run the shared pipeline from that seam. `voter_zip5_filter` scopes dev
+    # runs to a small slice.
+    zip_filter = (
+        ImportFilter(column="res_zip5", values=settings.voter_zip5_filter) if settings.voter_zip5_filter else None
+    )
+    importer = NysVoterFileImporter()
+    persons_validated = importer.load(source, args.schema, conn, NullProgress(), zip_filter)
 
     timing = TimingHook() if args.timing else None
     builder = driver.Builder().with_modules(
