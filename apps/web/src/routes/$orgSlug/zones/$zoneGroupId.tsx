@@ -588,6 +588,7 @@ function ZoneGroupEditor() {
           coloringByKey={coloringByKey}
           coloredFillOpacity={0.8}
           activeKeys={activeKeys}
+          fitBounds={manifestRow?.bounds ?? null}
           onPolygonClick={handlePolygonClick}
           onPolygonHover={setHoveredKey}
           onBackgroundClick={() => setActiveZoneId(null)}

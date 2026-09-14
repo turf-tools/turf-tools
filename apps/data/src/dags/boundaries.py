@@ -135,6 +135,14 @@ def boundary_from_blocks(
     no-voter blocks become visible holes in the polygon coverage,
     especially for ZIPs.
 
+    Backfilling is bounded by the voter footprint — the union of
+    voter-assigned blocks with its interior gaps filled (each polygon
+    reduced to its exterior ring). Blocks whose centroid falls outside it
+    stay unassigned. A dataset sliced to one district otherwise pulls
+    every no-voter block in the county onto its edge keys, ballooning
+    them far past the district line; the footprint keeps parks inside
+    the slice filled while nothing outside it grows.
+
     Water-only blocks (``land_area = 0``) are excluded from
     backfilling so polygons don't extend across rivers, the harbor,
     Central Park's reservoir, etc.
@@ -207,6 +215,13 @@ def boundary_from_blocks(
             SELECT block_geoid, key, ST_Centroid(block_geom) AS centroid
             FROM winning_key
         ),
+        footprint AS (
+            SELECT ST_Union_Agg(ST_MakePolygon(ST_ExteriorRing(d.geom))) AS geom
+            FROM (
+                SELECT UNNEST(ST_Dump(ST_Union_Agg(block_geom)), recursive := true)
+                FROM winning_key
+            ) d
+        ),
         unassigned AS (
             SELECT b.block_geoid, b.geom AS block_geom, ST_Centroid(b.geom) AS centroid
             FROM {tabblock_fqn} b
@@ -214,6 +229,7 @@ def boundary_from_blocks(
             WHERE wk.block_geoid IS NULL
               AND b.land_area > 0
               AND {tabblock_scope}
+              AND ST_Contains((SELECT geom FROM footprint), ST_Centroid(b.geom))
         ),
         backfilled AS (
             SELECT
