@@ -111,6 +111,52 @@ services:
       timeout: 5s
       retries: 10
 
+  # Hourly dumps of the app database and both DuckLake catalogs (see
+  # backup.sh). The postgres image so pg_dump matches the server; the dumps
+  # land in a bind mount that doubles as the on-box copy.
+  backup:
+    image: postgres:17
+    restart: unless-stopped
+    command: ["sh", "/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - /var/lib/turf-tools/backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Mirrors the dumps to `backups/` in the deployment bucket every five
+  # minutes. The remote is configured entirely from the environment (rclone's
+  # RCLONE_CONFIG_<remote>_<option> convention); path style matches Quickwit's
+  # setting above.
+  backup-sync:
+    image: rclone/rclone:1.75
+    restart: unless-stopped
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        while true; do
+        rclone sync /backups "bucket:$STORAGE_BUCKET/backups" --exclude '.tmp.dump' --quiet
+        || echo 'backup-sync: sync FAILED';
+        sleep 300; done
+    environment:
+      STORAGE_BUCKET: ${STORAGE_BUCKET}
+      RCLONE_CONFIG_BUCKET_TYPE: s3
+      RCLONE_CONFIG_BUCKET_PROVIDER: Other
+      RCLONE_CONFIG_BUCKET_ENDPOINT: https://${STORAGE_ENDPOINT_URL}
+      RCLONE_CONFIG_BUCKET_REGION: ${STORAGE_REGION}
+      RCLONE_CONFIG_BUCKET_FORCE_PATH_STYLE: "true"
+      RCLONE_CONFIG_BUCKET_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID}
+      RCLONE_CONFIG_BUCKET_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY}
+    volumes:
+      - /var/lib/turf-tools/backups:/backups:ro
+    depends_on:
+      - backup
+
 volumes:
   qwdata:
   caddy_data:
