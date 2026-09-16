@@ -229,6 +229,7 @@ type ProgressRow = {
   campaignId: string;
   zoneId: string | null;
   zoneName: string | null;
+  zoneOrder: number | null;
   people: number;
   doors: number;
   turfs: number;
@@ -514,6 +515,7 @@ function ProgressTable({
             campaignId: r.campaignId,
             zoneId: r.zoneId,
             zoneName: r.zoneName,
+            zoneOrder: r.zoneOrder,
             people: r.people,
             doors: r.doors,
             turfs: 0,
@@ -522,8 +524,11 @@ function ProgressTable({
             inferred: true,
           }))
       : [];
-  const merged: ProgressRow[] = [...data, ...inferredRows].sort((a, b) =>
-    (a.zoneName ?? "").localeCompare(b.zoneName ?? ""),
+  // Zone drag order first (as on the turfs board), name for zoneless rows.
+  const merged: ProgressRow[] = [...data, ...inferredRows].sort(
+    (a, b) =>
+      (a.zoneOrder ?? Number.POSITIVE_INFINITY) - (b.zoneOrder ?? Number.POSITIVE_INFINITY) ||
+      (a.zoneName ?? "").localeCompare(b.zoneName ?? ""),
   );
   const rows = campaignFilter ? merged.filter((r) => r.campaignId === campaignFilter) : merged;
 

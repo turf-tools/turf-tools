@@ -1,4 +1,5 @@
-import { sql } from "@turf-tools/db";
+import { and, eq, sql } from "@turf-tools/db";
+import { campaigns, zones } from "@turf-tools/db/schema";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { z } from "zod";
 import { activeDatasetId } from "./active-dataset";
@@ -23,6 +24,7 @@ type ZoneProgressRow = {
   campaignName: string;
   zoneId: string | null;
   zoneName: string | null;
+  zoneOrder: number | null;
   people: number;
   doors: number;
   turfs: number;
@@ -113,6 +115,7 @@ export const byZone = pub
         c.name AS campaign_name,
         t.zone_id,
         t.zone_name,
+        z."order" AS zone_order,
         coalesce(sum(t.person_count), 0)::int AS people,
         coalesce(sum(t.door_count), 0)::int AS doors,
         count(*)::int AS turfs,
@@ -120,12 +123,13 @@ export const byZone = pub
         coalesce(sum(a.att), 0)::int AS attempted
       FROM app.turfs t
       JOIN app.campaigns c ON c.campaign_id = t.campaign_id
+      LEFT JOIN app.zones z ON z.zone_id = t.zone_id
       LEFT JOIN attempted a ON a.turf_id = t.turf_id AND a.campaign_id = t.campaign_id
       WHERE t.status = 'active'
         AND c.organization_id = ${context.organizationId}
         AND c.dataset_id = ${datasetId}
-      GROUP BY c.campaign_id, c.name, t.zone_id, t.zone_name
-      ORDER BY c.name, t.zone_name NULLS FIRST
+      GROUP BY c.campaign_id, c.name, t.zone_id, t.zone_name, z."order"
+      ORDER BY c.name, z."order" NULLS FIRST, t.zone_name
     `);
     const rows = (
       result as unknown as Array<{
@@ -133,6 +137,7 @@ export const byZone = pub
         campaign_name: string;
         zone_id: string | null;
         zone_name: string | null;
+        zone_order: number | null;
         people: number;
         doors: number;
         turfs: number;
@@ -144,6 +149,7 @@ export const byZone = pub
       campaignName: r.campaign_name,
       zoneId: r.zone_id,
       zoneName: r.zone_name,
+      zoneOrder: r.zone_order,
       people: r.people,
       doors: r.doors,
       turfs: r.turfs,
@@ -158,6 +164,7 @@ export type ProgressTargetsRow = {
   campaignId: string;
   zoneId: string;
   zoneName: string | null;
+  zoneOrder: number | null;
   people: number;
   doors: number;
 };
@@ -168,8 +175,26 @@ export type ProgressTargetsRow = {
 export const targets = pub
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }): Promise<{ rows: ProgressTargetsRow[] }> => {
-    return dataPostJson<{ rows: ProgressTargetsRow[] }>("/progress/targets", {
-      orgSlug: context.orgSlug,
-      campaignId: input.campaignId,
-    });
+    const [result, orderRows] = await Promise.all([
+      dataPostJson<{ rows: Omit<ProgressTargetsRow, "zoneOrder">[] }>("/progress/targets", {
+        orgSlug: context.orgSlug,
+        campaignId: input.campaignId,
+      }),
+      // Zone order is editor state, so it's stamped here rather than read
+      // by the data service.
+      context.db
+        .select({ zoneId: zones.zoneId, order: zones.order })
+        .from(zones)
+        .innerJoin(campaigns, eq(campaigns.zoneGroupId, zones.zoneGroupId))
+        .where(
+          and(
+            eq(campaigns.campaignId, input.campaignId),
+            eq(campaigns.organizationId, context.organizationId),
+          ),
+        ),
+    ]);
+    const orderByZone = new Map(orderRows.map((r) => [r.zoneId, r.order]));
+    return {
+      rows: result.rows.map((r) => ({ ...r, zoneOrder: orderByZone.get(r.zoneId) ?? null })),
+    };
   });

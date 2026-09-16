@@ -228,8 +228,15 @@ function ResultsIndex() {
   const pickedQuestions = questionList.filter((q) => questionPicks.includes(q.questionId));
   const activeQuestions = pickedQuestions.length > 0 ? pickedQuestions : questionList.slice(0, 1);
   const totals = sumRows(aggregate.rows);
-  // The aggregate zero-fills a row per zone; only walked zones render.
-  const walkedRows = aggregate.rows.filter((r) => r.attempted > 0);
+  // The aggregate zero-fills a row per zone; only walked zones render, in
+  // zone drag order (as on the turfs board), zoneless rows last by name.
+  const walkedRows = aggregate.rows
+    .filter((r) => r.attempted > 0)
+    .sort(
+      (a, b) =>
+        (a.zoneOrder ?? Number.POSITIVE_INFINITY) - (b.zoneOrder ?? Number.POSITIVE_INFINITY) ||
+        regionLabel(a).localeCompare(regionLabel(b)),
+    );
   // Archived options stay visible while they carry answers in scope —
   // archive hides options from pickers, never from history.
   const visibleOptions = (q: (typeof questionList)[number]) =>
@@ -871,6 +878,7 @@ function sumRows(rows: ZoneFunnelRow[]): ZoneFunnelRow {
   const out: ZoneFunnelRow = {
     zoneId: null,
     zoneName: null,
+    zoneOrder: null,
     segmentId: null,
     segmentName: null,
     attempted: 0,

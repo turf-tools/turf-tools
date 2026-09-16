@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "@turf-tools/db";
-import { campaigns, canvassEvents, turfs } from "@turf-tools/db/schema";
+import { campaigns, canvassEvents, turfs, zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub as pub } from "../context";
@@ -28,6 +28,7 @@ export const eventsVersion = pub
 export type ZoneFunnelRow = {
   zoneId: string | null;
   zoneName: string | null;
+  zoneOrder: number | null;
   // Set only on null-zone rows: the full-segment campaign's segment.
   // Zoneless rows split per segment server-side.
   segmentId: string | null;
@@ -62,15 +63,35 @@ export const aggregate = pub
     }),
   )
   .handler(async ({ context, input }): Promise<ResultsAggregate> => {
-    return dataPostJson<ResultsAggregate>("/results/aggregate", {
-      orgSlug: context.orgSlug,
-      campaignIds: input.campaignIds,
-      criteria: input.criteria,
-      start: input.start,
-      end: input.end,
-      day: input.day,
-      tz: input.tz,
-    });
+    const [result, orderRows] = await Promise.all([
+      dataPostJson<{ days: string[]; rows: Omit<ZoneFunnelRow, "zoneOrder">[] }>(
+        "/results/aggregate",
+        {
+          orgSlug: context.orgSlug,
+          campaignIds: input.campaignIds,
+          criteria: input.criteria,
+          start: input.start,
+          end: input.end,
+          day: input.day,
+          tz: input.tz,
+        },
+      ),
+      // Zone order is editor state, so it's stamped here rather than read
+      // by the data service.
+      context.db
+        .select({ zoneId: zones.zoneId, order: zones.order })
+        .from(zones)
+        .innerJoin(zoneGroups, eq(zoneGroups.zoneGroupId, zones.zoneGroupId))
+        .where(eq(zoneGroups.organizationId, context.organizationId)),
+    ]);
+    const orderByZone = new Map(orderRows.map((r) => [r.zoneId, r.order]));
+    return {
+      days: result.days,
+      rows: result.rows.map((r) => ({
+        ...r,
+        zoneOrder: r.zoneId ? (orderByZone.get(r.zoneId) ?? null) : null,
+      })),
+    };
   });
 
 export type ZonePerimeters = GeoJSON.FeatureCollection;
