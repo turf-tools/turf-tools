@@ -1,4 +1,10 @@
 {$DOMAIN} {
+	# Access log with per-request duration, so a stall shows up as either a
+	# slow request or no request at all. `tt logs <stack> caddy`.
+	log {
+		output stdout
+		format json
+	}
 	encode zstd gzip
 	reverse_proxy web:3000
 }
