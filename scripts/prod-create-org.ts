@@ -1,6 +1,6 @@
 import meow from "meow";
 import { db, eq } from "@turf-tools/db";
-import { organizations } from "@turf-tools/db/schema";
+import { organizations, RESERVED_ORG_SLUGS } from "@turf-tools/db/schema";
 import { createLogger } from "./_logging";
 
 const log = createLogger("create-org");
@@ -33,6 +33,11 @@ const name = cli.flags.name ?? cli.input[1];
 
 if (!slug || !name) {
   cli.showHelp(1);
+}
+
+if ((RESERVED_ORG_SLUGS as readonly string[]).includes(slug)) {
+  log.error(`"${slug}" is a route on every deployment; pick another slug`);
+  process.exit(1);
 }
 
 const existing = await db
