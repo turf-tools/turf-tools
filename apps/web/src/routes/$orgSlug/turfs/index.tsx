@@ -96,7 +96,6 @@ function TurfsIndex() {
   // SPA-shell cold boots skip route loaders, so data arrives via component
   // mount; suspending keeps the campaign filter from painting label-less.
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
-  const { data: turfs } = useSuspenseQuery(turfsListQuery(campaignId));
   const rows = useTurfRows(campaignId, zoneId);
 
   // Mobile-only rendering choice; desktop is always the table.
@@ -187,15 +186,17 @@ function TurfsIndex() {
   // campaigns cut against the whole segment, so the segment stands in as
   // the region — organizers think in zones, and a second segment column
   // (or filter) would be noise.
+  // First-seen over the sorted rows, so the menu lists zones in the same
+  // order the board does.
   const regionOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    for (const t of turfs) {
+    for (const t of allRows) {
       const id = regionId(t);
       const name = regionName(t);
       if (id && name && !seen.has(id)) seen.set(id, name);
     }
     return [...seen].map(([value, label]) => ({ value, label }));
-  }, [turfs]);
+  }, [allRows]);
   const regionLabel =
     zoneId === null ? "All zones" : (regionOptions.find((z) => z.value === zoneId)?.label ?? null);
 
