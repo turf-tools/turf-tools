@@ -299,6 +299,20 @@ def test_canvass_days_bucket_in_display_timezone(operational_conn) -> None:
     assert [r[0] for r in rows] == ["2026-08-24", "2026-08-23"]
 
 
+def test_canvass_days_skip_cleared_only_days(operational_conn) -> None:
+    _seed(operational_conn)
+    # A disposition set and cleared is a null-outcome result event — never an
+    # attempt, so a day with nothing else must not offer an empty view.
+    operational_conn.execute(
+        f"INSERT INTO {APP}.canvass_events VALUES ('result', 'p1', 'turf1', 'w1', 'Jer', '+1', 40, "
+        f"'2026-08-25 16:00:00+00', ?)",
+        [_payload(None)],
+    )
+    scope = event_scope("testorg", ["camp1"], tz=TZ)
+    rows = operational_conn.execute(canvass_days_sql(scope.base_filters), [TZ, *scope.base_params]).fetchall()
+    assert [r[0] for r in rows] == ["2026-08-24", "2026-08-23"]
+
+
 def test_zoneless_rows_split_per_segment(operational_conn) -> None:
     _seed(operational_conn)
     # Zoneless turfs (null zone) on two different segments — one row per

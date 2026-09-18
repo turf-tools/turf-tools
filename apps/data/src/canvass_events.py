@@ -275,8 +275,11 @@ def attempt_days_sql(rel: str) -> str:
 
 
 def canvass_days_sql(base_filters: list[str]) -> str:
-    """Distinct canvass days in the display timezone, newest first.
-    Binds [tz, *base_params]."""
+    """Distinct canvass days in the display timezone, newest first — the
+    results day picker. A cleared disposition is a result event with a null
+    outcome and never counts as an attempt, so a day with nothing else lists
+    nothing and is left out, matching `attempt_days_sql`. Binds [tz,
+    *base_params]."""
     return f"""
         SELECT DISTINCT ((e.created_at AT TIME ZONE ?)::DATE)::VARCHAR AS day
         FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
@@ -285,6 +288,7 @@ def canvass_days_sql(base_filters: list[str]) -> str:
         JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
             ON o.organization_id = c.organization_id
         WHERE {" AND ".join(base_filters)}
+          AND json_extract_string(CAST(e.payload AS VARCHAR), '$.outcome') IS NOT NULL
         ORDER BY day DESC
     """
 
