@@ -650,6 +650,7 @@ function ZoneGroupEditor() {
               >
                 {segments
                   ?.filter((s) => !s.isArchived || s.segmentId === overlaySegmentId)
+                  .sort((a, b) => a.name.localeCompare(b.name))
                   .map((s) => (
                     <DropdownMenuRadioItem key={s.segmentId} value={s.segmentId}>
                       {s.name}
