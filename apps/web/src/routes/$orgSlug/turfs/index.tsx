@@ -396,8 +396,7 @@ function useTurfRows(campaignId: string | null, zoneId: string | null) {
         if (c !== 0) return c;
         return a.campaignId.localeCompare(b.campaignId);
       }
-      // Compared, not subtracted: two zoneless rows would give Infinity -
-      // Infinity = NaN and skip every tiebreak below.
+      // Compared, not subtracted: Infinity - Infinity is NaN.
       const ao = a.zoneOrder ?? Infinity;
       const bo = b.zoneOrder ?? Infinity;
       if (ao !== bo) return ao < bo ? -1 : 1;
@@ -858,6 +857,7 @@ function ZoneMapDialog({
               loading={!zoneData}
               loadingSpinner
               streetsAlwaysOn
+              streetsBelow
               onBadgeClick={onSelectTurf}
             />
             <label className="mt-2.5 -mb-0.5 flex w-fit cursor-pointer items-center gap-3 text-sm">
@@ -938,6 +938,7 @@ function TurfMapDialog({
               loading={!data}
               loadingSpinner
               streetsAlwaysOn
+              streetsBelow
             />
           </>
         ) : null}

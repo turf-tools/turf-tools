@@ -138,6 +138,10 @@ type MapProps = {
   // Force the street-label overlay on and drop its toggle; omit to
   // keep the toggle.
   streetsAlwaysOn?: boolean;
+  // Stack street labels beneath this map's overlays (fills, perimeters,
+  // badges) instead of above them. The turf board wants its shapes to
+  // read over the streets; editors want the street names legible.
+  streetsBelow?: boolean;
   // Content for the bottom-right inset, rendered below the built-in
   // "Show streets" toggle in the same card. Lets routes drop in extra
   // rows without re-inventing an absolute-positioned inset.
@@ -246,6 +250,7 @@ export function Map({
   pointSizes,
   onViewportChange,
   streetsAlwaysOn,
+  streetsBelow = false,
   cornerLowerRight,
   cornerUpperRight,
   cornerUpperLeft,
@@ -255,15 +260,19 @@ export function Map({
   const isDark = useAtomValue(darkAtom);
   const [streetsToggled, setStreetsToggled] = useState(false);
   const showLabels = streetsAlwaysOn || streetsToggled;
-  // Street labels sit beneath every overlay layer this map renders —
-  // insert them before whichever of ours is lowest in the stack.
-  const streetLabelsBeforeId = boundariesUrl
-    ? BOUNDARIES_FILL_LAYER
-    : zonePerimeters
-      ? ZONE_PERIMETERS_FILL_LAYER
-      : shapeLabels
-        ? "shape-labels-badged"
-        : undefined;
+  // Below: insert the street labels before whichever of our overlays is
+  // lowest in the stack. Above: no target, so they append on top — they
+  // render last, and react-map-gl adds sources and layers in render
+  // order (the points layer re-stacks itself over them regardless).
+  const streetLabelsBeforeId = !streetsBelow
+    ? undefined
+    : boundariesUrl
+      ? BOUNDARIES_FILL_LAYER
+      : zonePerimeters
+        ? ZONE_PERIMETERS_FILL_LAYER
+        : shapeLabels
+          ? "shape-labels-badged"
+          : undefined;
   const [hoveringPolygon, setHoveringPolygon] = useState(false);
   // The underlying MapLibre instance isn't available on first render —
   // react-map-gl populates the ref but doesn't trigger a re-render
@@ -986,11 +995,19 @@ export function Map({
           </Source>
         ) : null}
 
-        {/* Symbol placement runs top-down, so badges claim collision
-            space first and street names flow around the plates — layer
-            order is MapLibre's only collision-priority mechanism. */}
+        {/* Symbol placement runs top-down, so with streets below, badges
+            claim collision space first and street names flow around the
+            plates — layer order is MapLibre's only collision-priority
+            mechanism. Keyed on the boundaries URL so a boundaries remount
+            (dataset version change) re-adds the labels after it, keeping
+            them on top. */}
         {showLabels ? (
-          <Source id={LABELS_SOURCE_ID} type="vector" url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
+          <Source
+            key={`labels:${boundariesUrl}`}
+            id={LABELS_SOURCE_ID}
+            type="vector"
+            url={MAPTILER_OPENMAPTILES_TILEJSON_URL}
+          >
             {/* Cities (zoom 4–14) */}
             <Layer
               id="labels-city"
