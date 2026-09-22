@@ -396,8 +396,11 @@ function useTurfRows(campaignId: string | null, zoneId: string | null) {
         if (c !== 0) return c;
         return a.campaignId.localeCompare(b.campaignId);
       }
-      const o = (a.zoneOrder ?? Infinity) - (b.zoneOrder ?? Infinity);
-      if (o !== 0) return o;
+      // Compared, not subtracted: two zoneless rows would give Infinity -
+      // Infinity = NaN and skip every tiebreak below.
+      const ao = a.zoneOrder ?? Infinity;
+      const bo = b.zoneOrder ?? Infinity;
+      if (ao !== bo) return ao < bo ? -1 : 1;
       const r = (regionName(a) ?? "").localeCompare(regionName(b) ?? "", undefined, {
         numeric: true,
       });
