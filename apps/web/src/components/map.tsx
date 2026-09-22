@@ -85,10 +85,8 @@ type MapProps = {
   // Fired with the clicked polygon's `key` when the user clicks
   // anywhere on the boundary layer. The second argument carries
   // modifier-key state from the underlying mouse event so callers
-  // can distinguish click vs. shift-click without needing their
-  // own DOM listener — the zone editor uses this to differentiate
-  // "activate the containing zone" (plain click) from "toggle key
-  // membership in the active zone" (shift-click).
+  // can distinguish click vs. shift-click without needing their own
+  // DOM listener.
   onPolygonClick?: (key: string, opts: { shiftKey: boolean }) => void;
   // Fires when the cursor moves over a polygon, with the
   // hovered polygon's `key`, and again with `null` when the cursor
@@ -97,6 +95,9 @@ type MapProps = {
   // hover-driven info popup without each consumer having to wire
   // up its own MapLibre layer listeners.
   onPolygonHover?: (key: string | null) => void;
+  // Off for editors where consecutive clicks on one key are a real
+  // sequence (focus, then toggle) that would otherwise also zoom.
+  doubleClickZoom?: boolean;
   // Fired when the user clicks on the map but not on a polygon (i.e.
   // on the basemap). Useful for dismissing transient UI like a
   // clicked-key info popup.
@@ -236,6 +237,7 @@ export function Map({
   fitBounds,
   onPolygonClick,
   onPolygonHover,
+  doubleClickZoom = true,
   onBackgroundClick,
   loading,
   loadingSpinner = false,
@@ -791,10 +793,10 @@ export function Map({
         }}
         // Disabled: MapLibre's box-zoom handler intercepts
         // shift+drag (and effectively shift+click) to draw a zoom
-        // rectangle. The zone editor uses shift+click to toggle
-        // key membership in a zone, so we need the click event to
-        // pass through unmolested.
+        // rectangle. The zone editor uses shift+click to start a new
+        // zone, so the click event has to reach it untouched.
         boxZoom={false}
+        doubleClickZoom={doubleClickZoom}
         // `interactiveLayerIds` filters the `features` field on the
         // click event to those layers — without it, basemap clicks
         // would never resolve a polygon. `onClick` itself fires for

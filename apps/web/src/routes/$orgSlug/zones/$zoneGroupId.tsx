@@ -139,16 +139,31 @@ function ZoneGroupEditor() {
     // their cache via key change rather than explicit invalidation.
   });
 
+  // Keys clicked while a create is still round-tripping; they join the new
+  // zone once its id lands instead of spawning a second zone.
+  const pendingKeysRef = useRef<string[]>([]);
   const createZoneMutation = useMutation({
-    mutationFn: (input: { zoneGroupId: string; name: string }) => client.zones.create(input),
-    onSuccess: (created) => {
+    mutationFn: (input: { zoneGroupId: string; name: string; keys?: string[] }) =>
+      client.zones.create(input),
+    onSuccess: async (created) => {
+      const extra = pendingKeysRef.current;
+      pendingKeysRef.current = [];
       setActiveZoneId(created.zoneId);
-      return queryClient.invalidateQueries({
-        queryKey: ["zones", zoneGroupId],
-      });
+      await queryClient.invalidateQueries({ queryKey: ["zones", zoneGroupId] });
+      if (extra.length > 0) {
+        updateKeysMutation.mutate({
+          zoneId: created.zoneId,
+          keys: [...new Set([...created.keys, ...extra])],
+        });
+      }
     },
-    onError: (e) => console.error("zones.create failed", e),
+    onError: (e) => {
+      pendingKeysRef.current = [];
+      console.error("zones.create failed", e);
+    },
   });
+
+  const nextZoneName = () => `Zone ${(zones?.length ?? 0) + 1}`;
 
   const renameZoneMutation = useMutation({
     mutationFn: (input: { zoneId: string; name: string }) => client.zones.rename(input),
@@ -239,14 +254,15 @@ function ZoneGroupEditor() {
     prevZonesRef.current = { zoneGroupId, length: zones.length };
   }, [zones, zoneGroupId]);
 
-  // Delete / Backspace removes the active zone (mirrors the trash button).
-  // Skipped while typing in any text input so the rename flow isn't hijacked.
-  // Mod-Delete escalates to the route-level zone-group delete and is
-  // skipped here.
+  // Keyboard on the active zone: Delete / Backspace removes it (mirrors
+  // the trash button), Escape deselects. Skipped while typing in any text
+  // input so the rename flow keeps its own keys. Mod-Delete escalates to
+  // the route-level zone-group delete and is skipped here.
   useEffect(() => {
     if (!activeZoneId) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const isDelete = e.key === "Delete" || e.key === "Backspace";
+      if (!isDelete && e.key !== "Escape") return;
       if (e.metaKey || e.ctrlKey) return;
       const t = e.target;
       if (
@@ -258,7 +274,7 @@ function ZoneGroupEditor() {
       e.preventDefault();
       const id = activeZoneId;
       setActiveZoneId(null);
-      removeZoneMutation.mutate(id);
+      if (isDelete) removeZoneMutation.mutate(id);
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -357,41 +373,41 @@ function ZoneGroupEditor() {
 
   const handlePolygonClick = (key: string, opts: { shiftKey: boolean }) => {
     if (!zones) return;
-    if (opts.shiftKey) {
-      // Shift-click toggles the key's membership in the active zone.
-      if (!activeZoneId) return;
-      const active = zones.find((z) => z.zoneId === activeZoneId);
-      if (!active) return;
+    const owner = zones.find((z) => z.keys.includes(key));
+    // Shift-click is a click from the unselected state: a new zone from an
+    // empty key, focus from a filled one.
+    const active =
+      activeZoneId && !opts.shiftKey ? zones.find((z) => z.zoneId === activeZoneId) : undefined;
 
-      if (active.keys.includes(key)) {
-        updateKeysMutation.mutate({
-          zoneId: activeZoneId,
-          keys: active.keys.filter((k) => k !== key),
-        });
-        return;
-      }
-
-      // A key belongs to at most one zone — strip from the previous owner
-      // before adding to the active zone.
-      const previousOwner = zones.find((z) => z.zoneId !== activeZoneId && z.keys.includes(key));
-      if (previousOwner) {
-        updateKeysMutation.mutate({
-          zoneId: previousOwner.zoneId,
-          keys: previousOwner.keys.filter((k) => k !== key),
-        });
-      }
+    // A key in the active zone toggles out.
+    if (owner && active && owner.zoneId === active.zoneId) {
       updateKeysMutation.mutate({
-        zoneId: activeZoneId,
-        keys: [...active.keys, key],
+        zoneId: active.zoneId,
+        keys: active.keys.filter((k) => k !== key),
       });
       return;
     }
-    // Plain click activates the zone that contains the key (or clears).
-    const owner = zones.find((z) => z.keys.includes(key));
-    setActiveZoneId(owner?.zoneId ?? null);
-    // Map-originated activation only: surface the card in the list (a
-    // card click never scrolls — it's already in view).
-    if (owner) revealZoneCard(owner.zoneId);
+
+    // Another zone's key focuses that zone. Map-originated activation
+    // only: surface the card in the list (a card click never scrolls —
+    // it's already in view).
+    if (owner) {
+      setActiveZoneId(owner.zoneId);
+      revealZoneCard(owner.zoneId);
+      return;
+    }
+
+    // An empty key joins the active zone, or starts a new one when nothing
+    // is selected (mirrors the cutter's click-to-draw).
+    if (active) {
+      updateKeysMutation.mutate({ zoneId: active.zoneId, keys: [...active.keys, key] });
+      return;
+    }
+    if (createZoneMutation.isPending) {
+      pendingKeysRef.current.push(key);
+      return;
+    }
+    createZoneMutation.mutate({ zoneGroupId, name: nextZoneName(), keys: [key] });
   };
 
   // Click outside the map clears the active zone. Suppressed while a
@@ -561,7 +577,7 @@ function ZoneGroupEditor() {
             onClick={() =>
               createZoneMutation.mutate({
                 zoneGroupId,
-                name: `Zone ${zones.length + 1}`,
+                name: nextZoneName(),
               })
             }
             className={cn(
@@ -592,6 +608,7 @@ function ZoneGroupEditor() {
           onPolygonClick={handlePolygonClick}
           onPolygonHover={setHoveredKey}
           onBackgroundClick={() => setActiveZoneId(null)}
+          doubleClickZoom={false}
         />
 
         <div

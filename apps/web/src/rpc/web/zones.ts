@@ -118,6 +118,7 @@ export const create = pub
     z.object({
       zoneGroupId: z.string().uuid(),
       name: z.string().min(1),
+      keys: z.array(z.string()).optional(),
     }),
   )
   .handler(async ({ context, input }) => {
@@ -144,7 +145,7 @@ export const create = pub
       .values({
         zoneGroupId: input.zoneGroupId,
         name: input.name,
-        keys: [],
+        keys: input.keys ?? [],
         order: (last[0]?.order ?? -1) + 1,
         createdBy: context.user.id,
       })
