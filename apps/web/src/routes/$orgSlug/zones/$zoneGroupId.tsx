@@ -627,7 +627,7 @@ function ZoneGroupEditor() {
               // Space-to-activate.
               onMouseDown={(e) => e.preventDefault()}
             />
-            <span>Show segment counts</span>
+            <span>Color by door count</span>
           </label>
           <DropdownMenu {...overlaySegmentDropdown.menu}>
             <DropdownMenuTrigger
