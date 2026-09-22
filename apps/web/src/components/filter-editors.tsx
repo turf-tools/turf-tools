@@ -135,7 +135,7 @@ function TextFilterEditor({
             commit();
           }
         }}
-        className="h-8 text-sm"
+        className="h-7 px-2"
         placeholder="any substring"
       />
     </div>
@@ -189,7 +189,7 @@ function TextMultiFilterEditor({
             commit();
           }
         }}
-        className="h-8 text-sm"
+        className="h-7 px-2"
         placeholder="single or comma-separated"
       />
     </div>
@@ -340,7 +340,9 @@ function CanvassResponseEditor({
     <div className="flex flex-col gap-2">
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={<Button variant="outline" className="w-full justify-between font-normal" />}
+          render={
+            <Button variant="outline" size="sm" className="w-full justify-between font-normal" />
+          }
         >
           <span className={cn("truncate", !selected ? "text-muted-foreground" : null)}>
             {triggerLabel}
@@ -876,7 +878,9 @@ function SegmentFilterEditor({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="outline" className="w-full justify-between font-normal" />}
+        render={
+          <Button variant="outline" size="sm" className="w-full justify-between font-normal" />
+        }
       >
         <span className={cn("truncate", !selected ? "text-muted-foreground" : null)}>
           {triggerLabel}
