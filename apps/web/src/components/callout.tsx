@@ -8,12 +8,13 @@ import { cn } from "~/lib/utils";
 // red/yellow/green — the same three the status badges use. Unlike badges
 // these carry a border — multi-line prose on a light tint needs the
 // frame to read as a discrete callout (set --badge-border-alpha to 0
-// at /badges to preview borderless). The fourth tone, `neutral`, sits
+// at /badges to preview borderless). The `neutral` tone sits
 // outside the tint system on the plain muted surface (the gray-pill
 // combination) — for information the reader can't act on.
 const TONE_COLORS = {
   error: RED,
   pending: YELLOW,
+  warning: YELLOW,
   success: GREEN,
 };
 

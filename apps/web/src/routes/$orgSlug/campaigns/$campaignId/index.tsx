@@ -249,14 +249,12 @@ function CampaignEditor() {
   const totals = useMemo(() => {
     if (!turfStats) return null;
     let drafts = 0;
-    let active = 0;
     let published = 0;
     for (const s of Object.values(turfStats)) {
       drafts += s.drafts;
-      active += s.active;
       published += s.published;
     }
-    return { drafts, active, published };
+    return { drafts, published };
   }, [turfStats]);
 
   // Selection id for the zoneless full-segment shape — shared between
@@ -465,7 +463,7 @@ function CampaignEditor() {
   );
 }
 
-type TurfStats = Record<string, { drafts: number; published: number; active: number }>;
+type TurfStats = Record<string, { drafts: number; published: number }>;
 
 function ZonesList({
   campaignId,
@@ -487,11 +485,7 @@ function ZonesList({
   selectedZoneId: string | null;
   zoneCounts: Record<string, { doors: number; people: number }> | null;
   turfStats: TurfStats | null;
-  totals: {
-    drafts: number;
-    active: number;
-    published: number;
-  } | null;
+  totals: { drafts: number; published: number } | null;
   fullSegmentCounts: { doors: number; people: number } | null;
   segmentName: string | null;
   segmentZoneId: string | null;
@@ -519,7 +513,7 @@ function ZonesList({
           // statsForCampaign — see the sentinel comment there. Once stats
           // resolve, a missing entry means "no turfs yet": zeros, not null,
           // so the drafts pill still shows 0.
-          turfStats={turfStats ? (turfStats[""] ?? { drafts: 0, published: 0, active: 0 }) : null}
+          turfStats={turfStats ? (turfStats[""] ?? { drafts: 0, published: 0 }) : null}
           onSelect={segmentZoneId !== null ? () => onSelect(segmentZoneId) : undefined}
           onCut={() => onCut(null)}
         />
@@ -532,15 +526,7 @@ function ZonesList({
             color={colorFor(idx)}
             selected={zone.zoneId === selectedZoneId}
             counts={zoneCounts?.[zone.zoneId] ?? null}
-            turfStats={
-              turfStats
-                ? (turfStats[zone.zoneId] ?? {
-                    drafts: 0,
-                    published: 0,
-                    active: 0,
-                  })
-                : null
-            }
+            turfStats={turfStats ? (turfStats[zone.zoneId] ?? { drafts: 0, published: 0 }) : null}
             onSelect={() => onSelect(zone.zoneId)}
             onCut={() => onCut(zone.zoneId)}
           />
@@ -557,11 +543,7 @@ function ConfigSummary({
 }: {
   segmentName: string | null;
   scriptName: string | null;
-  totals: {
-    drafts: number;
-    active: number;
-    published: number;
-  } | null;
+  totals: { drafts: number; published: number } | null;
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border bg-card px-3 py-2">
@@ -576,10 +558,9 @@ function ConfigSummary({
         </div>
       </div>
       <hr className="my-1 border-t border-border" />
-      <div className="grid grid-cols-3 gap-2">
-        <Stat label="Draft turfs" value={totals?.drafts ?? null} />
+      <div className="grid grid-cols-2 gap-2">
         <Stat label="Published turfs" value={totals?.published ?? null} />
-        <Stat label="Active turfs" value={totals?.active ?? null} />
+        <Stat label="Draft turfs" value={totals?.drafts ?? null} />
       </div>
     </div>
   );
@@ -616,7 +597,7 @@ function FullSegmentRow({
   zoneId: string | null;
   selected: boolean;
   counts: { doors: number; people: number } | null;
-  turfStats: { drafts: number; published: number; active: number } | null;
+  turfStats: { drafts: number; published: number } | null;
   // Absent only when the campaign detail is missing (not-found edge).
   onSelect?: () => void;
   onCut: () => void;
@@ -722,7 +703,7 @@ function ZoneRow({
   color: string;
   selected: boolean;
   counts: { doors: number; people: number } | null;
-  turfStats: { drafts: number; published: number; active: number } | null;
+  turfStats: { drafts: number; published: number } | null;
   onSelect: () => void;
   onCut: () => void;
 }) {

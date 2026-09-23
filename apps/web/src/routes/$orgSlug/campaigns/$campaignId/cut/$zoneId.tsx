@@ -31,6 +31,7 @@ import {
   segmentsListQuery,
 } from "~/lib/queries/segments";
 import { turfDraftsQuery } from "~/lib/queries/turf-drafts";
+import { publishImpactQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -413,18 +414,28 @@ export function Cutter({
   const [sizeByDoors, setSizeByDoors] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  // Fetched per open so the warning reflects the board as it is now.
+  const { data: impact = null } = useQuery({
+    ...publishImpactQuery(campaignId, zoneId),
+    enabled: publishOpen,
+    staleTime: 0,
+  });
 
   const publishMutation = useMutation({
     mutationFn: () => client.turfs.publish({ campaignId, zoneId }),
     // Errors render inline in the publish dialog's callout; skip the
     // global error status.
     meta: { errorHandled: true },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setPublishOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["turfs"] });
       void queryClient.invalidateQueries({ queryKey: ["turf-stats", campaignId] });
       const n = publishSummary.count;
-      notify.success(`Published ${n} turf${n === 1 ? "" : "s"}`);
+      const superseded = result.summary.supersededCount;
+      notify.success(
+        `Published ${n} turf${n === 1 ? "" : "s"}` +
+          (superseded > 0 ? `, replacing ${superseded}` : ""),
+      );
     },
   });
 
@@ -657,9 +668,21 @@ export function Cutter({
               {publishSummary.people.toLocaleString()}
             </span>{" "}
             person
-            {publishSummary.people === 1 ? "" : "s"}. You can keep editing after publishing. Every
-            time you publish it creates a new set of turf numbers that can be used for canvassing.
+            {publishSummary.people === 1 ? "" : "s"}. You can keep editing after publishing.
           </DialogDescription>
+          {impact && impact.active > 0 ? (
+            <Callout tone="warning" className="-mt-1 mb-5">
+              This action will replace <span className="font-bold">{impact.active}</span> already
+              published turf{impact.active === 1 ? "" : "s"}
+              {impact.walked > 0
+                ? impact.active === 1
+                  ? ", which has been walked"
+                  : `, ${impact.walked} of which ${impact.walked === 1 ? "has" : "have"} been walked`
+                : ""}
+              . {impact.active === 1 ? "Its code" : "Their codes"} will stop working, and progress
+              will be reset to 0%, but any canvassing results will be preserved.
+            </Callout>
+          ) : null}
           {publishMutation.error ? (
             <Callout tone="error" className="mb-5">
               {publishMutation.error.message}
@@ -669,6 +692,9 @@ export function Cutter({
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button
               onClick={() => publishMutation.mutate()}
+              // The warning must be on screen before the button is live —
+              // its query runs on open.
+              disabled={impact === null}
               // isSuccess keeps the spinner up while the dialog animates
               // closed — isPending alone flashes the idle icon first.
               loading={publishMutation.isPending || publishMutation.isSuccess}

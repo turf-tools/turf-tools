@@ -104,6 +104,7 @@ export const webRouter = {
     turfMapData: webTurfs.turfMapData,
     zoneMapData: webTurfs.zoneMapData,
     statsForCampaign: webTurfs.statsForCampaign,
+    publishImpact: webTurfs.publishImpact,
     publish: webTurfs.publish,
   },
   walks: {

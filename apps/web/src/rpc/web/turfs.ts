@@ -1,9 +1,10 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, isNull, sql } from "@turf-tools/db";
-import { campaigns, segments, turfDrafts, turfs, zones } from "@turf-tools/db/schema";
+import { and, asc, eq, exists, isNull, or, sql } from "@turf-tools/db";
+import { campaigns, segments, turfDrafts, turfs, walks, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
 import { activeDatasetId } from "./active-dataset";
+import { walkEvents } from "./walks";
 import { webMut as mut, webPub as pub } from "../context";
 
 // Admin-scoped turf list: turfs within the current user's org whose campaign
@@ -22,8 +23,10 @@ export const listForOrg = pub
       eq(campaigns.organizationId, context.organizationId),
       eq(campaigns.datasetId, datasetId),
       // Archived campaigns take their turfs off the board (the turfs and
-      // their codes live on; unarchiving brings them back).
+      // their codes live on; unarchiving brings them back). Superseded
+      // turfs are off for good.
       isNull(campaigns.archivedAt),
+      eq(turfs.status, "active"),
     );
     const where = input?.campaignId ? and(scope, eq(turfs.campaignId, input.campaignId)) : scope;
     const rows = await context.db
@@ -71,6 +74,7 @@ export const countForOrg = pub.handler(async ({ context }) => {
         eq(campaigns.organizationId, context.organizationId),
         eq(campaigns.datasetId, datasetId),
         isNull(campaigns.archivedAt),
+        eq(turfs.status, "active"),
       ),
     );
   return rows[0]?.count ?? 0;
@@ -111,12 +115,14 @@ export const zoneMapData = pub
           eq(campaigns.organizationId, context.organizationId),
           eq(turfs.campaignId, input.campaignId),
           input.zoneId ? eq(turfs.zoneId, input.zoneId) : isNull(turfs.zoneId),
+          eq(turfs.status, "active"),
         ),
       );
   });
 
 // Per-zone turf counts for a campaign — drafts (work-in-progress in the
-// cutter) and published (rows in `turfs`). Drives the campaign editor's
+// cutter) and published (the zone's current generation of `turfs`;
+// superseded generations don't count). Drives the campaign editor's
 // at-a-glance progress indicators.
 export const statsForCampaign = pub
   .input(z.object({ campaignId: z.string().uuid() }))
@@ -144,36 +150,68 @@ export const statsForCampaign = pub
       .select({
         zoneId: turfs.zoneId,
         published: sql<number>`count(*)::int`,
-        active: sql<number>`count(*) FILTER (WHERE ${turfs.status} = 'active')::int`,
       })
       .from(turfs)
-      .where(eq(turfs.campaignId, input.campaignId))
+      .where(and(eq(turfs.campaignId, input.campaignId), eq(turfs.status, "active")))
       .groupBy(turfs.zoneId);
     // Keyed by zoneId; an empty-string key buckets rows from zoneless
     // campaigns (turfs/drafts with `zoneId = NULL`). Consumers that
     // render per-zone (ZoneRow) only look up real zoneIds; totals
     // iterate Object.values so the sentinel key is invisible there.
-    const stats: Record<string, { drafts: number; published: number; active: number }> = {};
+    const stats: Record<string, { drafts: number; published: number }> = {};
     for (const r of draftRows) {
       const key = r.zoneId ?? "";
-      stats[key] = { drafts: r.count, published: 0, active: 0 };
+      stats[key] = { drafts: r.count, published: 0 };
     }
     for (const r of turfRows) {
       const key = r.zoneId ?? "";
-      const cur = stats[key] ?? { drafts: 0, published: 0, active: 0 };
+      const cur = stats[key] ?? { drafts: 0, published: 0 };
       cur.published = r.published;
-      cur.active = r.active;
       stats[key] = cur;
     }
     return stats;
   });
 
-// Publish drafts for a `(campaign, zone)` as immutable turfs. The
-// data service does the spatial join + JSON construction; the web
-// RPC just looks up the org slug and forwards the call.
+// What a publish would supersede: the scope's active turfs and how
+// many of them have been walked, for the publish dialog's warning.
+// Walk visibility matches walks.listForOrg.
+export const publishImpact = pub
+  .input(z.object({ campaignId: z.string().uuid(), zoneId: z.string().uuid().nullable() }))
+  .handler(async ({ context, input }) => {
+    const walked = context.db
+      .select({ one: sql`1` })
+      .from(walks)
+      .where(
+        and(
+          eq(walks.turfId, turfs.turfId),
+          or(isNull(walks.archivedAt), exists(walkEvents(context.db))),
+        ),
+      );
+    const rows = await context.db
+      .select({
+        active: sql<number>`count(*)::int`,
+        walked: sql<number>`count(*) FILTER (WHERE ${exists(walked)})::int`,
+      })
+      .from(turfs)
+      .innerJoin(campaigns, eq(turfs.campaignId, campaigns.campaignId))
+      .where(
+        and(
+          eq(campaigns.organizationId, context.organizationId),
+          eq(turfs.campaignId, input.campaignId),
+          input.zoneId ? eq(turfs.zoneId, input.zoneId) : isNull(turfs.zoneId),
+          eq(turfs.status, "active"),
+        ),
+      );
+    return rows[0] ?? { active: 0, walked: 0 };
+  });
+
+// Publish drafts for a `(campaign, zone)` as immutable turfs, superseding
+// the scope's current generation. The data service does the spatial
+// join + JSON construction; the web RPC just looks up the org slug and
+// forwards the call.
 type PublishResult = {
   created: Array<{ turfId: string; name: string; turfCode: string }>;
-  summary: { turfCount: number; doorCount: number; personCount: number };
+  summary: { turfCount: number; doorCount: number; personCount: number; supersededCount: number };
 };
 
 export const publish = mut
