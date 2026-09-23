@@ -674,11 +674,18 @@ export function Cutter({
             <Callout tone="warning" className="-mt-1 mb-5">
               This action will replace <span className="font-bold">{impact.active}</span> already
               published turf{impact.active === 1 ? "" : "s"}
-              {impact.walked > 0
-                ? impact.active === 1
-                  ? ", which has been walked"
-                  : `, ${impact.walked} of which ${impact.walked === 1 ? "has" : "have"} been walked`
-                : ""}
+              {impact.walked > 0 ? (
+                impact.active === 1 ? (
+                  ", which has been walked"
+                ) : (
+                  <>
+                    , <span className="font-bold">{impact.walked}</span> of which{" "}
+                    {impact.walked === 1 ? "has" : "have"} been walked
+                  </>
+                )
+              ) : (
+                ""
+              )}
               . {impact.active === 1 ? "Its code" : "Their codes"} will stop working, and progress
               will be reset to 0%, but any canvassing results will be preserved.
             </Callout>
