@@ -102,7 +102,7 @@ function RailNew({
   disabled?: boolean;
 }) {
   return (
-    <div className="px-2 py-0.5">
+    <div className="mx-2 my-0.5">
       <button
         type="button"
         disabled={disabled}
