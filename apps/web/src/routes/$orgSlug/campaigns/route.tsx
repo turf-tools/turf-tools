@@ -122,14 +122,17 @@ function CampaignsLayout() {
   const segmentOptions = (boundId?: string | null) =>
     segments
       .filter((s) => !s.isArchived || s.segmentId === boundId)
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map((s) => ({ value: s.segmentId, label: s.name, archived: s.isArchived }));
   const zoneGroupOptions = (boundId?: string | null) =>
     zoneGroups
       .filter((g) => !g.isArchived || g.zoneGroupId === boundId)
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map((g) => ({ value: g.zoneGroupId, label: g.name, archived: g.isArchived }));
   const scriptOptions = (boundId?: string | null) =>
     scripts
       .filter((s) => !s.isArchived || s.scriptId === boundId)
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map((s) => ({ value: s.scriptId, label: s.name, archived: s.isArchived }));
   // Configure / rename / duplicate need the bound segment + zone group
   // ids, which only live on the detail row. Fall back to the list row for the
