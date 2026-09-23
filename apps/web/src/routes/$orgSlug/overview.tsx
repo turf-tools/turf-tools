@@ -32,7 +32,7 @@ const active = (rows: ReadonlyArray<{ isArchived: boolean }>) =>
   rows.filter((r) => !r.isArchived).length;
 
 const cardClass = cn(
-  "relative flex flex-col gap-1 rounded-lg border border-border bg-card p-5",
+  "flex flex-col gap-1 rounded-lg border border-border bg-card p-3.5",
   "transition-colors hover:bg-accent",
 );
 
@@ -164,7 +164,7 @@ function CardBadge({ children }: { children: ReactNode }) {
   return (
     <span
       className={cn(
-        "absolute top-3 right-3 max-w-[25%] truncate rounded px-1.5 py-0.5",
+        "mb-1 max-w-full self-end truncate rounded px-1.5 py-0.5",
         "bg-muted text-xs font-medium text-muted-foreground",
       )}
     >
