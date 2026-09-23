@@ -30,3 +30,9 @@ export const turfStatsForCampaignQuery = (campaignId: string) =>
     queryKey: ["turf-stats", campaignId] as const,
     queryFn: () => client.turfs.statsForCampaign({ campaignId }),
   });
+
+export const publishImpactQuery = (campaignId: string, zoneId: string | null) =>
+  queryOptions({
+    queryKey: ["publish-impact", campaignId, zoneId] as const,
+    queryFn: () => client.turfs.publishImpact({ campaignId, zoneId }),
+  });

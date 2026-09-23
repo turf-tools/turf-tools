@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { index, integer, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { campaigns } from "./campaigns";
@@ -28,11 +27,11 @@ import { zoneGroups } from "./zone-groups";
 // without a zone group hang off the campaign's segment directly.
 //
 // `status` gates the canvasser-facing lifecycle: only `'active'`
-// turfs honor their `turfCode` (the partial unique index enforces
-// uniqueness only across active turfs, so archived turfs hold
-// expired codes harmlessly without blocking new turfs from
-// reusing them).
-export type TurfStatus = "active" | "archived";
+// turfs honor their `turfCode` and appear on the board. Publishing
+// a scope supersedes its prior actives (system-set, never reversed).
+// Codes are never reused: one already handed out must not resolve
+// to a different turf.
+export type TurfStatus = "active" | "superseded";
 
 export const turfs = app.table(
   "turfs",
@@ -85,9 +84,7 @@ export const turfs = app.table(
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
-    uniqueIndex("turfs_active_turf_code")
-      .on(t.turfCode)
-      .where(sql`${t.status} = 'active'`),
+    uniqueIndex("turfs_turf_code").on(t.turfCode),
     index("turfs_scope_idx").on(t.campaignId, t.zoneId),
   ],
 );

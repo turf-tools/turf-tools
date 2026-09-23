@@ -497,9 +497,9 @@ function CampaignsLayout() {
     // the editor is open). Trust the cache for the user-facing N; the
     // server-side clear runs unconditionally on a zone change so any
     // drift can't leave orphaned drafts behind.
-    const stats = queryClient.getQueryData<
-      Record<string, { drafts: number; published: number; active: number }>
-    >(turfStatsForCampaignQuery(activeCampaignId).queryKey);
+    const stats = queryClient.getQueryData<Record<string, { drafts: number; published: number }>>(
+      turfStatsForCampaignQuery(activeCampaignId).queryKey,
+    );
     const draftCount = stats ? Object.values(stats).reduce((a, b) => a + b.drafts, 0) : 0;
     if (draftCount === 0) {
       await commitConfigure(patch, { clearDrafts: true });

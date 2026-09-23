@@ -2,8 +2,9 @@
 
 Single-transaction publish: reads scope (campaign, segment, zone, drafts)
 from operational Postgres via DuckDB's postgres ATTACH, runs the spatial
-join + per-turf JSON construction in DuckLake, INSERTs both the `turfs`
-rows and their `turf_data` rows directly into Postgres. The web RPC's
+join + per-turf JSON construction in DuckLake, supersedes the scope's
+active turfs, and INSERTs both the new `turfs` rows and their
+`turf_data` rows directly into Postgres. The web RPC's
 `turfs.publish` is a thin caller that hands a small payload to this
 function and forwards the summary back to the client. No payloads cross
 the wire to web — the only response is a summary.
@@ -13,8 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from contextlib import suppress
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -29,6 +32,8 @@ from src.settings import get_settings
 from src.tables import resolve, resolve_version
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import duckdb
 
 logger = logging.getLogger("uvicorn")
@@ -66,6 +71,10 @@ class _PublishScope:
 
 
 _MAX_PUBLISH_RETRIES = 5
+_TURF_CODE_DIGITS = 8
+_TURF_CODE_SPACE = 10**_TURF_CODE_DIGITS
+# Rounds of surplus draws before declaring the code space exhausted.
+_MINT_ROUNDS = 8
 
 
 def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> dict[str, Any]:
@@ -108,19 +117,45 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     persons_columns = {row[0] for row in conn.execute(f"DESCRIBE {resolve('{persons_geocoded}', schema)}").fetchall()}
     present_optional = [f for f in _OPTIONAL_PAYLOAD_FIELDS if f[0] in persons_columns]
 
-    # Retry budget exists only to swallow the rare turf_code collision
-    # against the partial unique index on active turfs. Each attempt
-    # regenerates random codes inside the temp table, so a fresh draw
-    # breaks any unlucky duplicate.
+    return _publish(
+        conn, req, scope, criteria, schema, where_sql, where_params, present_optional, version.dataset_version_id
+    )
+
+
+def _publish(
+    conn: duckdb.DuckDBPyConnection,
+    req: PublishTurfsRequest,
+    scope: _PublishScope,
+    criteria: Criteria,
+    schema: str,
+    where_sql: str,
+    where_params: list[Any],
+    present_optional: list[tuple[str, str, str]],
+    dataset_version_id: str,
+) -> dict[str, Any]:
+    """The publish transaction: supersede the scope's active turfs, then
+    insert one turf (+ turf_data row) per draft. Atomic, so a republish
+    never leaves both generations on the board and a failure leaves it
+    untouched.
+
+    Codes are minted up front against the live table, so the unique
+    index only fires when two publishes mint the same code in the same
+    instant; the retry redraws and replays the whole transaction.
+    """
+    superseded = 0
+    taken = partial(_taken_turf_codes, conn)
     for attempt in range(_MAX_PUBLISH_RETRIES):
+        codes = mint_turf_codes(scope.draft_count, taken)
         try:
             conn.execute("BEGIN TRANSACTION")
+            superseded = _supersede_active(conn, req)
             conn.execute(
                 _build_publish_temp_table_sql(schema, where_sql, present_optional),
                 [
                     req.campaignId,
                     req.zoneId,
                     *where_params,
+                    codes,
                     scope.campaign_id,
                     scope.segment_id,
                     scope.zone_id,
@@ -130,7 +165,7 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
                     scope.script_id,
                     criteria.model_dump_json(),
                     req.createdBy,
-                    version.dataset_version_id,
+                    dataset_version_id,
                 ],
             )
             conn.execute(_insert_turfs_sql())
@@ -149,11 +184,74 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
                 continue
             raise
 
-    return _publish_summary(conn)
+    return _publish_summary(conn, superseded)
+
+
+def _supersede_active(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> int:
+    """Supersede the scope's active turfs and return how many. Runs
+    inside the publish transaction so the swap is atomic. Superseded
+    turfs keep their codes and stay reachable by id, so in-flight walks
+    finish and sync."""
+    table = f"{OPERATIONAL_PG_ALIAS}.app.turfs"
+    where = """
+        WHERE campaign_id = ?::UUID
+          AND zone_id IS NOT DISTINCT FROM ?::UUID
+          AND status = 'active'
+    """
+    params = [req.campaignId, req.zoneId]
+    row = conn.execute(f"SELECT count(*)::INT FROM {table} {where}", params).fetchone()
+    count = int(row[0]) if row else 0
+    if count:
+        conn.execute(f"UPDATE {table} SET status = 'superseded' {where}", params)
+    return count
+
+
+def mint_turf_codes(count: int, taken: Callable[[list[str]], set[str]]) -> list[str]:
+    """Draw `count` distinct 8-digit codes not already in use.
+
+    Draws a surplus and asks `taken` which candidates exist, so a publish
+    only comes up short when the code space is mostly full — and even
+    then it redraws before giving up. Cryptographic randomness because a
+    code is a capability.
+    """
+    codes: list[str] = []
+    seen: set[str] = set()
+    for _ in range(_MINT_ROUNDS):
+        need = count - len(codes)
+        if need <= 0:
+            break
+        candidates: list[str] = []
+        while len(candidates) < 2 * need + 8:
+            code = f"{secrets.randbelow(_TURF_CODE_SPACE):0{_TURF_CODE_DIGITS}d}"
+            if code not in seen:
+                seen.add(code)
+                candidates.append(code)
+        used = taken(candidates)
+        codes.extend(c for c in candidates if c not in used)
+        del codes[count:]
+    if len(codes) < count:
+        raise RuntimeError("Could not mint enough unused turf codes.")
+    return codes
+
+
+def _taken_turf_codes(conn: duckdb.DuckDBPyConnection, candidates: list[str]) -> set[str]:
+    """Which candidates already exist. A literal IN list rather than a
+    bound list parameter: the postgres scanner pushes the literal down
+    as a filter (an index probe per candidate), while a bound list
+    becomes a hash join over a full column scan."""
+    if not candidates:
+        return set()
+    if any(len(c) != _TURF_CODE_DIGITS or not (c.isascii() and c.isdigit()) for c in candidates):
+        raise ValueError(f"Turf codes must be {_TURF_CODE_DIGITS} digits.")
+    literals = ", ".join(f"'{c}'" for c in candidates)
+    rows = conn.execute(
+        f"SELECT turf_code FROM {OPERATIONAL_PG_ALIAS}.app.turfs WHERE turf_code IN ({literals})"
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 def _is_turf_code_collision(exc: BaseException) -> bool:
-    """Detect a unique-violation against the active-turf-code index. DuckDB
+    """Detect a unique-violation against the turf_code index. DuckDB
     surfaces Postgres errors as opaque exceptions; we string-match the
     message because no structured error code is exposed."""
     msg = str(exc).lower()
@@ -384,7 +482,7 @@ _OPTIONAL_PAYLOAD_FIELDS: list[tuple[str, str, str]] = [
 def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional: list[tuple[str, str, str]]) -> str:
     """Build the per-draft payload in a DuckDB TEMP TABLE.
 
-    One row per draft, with: a generated turf_id, a generated 8-digit
+    One row per draft, with: a generated turf_id, its minted 8-digit
     turf_code, all the metadata columns, and the full per-turf
     `turf_data.data` JSON blob (turfId/turfCode/name/geometry/buildings).
     The two INSERTs that follow read from this table, so the turf_id is
@@ -399,6 +497,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
       $2 zone_id (UUID)             — for the drafts CTE
       $3..    where_params          — variable, from to_where
       then:
+      codes (VARCHAR[], one per draft in draft order),
       campaign_id, segment_id, zone_id, zone_group_id, script_id, created_by,
       dataset_version_id  (all as UUID strings, in `generated`) — the last stamps
       the version the turf was published against onto the immutable turf row.
@@ -511,14 +610,9 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
     generated AS (
         SELECT
             uuid() AS turf_id,
-            -- 8-digit numeric turf_code. With the partial unique index
-            -- (active turfs only), collisions are vanishingly rare;
-            -- a unique-violation aborts the transaction and the caller
-            -- retries up to `_MAX_PUBLISH_RETRIES` times.
-            lpad(
-                floor(random() * 100000000)::BIGINT::VARCHAR,
-                8, '0'
-            ) AS turf_code,
+            -- Minted up front (`mint_turf_codes`), one per draft in
+            -- draft order.
+            list_extract(?::VARCHAR[], d.idx + 1) AS turf_code,
             ?::UUID AS campaign_id,
             ?::UUID AS segment_id,
             ?::UUID AS zone_id,
@@ -588,7 +682,7 @@ def _insert_turf_data_sql() -> str:
     """
 
 
-def _publish_summary(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+def _publish_summary(conn: duckdb.DuckDBPyConnection, superseded: int) -> dict[str, Any]:
     """Read the temp-table back to assemble the response. Cheap because the
     temp table is small (one row per draft, dozens at most)."""
     rows = conn.execute(
@@ -604,5 +698,6 @@ def _publish_summary(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             "turfCount": len(rows),
             "doorCount": sum(r[3] or 0 for r in rows),
             "personCount": sum(r[4] or 0 for r in rows),
+            "supersededCount": superseded,
         },
     }

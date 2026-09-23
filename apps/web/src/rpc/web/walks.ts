@@ -10,7 +10,7 @@ import { webMut as mut, webPub as pub } from "../context";
 // Events attributed to this walk. Correlated on turf_id too so the probe
 // rides the events PK instead of needing a walk_id index (which would tax
 // the append path); a turf's event count is small.
-const walkEvents = (db: Db) =>
+export const walkEvents = (db: Db) =>
   db
     .select({ one: sql`1` })
     .from(canvassEvents)
