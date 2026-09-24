@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { EditorHeader } from "~/components/editor-header";
 import { Filter } from "~/components/filter";
 import { Icon } from "~/components/icon";
@@ -59,32 +59,36 @@ function Overview() {
   // only when the org has no campaigns.
   const campaignFilter = campaigns ? scopedCampaignId(campaignParam, campaigns) : null;
   const campaignLabel = campaigns?.find((c) => c.campaignId === campaignFilter)?.name ?? null;
+  // Same keys as the Results loader, so the two share a cache.
+  const campaignIds = campaignFilter ? [campaignFilter] : null;
+  const { data: eventsVersion, isPlaceholderData: versionStale } = useQuery({
+    ...resultsEventsVersionQuery(campaignIds),
+    enabled: campaignFilter !== null,
+    placeholderData: keepPreviousData,
+  });
+  const { data: aggregate, isPlaceholderData: aggregateStale } = useQuery({
+    ...resultsAggregateQuery(campaignIds, null, tz, [], eventsVersion?.version),
+    enabled: campaignFilter !== null && eventsVersion !== undefined && !versionStale,
+    placeholderData: keepPreviousData,
+  });
+  // Both cards switch together, once the new results are in.
+  const [shownCampaign, setShownCampaign] = useState<string | null>(null);
+  if (aggregate && !versionStale && !aggregateStale && shownCampaign !== campaignFilter) {
+    setShownCampaign(campaignFilter);
+  }
   const { data: progressRows } = useQuery(progressByZoneQuery());
   const progress = useMemo(() => {
-    if (!progressRows || !campaignFilter) return null;
+    if (!progressRows || !shownCampaign) return null;
     const out = { zones: 0, turfs: 0, used: 0 };
     // One row per zone with published turfs; a full segment is one zone.
     for (const r of progressRows) {
-      if (r.campaignId !== campaignFilter) continue;
+      if (r.campaignId !== shownCampaign) continue;
       out.zones += 1;
       out.turfs += r.turfs;
       out.used += r.used;
     }
     return out;
-  }, [progressRows, campaignFilter]);
-  // Same keys as the Results loader, so the two share a cache. Previous
-  // data holds through a campaign switch so the card doesn't blink out.
-  const campaignIds = campaignFilter ? [campaignFilter] : null;
-  const { data: eventsVersion } = useQuery({
-    ...resultsEventsVersionQuery(campaignIds),
-    enabled: campaignFilter !== null,
-    placeholderData: keepPreviousData,
-  });
-  const { data: aggregate } = useQuery({
-    ...resultsAggregateQuery(campaignIds, null, tz, [], eventsVersion?.version),
-    enabled: campaignFilter !== null && eventsVersion !== undefined,
-    placeholderData: keepPreviousData,
-  });
+  }, [progressRows, shownCampaign]);
   const results = useMemo(() => {
     if (!aggregate) return null;
     const out = { attempted: 0, contacted: 0 };
@@ -127,7 +131,7 @@ function Overview() {
               <Stat value={card.count} label={card.label} />
             </Link>
           ))}
-          {/* Gated separately: the results reduction is the slow one. */}
+          {/* The pair waits on the results reduction, then appears together. */}
           {progress ? (
             <Link
               to="/$orgSlug/progress"
