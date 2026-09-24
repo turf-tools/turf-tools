@@ -1,9 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, type ReactNode } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { EditorHeader } from "~/components/editor-header";
+import { Filter } from "~/components/filter";
+import { Icon } from "~/components/icon";
 import { Page } from "~/components/page";
-import { defaultCampaignId } from "~/lib/campaign-options";
+import { campaignFilterOptions, scopedCampaignId } from "~/lib/campaign-options";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
@@ -14,7 +16,12 @@ import { segmentsListQuery } from "~/lib/queries/segments";
 import { scriptsListQuery } from "~/lib/queries/scripts";
 import { turfsCountQuery } from "~/lib/queries/turfs";
 
+// Optional: redirects and nav links land here without a campaign.
+type OverviewSearch = { campaign?: string };
+
 export const Route = createFileRoute("/$orgSlug/overview")({
+  validateSearch: (search): OverviewSearch =>
+    typeof search.campaign === "string" ? { campaign: search.campaign } : {},
   loader: async ({ context: { queryClient } }) => {
     await Promise.all([
       queryClient.fetchQuery(campaignsListQuery()),
@@ -32,13 +39,15 @@ const active = (rows: ReadonlyArray<{ isArchived: boolean }>) =>
   rows.filter((r) => !r.isArchived).length;
 
 const cardClass = cn(
-  "flex flex-col gap-1 rounded-lg border border-border bg-card p-3.5",
+  "flex flex-col gap-1 rounded-lg border border-border bg-card p-4",
   "transition-colors hover:bg-accent",
 );
 
 function Overview() {
   const shouldFade = useFadeOnce("/overview");
   const { orgSlug } = Route.useParams();
+  const campaignParam = Route.useSearch().campaign ?? null;
+  const navigate = Route.useNavigate();
   const { session } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
   const { data: campaigns } = useQuery(campaignsListQuery());
@@ -46,39 +55,35 @@ function Overview() {
   const { data: scripts } = useQuery(scriptsListQuery());
   const { data: turfCount } = useQuery(turfsCountQuery());
 
-  // The campaign Progress and Results open on by default.
-  const campaign = useMemo(() => {
-    if (!campaigns) return null;
-    const id = defaultCampaignId(campaigns);
-    return campaigns.find((c) => c.campaignId === id) ?? null;
-  }, [campaigns]);
+  // One campaign, like Progress: null floats to the newest. Null here
+  // only when the org has no campaigns.
+  const campaignFilter = campaigns ? scopedCampaignId(campaignParam, campaigns) : null;
+  const campaignLabel = campaigns?.find((c) => c.campaignId === campaignFilter)?.name ?? null;
   const { data: progressRows } = useQuery(progressByZoneQuery());
   const progress = useMemo(() => {
-    if (!progressRows || !campaign) return null;
+    if (!progressRows || !campaignFilter) return null;
     const out = { zones: 0, turfs: 0, used: 0 };
-    // One row per zone; a zoneless campaign's full segment counts as one.
+    // One row per zone with published turfs; a full segment is one zone.
     for (const r of progressRows) {
-      if (r.campaignId !== campaign.campaignId) continue;
+      if (r.campaignId !== campaignFilter) continue;
       out.zones += 1;
       out.turfs += r.turfs;
       out.used += r.used;
     }
     return out;
-  }, [progressRows, campaign]);
-  // Same keys as the Results loader, so the two share a cache.
+  }, [progressRows, campaignFilter]);
+  // Same keys as the Results loader, so the two share a cache. Previous
+  // data holds through a campaign switch so the card doesn't blink out.
+  const campaignIds = campaignFilter ? [campaignFilter] : null;
   const { data: eventsVersion } = useQuery({
-    ...resultsEventsVersionQuery(campaign ? [campaign.campaignId] : null),
-    enabled: campaign !== null,
+    ...resultsEventsVersionQuery(campaignIds),
+    enabled: campaignFilter !== null,
+    placeholderData: keepPreviousData,
   });
   const { data: aggregate } = useQuery({
-    ...resultsAggregateQuery(
-      campaign ? [campaign.campaignId] : null,
-      null,
-      tz,
-      [],
-      eventsVersion?.version,
-    ),
-    enabled: campaign !== null && eventsVersion !== undefined,
+    ...resultsAggregateQuery(campaignIds, null, tz, [], eventsVersion?.version),
+    enabled: campaignFilter !== null && eventsVersion !== undefined,
+    placeholderData: keepPreviousData,
   });
   const results = useMemo(() => {
     if (!aggregate) return null;
@@ -92,7 +97,18 @@ function Overview() {
 
   return (
     <Page className={shouldFade}>
-      <EditorHeader title="Overview" subtitle="Everything at a glance" />
+      <EditorHeader title="Overview" subtitle="Everything at a glance">
+        {campaigns && campaignFilter ? (
+          <Filter
+            icon={<Icon name="megaphone" className="size-3.5" />}
+            label={campaignLabel}
+            value={campaignFilter}
+            options={campaignFilterOptions(campaigns)}
+            allLabel={null}
+            onChange={(next) => void navigate({ search: { campaign: next ?? undefined } })}
+          />
+        ) : null}
+      </EditorHeader>
       {/* Gate on data so the numbers fade in once with real values rather than
           flashing 0 first — notably on org switch, where the org-scoped query
           key resolves a frame late. Keyed on orgSlug so the fade re-fires per org. */}
@@ -108,19 +124,17 @@ function Overview() {
             { label: "Scripts", count: active(scripts), to: "/$orgSlug/scripts" },
           ].map((card) => (
             <Link key={card.label} to={card.to} params={{ orgSlug }} className={cardClass}>
-              <CardBadge>Total</CardBadge>
               <Stat value={card.count} label={card.label} />
             </Link>
           ))}
           {/* Gated separately: the results reduction is the slow one. */}
-          {campaign && progress ? (
+          {progress ? (
             <Link
               to="/$orgSlug/progress"
               params={{ orgSlug }}
-              search={{ campaign: null, zones: null }}
+              search={{ campaign: campaignParam, zones: null }}
               className={cn(cardClass, "col-span-2 animate-in fade-in duration-100")}
             >
-              <CardBadge>{campaign.name}</CardBadge>
               <div className="flex gap-4">
                 <Stat value={progress.zones} label="Zones" />
                 <Stat
@@ -131,14 +145,13 @@ function Overview() {
               </div>
             </Link>
           ) : null}
-          {campaign && results ? (
+          {results ? (
             <Link
               to="/$orgSlug/results"
               params={{ orgSlug }}
-              search={{ campaign: null, day: null }}
+              search={{ campaign: campaignParam, day: null }}
               className={cn(cardClass, "col-span-2 animate-in fade-in duration-100")}
             >
-              <CardBadge>{campaign.name}</CardBadge>
               <div className="flex gap-4">
                 <Stat value={results.attempted} label="People attempted" />
                 <Stat
@@ -156,20 +169,6 @@ function Overview() {
         </div>
       ) : null}
     </Page>
-  );
-}
-
-// Corner scope label: "Total" or the campaign name.
-function CardBadge({ children }: { children: ReactNode }) {
-  return (
-    <span
-      className={cn(
-        "mb-1 max-w-full self-end truncate rounded px-1.5 py-0.5",
-        "bg-muted text-xs font-medium text-muted-foreground",
-      )}
-    >
-      {children}
-    </span>
   );
 }
 
