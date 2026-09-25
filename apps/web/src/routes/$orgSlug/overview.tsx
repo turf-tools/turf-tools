@@ -22,6 +22,9 @@ type OverviewSearch = { campaign?: string };
 export const Route = createFileRoute("/$orgSlug/overview")({
   validateSearch: (search): OverviewSearch =>
     typeof search.campaign === "string" ? { campaign: search.campaign } : {},
+  // Fresh state per org: the results placeholder and the shown campaign
+  // would otherwise carry across the switch.
+  remountDeps: ({ params }) => ({ orgSlug: params.orgSlug }),
   loader: async ({ context: { queryClient } }) => {
     await Promise.all([
       queryClient.fetchQuery(campaignsListQuery()),
@@ -115,12 +118,9 @@ function Overview() {
       </EditorHeader>
       {/* Gate on data so the numbers fade in once with real values rather than
           flashing 0 first — notably on org switch, where the org-scoped query
-          key resolves a frame late. Keyed on orgSlug so the fade re-fires per org. */}
+          key resolves a frame late. */}
       {campaigns && segments && scripts && turfCount != null ? (
-        <div
-          key={orgSlug}
-          className="grid grid-cols-2 gap-4 lg:grid-cols-4 animate-in fade-in duration-100"
-        >
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 animate-in fade-in duration-100">
           {[
             { label: "Campaigns", count: active(campaigns), to: "/$orgSlug/campaigns" },
             { label: "Segments", count: active(segments), to: "/$orgSlug/segments" },
