@@ -128,6 +128,8 @@ export const webRouter = {
     list: turfDrafts.list,
     replaceAll: turfDrafts.replaceAll,
     clearForCampaign: turfDrafts.clearForCampaign,
+    autocut: turfDrafts.autocut,
+    autocutStatus: turfDrafts.autocutStatus,
   },
   scripts: {
     list: scripts.list,

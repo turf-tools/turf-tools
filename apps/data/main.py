@@ -18,6 +18,8 @@ from starlette.background import BackgroundTask
 
 import duckdb
 from src import timing
+from src.autocut import autocut_turfs
+from src.buildings import building_points_sql, building_rows_sql
 from src.canvass_events import (
     answered_sql,
     assemble_zone_rows,
@@ -183,7 +185,7 @@ async def lifespan(app: FastAPI):
     await get_pool()
 
     job_manager_task = asyncio.create_task(
-        JobManager(jobs=(import_dataset_version,), sweeps=(fail_interrupted_versions,)).run_forever(),
+        JobManager(jobs=(import_dataset_version, autocut_turfs), sweeps=(fail_interrupted_versions,)).run_forever(),
         name="job-manager",
     )
     job_manager_task.add_done_callback(_log_background_task_failure)
@@ -1166,22 +1168,7 @@ async def buildings_list(req: _BuildingsListRequest):
         criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
         params: list = []
         where = criteria_to_where(catalog, criteria, req.key_filter, params)
-        sql = resolve(
-            f"""
-            SELECT
-                b.building_id              AS "buildingId",
-                b.longitude,
-                b.latitude,
-                count(DISTINCT fp.door_i)  AS "doorCount",
-                count(*)                   AS "personCount"
-            FROM {{buildings_geocoded}} b
-            JOIN (
-                SELECT building_id, door_i FROM {{persons_geocoded}} {where}
-            ) fp ON fp.building_id = b.building_id
-            GROUP BY b.building_id, b.longitude, b.latitude
-            """,
-            schema,
-        )
+        sql = resolve(building_rows_sql(where), schema)
         with timed("query"):
             result = conn.execute(sql, params)
             cols = [d[0] for d in result.description]
@@ -1219,23 +1206,7 @@ async def buildings_points(req: _BuildingsPointsRequest):
         criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
         params: list = []
         where = criteria_to_where(catalog, criteria, req.key_filter, params)
-        sql = resolve(
-            f"""
-            WITH pts AS (
-                SELECT
-                    (b.longitude + 180.0) / 360.0 AS mx,
-                    0.5 - ln(tan(pi()/4 + radians(b.latitude)/2)) / (2*pi()) AS my
-                FROM {{buildings_geocoded}} b
-                WHERE b.building_i IN (
-                    SELECT DISTINCT building_i FROM {{persons_geocoded}} {where}
-                )
-            ),
-            o AS (SELECT avg(mx) AS ox, avg(my) AS oy FROM pts)
-            SELECT pts.mx - o.ox AS dx, pts.my - o.oy AS dy, o.ox AS ox, o.oy AS oy
-            FROM pts, o
-            """,
-            schema,
-        )
+        sql = resolve(building_points_sql(where), schema)
         # fetchnumpy + vectorized repack: materializing hundreds of thousands of
         # rows as Python tuples costs several times the query itself.
         with timed("query"):

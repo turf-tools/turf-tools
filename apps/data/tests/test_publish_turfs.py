@@ -11,13 +11,13 @@ import pytest
 from fastapi import HTTPException
 
 from src import publish_turfs as pt
+from src.campaign_scope import CampaignScope
 from src.dsl.criteria import Criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS
 from src.publish_turfs import (
     PublishTurfsRequest,
     _load_publish_scope,
     _publish,
-    _PublishScope,
     _taken_turf_codes,
     mint_turf_codes,
 )
@@ -222,8 +222,8 @@ def _request(zone: str | None = ZONE) -> PublishTurfsRequest:
     return PublishTurfsRequest(campaignId=CAMPAIGN, zoneId=zone, createdBy=USER, orgSlug="testorg")
 
 
-def _scope(zone: str | None, draft_count: int) -> _PublishScope:
-    return _PublishScope(
+def _scope(zone: str | None) -> CampaignScope:
+    return CampaignScope(
         campaign_id=CAMPAIGN,
         segment_id=SEGMENT,
         zone_id=zone,
@@ -233,13 +233,12 @@ def _scope(zone: str | None, draft_count: int) -> _PublishScope:
         key_group="ed" if zone else None,
         keys=["k1", "k2"] if zone else [],
         criteria=Criteria.model_validate({}),
-        draft_count=draft_count,
     )
 
 
 def _run_publish(conn, zone: str | None, draft_count: int) -> dict:
-    scope = _scope(zone, draft_count)
-    return _publish(conn, _request(zone), scope, scope.criteria, SCHEMA, "", [], [], VERSION)
+    scope = _scope(zone)
+    return _publish(conn, _request(zone), scope, draft_count, scope.criteria, SCHEMA, "", [], [], VERSION)
 
 
 def _turf_rows(conn) -> list[tuple]:
@@ -264,11 +263,11 @@ def conn(operational_conn):
 def test_scope_loads_zone_keys_and_draft_count(conn) -> None:
     _seed_campaign(conn)
     _seed_drafts(conn, ZONE, [(0, 0), (2, 2)])
-    scope = _load_publish_scope(conn, _request())
+    scope, draft_count = _load_publish_scope(conn, _request())
     assert scope.zone_name == "Zone One"
     assert scope.key_group == "ed"
     assert scope.keys == ["k1", "k2"]
-    assert scope.draft_count == 2
+    assert draft_count == 2
 
 
 def test_scope_refuses_campaign_without_segment_or_script(conn) -> None:

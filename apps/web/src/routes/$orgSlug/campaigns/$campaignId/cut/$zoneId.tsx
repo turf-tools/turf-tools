@@ -18,6 +18,7 @@ import {
 } from "~/components/dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { Map } from "~/components/map";
+import { NumberInput } from "~/components/number-input";
 import { Switch } from "~/components/switch";
 import { TurfDrawer, type Turf } from "~/components/turf-drawer";
 import { TurfList } from "~/components/turf-list";
@@ -72,6 +73,15 @@ function StatValue({ icon, value }: { icon: IconName; value: number | null }) {
       {value?.toLocaleString() ?? "—"}
     </span>
   );
+}
+
+const DEFAULT_DOOR_TARGET = 75;
+const AUTOCUT_POLL_MS = 1000;
+
+type Draft = Awaited<ReturnType<typeof client.turfDrafts.list>>[number];
+
+function draftToTurf(d: Draft): Turf {
+  return { id: d.turfDraftId, vertices: polygonToVertices(d.geometry), mode: "editing" };
 }
 
 // Thin shell so `key={zoneId}` remounts the Cutter on zone change,
@@ -221,13 +231,7 @@ export function Cutter({
 
   // In-progress turfs. Lives in the parent so the sidebar list and the
   // drawer share one source of truth. Initialised from loader-fresh drafts.
-  const [turfs, setTurfs] = useState<Turf[]>(() =>
-    drafts.map((d) => ({
-      id: d.turfDraftId,
-      vertices: polygonToVertices(d.geometry),
-      mode: "editing" as const,
-    })),
-  );
+  const [turfs, setTurfs] = useState<Turf[]>(() => drafts.map(draftToTurf));
   const [selectedTurfId, setSelectedTurfId] = useState<string | null>(null);
 
   // Replace-all save. `scope.id` serializes mutations so rapid commits
@@ -439,6 +443,38 @@ export function Cutter({
     },
   });
 
+  const [autocutOpen, setAutocutOpen] = useState(false);
+  const [doorTarget, setDoorTarget] = useState(String(DEFAULT_DOOR_TARGET));
+  // Enqueues the job, polls it to completion, then swaps in the drafts it
+  // wrote. The dialog stays open (and blocks edits) for the whole run.
+  const autocutMutation = useMutation({
+    mutationFn: async () => {
+      const { jobId } = await client.turfDrafts.autocut({
+        campaignId,
+        zoneId,
+        doorTarget: Number(doorTarget),
+      });
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, AUTOCUT_POLL_MS));
+        const job = await client.turfDrafts.autocutStatus({ jobId });
+        if (job.status === "completed") {
+          return queryClient.fetchQuery({ ...turfDraftsQuery(campaignId, zoneId), staleTime: 0 });
+        }
+        if (job.status === "permanently_failed") {
+          throw new Error(job.failureReason ?? "Autocut failed");
+        }
+      }
+    },
+    meta: { errorHandled: true },
+    onSuccess: (next) => {
+      setTurfs(next.map(draftToTurf));
+      setSelectedTurfId(null);
+      setAutocutOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["turf-stats", campaignId] });
+      notify.success(`Cut ${next.length} turf${next.length === 1 ? "" : "s"}`);
+    },
+  });
+
   // Per-point colors, derived from the same per-turf containment cache.
   // Each building gets the palette color of the first turf that contains it
   // (painted in reverse so the lowest index wins on any transient overlap),
@@ -546,7 +582,14 @@ export function Cutter({
           </Button>
         }
       >
-        <Button variant="outline" disabled>
+        <Button
+          variant="outline"
+          disabled={!buildings?.length}
+          onClick={() => {
+            autocutMutation.reset();
+            setAutocutOpen(true);
+          }}
+        >
           <Icon name="sparkles" />
           Autocut
         </Button>
@@ -639,6 +682,59 @@ export function Cutter({
               }}
             >
               Clear all turfs
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={autocutOpen}
+        onOpenChange={(next) => {
+          if (autocutMutation.isPending || autocutMutation.isSuccess) return;
+          setAutocutOpen(next);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>Autocut turfs</DialogTitle>
+          <DialogDescription>
+            Cuts {zoneId === null ? "the full segment" : "this zone"} into turfs of about this many
+            doors each.
+          </DialogDescription>
+          <label className="mb-5 flex items-center justify-between gap-4">
+            <span>Doors per turf</span>
+            <NumberInput
+              className="w-24"
+              value={doorTarget}
+              onChange={setDoorTarget}
+              min={1}
+              disabled={autocutMutation.isPending}
+            />
+          </label>
+          {turfs.length > 0 ? (
+            <Callout tone="warning" className="-mt-1 mb-5">
+              This replaces the <span className="font-bold">{turfs.length}</span> turf
+              {turfs.length === 1 ? "" : "s"} you've cut.
+            </Callout>
+          ) : null}
+          {autocutMutation.error ? (
+            <Callout tone="error" className="mb-5">
+              {autocutMutation.error.message}
+            </Callout>
+          ) : null}
+          <div className="mt-2 flex justify-end gap-2">
+            <DialogClose
+              render={<Button variant="outline" type="button" />}
+              disabled={autocutMutation.isPending}
+            >
+              Cancel
+            </DialogClose>
+            <Button
+              onClick={() => autocutMutation.mutate()}
+              disabled={!(Number(doorTarget) > 0)}
+              loading={autocutMutation.isPending || autocutMutation.isSuccess}
+            >
+              <Icon name="sparkles" />
+              Autocut
             </Button>
           </div>
         </DialogContent>

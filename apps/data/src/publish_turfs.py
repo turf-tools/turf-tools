@@ -16,16 +16,15 @@ import json
 import logging
 import secrets
 from contextlib import suppress
-from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from src.campaign_scope import CampaignScope, ScopeError, load_campaign_scope
 from src.custom_fields import catalog_for
 from src.dsl.compile import criteria_to_where
-from src.dsl.criteria import Criteria, KeyFilter
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
 from src.settings import get_settings
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import duckdb
+    from src.dsl.criteria import Criteria
 
 logger = logging.getLogger("uvicorn")
 
@@ -46,28 +46,6 @@ class PublishTurfsRequest(BaseModel):
     zoneId: str | None  # noqa: N815
     createdBy: str  # noqa: N815
     orgSlug: str  # noqa: N815
-
-
-@dataclass(frozen=True)
-class _PublishScope:
-    """Pre-resolved facts the publish SQL needs as parameters.
-
-    For zoneless campaigns, ``zone_id``, ``zone_group_id``, ``key_group``
-    are ``None`` and ``keys`` is empty — downstream SQL binds NULL for
-    the zone columns and ``criteria_to_where`` is called without a key
-    filter.
-    """
-
-    campaign_id: str
-    segment_id: str
-    zone_id: str | None
-    zone_name: str | None
-    zone_group_id: str | None
-    script_id: str
-    key_group: str | None
-    keys: list[str]
-    criteria: Criteria
-    draft_count: int
 
 
 _MAX_PUBLISH_RETRIES = 5
@@ -102,13 +80,10 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     version = resolve_version(conn, settings, req.orgSlug)
     schema = version.schema
     catalog = catalog_for(conn, version)
-    scope = _load_publish_scope(conn, req)
+    scope, draft_count = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
-    # Zoned: scope to the zone's keys. Zoneless: no key filter — publish
-    # spans the whole segment.
-    key_filter = KeyFilter(keyGroup=scope.key_group, keys=scope.keys) if scope.key_group is not None else None
-    where_sql = criteria_to_where(catalog, criteria, key_filter, where_params)
+    where_sql = criteria_to_where(catalog, criteria, scope.key_filter, where_params)
     _check_no_ambiguous_assignments(conn, req, schema, where_sql, where_params)
     _check_no_empty_turfs(conn, req, schema, where_sql, where_params)
 
@@ -118,14 +93,24 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     present_optional = [f for f in _OPTIONAL_PAYLOAD_FIELDS if f[0] in persons_columns]
 
     return _publish(
-        conn, req, scope, criteria, schema, where_sql, where_params, present_optional, version.dataset_version_id
+        conn,
+        req,
+        scope,
+        draft_count,
+        criteria,
+        schema,
+        where_sql,
+        where_params,
+        present_optional,
+        version.dataset_version_id,
     )
 
 
 def _publish(
     conn: duckdb.DuckDBPyConnection,
     req: PublishTurfsRequest,
-    scope: _PublishScope,
+    scope: CampaignScope,
+    draft_count: int,
     criteria: Criteria,
     schema: str,
     where_sql: str,
@@ -145,7 +130,7 @@ def _publish(
     superseded = 0
     taken = partial(_taken_turf_codes, conn)
     for attempt in range(_MAX_PUBLISH_RETRIES):
-        codes = mint_turf_codes(scope.draft_count, taken)
+        codes = mint_turf_codes(draft_count, taken)
         try:
             conn.execute("BEGIN TRANSACTION")
             superseded = _supersede_active(conn, req)
@@ -367,99 +352,25 @@ def _check_no_empty_turfs(
         )
 
 
-def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> _PublishScope:
-    """Resolve the campaign + segment + (optional) zone + draft count in
-    one SQL hit through the attached Postgres.
-
-    Zone joins are LEFT so zoneless campaigns (``req.zoneId is None``
-    AND ``campaigns.zone_group_id IS NULL``) still produce a row with
-    nulls in the zone columns. ``IS NOT DISTINCT FROM`` matches the
-    draft-count subquery for both zoned (zoneId UUID) and zoneless
-    (zoneId NULL) callers.
-
-    Raises 4xx for the various "not configured to publish" cases.
-    """
-    row = conn.execute(
+def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> tuple[CampaignScope, int]:
+    """The campaign scope plus the scope's draft count, refusing (4xx)
+    anything not configured to publish: no script bound, or no drafts."""
+    try:
+        scope = load_campaign_scope(conn, req.campaignId, req.zoneId)
+    except ScopeError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    if scope.script_id is None:
+        raise HTTPException(status_code=400, detail="Campaign must have a script bound to publish.")
+    (draft_count,) = conn.execute(
         f"""
-        SELECT
-            c.campaign_id::VARCHAR AS campaign_id,
-            c.segment_id::VARCHAR AS segment_id,
-            c.script_id::VARCHAR AS script_id,
-            c.zone_group_id::VARCHAR AS zone_group_id,
-            s.criteria::VARCHAR AS criteria_json,
-            zg.key_group,
-            z.zone_id::VARCHAR AS zone_id,
-            z.name AS zone_name,
-            z.keys::VARCHAR AS keys_json,
-            (
-                SELECT count(*)::INT FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts d
-                WHERE d.campaign_id = c.campaign_id
-                  AND d.zone_id IS NOT DISTINCT FROM ?::UUID
-            ) AS draft_count
-        FROM {OPERATIONAL_PG_ALIAS}.app.campaigns c
-        JOIN {OPERATIONAL_PG_ALIAS}.app.segments s ON s.segment_id = c.segment_id
-        LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.zone_groups zg
-            ON zg.zone_group_id = c.zone_group_id
-        LEFT JOIN {OPERATIONAL_PG_ALIAS}.app.zones z
-            ON z.zone_id = ?::UUID
-            AND z.zone_group_id = c.zone_group_id
-        WHERE c.campaign_id = ?::UUID
+        SELECT count(*)::INT FROM {OPERATIONAL_PG_ALIAS}.app.turf_drafts
+        WHERE campaign_id = ?::UUID AND zone_id IS NOT DISTINCT FROM ?::UUID
         """,
-        [req.zoneId, req.zoneId, req.campaignId],
+        [req.campaignId, req.zoneId],
     ).fetchone()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="Campaign not found.")
-
-    (
-        campaign_id,
-        segment_id,
-        script_id,
-        campaign_zone_group_id,
-        criteria_json,
-        key_group,
-        zone_id,
-        zone_name,
-        keys_json,
-        draft_count,
-    ) = row
-
-    if not segment_id or not script_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Campaign must have a segment and script bound to publish.",
-        )
-    # Valid shapes: zoned (both zoneId and zoneGroupId present) or
-    # zoneless (both absent). Anything else is a caller bug.
-    expects_zone = req.zoneId is not None
-    has_zone_group = campaign_zone_group_id is not None
-    if expects_zone != has_zone_group:
-        raise HTTPException(
-            status_code=400,
-            detail="zoneId presence must match campaign.zoneGroupId presence.",
-        )
-    if expects_zone and not zone_id:
-        raise HTTPException(status_code=404, detail="Zone not found in campaign's zone group.")
     if draft_count == 0:
         raise HTTPException(status_code=400, detail="No drafts to publish.")
-
-    criteria = Criteria.model_validate(json.loads(criteria_json) if criteria_json else {})
-    keys = json.loads(keys_json) if keys_json else []
-    if not isinstance(keys, list):
-        raise HTTPException(status_code=500, detail="Zone.keys is not a JSON array.")
-
-    return _PublishScope(
-        campaign_id=campaign_id,
-        segment_id=segment_id,
-        zone_id=zone_id,
-        zone_name=zone_name,
-        zone_group_id=campaign_zone_group_id,
-        script_id=script_id,
-        key_group=key_group,
-        keys=[str(k) for k in keys],
-        criteria=criteria,
-        draft_count=int(draft_count),
-    )
+    return scope, draft_count
 
 
 # Non-canonical person fields the native card renders (party, gender, age, and
