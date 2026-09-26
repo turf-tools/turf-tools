@@ -527,11 +527,41 @@ def osm_only_matches(
             -- deterministically; without it the chosen blockface_id can
             -- vary between runs.
             ORDER BY zip5, latitude, longitude, d_m, blockface_id
+        ),
+        -- A street's two sides share one line, so distance alone always
+        -- ties them; take the side of the line the building sits on
+        -- (TIGER left/right follow the line's digitized direction), or the
+        -- snapped side when the zip has no blockface on the other.
+        lines AS (
+            SELECT blockface_id, ANY_VALUE(tiger_line_id) AS tiger_line_id,
+                   ANY_VALUE(ST_Transform(geom, 'OGC:CRS84', 'EPSG:32618')) AS line_m
+            FROM {bf_}
+            WHERE blockface_id IN (SELECT blockface_id FROM loc_snaps)
+            GROUP BY blockface_id
+        ),
+        placed AS (
+            SELECT s.*, l.tiger_line_id, p.pt_m,
+                   ST_LineInterpolatePoint(l.line_m, GREATEST(ST_LineLocatePoint(l.line_m, p.pt_m) - 0.02, 0.0)) AS p0,
+                   ST_LineInterpolatePoint(l.line_m, LEAST(ST_LineLocatePoint(l.line_m, p.pt_m) + 0.02, 1.0)) AS p1
+            FROM loc_snaps s
+            JOIN lines l USING (blockface_id),
+            LATERAL (SELECT ST_Transform(ST_Point(s.longitude, s.latitude), 'OGC:CRS84', 'EPSG:32618') AS pt_m) p
+        ),
+        sided AS (
+            SELECT p.zip5, p.latitude, p.longitude, p.snap_distance_m,
+                   COALESCE(o.blockface_id, p.blockface_id) AS blockface_id
+            FROM placed p
+            LEFT JOIN (SELECT DISTINCT blockface_id, tiger_line_id, side, zip_code FROM {bf_}) o
+              ON o.tiger_line_id = p.tiger_line_id
+             AND o.zip_code = p.zip5
+             AND o.side = CASE WHEN (ST_X(p.p1) - ST_X(p.p0)) * (ST_Y(p.pt_m) - ST_Y(p.p0))
+                                  - (ST_Y(p.p1) - ST_Y(p.p0)) * (ST_X(p.pt_m) - ST_X(p.p0)) > 0
+                               THEN 'left' ELSE 'right' END
         )
         SELECT v.external_id, v.latitude, v.longitude, v.osm_street, v.osm_housenumber,
                s.blockface_id, s.snap_distance_m
         FROM _miss_with_osm v
-        JOIN loc_snaps s
+        JOIN sided s
           ON s.zip5 = v.zip5
          AND s.latitude = v.latitude
          AND s.longitude = v.longitude
