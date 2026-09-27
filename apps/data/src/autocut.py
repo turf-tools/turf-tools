@@ -229,15 +229,21 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                  WHERE a.cid <> b.cid AND l.crossing < {BARRIER_COST_M}
                  GROUP BY ALL
              ),
-             -- The hull each candidate merge would have.
+             -- The hull each candidate merge would have, from the two turfs'
+             -- own hulls, with its box for cheap tests ahead of the real ones.
+             turf_hulls AS (
+                 SELECT m.cid, ST_ConvexHull(ST_Collect(list(s.pt))) AS hull
+                 FROM recurring.merged m JOIN autocut_units u USING (unit_id) JOIN autocut_sites s USING (site)
+                 GROUP BY m.cid
+             ),
              hulls AS (
-                 SELECT p.ca, p.cb, ST_ConvexHull(ST_Collect(list(s.pt))) AS hull
+                 SELECT p.ca, p.cb, h.hull,
+                        ST_XMin(h.hull) AS x0, ST_YMin(h.hull) AS y0, ST_XMax(h.hull) AS x1, ST_YMax(h.hull) AS y1
                  FROM pairs p
-                 JOIN recurring.merged m ON m.cid IN (p.ca, p.cb)
-                 JOIN autocut_units u USING (unit_id)
-                 JOIN autocut_sites s USING (site)
+                 JOIN turf_hulls a ON a.cid = p.ca
+                 JOIN turf_hulls b ON b.cid = p.cb,
+                 LATERAL (SELECT ST_ConvexHull(ST_Collect([a.hull, b.hull])) AS hull) h
                  WHERE p.ca < p.cb
-                 GROUP BY p.ca, p.cb
              ),
              -- Other turfs' buildings next to either side; a boxed-in
              -- building is always among them.
@@ -247,24 +253,45 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                  JOIN autocut_links l ON l.u = m.unit_id
                  JOIN recurring.merged o ON o.unit_id = l.v AND o.cid <> m.cid
              ),
-             wrapping AS (
-                 SELECT DISTINCT h.ca, h.cb
-                 FROM hulls h
-                 JOIN around a ON a.cid IN (h.ca, h.cb)
-                 JOIN recurring.merged o ON o.unit_id = a.unit_id AND o.cid NOT IN (h.ca, h.cb)
+             around_cells AS (
+                 SELECT a.cid, a.unit_id, o.cid AS other, c.geom,
+                        ST_XMin(c.geom) AS x0, ST_YMin(c.geom) AS y0, ST_XMax(c.geom) AS x1, ST_YMax(c.geom) AS y1
+                 FROM around a
+                 JOIN recurring.merged o ON o.unit_id = a.unit_id
                  JOIN autocut_units u ON u.unit_id = a.unit_id
                  JOIN autocut_cells c USING (site)
-                 WHERE ST_Within(c.geom, h.hull)
-                 UNION
-                 SELECT h.ca, h.cb
+             ),
+             -- Boxed in: the cell's box fits the hull's box, then the cell fits the hull.
+             boxed AS (
+                 SELECT DISTINCT h.ca, h.cb
                  FROM hulls h
-                 WHERE NOT EXISTS (
-                     SELECT 1
-                     FROM autocut_links l
-                     JOIN recurring.merged a ON a.unit_id = l.u AND a.cid = h.ca
-                     JOIN recurring.merged b ON b.unit_id = l.v AND b.cid = h.cb
-                     WHERE ST_Intersects(l.edge, h.hull)
-                 )
+                 JOIN around_cells c ON c.cid = h.ca
+                 WHERE c.other <> h.cb
+                   AND c.x0 >= h.x0 AND c.y0 >= h.y0 AND c.x1 <= h.x1 AND c.y1 <= h.y1
+                   AND ST_Within(c.geom, h.hull)
+                 UNION
+                 SELECT DISTINCT h.ca, h.cb
+                 FROM hulls h
+                 JOIN around_cells c ON c.cid = h.cb
+                 WHERE c.other <> h.ca
+                   AND c.x0 >= h.x0 AND c.y0 >= h.y0 AND c.x1 <= h.x1 AND c.y1 <= h.y1
+                   AND ST_Within(c.geom, h.hull)
+             ),
+             -- Meeting inside: some link between the two crosses the hull.
+             meeting AS (
+                 SELECT DISTINCT h.ca, h.cb
+                 FROM hulls h
+                 JOIN recurring.merged a ON a.cid = h.ca
+                 JOIN autocut_links l ON l.u = a.unit_id
+                 JOIN recurring.merged b ON b.unit_id = l.v AND b.cid = h.cb
+                 WHERE ST_XMax(l.edge) >= h.x0 AND ST_XMin(l.edge) <= h.x1
+                   AND ST_YMax(l.edge) >= h.y0 AND ST_YMin(l.edge) <= h.y1
+                   AND ST_Intersects(l.edge, h.hull)
+             ),
+             wrapping AS (
+                 SELECT ca, cb FROM boxed
+                 UNION
+                 SELECT ca, cb FROM hulls WHERE (ca, cb) NOT IN (SELECT ca, cb FROM meeting)
              ),
              legal AS (
                  SELECT p.ca, p.cb, p.link.crossing AS crossing, p.link.distance AS distance,
