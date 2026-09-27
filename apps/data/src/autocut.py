@@ -5,8 +5,12 @@
         cut         buildings merged into turfs along map neighbours, closest
                     first, up to a cap around the door target, never wrapping
                     around another turf
-        polygons    each turf's convex hull, padded a little; where hulls overlap
-                    or hold another turf's buildings, the nearest building decides
+        trade       single buildings cross a boundary where that untangles
+                    two turfs' hulls
+        polygons    each turf's hull, padded a little; where hulls overlap or
+                    hold another turf's buildings, the nearest building decides;
+                    a turf drawn in pieces gives the buildings of its islands
+                    to the turf around them and is drawn again
         drafts      one per turf, replacing the scope's drafts; the cutter reloads them
 
 `cut` is the algorithm; everything around it is plumbing that holds
@@ -36,20 +40,22 @@ from src.tables import resolve
 _CAP = 1.25
 _FLOOR = 1 / 3
 
-# A turf left under the floor with no other turf this close is left out of
-# the cut instead: a lone building far from everything else, which no one
-# would sign out as a turf of its own. Ground meters.
-_ISOLATED_M = 500.0
-
-# Two buildings are neighbours when their Voronoi cells share an edge within
-# this distance of them (the edge is equidistant, so of either one). Half of
-# `_ISOLATED_M`: buildings further apart than that are never neighbours.
-_NEIGHBOUR_REACH_M = 250.0
+# No merge reaches further than this between the two nearest buildings:
+# a six-minute walk past nobody isn't the same turf, whatever the door
+# count says. A turf left under the floor with nothing this close stays
+# out of the cut. Ground meters.
+_REACH_M = 500.0
 
 # Crossing rank for neighbouring buildings whose blockfaces don't meet,
 # e.g. back to back across a block's interior: after any street crossing,
 # before a barrier.
 _AROUND_BLOCK = 150.0
+
+# A turf's hull hugs its buildings: a concave hull, keeping boundary edges
+# up to this fraction of the way from the shortest to the longest, so a
+# turf that turns a corner doesn't claim the block inside it. 1 is the
+# convex hull; below about 0.25 the shapes go spidery.
+_HULL_CONCAVITY = 0.5
 
 # How far a turf's polygon reaches past its outermost buildings, so a row
 # of buildings draws as a rectangle and a lone building as a square. Ground
@@ -57,6 +63,11 @@ _AROUND_BLOCK = 150.0
 # an edge across a building.
 _HULL_MARGIN_M = 5.0
 _SIMPLIFY_M = 2.0
+
+# Trades are few (a few dozen buildings in a sprawling zone) and each one
+# strictly shrinks the overlap between hulls, so this only bounds the
+# unforeseen.
+_TRADE_MOVES = 200
 # Dividers between turfs are cut this far past the region they divide, so
 # they cross the hull outlines instead of ending a hair short of them
 # (polygonizing ignores dangling ends). Web Mercator meters.
@@ -104,7 +115,9 @@ def _run(payload: AutocutTurfsPayload) -> dict[str, Any]:
         if buildings == 0:
             raise ValueError("The segment has no buildings in this zone.")
         cut(conn, payload.door_target)
+        _trade(conn, payload.door_target)
         _build_polygons(conn)
+        _absorb_islands(conn)
         turfs = _replace_drafts(conn, payload, scope.segment_id)
     return {"turfs": turfs, "buildings": buildings, "doors": doors}
 
@@ -114,26 +127,25 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     `autocut_turfs(building_id, turf)`.
 
     Agglomerative clustering. Every building starts as its own turf,
-    linked to the buildings whose Voronoi cells meet its own within
-    `_NEIGHBOUR_REACH_M` of them. Because
-    links only join map neighbours, every turf is one connected region of
-    cells. Each link carries where the two cells meet, the street crossing between the two buildings
-    (none along one blockface, the `blockface_relationships` cost between
-    two, `_AROUND_BLOCK` when their blockfaces don't meet) and the distance
-    between them.
+    linked to the buildings whose Voronoi cells meet its own. Because links
+    only join map neighbours, every turf is one connected region of cells.
+    Each link carries where the two cells meet, the street crossing between
+    the two buildings (none along one blockface, the `blockface_relationships`
+    cost between two, `_AROUND_BLOCK` when their blockfaces don't meet) and
+    the distance between them.
 
     Turfs absorb their neighbours closest first: along the block before
     across a street, across a quiet street before an avenue, shorter
     distances first within each, never across a barrier. Merging stops
     before a turf would pass the cap, and keeps every turf drawable as a
-    hull: a merge is illegal when the combined turf's convex hull would box
-    in another turf's building (its whole cell inside the hull), or when
-    the two turfs' cells meet only outside that hull, on the far side of
+    hull: a merge is illegal when the combined turf's hull would box in
+    another turf's building (its whole cell inside the hull), or when the
+    two turfs' cells meet only outside that hull, on the far side of
     someone else's buildings. Anything left under the floor joins a
     neighbour anyway: one it doesn't wrap around if there is one, even past
     the cap, else one with room, since a tiny or uncut turf is worse than
-    either; as long as some turf is within `_ISOLATED_M`, otherwise it's
-    left out.
+    either. No merge reaches past `_REACH_M`; a turf under the floor with
+    nothing that close is left out.
     """
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_sites AS
@@ -157,8 +169,6 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_links AS
         -- Cells sharing an edge that comes within reach of the buildings.
-        -- At the fringe of the map, outer cells fan out and can meet far
-        -- from both buildings; those pairs aren't neighbours.
         WITH shared AS (
             SELECT a.site AS a, b.site AS b, ST_Intersection(a.geom, b.geom) AS edge
             FROM autocut_cells a JOIN autocut_cells b ON a.site < b.site AND ST_Intersects(a.geom, b.geom)
@@ -167,7 +177,6 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
             SELECT s.a, s.b, s.edge
             FROM shared s JOIN autocut_sites sa ON sa.site = s.a
             WHERE ST_Dimension(s.edge) = 1
-              AND ST_DWithin(s.edge, sa.pt, {_NEIGHBOUR_REACH_M} / cos(radians(sa.latitude)))
         ),
         -- Web Mercator distance to ground meters.
         scale AS (
@@ -229,21 +238,17 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                  WHERE a.cid <> b.cid AND l.crossing < {BARRIER_COST_M}
                  GROUP BY ALL
              ),
-             -- The hull each candidate merge would have, from the two turfs'
-             -- own hulls, with its box for cheap tests ahead of the real ones.
-             turf_hulls AS (
-                 SELECT m.cid, ST_ConvexHull(ST_Collect(list(s.pt))) AS hull
-                 FROM recurring.merged m JOIN autocut_units u USING (unit_id) JOIN autocut_sites s USING (site)
-                 GROUP BY m.cid
-             ),
+             -- The hull each candidate merge would have, with its box for
+             -- cheap tests ahead of the real ones.
              hulls AS (
                  SELECT p.ca, p.cb, h.hull,
                         ST_XMin(h.hull) AS x0, ST_YMin(h.hull) AS y0, ST_XMax(h.hull) AS x1, ST_YMax(h.hull) AS y1
-                 FROM pairs p
-                 JOIN turf_hulls a ON a.cid = p.ca
-                 JOIN turf_hulls b ON b.cid = p.cb,
-                 LATERAL (SELECT ST_ConvexHull(ST_Collect([a.hull, b.hull])) AS hull) h
-                 WHERE p.ca < p.cb
+                 FROM (SELECT ca, cb FROM pairs WHERE ca < cb) p,
+                 LATERAL (
+                     SELECT ST_ConcaveHull(ST_Collect(list(s.pt)), {_HULL_CONCAVITY}, false) AS hull
+                     FROM recurring.merged m JOIN autocut_units u USING (unit_id) JOIN autocut_sites s USING (site)
+                     WHERE m.cid IN (p.ca, p.cb)
+                 ) h
              ),
              -- Other turfs' buildings next to either side; a boxed-in
              -- building is always among them.
@@ -301,8 +306,8 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                             SELECT 1 FROM wrapping w WHERE (w.ca, w.cb) = (least(p.ca, p.cb), greatest(p.ca, p.cb))
                         ) AS wraps
                  FROM pairs p JOIN sizes sa ON sa.cid = p.ca JOIN sizes sb ON sb.cid = p.cb
-                 WHERE sa.doors + sb.doors <= {cap}
-                    OR (least(sa.doors, sb.doors) < {floor} AND p.nearest <= {_ISOLATED_M})
+                 WHERE p.nearest <= {_REACH_M}
+                   AND (sa.doors + sb.doors <= {cap} OR least(sa.doors, sb.doors) < {floor})
              ),
              best AS (
                  SELECT ca,
@@ -328,12 +333,125 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     """)
 
 
+def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
+    """Untangle neighbouring turfs after the cut; returns how many buildings
+    moved.
+
+    Merging never reconsiders a building once absorbed, so two turfs often
+    end up with hulls that overlap for the sake of one or two buildings at
+    the edge: a tip poking into the neighbour, a house grabbed from the
+    other side. A trade moves one building across a boundary it is linked
+    over when that strictly shrinks the total overlap between the padded
+    hulls (the ones the drawing contests), the receiving turf stays under
+    the cap, the giving turf stays over the floor and in one piece
+    (connected through links that meet inside its new hull). Largest
+    shrink first, one at a time; every move lowers one non-negative total,
+    so it ends on its own.
+    """
+    cap, floor = _CAP * door_target, _FLOOR * door_target
+    (k,) = conn.execute("SELECT 1 / cos(radians(avg(latitude))) FROM autocut_sites").fetchone()
+    m = _HULL_MARGIN_M * k
+    hull = (
+        f"ST_Buffer(ST_ConcaveHull(ST_Collect(list({{pts}})), {_HULL_CONCAVITY}, false), "
+        f"{m}, 1, 'CAP_SQUARE', 'JOIN_MITRE', 2.0)"
+    )
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE autocut_trade AS
+        SELECT t.turf, u.unit_id AS id, u.building_id, u.doors, s.pt
+        FROM autocut_turfs t JOIN autocut_units u USING (building_id) JOIN autocut_sites s USING (site)
+    """)
+    moves = 0
+    while moves < _TRADE_MOVES:
+        row = conn.execute(f"""
+            WITH hulls AS (
+                SELECT turf, {hull.format(pts="pt")} AS hull, sum(doors) AS doors,
+                       min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
+                FROM autocut_trade GROUP BY turf
+            ),
+            overlapping AS (
+                SELECT a.turf AS ta, b.turf AS tb, ST_Area(ST_Intersection(a.hull, b.hull)) AS area
+                FROM hulls a
+                JOIN hulls b ON a.turf < b.turf
+                 AND b.x1 >= a.x0 - {2 * m} AND b.x0 <= a.x1 + {2 * m}
+                 AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
+                WHERE ST_Intersects(a.hull, b.hull)
+            ),
+            -- A building linked into a turf whose hull overlaps its own.
+            candidates AS (
+                SELECT DISTINCT x.id, x.turf AS own, y.turf AS other, x.doors
+                FROM autocut_links l
+                JOIN autocut_trade x ON x.id = l.u
+                JOIN autocut_trade y ON y.id = l.v AND y.turf <> x.turf
+                JOIN overlapping o ON (o.ta, o.tb) = (least(x.turf, y.turf), greatest(x.turf, y.turf)) AND o.area > 0
+                JOIN hulls ha ON ha.turf = x.turf
+                JOIN hulls hb ON hb.turf = y.turf
+                WHERE hb.doors + x.doors <= {cap} AND ha.doors - x.doors >= {floor}
+            ),
+            -- The two hulls after the move.
+            after AS (
+                SELECT c.id, c.own, c.other,
+                       {hull.format(pts="p.pt) FILTER (WHERE p.turf = c.own AND p.id <> c.id")} AS ha,
+                       {hull.format(pts="p.pt) FILTER (WHERE p.turf = c.other OR p.id = c.id")} AS hb
+                FROM candidates c JOIN autocut_trade p ON p.turf IN (c.own, c.other)
+                GROUP BY c.id, c.own, c.other
+            ),
+            -- Overlap involving either turf, before and after (with each
+            -- other and with any third turf).
+            before AS (
+                SELECT c.id, c.other, coalesce(sum(o.area), 0) AS area
+                FROM candidates c
+                LEFT JOIN overlapping o ON o.ta IN (c.own, c.other) OR o.tb IN (c.own, c.other)
+                GROUP BY c.id, c.other
+            ),
+            after_area AS (
+                SELECT a.id, a.other,
+                       ST_Area(ST_Intersection(a.ha, a.hb))
+                     + coalesce((SELECT sum(ST_Area(ST_Intersection(a.ha, h.hull))) FROM hulls h
+                                 WHERE h.turf NOT IN (a.own, a.other) AND ST_Intersects(a.ha, h.hull)), 0)
+                     + coalesce((SELECT sum(ST_Area(ST_Intersection(a.hb, h.hull))) FROM hulls h
+                                 WHERE h.turf NOT IN (a.own, a.other) AND ST_Intersects(a.hb, h.hull)), 0) AS area
+                FROM after a
+            ),
+            gains AS (
+                SELECT c.id, c.own, c.other, b.area - aa.area AS gain, a.ha
+                FROM candidates c
+                JOIN before b USING (id, other)
+                JOIN after_area aa USING (id, other)
+                JOIN after a USING (id, other)
+                WHERE b.area - aa.area > 0.5
+            ),
+            -- The giving turf stays connected through links that meet inside its new hull.
+            legal AS (
+                SELECT g.id, g.own, g.other, g.gain
+                FROM gains g
+                WHERE (
+                    WITH RECURSIVE rest AS (SELECT id FROM autocut_trade WHERE turf = g.own AND id <> g.id),
+                    inner_links AS (
+                        SELECT l.u, l.v FROM autocut_links l JOIN rest a ON a.id = l.u JOIN rest b ON b.id = l.v
+                        WHERE ST_Intersects(l.edge, g.ha)
+                    ),
+                    walk(id) AS (SELECT min(id) FROM rest UNION SELECT l.v FROM walk w JOIN inner_links l ON l.u = w.id)
+                    SELECT (SELECT count(*) FROM walk) = (SELECT count(*) FROM rest)
+                )
+            )
+            SELECT id, other FROM legal ORDER BY gain DESC, id LIMIT 1
+        """).fetchone()
+        if row is None:
+            break
+        conn.execute("UPDATE autocut_trade SET turf = ? WHERE id = ?", [row[1], row[0]])
+        moves += 1
+    conn.execute("""
+        UPDATE autocut_turfs SET turf = p.turf FROM autocut_trade p WHERE autocut_turfs.building_id = p.building_id
+    """)
+    return moves
+
+
 def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
     """One polygon per turf, in `autocut_polygons`.
 
-    A turf is the convex hull of its buildings, padded by `_HULL_MARGIN_M`
-    with square corners, so a row of buildings is a rectangle and a lone
-    building a square. Hulls overlap, and a hull often takes in another
+    A turf is the concave hull of its buildings (`_HULL_CONCAVITY`), padded
+    by `_HULL_MARGIN_M` with square corners, so a row of buildings is a
+    rectangle and a lone building a square. Hulls overlap, and a hull often takes in another
     turf's buildings, so the hulls are cut into a planar partition: every
     hull outline plus, wherever two turfs contest an area, the Voronoi
     dividers between their buildings, noded together and polygonized into
@@ -361,7 +479,10 @@ def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_hulls AS
         SELECT turf, ST_Buffer(hull, {_HULL_MARGIN_M * k}, 1, 'CAP_SQUARE', 'JOIN_MITRE', 2.0) AS geom
-        FROM (SELECT turf, ST_ConvexHull(ST_Collect(list(pt))) AS hull FROM autocut_turf_points GROUP BY turf)
+        FROM (
+            SELECT turf, ST_ConcaveHull(ST_Collect(list(pt)), {_HULL_CONCAVITY}, false) AS hull
+            FROM autocut_turf_points GROUP BY turf
+        )
     """)
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_contests AS
@@ -458,6 +579,49 @@ def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
                ST_Transform(geom, 'EPSG:3857', 'EPSG:4326', true) AS geom
         FROM solid
     """)
+
+
+def _absorb_islands(conn: duckdb.DuckDBPyConnection) -> None:
+    """A turf must be one draft. The rare turf still drawn in pieces (a
+    building of its own stranded inside another turf's hull, which no
+    single trade could untangle) gives the buildings of its smaller pieces
+    to the turf whose buildings are nearest, then everything is drawn
+    again. Each pass settles at least one turf, and there are few.
+    """
+    for _ in range(3):
+        moved = conn.execute("""
+            WITH pieces AS (
+                SELECT p.turf, p.piece, ST_Transform(p.geom, 'EPSG:4326', 'EPSG:3857', true) AS geom,
+                       count(*) OVER (PARTITION BY p.turf) AS n
+                FROM autocut_polygons p
+            ),
+            members AS (
+                SELECT t.building_id, t.turf, s.pt
+                FROM autocut_turfs t JOIN autocut_units u USING (building_id) JOIN autocut_sites s USING (site)
+            ),
+            held AS (
+                SELECT p.turf, p.piece, count(m.building_id) AS bldgs
+                FROM pieces p LEFT JOIN members m ON m.turf = p.turf AND ST_DWithin(p.geom, m.pt, 0.05)
+                WHERE p.n > 1 GROUP BY p.turf, p.piece
+            ),
+            main AS (SELECT turf, arg_max(piece, bldgs) AS piece FROM held GROUP BY turf),
+            stranded AS (
+                SELECT m.building_id, m.turf, m.pt
+                FROM members m JOIN pieces p ON p.turf = m.turf AND p.n > 1 AND ST_DWithin(p.geom, m.pt, 0.05)
+                JOIN main ON main.turf = p.turf AND main.piece <> p.piece
+            )
+            SELECT s.building_id, arg_min(o.turf, ST_Distance(o.pt, s.pt)) AS turf
+            FROM stranded s JOIN members o ON o.turf <> s.turf
+            GROUP BY s.building_id
+        """).fetchall()
+        if not moved:
+            return
+        conn.execute("CREATE OR REPLACE TEMP TABLE autocut_moves (building_id VARCHAR, turf INT)")
+        conn.executemany("INSERT INTO autocut_moves VALUES (?, ?)", moved)
+        conn.execute("""
+            UPDATE autocut_turfs SET turf = m.turf FROM autocut_moves m WHERE autocut_turfs.building_id = m.building_id
+        """)
+        _build_polygons(conn)
 
 
 def _replace_drafts(conn: duckdb.DuckDBPyConnection, payload: AutocutTurfsPayload, segment_id: str) -> int:
