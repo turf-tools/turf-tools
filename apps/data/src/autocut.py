@@ -158,7 +158,9 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
         WITH cells AS (
             SELECT unnest(ST_Dump(ST_VoronoiDiagram(ST_Collect(list(pt)))), recursive := true) FROM autocut_sites
         )
-        SELECT s.site, c.geom FROM autocut_sites s JOIN cells c ON ST_Contains(c.geom, s.pt)
+        SELECT s.site, c.geom,
+               ST_XMin(c.geom) AS x0, ST_YMin(c.geom) AS y0, ST_XMax(c.geom) AS x1, ST_YMax(c.geom) AS y1
+        FROM autocut_sites s JOIN cells c ON ST_Contains(c.geom, s.pt)
     """)
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_units AS
@@ -169,9 +171,14 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_links AS
         -- Cells sharing an edge that comes within reach of the buildings.
+        -- Boxes first, so the pairing is a range join rather than every
+        -- cell against every other.
         WITH shared AS (
             SELECT a.site AS a, b.site AS b, ST_Intersection(a.geom, b.geom) AS edge
-            FROM autocut_cells a JOIN autocut_cells b ON a.site < b.site AND ST_Intersects(a.geom, b.geom)
+            FROM autocut_cells a
+            JOIN autocut_cells b ON a.site < b.site
+             AND b.x1 >= a.x0 AND b.x0 <= a.x1 AND b.y1 >= a.y0 AND b.y0 <= a.y1
+            WHERE ST_Intersects(a.geom, b.geom)
         ),
         touching AS (
             SELECT s.a, s.b, s.edge
@@ -212,123 +219,142 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     """)
 
     cap, floor = _CAP * door_target, _FLOOR * door_target
-    # Each round, every turf picks its best legal neighbour and pairs that
-    # picked each other merge. The best merge overall is always mutual, so
-    # every round makes progress; it stops when no legal merge is left.
+    conn.execute("CREATE OR REPLACE TEMP TABLE autocut_merged AS SELECT unit_id, unit_id AS cid FROM autocut_units")
+    conn.execute("CREATE OR REPLACE TEMP TABLE autocut_blocked (ca INT, cb INT)")
+    # Each round, every turf picks its best legal neighbour on doors,
+    # crossing and distance alone, and pairs that picked each other are
+    # tested for drawability: only those few pairs get a hull built. A pair
+    # that fails is blocked, so both turfs pick someone else next round; a
+    # turf under the floor whose every partner is blocked takes one anyway,
+    # since a tiny or uncut turf is worse than a hull with a bite in it.
+    # Every round merges or blocks at least one pair, so it ends.
+    while True:
+        picked = conn.execute(f"""
+            WITH sizes AS (
+                SELECT m.cid, sum(u.doors) AS doors
+                FROM autocut_merged m JOIN autocut_units u USING (unit_id)
+                GROUP BY m.cid
+            ),
+            -- The preferred link between each pair of touching turfs, and
+            -- how far apart they are at their closest.
+            pairs AS (
+                SELECT a.cid AS ca, b.cid AS cb,
+                       min(struct_pack(crossing := l.crossing, distance := l.distance)) AS link,
+                       min(l.distance) AS nearest
+                FROM autocut_links l
+                JOIN autocut_merged a ON a.unit_id = l.u
+                JOIN autocut_merged b ON b.unit_id = l.v
+                WHERE a.cid <> b.cid AND l.crossing < {BARRIER_COST_M}
+                GROUP BY ALL
+            ),
+            legal AS (
+                SELECT p.ca, p.cb, p.link.crossing AS crossing, p.link.distance AS distance,
+                       least(sa.doors, sb.doors) < {floor} AS under_floor,
+                       sa.doors + sb.doors > {cap} AS over_cap,
+                       EXISTS (
+                           SELECT 1 FROM autocut_blocked k
+                           WHERE (k.ca, k.cb) = (least(p.ca, p.cb), greatest(p.ca, p.cb))
+                       ) AS blocked
+                FROM pairs p JOIN sizes sa ON sa.cid = p.ca JOIN sizes sb ON sb.cid = p.cb
+                WHERE p.nearest <= {_REACH_M}
+                  AND (sa.doors + sb.doors <= {cap} OR least(sa.doors, sb.doors) < {floor})
+            ),
+            -- A blocked pair is a last resort, and only for a turf under the floor.
+            best AS (
+                SELECT ca,
+                       arg_min(cb, (NOT under_floor, blocked, over_cap, crossing, distance,
+                                    least(ca, cb), greatest(ca, cb))) AS cb,
+                       arg_min(blocked, (NOT under_floor, blocked, over_cap, crossing, distance,
+                                         least(ca, cb), greatest(ca, cb))) AS forced
+                FROM legal
+                WHERE NOT blocked OR under_floor
+                GROUP BY ca
+            )
+            SELECT b1.ca, b1.cb, b1.forced
+            FROM best b1
+            JOIN best b2 ON b2.ca = b1.cb AND b2.cb = b1.ca
+            WHERE b1.ca < b1.cb
+        """).fetchall()
+        if not picked:
+            break
+        conn.execute("CREATE OR REPLACE TEMP TABLE autocut_pairs (ca INT, cb INT, forced BOOLEAN)")
+        conn.executemany("INSERT INTO autocut_pairs VALUES (?, ?, ?)", picked)
+        wrapping = conn.execute(f"""
+            -- The hull each picked merge would have, with its box for cheap
+            -- tests ahead of the real ones.
+            WITH hulls AS (
+                SELECT p.ca, p.cb, h.hull,
+                       ST_XMin(h.hull) AS x0, ST_YMin(h.hull) AS y0, ST_XMax(h.hull) AS x1, ST_YMax(h.hull) AS y1
+                FROM autocut_pairs p,
+                LATERAL (
+                    SELECT ST_ConcaveHull(ST_Collect(list(s.pt)), {_HULL_CONCAVITY}, false) AS hull
+                    FROM autocut_merged m JOIN autocut_units u USING (unit_id) JOIN autocut_sites s USING (site)
+                    WHERE m.cid IN (p.ca, p.cb)
+                ) h
+            ),
+            -- Other turfs' buildings next to either side; a boxed-in
+            -- building is always among them.
+            around AS (
+                SELECT DISTINCT m.cid, l.v AS unit_id
+                FROM autocut_merged m
+                JOIN autocut_links l ON l.u = m.unit_id
+                JOIN autocut_merged o ON o.unit_id = l.v AND o.cid <> m.cid
+                WHERE m.cid IN (SELECT ca FROM autocut_pairs UNION ALL SELECT cb FROM autocut_pairs)
+            ),
+            around_cells AS (
+                SELECT a.cid, a.unit_id, o.cid AS other, c.geom,
+                       ST_XMin(c.geom) AS x0, ST_YMin(c.geom) AS y0, ST_XMax(c.geom) AS x1, ST_YMax(c.geom) AS y1
+                FROM around a
+                JOIN autocut_merged o ON o.unit_id = a.unit_id
+                JOIN autocut_units u ON u.unit_id = a.unit_id
+                JOIN autocut_cells c USING (site)
+            ),
+            -- Boxed in: the cell's box fits the hull's box, then the cell fits the hull.
+            boxed AS (
+                SELECT DISTINCT h.ca, h.cb
+                FROM hulls h
+                JOIN around_cells c ON c.cid = h.ca
+                WHERE c.other <> h.cb
+                  AND c.x0 >= h.x0 AND c.y0 >= h.y0 AND c.x1 <= h.x1 AND c.y1 <= h.y1
+                  AND ST_Within(c.geom, h.hull)
+                UNION
+                SELECT DISTINCT h.ca, h.cb
+                FROM hulls h
+                JOIN around_cells c ON c.cid = h.cb
+                WHERE c.other <> h.ca
+                  AND c.x0 >= h.x0 AND c.y0 >= h.y0 AND c.x1 <= h.x1 AND c.y1 <= h.y1
+                  AND ST_Within(c.geom, h.hull)
+            ),
+            -- Meeting inside: some link between the two crosses the hull.
+            meeting AS (
+                SELECT DISTINCT h.ca, h.cb
+                FROM hulls h
+                JOIN autocut_merged a ON a.cid = h.ca
+                JOIN autocut_links l ON l.u = a.unit_id
+                JOIN autocut_merged b ON b.unit_id = l.v AND b.cid = h.cb
+                WHERE ST_XMax(l.edge) >= h.x0 AND ST_XMin(l.edge) <= h.x1
+                  AND ST_YMax(l.edge) >= h.y0 AND ST_YMin(l.edge) <= h.y1
+                  AND ST_Intersects(l.edge, h.hull)
+            )
+            SELECT ca, cb FROM boxed
+            UNION
+            SELECT ca, cb FROM hulls WHERE (ca, cb) NOT IN (SELECT ca, cb FROM meeting)
+        """).fetchall()
+        wraps = set(wrapping)
+        merges = [(ca, cb) for ca, cb, forced in picked if (ca, cb) not in wraps or forced]
+        blocks = [(ca, cb) for ca, cb, forced in picked if (ca, cb) in wraps and not forced]
+        if merges:
+            conn.executemany("UPDATE autocut_merged SET cid = ? WHERE cid = ?", merges)
+        if blocks:
+            conn.executemany("INSERT INTO autocut_blocked VALUES (?, ?)", blocks)
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_turfs AS
-        WITH RECURSIVE
-        merged(unit_id, cid) USING KEY (unit_id) AS (
-            SELECT unit_id, unit_id FROM autocut_units
-            UNION
-            (WITH sizes AS (
-                 SELECT m.cid, sum(u.doors) AS doors
-                 FROM recurring.merged m JOIN autocut_units u USING (unit_id)
-                 GROUP BY m.cid
-             ),
-             -- The preferred link between each pair of touching turfs, and
-             -- how far apart they are at their closest.
-             pairs AS (
-                 SELECT a.cid AS ca, b.cid AS cb,
-                        min(struct_pack(crossing := l.crossing, distance := l.distance)) AS link,
-                        min(l.distance) AS nearest
-                 FROM autocut_links l
-                 JOIN recurring.merged a ON a.unit_id = l.u
-                 JOIN recurring.merged b ON b.unit_id = l.v
-                 WHERE a.cid <> b.cid AND l.crossing < {BARRIER_COST_M}
-                 GROUP BY ALL
-             ),
-             -- The hull each candidate merge would have, with its box for
-             -- cheap tests ahead of the real ones.
-             hulls AS (
-                 SELECT p.ca, p.cb, h.hull,
-                        ST_XMin(h.hull) AS x0, ST_YMin(h.hull) AS y0, ST_XMax(h.hull) AS x1, ST_YMax(h.hull) AS y1
-                 FROM (SELECT ca, cb FROM pairs WHERE ca < cb) p,
-                 LATERAL (
-                     SELECT ST_ConcaveHull(ST_Collect(list(s.pt)), {_HULL_CONCAVITY}, false) AS hull
-                     FROM recurring.merged m JOIN autocut_units u USING (unit_id) JOIN autocut_sites s USING (site)
-                     WHERE m.cid IN (p.ca, p.cb)
-                 ) h
-             ),
-             -- Other turfs' buildings next to either side; a boxed-in
-             -- building is always among them.
-             around AS (
-                 SELECT DISTINCT m.cid, l.v AS unit_id
-                 FROM recurring.merged m
-                 JOIN autocut_links l ON l.u = m.unit_id
-                 JOIN recurring.merged o ON o.unit_id = l.v AND o.cid <> m.cid
-             ),
-             around_cells AS (
-                 SELECT a.cid, a.unit_id, o.cid AS other, c.geom,
-                        ST_XMin(c.geom) AS x0, ST_YMin(c.geom) AS y0, ST_XMax(c.geom) AS x1, ST_YMax(c.geom) AS y1
-                 FROM around a
-                 JOIN recurring.merged o ON o.unit_id = a.unit_id
-                 JOIN autocut_units u ON u.unit_id = a.unit_id
-                 JOIN autocut_cells c USING (site)
-             ),
-             -- Boxed in: the cell's box fits the hull's box, then the cell fits the hull.
-             boxed AS (
-                 SELECT DISTINCT h.ca, h.cb
-                 FROM hulls h
-                 JOIN around_cells c ON c.cid = h.ca
-                 WHERE c.other <> h.cb
-                   AND c.x0 >= h.x0 AND c.y0 >= h.y0 AND c.x1 <= h.x1 AND c.y1 <= h.y1
-                   AND ST_Within(c.geom, h.hull)
-                 UNION
-                 SELECT DISTINCT h.ca, h.cb
-                 FROM hulls h
-                 JOIN around_cells c ON c.cid = h.cb
-                 WHERE c.other <> h.ca
-                   AND c.x0 >= h.x0 AND c.y0 >= h.y0 AND c.x1 <= h.x1 AND c.y1 <= h.y1
-                   AND ST_Within(c.geom, h.hull)
-             ),
-             -- Meeting inside: some link between the two crosses the hull.
-             meeting AS (
-                 SELECT DISTINCT h.ca, h.cb
-                 FROM hulls h
-                 JOIN recurring.merged a ON a.cid = h.ca
-                 JOIN autocut_links l ON l.u = a.unit_id
-                 JOIN recurring.merged b ON b.unit_id = l.v AND b.cid = h.cb
-                 WHERE ST_XMax(l.edge) >= h.x0 AND ST_XMin(l.edge) <= h.x1
-                   AND ST_YMax(l.edge) >= h.y0 AND ST_YMin(l.edge) <= h.y1
-                   AND ST_Intersects(l.edge, h.hull)
-             ),
-             wrapping AS (
-                 SELECT ca, cb FROM boxed
-                 UNION
-                 SELECT ca, cb FROM hulls WHERE (ca, cb) NOT IN (SELECT ca, cb FROM meeting)
-             ),
-             legal AS (
-                 SELECT p.ca, p.cb, p.link.crossing AS crossing, p.link.distance AS distance,
-                        least(sa.doors, sb.doors) < {floor} AS under_floor,
-                        sa.doors + sb.doors > {cap} AS over_cap,
-                        EXISTS (
-                            SELECT 1 FROM wrapping w WHERE (w.ca, w.cb) = (least(p.ca, p.cb), greatest(p.ca, p.cb))
-                        ) AS wraps
-                 FROM pairs p JOIN sizes sa ON sa.cid = p.ca JOIN sizes sb ON sb.cid = p.cb
-                 WHERE p.nearest <= {_REACH_M}
-                   AND (sa.doors + sb.doors <= {cap} OR least(sa.doors, sb.doors) < {floor})
-             ),
-             best AS (
-                 SELECT ca,
-                        arg_min(cb, (NOT under_floor, wraps, over_cap, crossing, distance,
-                                     least(ca, cb), greatest(ca, cb))) AS cb
-                 FROM legal
-                 WHERE NOT wraps OR under_floor
-                 GROUP BY ca
-             )
-             SELECT m.unit_id, b1.cb
-             FROM best b1
-             JOIN best b2 ON b2.ca = b1.cb AND b2.cb = b1.ca
-             JOIN recurring.merged m ON m.cid = b1.ca
-             WHERE b1.ca > b1.cb)
-        ),
-        kept AS (
-            SELECT m.cid FROM merged m JOIN autocut_units u USING (unit_id)
+        WITH kept AS (
+            SELECT m.cid FROM autocut_merged m JOIN autocut_units u USING (unit_id)
             GROUP BY m.cid HAVING sum(u.doors) >= {floor}
         )
         SELECT u.building_id, dense_rank() OVER (ORDER BY m.cid)::INT - 1 AS turf
-        FROM autocut_units u JOIN merged m USING (unit_id)
+        FROM autocut_units u JOIN autocut_merged m USING (unit_id)
         WHERE m.cid IN (SELECT cid FROM kept)
     """)
 
@@ -344,9 +370,14 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     over when that strictly shrinks the total overlap between the padded
     hulls (the ones the drawing contests), the receiving turf stays under
     the cap, the giving turf stays over the floor and in one piece
-    (connected through links that meet inside its new hull). Largest
-    shrink first, one at a time; every move lowers one non-negative total,
-    so it ends on its own.
+    (connected through links that meet inside its new hull).
+
+    Moves are found a round at a time: every legal trade's gain is worked
+    out on the current hulls, and the moves that touch different turfs are
+    applied together. Two moves can still affect each other's overlap, so
+    a round that fails to lower the total is undone in favour of its best
+    move alone, which always lowers it. Every round lowers one
+    non-negative total, so it ends on its own.
     """
     cap, floor = _CAP * door_target, _FLOOR * door_target
     (k,) = conn.execute("SELECT 1 / cos(radians(avg(latitude))) FROM autocut_sites").fetchone()
@@ -360,9 +391,22 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
         SELECT t.turf, u.unit_id AS id, u.building_id, u.doors, s.pt
         FROM autocut_turfs t JOIN autocut_units u USING (building_id) JOIN autocut_sites s USING (site)
     """)
+    overlap_sql = f"""
+        WITH hulls AS (
+            SELECT turf, {hull.format(pts="pt")} AS hull,
+                   min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
+            FROM autocut_trade GROUP BY turf
+        )
+        SELECT coalesce(sum(ST_Area(ST_Intersection(a.hull, b.hull))), 0)
+        FROM hulls a
+        JOIN hulls b ON a.turf < b.turf
+         AND b.x1 >= a.x0 - {2 * m} AND b.x0 <= a.x1 + {2 * m}
+         AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
+        WHERE ST_Intersects(a.hull, b.hull)
+    """
     moves = 0
     while moves < _TRADE_MOVES:
-        row = conn.execute(f"""
+        found = conn.execute(f"""
             WITH hulls AS (
                 SELECT turf, {hull.format(pts="pt")} AS hull, sum(doors) AS doors,
                        min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
@@ -434,12 +478,23 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                     SELECT (SELECT count(*) FROM walk) = (SELECT count(*) FROM rest)
                 )
             )
-            SELECT id, other FROM legal ORDER BY gain DESC, id LIMIT 1
-        """).fetchone()
-        if row is None:
+            SELECT id, own, other FROM legal ORDER BY gain DESC, id
+        """).fetchall()
+        if not found:
             break
-        conn.execute("UPDATE autocut_trade SET turf = ? WHERE id = ?", [row[1], row[0]])
-        moves += 1
+        touched: set[int] = set()
+        batch = []
+        for building, own, other in found:
+            if own not in touched and other not in touched:
+                touched.update((own, other))
+                batch.append((building, own, other))
+        (before,) = conn.execute(overlap_sql).fetchone()
+        conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(other, b) for b, _, other in batch])
+        (after,) = conn.execute(overlap_sql).fetchone()
+        if after >= before and len(batch) > 1:
+            conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(own, b) for b, own, _ in batch[1:]])
+            batch = batch[:1]
+        moves += len(batch)
     conn.execute("""
         UPDATE autocut_turfs SET turf = p.turf FROM autocut_trade p WHERE autocut_turfs.building_id = p.building_id
     """)
