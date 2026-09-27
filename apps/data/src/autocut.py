@@ -3,8 +3,10 @@
     turfDrafts.autocut (web) ─► jobs row ─► autocut_turfs
         buildings   segment ∩ zone, doors counted like the cutter's sidebar
         cut         buildings merged into turfs along map neighbours, closest
-                    first, up to a cap around the door target
-        polygons    each turf's Voronoi cells, trimmed to its hull
+                    first, up to a cap around the door target, never wrapping
+                    around another turf
+        polygons    each turf's convex hull, padded a little; where hulls overlap
+                    or hold another turf's buildings, the nearest building decides
         drafts      one per turf, replacing the scope's drafts; the cutter reloads them
 
 `cut` is the algorithm; everything around it is plumbing that holds
@@ -49,13 +51,18 @@ _NEIGHBOUR_REACH_M = 250.0
 # before a barrier.
 _AROUND_BLOCK = 150.0
 
-# How far a turf's polygon reaches past its outermost buildings, and half
-# the width of a bridge rejoining a turf the trim split. Ground meters.
-_HULL_MARGIN_M = 10.0
-_BRIDGE_HALF_WIDTH_M = 8.0
-# Kept small: buildings sit about this close to the edges turfs share, so
-# coarser simplification moves some into the neighbouring turf.
-_SIMPLIFY_M = 5.0
+# How far a turf's polygon reaches past its outermost buildings, so a row
+# of buildings draws as a rectangle and a lone building as a square. Ground
+# meters. Anything under it is safe for simplification, which never moves
+# an edge across a building.
+_HULL_MARGIN_M = 5.0
+_SIMPLIFY_M = 2.0
+# Dividers between turfs are cut this far past the region they divide, so
+# they cross the hull outlines instead of ending a hair short of them
+# (polygonizing ignores dangling ends). Web Mercator meters.
+_DIVIDER_OVERSHOOT_M = 0.5
+# Noding leaves the odd sliver or pinhole; nothing this small is geometry.
+_SLIVER_M2 = 1.0
 
 _RELATIONSHIPS = f"{GEO_CATALOG}.{TIGER_SCHEMA}.blockface_relationships"
 
@@ -110,7 +117,7 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     linked to the buildings whose Voronoi cells meet its own within
     `_NEIGHBOUR_REACH_M` of them. Because
     links only join map neighbours, every turf is one connected region of
-    cells. Each link carries the street crossing between the two buildings
+    cells. Each link carries where the two cells meet, the street crossing between the two buildings
     (none along one blockface, the `blockface_relationships` cost between
     two, `_AROUND_BLOCK` when their blockfaces don't meet) and the distance
     between them.
@@ -118,9 +125,15 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     Turfs absorb their neighbours closest first: along the block before
     across a street, across a quiet street before an avenue, shorter
     distances first within each, never across a barrier. Merging stops
-    before a turf would pass the cap. Anything left under the floor joins
-    a neighbour anyway, one with room under the cap if there is one, as
-    long as some turf is within `_ISOLATED_M`; otherwise it's left out.
+    before a turf would pass the cap, and keeps every turf drawable as a
+    hull: a merge is illegal when the combined turf's convex hull would box
+    in another turf's building (its whole cell inside the hull), or when
+    the two turfs' cells meet only outside that hull, on the far side of
+    someone else's buildings. Anything left under the floor joins a
+    neighbour anyway: one it doesn't wrap around if there is one, even past
+    the cap, else one with room, since a tiny or uncut turf is worse than
+    either; as long as some turf is within `_ISOLATED_M`, otherwise it's
+    left out.
     """
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_sites AS
@@ -151,7 +164,7 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
             FROM autocut_cells a JOIN autocut_cells b ON a.site < b.site AND ST_Intersects(a.geom, b.geom)
         ),
         touching AS (
-            SELECT s.a, s.b
+            SELECT s.a, s.b, s.edge
             FROM shared s JOIN autocut_sites sa ON sa.site = s.a
             WHERE ST_Dimension(s.edge) = 1
               AND ST_DWithin(s.edge, sa.pt, {_NEIGHBOUR_REACH_M} / cos(radians(sa.latitude)))
@@ -160,14 +173,15 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
         scale AS (
             SELECT cos(radians(avg(latitude))) AS k FROM autocut_sites
         ),
-        -- Buildings at one spot are neighbours too.
+        -- Buildings at one spot are neighbours too (meeting at that spot).
         neighbours AS (
             SELECT x.unit_id AS u, y.unit_id AS v, x.blockface_id AS bu, y.blockface_id AS bv,
-                   true AS same_site, 0.0 AS distance
+                   true AS same_site, 0.0 AS distance, s.pt AS edge
             FROM autocut_units x JOIN autocut_units y ON x.site = y.site AND x.unit_id < y.unit_id
+            JOIN autocut_sites s ON s.site = x.site
             UNION ALL
             SELECT x.unit_id, y.unit_id, x.blockface_id, y.blockface_id,
-                   false, ST_Distance(sa.pt, sb.pt) * scale.k
+                   false, ST_Distance(sa.pt, sb.pt) * scale.k, t.edge
             FROM touching t
             JOIN autocut_sites sa ON sa.site = t.a JOIN autocut_sites sb ON sb.site = t.b
             JOIN autocut_units x ON x.site = t.a JOIN autocut_units y ON y.site = t.b, scale
@@ -180,12 +194,12 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
             GROUP BY ALL
         ),
         pairs AS (
-            SELECT n.u, n.v, n.distance,
+            SELECT n.u, n.v, n.distance, n.edge,
                    CASE WHEN n.same_site OR n.bu = n.bv THEN 0.0 ELSE coalesce(r.w, {_AROUND_BLOCK}) END AS crossing
             FROM neighbours n
             LEFT JOIN rel r ON r.a = least(n.bu, n.bv) AND r.b = greatest(n.bu, n.bv)
         )
-        SELECT u, v, distance, crossing FROM pairs UNION ALL SELECT v, u, distance, crossing FROM pairs
+        SELECT u, v, distance, crossing, edge FROM pairs UNION ALL SELECT v, u, distance, crossing, edge FROM pairs
     """)
 
     cap, floor = _CAP * door_target, _FLOOR * door_target
@@ -215,19 +229,60 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                  WHERE a.cid <> b.cid AND l.crossing < {BARRIER_COST_M}
                  GROUP BY ALL
              ),
+             -- The hull each candidate merge would have.
+             hulls AS (
+                 SELECT p.ca, p.cb, ST_ConvexHull(ST_Collect(list(s.pt))) AS hull
+                 FROM pairs p
+                 JOIN recurring.merged m ON m.cid IN (p.ca, p.cb)
+                 JOIN autocut_units u USING (unit_id)
+                 JOIN autocut_sites s USING (site)
+                 WHERE p.ca < p.cb
+                 GROUP BY p.ca, p.cb
+             ),
+             -- Other turfs' buildings next to either side; a boxed-in
+             -- building is always among them.
+             around AS (
+                 SELECT DISTINCT m.cid, l.v AS unit_id
+                 FROM recurring.merged m
+                 JOIN autocut_links l ON l.u = m.unit_id
+                 JOIN recurring.merged o ON o.unit_id = l.v AND o.cid <> m.cid
+             ),
+             wrapping AS (
+                 SELECT DISTINCT h.ca, h.cb
+                 FROM hulls h
+                 JOIN around a ON a.cid IN (h.ca, h.cb)
+                 JOIN recurring.merged o ON o.unit_id = a.unit_id AND o.cid NOT IN (h.ca, h.cb)
+                 JOIN autocut_units u ON u.unit_id = a.unit_id
+                 JOIN autocut_cells c USING (site)
+                 WHERE ST_Within(c.geom, h.hull)
+                 UNION
+                 SELECT h.ca, h.cb
+                 FROM hulls h
+                 WHERE NOT EXISTS (
+                     SELECT 1
+                     FROM autocut_links l
+                     JOIN recurring.merged a ON a.unit_id = l.u AND a.cid = h.ca
+                     JOIN recurring.merged b ON b.unit_id = l.v AND b.cid = h.cb
+                     WHERE ST_Intersects(l.edge, h.hull)
+                 )
+             ),
              legal AS (
                  SELECT p.ca, p.cb, p.link.crossing AS crossing, p.link.distance AS distance,
                         least(sa.doors, sb.doors) < {floor} AS under_floor,
-                        sa.doors + sb.doors > {cap} AS over_cap
+                        sa.doors + sb.doors > {cap} AS over_cap,
+                        EXISTS (
+                            SELECT 1 FROM wrapping w WHERE (w.ca, w.cb) = (least(p.ca, p.cb), greatest(p.ca, p.cb))
+                        ) AS wraps
                  FROM pairs p JOIN sizes sa ON sa.cid = p.ca JOIN sizes sb ON sb.cid = p.cb
                  WHERE sa.doors + sb.doors <= {cap}
                     OR (least(sa.doors, sb.doors) < {floor} AND p.nearest <= {_ISOLATED_M})
              ),
              best AS (
                  SELECT ca,
-                        arg_min(cb, (NOT under_floor, over_cap, crossing, distance, least(ca, cb), greatest(ca, cb)))
-                          AS cb
+                        arg_min(cb, (NOT under_floor, wraps, over_cap, crossing, distance,
+                                     least(ca, cb), greatest(ca, cb))) AS cb
                  FROM legal
+                 WHERE NOT wraps OR under_floor
                  GROUP BY ca
              )
              SELECT m.unit_id, b1.cb
@@ -249,138 +304,132 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
 def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
     """One polygon per turf, in `autocut_polygons`.
 
-    A turf is its buildings' Voronoi cells, trimmed to their convex hull
-    padded a little, so it hugs its buildings instead of filling parks and
-    rivers. Cells never overlap, so neither do turfs. Where the trim cuts a
-    turf in two (its cells connect outside the hull), a bridge rejoins it:
-    for each link between buildings on either side, a strip from one
-    building to the point on the edge their cells share nearest the middle
-    of the two, and on to the other, kept inside those two cells so it
-    can't reach another turf.
+    A turf is the convex hull of its buildings, padded by `_HULL_MARGIN_M`
+    with square corners, so a row of buildings is a rectangle and a lone
+    building a square. Hulls overlap, and a hull often takes in another
+    turf's buildings, so the hulls are cut into a planar partition: every
+    hull outline plus, wherever two turfs contest an area, the Voronoi
+    dividers between their buildings, noded together and polygonized into
+    faces. A face goes to the turf with the nearest building among those
+    whose hull covers it and those with a building inside a hull covering
+    it. Nothing is subtracted from anything, so nothing is left behind.
 
-    The turfs are then cleaned into an exact coverage (neighbours sharing
-    identical edges, which simplification relies on) and simplified
-    together. Work happens in Web Mercator, which stretches ground distance
-    by 1/cos(latitude). The cutter draws single rings, so holes are filled,
-    and a turf sitting in one is absorbed by the turf around it rather
-    than drawn twice.
+    Contests are where two hulls overlap (all buildings of both turfs) and
+    inside a hull that holds another turf's buildings (its owner's
+    buildings and the buildings inside). Because the cut never boxes a
+    building in, a turf's faces join up into one polygon, bar the rare
+    turf whose buildings sit in two groups with another turf between them.
+
+    The faces are unioned per turf and the coverage simplified together, so
+    neighbours keep sharing exact edges. Work happens in Web Mercator,
+    which stretches ground distance by 1/cos(latitude). The cutter draws
+    single rings, so holes are filled.
     """
     (k,) = conn.execute("SELECT 1 / cos(radians(avg(latitude))) FROM autocut_sites").fetchone()
-    # Buildings sharing a spot share one cell.
     conn.execute("""
-        CREATE OR REPLACE TEMP TABLE autocut_site_turfs AS
-        SELECT u.site, min(t.turf) AS turf
-        FROM autocut_units u JOIN autocut_turfs t USING (building_id)
-        GROUP BY u.site
+        CREATE OR REPLACE TEMP TABLE autocut_turf_points AS
+        SELECT t.turf, u.building_id, s.pt
+        FROM autocut_turfs t JOIN autocut_units u USING (building_id) JOIN autocut_sites s USING (site)
     """)
     conn.execute(f"""
-        CREATE OR REPLACE TEMP TABLE autocut_trimmed AS
-        WITH turf_cells AS (
-            SELECT st.turf, ST_Union_Agg(c.geom) AS geom
-            FROM autocut_site_turfs st JOIN autocut_cells c USING (site)
-            GROUP BY st.turf
-        ),
-        hulls AS (
-            SELECT st.turf, ST_ConvexHull(ST_Collect(list(s.pt))) AS geom
-            FROM autocut_site_turfs st JOIN autocut_sites s USING (site)
-            GROUP BY st.turf
+        CREATE OR REPLACE TEMP TABLE autocut_hulls AS
+        SELECT turf, ST_Buffer(hull, {_HULL_MARGIN_M * k}, 1, 'CAP_SQUARE', 'JOIN_MITRE', 2.0) AS geom
+        FROM (SELECT turf, ST_ConvexHull(ST_Collect(list(pt))) AS hull FROM autocut_turf_points GROUP BY turf)
+    """)
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE autocut_contests AS
+        SELECT row_number() OVER () AS contest, region, sites
+        FROM (
+            SELECT ST_CollectionExtract(ST_Intersection(a.geom, b.geom), 3) AS region, list(x.pt) AS sites
+            FROM autocut_hulls a
+            JOIN autocut_hulls b ON a.turf < b.turf AND ST_Intersects(a.geom, b.geom)
+            JOIN autocut_turf_points x ON x.turf IN (a.turf, b.turf)
+            GROUP BY a.turf, b.turf, a.geom, b.geom
+            HAVING ST_Area(ST_Intersection(a.geom, b.geom)) > 0
+            UNION ALL
+            SELECT h.geom, list(x.pt)
+            FROM autocut_hulls h
+            JOIN (
+                SELECT DISTINCT h.turf AS hull, x.turf
+                FROM autocut_hulls h JOIN autocut_turf_points x ON x.turf <> h.turf AND ST_Contains(h.geom, x.pt)
+            ) o ON o.hull = h.turf
+            JOIN autocut_turf_points x ON x.turf = h.turf OR (x.turf = o.turf AND ST_Contains(h.geom, x.pt))
+            GROUP BY h.turf, o.turf, h.geom
         )
-        SELECT c.turf,
-               ST_CollectionExtract(ST_Intersection(
-                   c.geom, ST_Buffer(h.geom, {_HULL_MARGIN_M * k}, 2, 'CAP_ROUND', 'JOIN_MITRE', 2.0)
-               ), 3) AS geom
-        FROM turf_cells c JOIN hulls h USING (turf)
     """)
     conn.execute(f"""
-        CREATE OR REPLACE TEMP TABLE autocut_bridged AS
-        WITH pieces AS (
-            SELECT turf, row_number() OVER () AS piece, geom
-            FROM (SELECT turf, unnest(ST_Dump(geom), recursive := true) FROM autocut_trimmed)
+        CREATE OR REPLACE TEMP TABLE autocut_dividers AS
+        -- Voronoi cells are clipped to an envelope around their sites; anchors
+        -- far outside push it past the contested region.
+        WITH sites AS (
+            SELECT contest, unnest(sites) AS pt FROM autocut_contests
+            UNION ALL
+            SELECT contest, unnest([
+                ST_Point(ST_XMin(e) - 10000, ST_YMin(e) - 10000), ST_Point(ST_XMax(e) + 10000, ST_YMin(e) - 10000),
+                ST_Point(ST_XMax(e) + 10000, ST_YMax(e) + 10000), ST_Point(ST_XMin(e) - 10000, ST_YMax(e) + 10000)
+            ])
+            FROM autocut_contests, LATERAL (SELECT ST_Envelope(region) AS e) q
         ),
-        split AS (
-            SELECT turf FROM pieces GROUP BY turf HAVING count(*) > 1
-        ),
-        site_pieces AS (
-            SELECT st.site, st.turf, p.piece
-            FROM autocut_site_turfs st
-            JOIN autocut_sites s USING (site)
-            JOIN pieces p ON p.turf = st.turf AND ST_Intersects(p.geom, s.pt)
-            WHERE st.turf IN (SELECT turf FROM split)
-        ),
-        -- Links between buildings drawn in different pieces of one turf.
-        gaps AS (
-            SELECT DISTINCT pa.turf, least(ua.site, ub.site) AS a, greatest(ua.site, ub.site) AS b
-            FROM autocut_links l
-            JOIN autocut_units ua ON ua.unit_id = l.u
-            JOIN autocut_units ub ON ub.unit_id = l.v
-            JOIN site_pieces pa ON pa.site = ua.site
-            JOIN site_pieces pb ON pb.site = ub.site
-            WHERE pa.turf = pb.turf AND pa.piece <> pb.piece
-        ),
-        bridges AS (
-            SELECT g.turf,
-                   ST_Union_Agg(ST_CollectionExtract(ST_Intersection(
-                       ST_Buffer(
-                           ST_MakeLine([
-                               sa.pt,
-                               ST_LineInterpolatePoint(
-                                   ST_LineMerge(ST_Intersection(ca.geom, cb.geom)),
-                                   ST_LineLocatePoint(
-                                       ST_LineMerge(ST_Intersection(ca.geom, cb.geom)),
-                                       ST_Centroid(ST_MakeLine(sa.pt, sb.pt))
-                                   )
-                               ),
-                               sb.pt
-                           ]),
-                           {_BRIDGE_HALF_WIDTH_M * k}, 2
-                       ),
-                       ST_Union(ca.geom, cb.geom)
-                   ), 3)) AS geom
-            FROM gaps g
-            JOIN autocut_sites sa ON sa.site = g.a JOIN autocut_sites sb ON sb.site = g.b
-            JOIN autocut_cells ca ON ca.site = g.a JOIN autocut_cells cb ON cb.site = g.b
-            GROUP BY g.turf
+        cells AS (
+            SELECT s.contest, any_value(c.region) AS region,
+                   unnest(ST_Dump(ST_VoronoiDiagram(ST_Collect(list(s.pt)))), recursive := true)
+            FROM sites s JOIN autocut_contests c USING (contest)
+            GROUP BY s.contest
         )
-        SELECT t.turf,
-               CASE WHEN b.geom IS NULL THEN t.geom ELSE ST_CollectionExtract(ST_Union(t.geom, b.geom), 3) END AS geom
-        FROM autocut_trimmed t LEFT JOIN bridges b USING (turf)
+        SELECT ST_Intersection(ST_Boundary(geom), ST_Buffer(region, {_DIVIDER_OVERSHOOT_M})) AS geom FROM cells
     """)
-    # Clean and simplify each come back as one collection in input order.
-    # Dumping a collection splits multipart members, so parts are regrouped
-    # by their member index, carrying each member's turf along.
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE autocut_faces AS
+        WITH lines AS (
+            SELECT ST_Boundary(geom) AS geom FROM autocut_hulls
+            UNION ALL
+            SELECT geom FROM autocut_dividers WHERE NOT ST_IsEmpty(geom)
+        ),
+        -- A unary union nodes the linework through the snapping overlay,
+        -- which converges where plain noding can fail on near-coincident lines.
+        noded AS (SELECT ST_Union_Agg(geom) AS geom FROM lines),
+        faces AS (SELECT unnest(ST_Dump(ST_Polygonize([geom])), recursive := true) FROM noded)
+        SELECT row_number() OVER () AS face, geom, ST_PointOnSurface(geom) AS rep FROM faces
+    """)
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE autocut_labelled AS
+        WITH covering AS (
+            SELECT f.face, h.turf, h.geom FROM autocut_faces f JOIN autocut_hulls h ON ST_Contains(h.geom, f.rep)
+        ),
+        candidates AS (
+            SELECT c.face, x.turf, x.pt FROM covering c JOIN autocut_turf_points x ON x.turf = c.turf
+            UNION
+            SELECT c.face, x.turf, x.pt FROM covering c JOIN autocut_turf_points x ON ST_Contains(c.geom, x.pt)
+        ),
+        nearest AS (
+            SELECT c.face, arg_min(c.turf, ST_Distance(c.pt, f.rep)) AS turf
+            FROM candidates c JOIN autocut_faces f USING (face)
+            GROUP BY c.face
+        )
+        SELECT f.face, n.turf, f.geom FROM autocut_faces f JOIN nearest n USING (face)
+    """)
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_polygons AS
-        WITH cleaned AS (
-            SELECT ST_CoverageClean(list(geom ORDER BY turf)) AS geom, list(turf ORDER BY turf) AS turfs
-            FROM autocut_bridged
-        ),
-        regrouped AS (
-            SELECT d.path[1] AS i, any_value(turfs)[d.path[1]] AS turf,
-                   ST_CollectionExtract(ST_Collect(list(d.geom)), 3) AS geom
-            FROM cleaned, unnest(ST_Dump(cleaned.geom)) AS u(d)
-            GROUP BY d.path[1]
+        WITH shapes AS (
+            SELECT turf, ST_CoverageUnion(list(geom)) AS geom FROM autocut_labelled GROUP BY turf
         ),
         simplified AS (
-            SELECT ST_CoverageSimplify(list(geom ORDER BY i), {_SIMPLIFY_M * k}) AS geom, list(turf ORDER BY i) AS turfs
-            FROM regrouped
+            SELECT ST_CoverageSimplify(list(geom ORDER BY turf), {_SIMPLIFY_M * k}) AS geom,
+                   list(turf ORDER BY turf) AS turfs
+            FROM shapes
         ),
         turf_shapes AS (
-            SELECT turfs[d.path[1]] AS turf, d.geom
-            FROM simplified, unnest(ST_Dump(simplified.geom)) AS u(d)
+            SELECT turfs[d.path[1]] AS turf, d.geom FROM simplified, unnest(ST_Dump(simplified.geom)) AS u(d)
         ),
         pieces AS (
             SELECT turf, unnest(ST_Dump(geom), recursive := true) FROM turf_shapes
         ),
-        filled AS (
-            SELECT turf, path, ST_MakePolygon(ST_ExteriorRing(geom)) AS geom FROM pieces
+        solid AS (
+            SELECT turf, ST_MakePolygon(ST_ExteriorRing(geom)) AS geom FROM pieces WHERE ST_Area(geom) > {_SLIVER_M2}
         )
-        SELECT turf, row_number() OVER (ORDER BY turf, path) AS piece,
+        SELECT turf, row_number() OVER (ORDER BY turf) AS piece,
                ST_Transform(geom, 'EPSG:3857', 'EPSG:4326', true) AS geom
-        FROM filled f
-        WHERE NOT EXISTS (
-            SELECT 1 FROM filled o
-            WHERE (o.turf, o.path) <> (f.turf, f.path) AND ST_Within(f.geom, o.geom)
-        )
+        FROM solid
     """)
 
 
