@@ -11,14 +11,17 @@
                     hold another turf's buildings, the nearest building decides;
                     a turf drawn in pieces gives the buildings of its islands
                     to the turf around them and is drawn again
-        drafts      one per turf, replacing the scope's drafts; the cutter reloads them
+        drafts      one per turf, numbered as a walk from the chosen corner so
+                    nearby numbers are nearby on the map; they replace the
+                    scope's drafts and the cutter reloads them
 
 `cut` is the algorithm; everything around it is plumbing that holds
 still while the algorithm changes.
 """
 
 import asyncio
-from typing import Any
+import math
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -84,6 +87,7 @@ class AutocutTurfsPayload(BaseModel):
     org_slug: str
     organization_id: str
     door_target: int = Field(gt=0)
+    start: Literal["northwest", "northeast", "southwest", "southeast"] = "northwest"
 
 
 @job(task="autocut_turfs")
@@ -118,6 +122,7 @@ def _run(payload: AutocutTurfsPayload) -> dict[str, Any]:
         _trade(conn, payload.door_target)
         _build_polygons(conn)
         _absorb_islands(conn)
+        _order_drafts(conn, payload.start)
         turfs = _replace_drafts(conn, payload, scope.segment_id)
     return {"turfs": turfs, "buildings": buildings, "doors": doors}
 
@@ -677,6 +682,54 @@ def _absorb_islands(conn: duckdb.DuckDBPyConnection) -> None:
             UPDATE autocut_turfs SET turf = m.turf FROM autocut_moves m WHERE autocut_turfs.building_id = m.building_id
         """)
         _build_polygons(conn)
+
+
+def _order_drafts(conn: duckdb.DuckDBPyConnection, start: str) -> None:
+    """Number the drafts the way a field lead signs them out: start at the
+    turf furthest toward the chosen corner (north-west = the most northerly
+    and westerly at once), then always the nearest turf not yet numbered.
+    That walk strands the odd turf it steps past, so it's then untangled:
+    any stretch of the sequence whose reversal shortens the walk is
+    reversed, until none does (2-opt, with the start pinned).
+    """
+    rows = conn.execute("""
+        SELECT turf, ST_X(c), ST_Y(c)
+        FROM (SELECT turf, ST_Centroid(ST_Transform(geom, 'EPSG:4326', 'EPSG:3857', true)) AS c FROM autocut_polygons)
+    """).fetchall()
+    at = {turf: (x, y) for turf, x, y in rows}
+    east, north = {
+        "northwest": (-1, 1),
+        "northeast": (1, 1),
+        "southwest": (-1, -1),
+        "southeast": (1, -1),
+    }[start]
+    dist = lambda a, b: math.dist(at[a], at[b])  # noqa: E731
+
+    left = set(at)
+    path = [max(left, key=lambda t: east * at[t][0] + north * at[t][1])]
+    left.remove(path[0])
+    while left:
+        path.append(min(left, key=lambda t: dist(path[-1], t)))
+        left.remove(path[-1])
+
+    n = len(path)
+    improved = True
+    while improved:
+        improved = False
+        for i in range(1, n - 1):
+            for j in range(i + 1, n):
+                before = dist(path[i - 1], path[i]) + (dist(path[j], path[j + 1]) if j + 1 < n else 0)
+                after = dist(path[i - 1], path[j]) + (dist(path[i], path[j + 1]) if j + 1 < n else 0)
+                if after < before - 1e-6:
+                    path[i : j + 1] = reversed(path[i : j + 1])
+                    improved = True
+
+    conn.execute("CREATE OR REPLACE TEMP TABLE autocut_order (turf INT, piece INT)")
+    conn.executemany("INSERT INTO autocut_order VALUES (?, ?)", [(turf, i + 1) for i, turf in enumerate(path)])
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE autocut_polygons AS
+        SELECT p.turf, o.piece, p.geom FROM autocut_polygons p JOIN autocut_order o USING (turf)
+    """)
 
 
 def _replace_drafts(conn: duckdb.DuckDBPyConnection, payload: AutocutTurfsPayload, segment_id: str) -> int:

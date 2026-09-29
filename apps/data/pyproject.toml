@@ -54,7 +54,10 @@ select = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-markers = ["integration: full-pipeline run on the NYC voter fixture (slow; ~1 min)"]
+markers = [
+  "integration: full-pipeline run on the NYC voter fixture (slow; ~1 min)",
+  "autocut: the autocut battery on the local autocut fixture (~15 s; `python -m scripts.autocut_fixture` first)",
+]
 
 [tool.ty.environment]
 python-version = "3.13"

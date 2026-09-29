@@ -2,6 +2,8 @@ import { ORPCError } from "@orpc/server";
 import { and, asc, eq, isNull, sql } from "@turf-tools/db";
 import { campaigns, jobs, turfDrafts } from "@turf-tools/db/schema";
 import { z } from "zod";
+
+import { AUTOCUT_STARTS } from "~/lib/utils";
 import { webPub as pub } from "../context";
 
 // Drafts are scoped to `(campaignId, zoneId)`, where `zoneId` is null
@@ -155,6 +157,7 @@ export const autocut = pub
       campaignId: z.string().uuid(),
       zoneId: nullableUuid,
       doorTarget: z.number().int().positive(),
+      start: z.enum(AUTOCUT_STARTS).default("northwest"),
     }),
   )
   .handler(async ({ context, input }) => {
@@ -182,6 +185,7 @@ export const autocut = pub
           org_slug: context.orgSlug,
           organization_id: context.organizationId,
           door_target: input.doorTarget,
+          start: input.start,
         },
         concurrencyKey: `autocut:${input.campaignId}:${input.zoneId ?? "all"}`,
       })

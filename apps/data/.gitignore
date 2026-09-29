@@ -27,10 +27,13 @@ tiger_cache/
 osm_cache/
 
 # Voter-file fixtures are never committed — they hold real NYS voter data
-# (PII). Local-only; regenerate via `scripts/sample_voter_file.py`.
+# (PII). Local-only; ask a maintainer for the NYC pull the integration
+# test reads.
 fixtures/*.parquet
 fixtures/*.txt
 fixtures/*.json
+# Autocut battery inputs, cut from the voter data; regenerate via `python -m scripts.autocut_fixture`.
+fixtures/autocut/
 
 # Quickwit local data
 qwdata/
@@ -40,8 +43,7 @@ old/**
 
 # Local-only one-off scripts (ad-hoc diagnostics, experiments). Not
 # part of the production pipeline; kept out of git so the commit story
-# stays clean. Exception: `sample_voter_file.py` produces the canonical
-# NYC fixture from the remote NYS voter file and is the only documented
-# way to regenerate fixtures — committed so collaborators can run it.
-scripts/
-!scripts/sample_voter_file.py
+# stays clean. Exception: `autocut_fixture.py` cuts the autocut battery's
+# fixture from the local lake, so anyone with the pipeline can rebuild it.
+scripts/*
+!scripts/autocut_fixture.py

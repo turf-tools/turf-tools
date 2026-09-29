@@ -19,6 +19,7 @@ import {
 import { EditorHeader } from "~/components/editor-header";
 import { Map } from "~/components/map";
 import { NumberInput } from "~/components/number-input";
+import { ToggleGroup, ToggleGroupItem } from "~/components/toggle-group";
 import { Switch } from "~/components/switch";
 import { TurfDrawer, type Turf } from "~/components/turf-drawer";
 import { TurfList } from "~/components/turf-list";
@@ -36,7 +37,7 @@ import { publishImpactQuery } from "~/lib/queries/turfs";
 import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import type { Criteria } from "~/lib/filters";
 import { useFadeOnce } from "~/lib/use-fade-once";
-import { cn, parseHexRgb } from "~/lib/utils";
+import { AUTOCUT_STARTS, cn, parseHexRgb, type AutocutStart } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 import { client } from "~/rpc/client";
 
@@ -76,6 +77,12 @@ function StatValue({ icon, value }: { icon: IconName; value: number | null }) {
 }
 
 const DEFAULT_DOOR_TARGET = 75;
+const START_LABELS: Record<AutocutStart, string> = {
+  northwest: "NW",
+  northeast: "NE",
+  southwest: "SW",
+  southeast: "SE",
+};
 const AUTOCUT_POLL_MS = 1000;
 
 type Draft = Awaited<ReturnType<typeof client.turfDrafts.list>>[number];
@@ -445,6 +452,7 @@ export function Cutter({
 
   const [autocutOpen, setAutocutOpen] = useState(false);
   const [doorTarget, setDoorTarget] = useState(String(DEFAULT_DOOR_TARGET));
+  const [start, setStart] = useState<AutocutStart>("northwest");
   // Enqueues the job, polls it to completion, then swaps in the drafts it
   // wrote. The dialog stays open (and blocks edits) for the whole run.
   const autocutMutation = useMutation({
@@ -453,6 +461,7 @@ export function Cutter({
         campaignId,
         zoneId,
         doorTarget: Number(doorTarget),
+        start,
       });
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, AUTOCUT_POLL_MS));
@@ -697,11 +706,11 @@ export function Cutter({
         <DialogContent>
           <DialogTitle>Autocut turfs</DialogTitle>
           <DialogDescription>
-            Cuts {zoneId === null ? "the full segment" : "this zone"} into turfs of about this many
-            doors each.
+            Cuts all buildings into turfs given a target number of doors per turf and a starting
+            location.
           </DialogDescription>
           <label className="mb-5 flex items-center justify-between gap-4">
-            <span>Doors per turf</span>
+            <span>Target number of doors per turf</span>
             <NumberInput
               className="w-24"
               value={doorTarget}
@@ -710,6 +719,24 @@ export function Cutter({
               disabled={autocutMutation.isPending}
             />
           </label>
+          <div className="mb-5 flex items-center justify-between gap-4">
+            <span>Starting location</span>
+            <ToggleGroup
+              variant="outline"
+              value={[start]}
+              disabled={autocutMutation.isPending}
+              onValueChange={(values) => {
+                const next = values[0];
+                if (AUTOCUT_STARTS.includes(next as AutocutStart)) setStart(next as AutocutStart);
+              }}
+            >
+              {AUTOCUT_STARTS.map((corner) => (
+                <ToggleGroupItem key={corner} value={corner} aria-label={corner}>
+                  {START_LABELS[corner]}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
           {turfs.length > 0 ? (
             <Callout tone="warning" className="-mt-1 mb-5">
               This replaces the <span className="font-bold">{turfs.length}</span> turf

@@ -58,3 +58,7 @@ export function toTitleCase(text: string | null | undefined): string {
   if (!text) return "";
   return text.toLowerCase().replace(/(?:^|[\s\-'])\p{L}/gu, (c) => c.toUpperCase());
 }
+
+// Where autocut starts numbering turfs: the corner a field lead signs out from.
+export const AUTOCUT_STARTS = ["northwest", "northeast", "southwest", "southeast"] as const;
+export type AutocutStart = (typeof AUTOCUT_STARTS)[number];

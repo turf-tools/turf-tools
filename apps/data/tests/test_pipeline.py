@@ -74,10 +74,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
     """Run the full NYC pipeline once for the whole module. Module-scoped
     so all assertions share one pipeline run."""
     if not VOTER_FILE.exists():
-        pytest.skip(
-            f"Voter fixture not present at {VOTER_FILE}. Pull from object "
-            "storage or regenerate via `uv run python scripts/sample_voter_file.py`."
-        )
+        pytest.skip(f"Voter fixture not present at {VOTER_FILE}; ask a maintainer for it.")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         conn = duckdb.connect()
