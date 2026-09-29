@@ -83,7 +83,7 @@ const START_LABELS: Record<AutocutStart, string> = {
   southwest: "SW",
   southeast: "SE",
 };
-const AUTOCUT_POLL_MS = 1000;
+const AUTOCUT_POLL_MS = 500;
 
 type Draft = Awaited<ReturnType<typeof client.turfDrafts.list>>[number];
 

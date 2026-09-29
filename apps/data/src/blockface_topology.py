@@ -50,7 +50,7 @@ shows up as two crossings.
 Everything in this module is pure Python over plain values — no DuckDB —
 so the tricky bookkeeping is unit-testable against hand-built
 intersections. The SQL half (extracting nodes, bearings, and MTFCC codes
-from TIGER tables) lives in ``src/dags/blockface_relationships.py``.
+from TIGER tables) lives in ``src/dags/topology.py``.
 
 Bearings use math convention: degrees CCW from east (+x), in a metric
 projection, normalized to [0, 360). Ascending bearing = CCW radial order.

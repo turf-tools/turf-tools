@@ -20,7 +20,7 @@ cuts along that line.
 
 import pytest
 
-from src.dags.blockface_relationships import blockface_relationships
+from src.dags.topology import blockface_relationships
 from src.models import TableRef
 
 CENTER = (-73.99, 40.73)

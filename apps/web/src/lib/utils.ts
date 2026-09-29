@@ -42,8 +42,8 @@ export function revealZoneCard(zoneId: string) {
     ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// The cutter's counterpart: scroll a turf's list row (tagged
-// `data-turf-row`) into view when the turf is picked on the map.
+// Scroll a turf's list row (tagged `data-turf-row`) into view when the
+// turf is picked on the map.
 export function revealTurfRow(turfId: string) {
   document
     .querySelector(`[data-turf-row="${turfId}"]`)

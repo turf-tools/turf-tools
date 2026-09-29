@@ -1,10 +1,10 @@
 """Write the autocut battery's inputs to `fixtures/autocut/`.
 
-For each zip: the buildings of the segment the battery has always used
-(Democrats who voted in the 2025 or 2026 primary), with doors counted like
-the cutter's sidebar. Plus the blockface relationships those buildings'
-blockfaces take part in. Reads the local lake; the fixture is local-only,
-like the voter fixtures. The battery tests (`pnpm data:test:autocut`) skip
+This script creates, for each of several zip codes, a set of doors
+based on a fixed filter, and assembles a self-contained dataset,
+including blockface relationships. It reads a local lake build from
+a full pipeline run using the NYS voter file subset to NYC. The resulting
+fixture is local-only and the autocut battery tests (`pnpm data:test:autocut`) skip
 until this has been run.
 
     uv run python -m scripts.autocut_fixture [--org default] [--zips 10003 ...]

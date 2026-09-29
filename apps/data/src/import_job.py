@@ -18,17 +18,7 @@ from hamilton import driver
 from pydantic import BaseModel
 
 from src import postgres
-from src.dags import (
-    aggregate,
-    assembly,
-    blockface_relationships,
-    boundaries,
-    geocode,
-    matching,
-    osm,
-    quickwit,
-    tiger,
-)
+from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, quickwit, tiger, topology
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
@@ -162,7 +152,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         hook = ProgressNodeHook(progress, input_keys)
         dr = (
             driver.Builder()
-            .with_modules(tiger, osm, matching, geocode, assembly, aggregate, boundaries, blockface_relationships)
+            .with_modules(tiger, osm, matching, geocode, assembly, aggregate, boundaries, topology)
             .with_adapters(hook)
             .build()
         )

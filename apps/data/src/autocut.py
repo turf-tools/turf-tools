@@ -1,7 +1,7 @@
-"""Autocut: cut a campaign zone's segment buildings into turf drafts.
+"""Autocut: cut a collection of buildings with door counts into turf drafts.
 
 turfDrafts.autocut (web) ─► jobs row ─► autocut_turfs
-    buildings   segment ∩ zone, doors counted like the cutter's sidebar
+    buildings   buildings in a segment zone intersection with door counts
     cut         buildings merged into turfs along map neighbours, closest
                 first, up to a cap around the door target, never wrapping
                 around another turf
@@ -46,9 +46,11 @@ _FLOOR = 1 / 3
 # out of the cut. Ground meters.
 _REACH_M = 500.0
 
-# Crossing rank for neighbouring buildings whose blockfaces don't meet,
-# e.g. back to back across a block's interior: after any street crossing,
-# before a barrier.
+# Crossing cost for neighbouring buildings whose blockfaces never meet,
+# e.g. back to back across a block's interior, which `blockface_relationships`
+# has no row for. Set between the costs in `src/blockface_topology.py` for a
+# major road (60) and a barrier (100,000): worse than any street crossing,
+# but not forbidden.
 _AROUND_BLOCK = 150.0
 
 # A turf's hull hugs its buildings: a concave hull, keeping boundary edges
@@ -687,10 +689,10 @@ def _absorb_islands(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 def _order_drafts(conn: duckdb.DuckDBPyConnection, start: str) -> None:
-    """Number the drafts the way a field lead signs them out: start at the
-    turf furthest toward the chosen corner (north-west = the most northerly
-    and westerly at once), then always the nearest turf not yet numbered.
-    That walk strands the odd turf it steps past, so it's then untangled:
+    """Sensible numbering of drafts: start at the turf furthest toward the
+    chosen corner (north-west = the most northerly and westerly at once),
+    then the next pick is the nearest turf not yet numbered. That walk
+    strands the odd turf it steps past, so it's then untangled:
     any stretch of the sequence whose reversal shortens the walk is
     reversed, until none does (2-opt, with the start pinned).
     """

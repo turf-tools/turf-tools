@@ -34,7 +34,7 @@ from src.models import TableRef
 from src.settings import get_settings
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.quickwit,
     pytest.mark.skipif(shutil.which("quickwit") is None, reason="quickwit binary not on PATH"),
 ]
 
