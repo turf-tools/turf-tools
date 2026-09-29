@@ -1,22 +1,19 @@
 """Autocut: cut a campaign zone's segment buildings into turf drafts.
 
-    turfDrafts.autocut (web) ─► jobs row ─► autocut_turfs
-        buildings   segment ∩ zone, doors counted like the cutter's sidebar
-        cut         buildings merged into turfs along map neighbours, closest
-                    first, up to a cap around the door target, never wrapping
-                    around another turf
-        trade       single buildings cross a boundary where that untangles
-                    two turfs' hulls
-        polygons    each turf's hull, padded a little; where hulls overlap or
-                    hold another turf's buildings, the nearest building decides;
-                    a turf drawn in pieces gives the buildings of its islands
-                    to the turf around them and is drawn again
-        drafts      one per turf, numbered as a walk from the chosen corner so
-                    nearby numbers are nearby on the map; they replace the
-                    scope's drafts and the cutter reloads them
-
-`cut` is the algorithm; everything around it is plumbing that holds
-still while the algorithm changes.
+turfDrafts.autocut (web) ─► jobs row ─► autocut_turfs
+    buildings   segment ∩ zone, doors counted like the cutter's sidebar
+    cut         buildings merged into turfs along map neighbours, closest
+                first, up to a cap around the door target, never wrapping
+                around another turf
+    trade       single buildings cross a boundary where that untangles
+                two turfs' hulls
+    polygons    each turf's hull, padded a little; where hulls overlap or
+                hold another turf's buildings, the nearest building decides;
+                a turf drawn in pieces gives the buildings of its islands
+                to the turf around them and is drawn again
+    drafts      one per turf, numbered as a walk from the chosen corner so
+                nearby numbers are nearby on the map; they replace the
+                scope's drafts and the cutter reloads them
 """
 
 import asyncio
@@ -81,12 +78,28 @@ _SLIVER_M2 = 1.0
 _RELATIONSHIPS = f"{GEO_CATALOG}.{TIGER_SCHEMA}.blockface_relationships"
 
 
+def _mercator_scale(conn: duckdb.DuckDBPyConnection) -> float:
+    """Web Mercator meters per ground meter at the zone's latitude."""
+    (k,) = conn.execute("SELECT 1 / cos(radians(avg(latitude))) FROM autocut_sites").fetchone()
+    return k
+
+
+def _hull_sql(points: str, k: float) -> str:
+    """SQL for a turf's drawn shape: the concave hull of `points` (a list
+    expression), padded by the margin with square corners."""
+    return (
+        f"ST_Buffer(ST_ConcaveHull(ST_Collect({points}), {_HULL_CONCAVITY}, false), "
+        f"{_HULL_MARGIN_M * k}, 1, 'CAP_SQUARE', 'JOIN_MITRE', 2.0)"
+    )
+
+
 class AutocutTurfsPayload(BaseModel):
     campaign_id: str
     zone_id: str | None
     org_slug: str
-    organization_id: str
     door_target: int = Field(gt=0)
+    # Read back by the web's status poll to keep jobs to their own org.
+    organization_id: str
     start: Literal["northwest", "northeast", "southwest", "southeast"] = "northwest"
 
 
@@ -175,9 +188,8 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     """)
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_links AS
-        -- Cells sharing an edge that comes within reach of the buildings.
-        -- Boxes first, so the pairing is a range join rather than every
-        -- cell against every other.
+        -- Cells sharing an edge. Boxes first, so the pairing is a range
+        -- join rather than every cell against every other.
         WITH shared AS (
             SELECT a.site AS a, b.site AS b, ST_Intersection(a.geom, b.geom) AS edge
             FROM autocut_cells a
@@ -385,12 +397,8 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     non-negative total, so it ends on its own.
     """
     cap, floor = _CAP * door_target, _FLOOR * door_target
-    (k,) = conn.execute("SELECT 1 / cos(radians(avg(latitude))) FROM autocut_sites").fetchone()
+    k = _mercator_scale(conn)
     m = _HULL_MARGIN_M * k
-    hull = (
-        f"ST_Buffer(ST_ConcaveHull(ST_Collect(list({{pts}})), {_HULL_CONCAVITY}, false), "
-        f"{m}, 1, 'CAP_SQUARE', 'JOIN_MITRE', 2.0)"
-    )
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_trade AS
         SELECT t.turf, u.unit_id AS id, u.building_id, u.doors, s.pt
@@ -398,7 +406,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     """)
     overlap_sql = f"""
         WITH hulls AS (
-            SELECT turf, {hull.format(pts="pt")} AS hull,
+            SELECT turf, {_hull_sql("list(pt)", k)} AS hull,
                    min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
             FROM autocut_trade GROUP BY turf
         )
@@ -413,7 +421,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     while moves < _TRADE_MOVES:
         found = conn.execute(f"""
             WITH hulls AS (
-                SELECT turf, {hull.format(pts="pt")} AS hull, sum(doors) AS doors,
+                SELECT turf, {_hull_sql("list(pt)", k)} AS hull, sum(doors) AS doors,
                        min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
                 FROM autocut_trade GROUP BY turf
             ),
@@ -439,8 +447,8 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
             -- The two hulls after the move.
             after AS (
                 SELECT c.id, c.own, c.other,
-                       {hull.format(pts="p.pt) FILTER (WHERE p.turf = c.own AND p.id <> c.id")} AS ha,
-                       {hull.format(pts="p.pt) FILTER (WHERE p.turf = c.other OR p.id = c.id")} AS hb
+                       {_hull_sql("list(p.pt) FILTER (WHERE p.turf = c.own AND p.id <> c.id)", k)} AS ha,
+                       {_hull_sql("list(p.pt) FILTER (WHERE p.turf = c.other OR p.id = c.id)", k)} AS hb
                 FROM candidates c JOIN autocut_trade p ON p.turf IN (c.own, c.other)
                 GROUP BY c.id, c.own, c.other
             ),
@@ -511,26 +519,26 @@ def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
 
     A turf is the concave hull of its buildings (`_HULL_CONCAVITY`), padded
     by `_HULL_MARGIN_M` with square corners, so a row of buildings is a
-    rectangle and a lone building a square. Hulls overlap, and a hull often takes in another
-    turf's buildings, so the hulls are cut into a planar partition: every
-    hull outline plus, wherever two turfs contest an area, the Voronoi
-    dividers between their buildings, noded together and polygonized into
-    faces. A face goes to the turf with the nearest building among those
-    whose hull covers it and those with a building inside a hull covering
-    it. Nothing is subtracted from anything, so nothing is left behind.
+    rectangle and a lone building a square. Hulls overlap, and a hull can
+    take in another turf's buildings, so the hulls are cut into a planar
+    partition: every hull outline plus, wherever two turfs contest an area,
+    the Voronoi dividers between their buildings, noded together and
+    polygonized into faces. A face goes to the turf with the nearest
+    building among those whose hull covers it and those with a building
+    inside a hull covering it. Nothing is subtracted from anything, so
+    nothing is left behind.
 
     Contests are where two hulls overlap (all buildings of both turfs) and
     inside a hull that holds another turf's buildings (its owner's
-    buildings and the buildings inside). Because the cut never boxes a
-    building in, a turf's faces join up into one polygon, bar the rare
-    turf whose buildings sit in two groups with another turf between them.
+    buildings and the buildings inside).
 
     The faces are unioned per turf and the coverage simplified together, so
     neighbours keep sharing exact edges. Work happens in Web Mercator,
     which stretches ground distance by 1/cos(latitude). The cutter draws
-    single rings, so holes are filled.
+    single rings, so holes are filled. A turf drawn in more than one piece
+    gets one row per piece; `_absorb_islands` settles those.
     """
-    (k,) = conn.execute("SELECT 1 / cos(radians(avg(latitude))) FROM autocut_sites").fetchone()
+    k = _mercator_scale(conn)
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_turf_points AS
         SELECT t.turf, u.building_id, s.pt
@@ -538,11 +546,7 @@ def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
     """)
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_hulls AS
-        SELECT turf, ST_Buffer(hull, {_HULL_MARGIN_M * k}, 1, 'CAP_SQUARE', 'JOIN_MITRE', 2.0) AS geom
-        FROM (
-            SELECT turf, ST_ConcaveHull(ST_Collect(list(pt)), {_HULL_CONCAVITY}, false) AS hull
-            FROM autocut_turf_points GROUP BY turf
-        )
+        SELECT turf, {_hull_sql("list(pt)", k)} AS geom FROM autocut_turf_points GROUP BY turf
     """)
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_contests AS
@@ -635,23 +639,21 @@ def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
         solid AS (
             SELECT turf, ST_MakePolygon(ST_ExteriorRing(geom)) AS geom FROM pieces WHERE ST_Area(geom) > {_SLIVER_M2}
         )
-        SELECT turf, row_number() OVER (ORDER BY turf) AS piece,
-               ST_Transform(geom, 'EPSG:3857', 'EPSG:4326', true) AS geom
-        FROM solid
+        SELECT turf, ST_Transform(geom, 'EPSG:3857', 'EPSG:4326', true) AS geom FROM solid
     """)
 
 
 def _absorb_islands(conn: duckdb.DuckDBPyConnection) -> None:
-    """A turf must be one draft. The rare turf still drawn in pieces (a
-    building of its own stranded inside another turf's hull, which no
-    single trade could untangle) gives the buildings of its smaller pieces
-    to the turf whose buildings are nearest, then everything is drawn
-    again. Each pass settles at least one turf, and there are few.
+    """A turf must be one draft. A turf drawn in pieces gives the buildings
+    of all but its largest piece to the turf whose buildings are nearest,
+    and everything is drawn again. Each pass settles every turf it touches;
+    the loop only guards against a move creating a new split.
     """
     for _ in range(3):
         moved = conn.execute("""
             WITH pieces AS (
-                SELECT p.turf, p.piece, ST_Transform(p.geom, 'EPSG:4326', 'EPSG:3857', true) AS geom,
+                SELECT p.turf, row_number() OVER () AS piece,
+                       ST_Transform(p.geom, 'EPSG:4326', 'EPSG:3857', true) AS geom,
                        count(*) OVER (PARTITION BY p.turf) AS n
                 FROM autocut_polygons p
             ),
@@ -724,11 +726,11 @@ def _order_drafts(conn: duckdb.DuckDBPyConnection, start: str) -> None:
                     path[i : j + 1] = reversed(path[i : j + 1])
                     improved = True
 
-    conn.execute("CREATE OR REPLACE TEMP TABLE autocut_order (turf INT, piece INT)")
+    conn.execute("CREATE OR REPLACE TEMP TABLE autocut_order (turf INT, number INT)")
     conn.executemany("INSERT INTO autocut_order VALUES (?, ?)", [(turf, i + 1) for i, turf in enumerate(path)])
     conn.execute("""
         CREATE OR REPLACE TEMP TABLE autocut_polygons AS
-        SELECT p.turf, o.piece, p.geom FROM autocut_polygons p JOIN autocut_order o USING (turf)
+        SELECT p.turf, o.number, p.geom FROM autocut_polygons p JOIN autocut_order o USING (turf)
     """)
 
 
@@ -745,7 +747,7 @@ def _replace_drafts(conn: duckdb.DuckDBPyConnection, payload: AutocutTurfsPayloa
         conn.execute(
             f"""
             INSERT INTO {drafts} (turf_draft_id, campaign_id, zone_id, segment_id, geometry, sort_order)
-            SELECT uuid(), ?::UUID, ?::UUID, ?::UUID, json(ST_AsGeoJSON(geom)), (piece - 1)::INT
+            SELECT uuid(), ?::UUID, ?::UUID, ?::UUID, json(ST_AsGeoJSON(geom)), (number - 1)::INT
             FROM autocut_polygons
             """,
             [payload.campaign_id, payload.zone_id, segment_id],

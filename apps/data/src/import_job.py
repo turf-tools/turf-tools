@@ -166,6 +166,8 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
             .with_adapters(hook)
             .build()
         )
+        # Steps are the computed nodes; inputs and unset optional parameters
+        # (which Hamilton also lists upstream) never complete.
         dag_steps = sum(1 for n in dr.graph.get_upstream_nodes(_FINAL_VARS)[0] if not n.user_defined)
         # +2 for the post-DAG passes not in the main graph: the Quickwit index
         # build and the derived-metadata unnest+count — so the bar doesn't sit

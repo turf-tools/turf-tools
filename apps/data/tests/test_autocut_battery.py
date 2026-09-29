@@ -40,8 +40,8 @@ GOLDEN: dict[str, tuple | None] = {
     "11385": (138, (48, 73, 90), 26, 79, 0, 13, 29),
 }
 
-# Generous next to the ~3 s the slowest zip takes; a regression like a
-# nested-loop join shows up long before this.
+# Generous next to the ~3 s the slowest zip takes, so only a real
+# regression trips it.
 TIME_BUDGET_S = 15.0
 
 pytestmark = pytest.mark.autocut
@@ -69,21 +69,21 @@ def _stats(conn: duckdb.DuckDBPyConnection) -> dict:
             FROM autocut_buildings b LEFT JOIN autocut_turfs t USING (building_id)
         ),
         hits AS (
-            SELECT b.building_id, b.doors, b.turf AS own, p.turf AS got, p.piece
+            SELECT b.building_id, b.doors, b.turf AS own, p.turf AS got, p.number
             FROM b LEFT JOIN autocut_polygons p ON ST_Contains(p.geom, b.pt)
         ),
         per_building AS (
-            SELECT building_id, any_value(own) AS own, count(piece) AS n, bool_or(got <> own) AS wrong
+            SELECT building_id, any_value(own) AS own, count(number) AS n, bool_or(got <> own) AS wrong
             FROM hits GROUP BY building_id
         ),
         drafts AS (
-            SELECT p.piece, coalesce(sum(h.doors), 0) AS d, coalesce(max(h.doors), 0) AS biggest
-            FROM autocut_polygons p LEFT JOIN hits h USING (piece) GROUP BY p.piece
+            SELECT p.number, coalesce(sum(h.doors), 0) AS d, coalesce(max(h.doors), 0) AS biggest
+            FROM autocut_polygons p LEFT JOIN hits h USING (number) GROUP BY p.number
         ),
-        m AS (SELECT piece, ST_Transform(geom, 'EPSG:4326', 'EPSG:32618', true) AS g FROM autocut_polygons),
+        m AS (SELECT number, ST_Transform(geom, 'EPSG:4326', 'EPSG:32618', true) AS g FROM autocut_polygons),
         overlap AS (
             SELECT coalesce(sum(ST_Area(ST_Intersection(a.g, b.g))), 0) AS m2
-            FROM m a JOIN m b ON a.piece < b.piece AND ST_Intersects(a.g, b.g)
+            FROM m a JOIN m b ON a.number < b.number AND ST_Intersects(a.g, b.g)
         )
         SELECT (SELECT count(*) FROM drafts) AS drafts,
                (SELECT count(*) FROM drafts) - (SELECT count(DISTINCT turf) FROM autocut_turfs) AS split,
