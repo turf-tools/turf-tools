@@ -155,3 +155,27 @@ def test_parquet_upload_with_typed_columns(conn, tmp_path):
     label, rows, skipped = parse_upload(conn, src, "number", None, None)
     assert (label, rows, skipped) == ("score", 2, 0)
     assert _values(conn) == {"101": "0.5", "102": "0.9"}
+
+
+def test_multi_category_splits_trims_dedupes(conn, tmp_path):
+    # Cells are comma lists; repeated ids union their values; row count is
+    # people, not values.
+    src = _csv(tmp_path, 'id,groups\nA,"1, 2"\nB,1\nC,"2,3,,2 "\nA,2\n')
+    label, rows, skipped = parse_upload(conn, src, "enum_multi", None, None)
+    assert (label, rows, skipped) == ("groups", 3, 0)
+    got = conn.execute("SELECT external_id, value FROM _rows ORDER BY 1, 2").fetchall()
+    assert got == [("A", "1"), ("A", "2"), ("B", "1"), ("C", "2"), ("C", "3")]
+
+
+def test_multi_category_constant_value_splits(conn, tmp_path):
+    src = _csv(tmp_path, "id\n1\n")
+    parse_upload(conn, src, "enum_multi", "groups", "a, b")
+    got = conn.execute("SELECT external_id, value FROM _rows ORDER BY 2").fetchall()
+    assert got == [("1", "a"), ("1", "b")]
+
+
+def test_multi_category_distinct_cap_counts_split_values(conn, tmp_path):
+    lines = "id,groups\n" + "\n".join(f'{i},"v{i}, v{i + 1}"' for i in range(100))
+    src = _csv(tmp_path, lines + "\n")
+    with pytest.raises(ValueError, match="too many"):
+        parse_upload(conn, src, "enum_multi", None, None)

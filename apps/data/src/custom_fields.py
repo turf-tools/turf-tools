@@ -3,7 +3,8 @@
 One long-format table per dataset, beside (not inside) the version schemas —
 `ducklake.main.<slug>_custom_fields (external_id, field_id, value, upload_id)`
 — which is what makes floating-across-versions visible in the layout itself.
-One row per (person, field) that has a value. Mutated directly
+One row per (person, field) that has a value — one per (person, field,
+value) for Multi Category fields. Mutated directly
 (insert/upsert/delete) — history comes from DuckLake snapshots, not a
 hand-rolled journal.
 
@@ -45,7 +46,10 @@ _SCHEMA = "main"
 # (Code) or free text (Text).
 _ENUM_VALUES_CAP = 100
 
-_FIELD_TYPES = ("number", "date", "text", "text_multi", "enum")
+_FIELD_TYPES = ("number", "date", "text", "text_multi", "enum", "enum_multi")
+
+# Field types whose option set is enumerated into a picker.
+_PICKER_TYPES = ("enum", "enum_multi")
 
 # Display names for error messages — mirrors the UI's FIELD_TYPE_META.
 _TYPE_LABELS = {
@@ -54,6 +58,7 @@ _TYPE_LABELS = {
     "text": "Text",
     "text_multi": "Code",
     "enum": "Category",
+    "enum_multi": "Multi Category",
 }
 
 
@@ -97,8 +102,7 @@ def rebuild_custom_wide(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> N
     if distinct_ids != distinct_hashes:
         raise RuntimeError(f"person_h collision in {values_table}: {distinct_ids} ids, {distinct_hashes} hashes")
     cols = ", ".join(
-        f"any_value({_wide_value_sql(field_id, field_type)}) AS {wide_column(field_id)}"
-        for field_id, field_type in fields
+        f"{_wide_value_sql(field_id, field_type)} AS {wide_column(field_id)}" for field_id, field_type in fields
     )
     conn.execute(f"""
         CREATE OR REPLACE TABLE {custom_wide_fqn(dataset_slug)} AS
@@ -110,11 +114,15 @@ def rebuild_custom_wide(conn: duckdb.DuckDBPyConnection, dataset_slug: str) -> N
 
 
 def _wide_value_sql(field_id: str, field_type: str) -> str:
-    """Per-field value expression for the rebuild's pivot. `field_id` is a
-    registry UUID (server-issued), safe to inline."""
+    """Per-field aggregate for the rebuild's pivot: a scalar cell for every
+    type but Multi Category, which collects the person's values into a list
+    (NULL when they have none). `field_id` is a registry UUID
+    (server-issued), safe to inline."""
+    if field_type == "enum_multi":
+        return f"list(value) FILTER (WHERE field_id = '{field_id}')"
     value = f"CASE WHEN field_id = '{field_id}' THEN value END"
     cast = _WIDE_CASTS.get(field_type)
-    return f"try_cast({value} AS {cast})" if cast else value
+    return f"any_value(try_cast({value} AS {cast}))" if cast else f"any_value({value})"
 
 
 # Wide-table existence probes, cached like `_values_table_cache`: the table is
@@ -203,9 +211,9 @@ def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include
         f"""
         SELECT f.custom_field_id::VARCHAR FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields f
         JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = f.dataset_id
-        WHERE d.slug = ? AND f.field_type = 'enum'
+        WHERE d.slug = ? AND f.field_type IN (SELECT unnest(?))
         """,
-        [dataset_slug],
+        [dataset_slug, list(_PICKER_TYPES)],
     ).fetchall()
     for (field_id,) in enum_fields:
         values = [
@@ -341,12 +349,14 @@ def parse_upload(
     if len(cols) >= 2:
         # One value per person: on in-file duplicates, keep max() —
         # deterministic, and dup ids in a scalar file are a data smell
-        # rather than a supported feature.
+        # rather than a supported feature. Multi Category joins duplicates
+        # into one comma list instead, so repeated ids union their values.
+        agg = "string_agg({0}, ',')" if field_type == "enum_multi" else "max({0})"
         conn.execute(
             f"""
             CREATE OR REPLACE TEMP TABLE _rows AS
             SELECT trim({id_col}) AS external_id, ? AS label,
-                max(trim(CAST("{cols[1]}" AS VARCHAR))) AS value
+                {agg.format(f'trim(CAST("{cols[1]}" AS VARCHAR))')} AS value
             FROM _upload
             WHERE trim({id_col}) <> '' AND trim(CAST("{cols[1]}" AS VARCHAR)) <> ''
             GROUP BY trim({id_col})
@@ -365,7 +375,18 @@ def parse_upload(
             """,
             [label, value],
         )
-    row = conn.execute("SELECT count(*) FROM _rows").fetchone()
+    # Multi Category cells are comma lists: one row per distinct value, so a
+    # person carries several rows for the field.
+    if field_type == "enum_multi":
+        conn.execute(
+            """
+            CREATE OR REPLACE TEMP TABLE _rows AS
+            SELECT DISTINCT r.external_id, r.label, trim(part) AS value
+            FROM _rows r, unnest(string_split(r.value, ',')) AS t(part)
+            WHERE trim(part) <> ''
+            """
+        )
+    row = conn.execute("SELECT count(DISTINCT external_id) FROM _rows").fetchone()
     row_count = row[0] if row else 0
     if row_count == 0:
         raise ValueError("No usable rows in the uploaded file.")
@@ -394,7 +415,7 @@ def parse_upload(
             kind = "numbers" if field_type == "number" else "dates (expected YYYY-MM-DD)"
             raise ValueError(f'{bad[0]} of {row_count} values aren\'t {kind} — e.g. "{bad[1]}".')
 
-    if field_type == "enum":
+    if field_type in _PICKER_TYPES:
         distinct = conn.execute("SELECT count(DISTINCT value) FROM _rows").fetchone()[0]
         if distinct > _ENUM_VALUES_CAP:
             raise ValueError(

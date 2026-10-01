@@ -89,7 +89,7 @@ export type FilterCatalog = {
 export type CustomFieldOption = {
   customFieldId: string;
   label: string;
-  fieldType: "number" | "date" | "text" | "text_multi" | "enum";
+  fieldType: "number" | "date" | "text" | "text_multi" | "enum" | "enum_multi";
   values: string[] | null;
   isArchived: boolean;
 };
@@ -98,7 +98,7 @@ export type CustomFieldOption = {
 // number-range) keyed by field id, so the standard editors work against them
 // unchanged.
 function customFieldToFilterDef(f: CustomFieldOption): FilterDef {
-  if (f.fieldType === "enum")
+  if (f.fieldType === "enum" || f.fieldType === "enum_multi")
     return {
       kind: "enum",
       key: f.customFieldId,

@@ -9,8 +9,9 @@ import { datasets } from "./datasets";
 // value (e.g. Employer → amazon), not a dedicated type.
 // `text_multi` ("Code") matches whole values against a typed-in list, so "3"
 // can't match "13"; `text` is a substring search and `enum` needs a picker
-// small enough to enumerate.
-export type CustomFieldType = "number" | "date" | "text" | "text_multi" | "enum";
+// small enough to enumerate. `enum_multi` ("Multi Category") is the picker
+// type for comma-separated cells: a person holds several values at once.
+export type CustomFieldType = "number" | "date" | "text" | "text_multi" | "enum" | "enum_multi";
 
 // A custom field — a user-appended, dataset-scoped, typed column that floats
 // across dataset versions. One row per field; values live in the lake's

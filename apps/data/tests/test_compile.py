@@ -594,6 +594,7 @@ CUSTOM_CATALOG = build_field_catalog(
         "f-text": "text",
         "f-code": "text_multi",
         "f-enum": "enum",
+        "f-multi": "enum_multi",
     },
 )
 
@@ -984,6 +985,43 @@ def test_cascade_supports_stacked_subquery_filters() -> None:
     sql = cascade_sql(catalog, criteria, "persons", params)
     step_0, step_1, step_2 = conn.execute(sql, params).fetchone()
     assert (step_0, step_1, step_2) == (3, 2, 1)
+
+
+def test_custom_multi_category_list_has_any() -> None:
+    params: list = []
+    where = criteria_to_where(
+        CUSTOM_CATALOG,
+        _narrow(EnumFilter(kind="enum", key="f-multi", values=["1", "3"])),
+        None,
+        params,
+    )
+    assert where == f"WHERE person_h IN (SELECT person_h FROM {WIDE} WHERE list_has_any(f_fmulti, ?))"
+    assert params == [["1", "3"]]
+
+
+def test_custom_multi_category_matches_any_value_end_to_end() -> None:
+    """A: 1,2 · B: 1 · C: 2,3 — filtering on 1 → A,B; on 2 → A,C; on 3 → C;
+    a person with no value never matches."""
+    import duckdb
+
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE persons (external_id VARCHAR, person_h UBIGINT)")
+    conn.execute("INSERT INTO persons VALUES ('A',1), ('B',2), ('C',3), ('D',4)")
+    conn.execute("CREATE TABLE cf (person_h UBIGINT, f_fmulti VARCHAR[])")
+    conn.execute("INSERT INTO cf VALUES (1,['1','2']), (2,['1']), (3,['2','3']), (4,NULL)")
+    catalog = build_field_catalog(NYS_MANIFEST, custom_table="cf", custom_fields={"f-multi": "enum_multi"})
+
+    def matches(values: list[str]) -> list[str]:
+        params: list = []
+        where = criteria_to_where(catalog, _narrow(EnumFilter(kind="enum", key="f-multi", values=values)), None, params)
+        rows = conn.execute(f"SELECT external_id FROM persons {where} ORDER BY 1", params).fetchall()
+        return [r[0] for r in rows]
+
+    assert matches(["1"]) == ["A", "B"]
+    assert matches(["2"]) == ["A", "C"]
+    assert matches(["3"]) == ["C"]
+    assert matches(["1", "3"]) == ["A", "B", "C"]
+    assert matches(["9"]) == []
 
 
 # ---------------------------------------------------------------------------

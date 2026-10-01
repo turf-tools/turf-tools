@@ -18,7 +18,14 @@ import { hasPermission } from "~/lib/permissions";
 import { dataFetch } from "~/lib/server/data-proxy";
 import { buildVoterDataContext } from "~/rpc/context";
 
-const FIELD_TYPES: CustomFieldType[] = ["number", "date", "text", "text_multi", "enum"];
+const FIELD_TYPES: CustomFieldType[] = [
+  "number",
+  "date",
+  "text",
+  "text_multi",
+  "enum",
+  "enum_multi",
+];
 
 // Worst realistic append is a full-population two-column CSV (~100–150MB for
 // 5M rows); typical lists are well under 15MB. Cap well above the worst case.

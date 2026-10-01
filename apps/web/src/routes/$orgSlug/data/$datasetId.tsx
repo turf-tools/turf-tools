@@ -73,11 +73,15 @@ const BASE_KIND_LABELS: Record<string, string> = {
 
 const FIELD_TYPE_META: Record<CustomFieldType, string> = {
   enum: "Category",
+  enum_multi: "Multi Category",
   number: "Number",
   date: "Date",
   text: "Text",
   text_multi: "Code",
 };
+
+// Types whose full option set lives on the registry row.
+const isPickerType = (t: CustomFieldType) => t === "enum" || t === "enum_multi";
 
 type DataSearch = {
   status: "current" | "archived" | "all";
@@ -689,7 +693,7 @@ function FieldsCard({
               // Warm the dialog's examples during hover→click latency so it
               // opens complete instead of popping the section in.
               onMouseEnter={() => {
-                if (f.fieldType !== "enum")
+                if (!isPickerType(f.fieldType))
                   void queryClient.prefetchQuery(customFieldExamplesQuery(f.customFieldId));
               }}
               onMouseDown={(e) => e.preventDefault()}
@@ -789,7 +793,7 @@ function FieldDialog({
   // Category fields carry their full option set on the registry row — no
   // fetch; scalar fields sample the lake. null = still loading (the section
   // shell reserves its space and the chips fade in).
-  const isEnum = field?.fieldType === "enum";
+  const isEnum = field != null && isPickerType(field.fieldType);
   const { data: sampled } = useQuery({
     ...customFieldExamplesQuery(field?.customFieldId ?? ""),
     enabled: open && field != null && !isEnum,

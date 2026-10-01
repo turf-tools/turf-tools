@@ -319,10 +319,15 @@ def _custom_pred(
     number/date filters compare directly."""
     col = wide_column(def_.key)
     if isinstance(f, EnumFilter):
-        if def_.kind != "enum":
+        if def_.kind not in ("enum", "enum_multi"):
             raise CriteriaError(f"Field {f.key} is not an enum field")
         if not f.values:
             return ""
+        if def_.kind == "enum_multi":
+            # The column is a list of the person's categories — match when
+            # any selected value is among them (one list bind).
+            params.append(list(f.values))
+            return f"list_has_any({col}, ?)"
         placeholders = ", ".join("?" for _ in f.values)
         params.extend(f.values)
         return f"{col} IN ({placeholders})"
