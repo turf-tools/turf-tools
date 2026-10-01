@@ -17,7 +17,9 @@ turfDrafts.autocut (web) ─► jobs row ─► autocut_turfs
 """
 
 import asyncio
+import logging
 import math
+import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -34,6 +36,8 @@ from src.duckdb import OPERATIONAL_PG_ALIAS, query_cursor
 from src.job_runner import JobContext, job
 from src.settings import get_settings
 from src.tables import resolve
+
+logger = logging.getLogger("uvicorn")
 
 # Multiples of the door target: merging stops before a turf would pass
 # the cap, and anything under the floor joins a neighbour regardless.
@@ -112,7 +116,14 @@ async def autocut_turfs(payload: AutocutTurfsPayload, ctx: JobContext) -> dict[s
 
 def _run(payload: AutocutTurfsPayload) -> dict[str, Any]:
     settings = get_settings()
+    phases: dict[str, float] = {}
+
+    def done(phase: str, since: float) -> float:
+        phases[phase] = time.perf_counter() - since
+        return time.perf_counter()
+
     with query_cursor(settings) as conn:
+        t = time.perf_counter()
         version, catalog = query_context(conn, payload.org_slug)
         scope = load_campaign_scope(conn, payload.campaign_id, payload.zone_id)
         criteria = resolve_criteria(scope.criteria, conn, settings, payload.org_slug)
@@ -133,12 +144,18 @@ def _run(payload: AutocutTurfsPayload) -> dict[str, Any]:
         buildings, doors = conn.execute("SELECT count(*), coalesce(sum(doors), 0) FROM autocut_buildings").fetchone()
         if buildings == 0:
             raise ValueError("The segment has no buildings in this zone.")
+        t = done("buildings", t)
         cut(conn, payload.door_target)
+        t = done("cut", t)
         _trade(conn, payload.door_target)
+        t = done("trade", t)
         _build_polygons(conn)
         _absorb_islands(conn)
         _order_drafts(conn, payload.start)
+        t = done("draw", t)
         turfs = _replace_drafts(conn, payload, scope.segment_id)
+        done("drafts", t)
+    logger.info("autocut %d buildings: %s", buildings, " ".join(f"{k} {v:.2f}s" for k, v in phases.items()))
     return {"turfs": turfs, "buildings": buildings, "doors": doors}
 
 
