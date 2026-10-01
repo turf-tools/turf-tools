@@ -414,10 +414,14 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     end up with hulls that overlap for the sake of one or two buildings at
     the edge: a tip poking into the neighbour, a house grabbed from the
     other side. A trade moves one building across a boundary it is linked
-    over when that strictly shrinks the total overlap between the padded
-    hulls (the ones the drawing contests), the receiving turf stays under
-    the cap, the giving turf stays over the floor and in one piece
-    (connected through links that meet inside its new hull).
+    over when it sits inside the neighbour's padded hull, its own turf's
+    hull no longer covers it once it has gone (a house mid-row would only
+    swap which side it is foreign to), and the move strictly shrinks the
+    total overlap between the padded hulls (the ones the drawing contests;
+    a concave hull can reshape when a point is added, so the shrink alone
+    is not proof of untangling). The receiving turf stays under the cap,
+    the giving turf stays over the floor and in one piece (connected
+    through links that meet inside its new hull).
 
     Moves over a street-level link are tried before moves around the
     block, so where a cheap move resolves an overlap it is taken before an
@@ -475,6 +479,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 JOIN hulls ha ON ha.turf = x.turf
                 JOIN hulls hb ON hb.turf = y.turf
                 WHERE hb.doors + x.doors <= {cap} AND ha.doors - x.doors >= {floor}
+                  AND ST_Within(x.pt, hb.hull)
                 GROUP BY x.id, x.turf, y.turf, x.doors
             ),
             -- The two hulls after the move.
@@ -507,7 +512,10 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 FROM candidates c
                 JOIN before b USING (id, other)
                 JOIN after_area aa USING (id, other)
+                JOIN after a USING (id, other)
+                JOIN autocut_trade p ON p.id = c.id
                 WHERE b.area - aa.area > 0.5
+                  AND NOT ST_Within(p.pt, a.ha)
             )
             SELECT id, own, other FROM gains ORDER BY via >= {_AROUND_BLOCK}, gain DESC, id
         """).fetchall()
