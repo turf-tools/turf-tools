@@ -11,6 +11,7 @@ import {
 import { type MapMouseEvent, useMap } from "react-map-gl/maplibre";
 import { darkAtom } from "~/lib/atoms/theme";
 import { pointInPolygon } from "~/lib/geometry";
+import { revealTurfRow } from "~/lib/utils";
 import { colorFor } from "~/lib/zone-colors";
 
 // Polygon-drawing surface for the turf cutter. Reads the underlying
@@ -313,6 +314,7 @@ export function TurfDrawer({
         });
         if (pointInPolygon(click, screen)) {
           setSelectedTurfId(turf.id);
+          revealTurfRow(turf.id);
           return;
         }
       }

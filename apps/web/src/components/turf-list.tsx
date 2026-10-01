@@ -70,6 +70,7 @@ const Row = memo(function Row({
     <div
       role="button"
       tabIndex={0}
+      data-turf-row={id}
       onClick={() => onSelect(id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

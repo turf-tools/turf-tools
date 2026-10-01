@@ -1,4 +1,4 @@
-"""Full-pipeline integration test.
+"""Full-pipeline test.
 
 Runs the same DAG `seed-persons` runs — `voter_file_loader` → `tiger` →
 `osm` → `matching` → `geocode` → `assembly` → `aggregate` — against the
@@ -14,8 +14,8 @@ Asserts:
     coords, no duplicate building dots, etc.) that should always hold
     regardless of the version baseline.
 
-Marked `@pytest.mark.integration` so the default suite skips it
-(see `pnpm data:test` vs `pnpm data:test:integration`).
+Marked `@pytest.mark.pipeline` so the default suite skips it
+(see `pnpm data:test` vs `pnpm data:test:pipeline`).
 
 Caches:
   - TIGER shapefiles under `apps/data/tiger_cache/` (~30 MB per county).
@@ -74,10 +74,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
     """Run the full NYC pipeline once for the whole module. Module-scoped
     so all assertions share one pipeline run."""
     if not VOTER_FILE.exists():
-        pytest.skip(
-            f"Voter fixture not present at {VOTER_FILE}. Pull from object "
-            "storage or regenerate via `uv run python scripts/sample_voter_file.py`."
-        )
+        pytest.skip(f"Voter fixture not present at {VOTER_FILE}; ask a maintainer for it.")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         conn = duckdb.connect()
@@ -122,8 +119,8 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.close()
 
 
-# Module-level mark so every test in this file is gated on -m integration.
-pytestmark = pytest.mark.integration
+# Module-level mark so every test in this file is gated on -m pipeline.
+pytestmark = pytest.mark.pipeline
 
 
 # ---------------------------------------------------------------------------

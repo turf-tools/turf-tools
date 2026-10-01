@@ -42,6 +42,14 @@ export function revealZoneCard(zoneId: string) {
     ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+// Scroll a turf's list row (tagged `data-turf-row`) into view when the
+// turf is picked on the map.
+export function revealTurfRow(turfId: string) {
+  document
+    .querySelector(`[data-turf-row="${turfId}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 // Render an ALL-CAPS voter-file string (name, address, city) as
 // title case. Capitalizes the first letter of each word *and* of
 // each segment after a hyphen or apostrophe — "O'BRIEN" → "O'Brien",
@@ -50,3 +58,7 @@ export function toTitleCase(text: string | null | undefined): string {
   if (!text) return "";
   return text.toLowerCase().replace(/(?:^|[\s\-'])\p{L}/gu, (c) => c.toUpperCase());
 }
+
+// Where autocut starts numbering turfs: the corner a field lead signs out from.
+export const AUTOCUT_STARTS = ["northwest", "northeast", "southwest", "southeast"] as const;
+export type AutocutStart = (typeof AUTOCUT_STARTS)[number];

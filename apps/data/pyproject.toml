@@ -54,7 +54,13 @@ select = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-markers = ["integration: full-pipeline run on the NYC voter fixture (slow; ~1 min)"]
+# The default suite is the fast tests with no outside dependencies; each
+# marker below needs local data or a binary and runs on its own.
+markers = [
+  "pipeline: full-pipeline run on the NYC voter fixture (slow; ~1 min)",
+  "autocut: the autocut battery on the local autocut fixture (~15 s; `python -m scripts.autocut_fixture` first)",
+  "quickwit: the Quickwit index build, needs the quickwit binary on PATH",
+]
 
 [tool.ty.environment]
 python-version = "3.13"

@@ -24,8 +24,8 @@ from pathlib import Path
 import pytest
 
 import duckdb
-from src.dags.blockface_relationships import blockface_relationships
 from src.dags.tiger import blockface_unpivoted, tiger_addrfeat_raw, tiger_edges_raw
+from src.dags.topology import blockface_relationships
 
 ZIP = "10003"
 

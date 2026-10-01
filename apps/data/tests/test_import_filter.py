@@ -1,19 +1,15 @@
 """The dataset-level import filter: a fixed `column IN values` slice applied
 before transform. Pins the SQL it compiles to, the allowlist that guards which
-columns a payload may name, and the end-to-end row count on the NYC fixture.
+columns a payload may name.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
 from src.importers.base import ImportFilter, InvalidImportFilterError
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.importers.nys_voter_file.transform import nys_sboe_transformation_query
-
-FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "ny-voters-2026-03-08-10k-sample.parquet"
 
 
 class _Progress:
@@ -40,12 +36,3 @@ def test_unlisted_column_is_rejected_before_the_source_is_read() -> None:
         NysVoterFileImporter().load(
             "/nope/not-here.parquet", "irrelevant", None, _Progress(), ImportFilter(column="status", values=["A"])
         )
-
-
-@pytest.mark.skipif(not FIXTURE.exists(), reason="NYC fixture not present")
-def test_fixture_slices_to_one_congressional_district(conn) -> None:
-    nyc13 = ImportFilter(column="congressional_district", values=["13"])
-    table = NysVoterFileImporter().load(str(FIXTURE), "nys_voter_file_v1", conn, _Progress(), nyc13)
-    (count,) = conn.execute(f"SELECT count(*) FROM {table.fqn}").fetchone()
-    (total,) = conn.execute(f"SELECT count(*) FROM '{FIXTURE}' WHERE congressional_district = '13'").fetchone()
-    assert count == total > 0

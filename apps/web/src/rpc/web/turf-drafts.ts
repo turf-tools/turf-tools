@@ -1,7 +1,9 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, isNull } from "@turf-tools/db";
-import { campaigns, turfDrafts } from "@turf-tools/db/schema";
+import { and, asc, eq, isNull, sql } from "@turf-tools/db";
+import { campaigns, jobs, turfDrafts } from "@turf-tools/db/schema";
 import { z } from "zod";
+
+import { AUTOCUT_STARTS } from "~/lib/utils";
 import { webPub as pub } from "../context";
 
 // Drafts are scoped to `(campaignId, zoneId)`, where `zoneId` is null
@@ -142,4 +144,70 @@ export const clearForCampaign = pub
       .where(eq(turfDrafts.campaignId, input.campaignId))
       .returning({ turfDraftId: turfDrafts.turfDraftId });
     return { deleted: deleted.length };
+  });
+
+// Enqueue an autocut of a `(campaignId, zoneId)` scope. The data-server
+// job replaces the scope's drafts; the client polls `autocutStatus` and
+// reloads drafts when it completes. The concurrency key runs one job
+// per scope at a time (a reload or second tab can enqueue another), so
+// two runs never interleave their draft replacements.
+export const autocut = pub
+  .input(
+    z.object({
+      campaignId: z.string().uuid(),
+      zoneId: nullableUuid,
+      doorTarget: z.number().int().positive(),
+      start: z.enum(AUTOCUT_STARTS).default("northwest"),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ segmentId: campaigns.segmentId })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.campaignId, input.campaignId),
+          eq(campaigns.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Campaign not found" });
+    if (!owned[0]!.segmentId) {
+      throw new ORPCError("BAD_REQUEST", { message: "Campaign has no bound segment" });
+    }
+
+    const [job] = await context.db
+      .insert(jobs)
+      .values({
+        task: "autocut_turfs",
+        payload: {
+          campaign_id: input.campaignId,
+          zone_id: input.zoneId,
+          org_slug: context.orgSlug,
+          organization_id: context.organizationId,
+          door_target: input.doorTarget,
+          start: input.start,
+        },
+        concurrencyKey: `autocut:${input.campaignId}:${input.zoneId ?? "all"}`,
+      })
+      .returning({ jobId: jobs.jobId });
+    return { jobId: job!.jobId };
+  });
+
+// Poll an autocut job. Org-checked via the payload the job was enqueued
+// with — job rows don't carry their own org id.
+export const autocutStatus = pub
+  .input(z.object({ jobId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const [job] = await context.db
+      .select({ status: jobs.status, failureReason: jobs.failureReason })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.jobId, input.jobId),
+          eq(jobs.task, "autocut_turfs"),
+          sql`${jobs.payload}->>'organization_id' = ${context.organizationId}`,
+        ),
+      );
+    if (!job) throw new ORPCError("NOT_FOUND", { message: "Autocut not found" });
+    return job;
   });

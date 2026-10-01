@@ -18,7 +18,7 @@ from hamilton import driver
 from pydantic import BaseModel
 
 from src import postgres
-from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, quickwit, tiger
+from src.dags import aggregate, assembly, boundaries, geocode, matching, osm, quickwit, tiger, topology
 from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
@@ -96,13 +96,15 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
 
 
 # Geocode-pipeline outputs, plus `tiger_tabblock_raw` — the census blocks the
-# boundary step unions over (not otherwise built during import).
+# boundary step unions over (not otherwise built during import) — and
+# `blockface_relationships`, the walkable blockface graph turf cutting reads.
 _FINAL_VARS = [
     "persons_geocoded",
     "geocoding_summary",
     "buildings_geocoded",
     "doors_geocoded",
     "tiger_tabblock_raw",
+    "blockface_relationships",
 ]
 
 
@@ -150,11 +152,13 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         hook = ProgressNodeHook(progress, input_keys)
         dr = (
             driver.Builder()
-            .with_modules(tiger, osm, matching, geocode, assembly, aggregate, boundaries)
+            .with_modules(tiger, osm, matching, geocode, assembly, aggregate, boundaries, topology)
             .with_adapters(hook)
             .build()
         )
-        dag_steps = sum(1 for n in dr.graph.get_upstream_nodes(_FINAL_VARS)[0] if n.name not in input_keys)
+        # Steps are the computed nodes; inputs and unset optional parameters
+        # (which Hamilton also lists upstream) never complete.
+        dag_steps = sum(1 for n in dr.graph.get_upstream_nodes(_FINAL_VARS)[0] if not n.user_defined)
         # +2 for the post-DAG passes not in the main graph: the Quickwit index
         # build and the derived-metadata unnest+count — so the bar doesn't sit
         # "stuck" near 100% while they run.

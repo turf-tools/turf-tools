@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
+import time
 import traceback
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -12,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol, get_type_hints, overload
 
 from pydantic import BaseModel, ValidationError
+
+logger = logging.getLogger("uvicorn")
 
 type JobFunc = Callable[..., Any]
 # A periodic maintenance pass, run by every worker on each maintenance tick,
@@ -298,11 +302,14 @@ class JobManager:
 
         context = JobContext(job_id=claimed_job.job_id, worker_id=self.worker_id, store=self.store)
 
+        started = time.monotonic()
         try:
             result = _call_registered_job(registered_job.func, payload, context)
             if inspect.isawaitable(result):
                 result = await result
         except Exception as exc:
+            elapsed = time.monotonic() - started
+            logger.info("job %s %s failed after %.1fs", claimed_job.task, claimed_job.job_id, elapsed)
             await self.store.write_message(
                 job_id=claimed_job.job_id,
                 payload={
@@ -315,6 +322,8 @@ class JobManager:
             await self.store.fail_job(job_id=claimed_job.job_id, failure_reason=_truncate(str(exc)))
             return
 
+        elapsed = time.monotonic() - started
+        logger.info("job %s %s completed in %.1fs", claimed_job.task, claimed_job.job_id, elapsed)
         await self.store.complete_job(job_id=claimed_job.job_id, result=_jsonable(result))
 
 
