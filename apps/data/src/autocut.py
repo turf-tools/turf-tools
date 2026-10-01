@@ -77,6 +77,10 @@ _SIMPLIFY_M = 2.0
 # strictly shrinks the overlap between hulls, so this only bounds the
 # unforeseen.
 _TRADE_MOVES = 200
+# How many times the run a trade moves may grow by what the receiver's
+# hull, redrawn around it, newly covers: about one per house along a
+# street. A run still growing is left alone.
+_TRADE_GROWTH = 5
 # Dividers between turfs are cut this far past the region they divide, so
 # they cross the hull outlines instead of ending a hair short of them
 # (polygonizing ignores dangling ends). Web Mercator meters.
@@ -411,28 +415,19 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     moved.
 
     Merging never reconsiders a building once absorbed, so two turfs often
-    end up with hulls that overlap for the sake of one or two buildings at
-    the edge: a tip poking into the neighbour, a house grabbed from the
-    other side. A trade moves one building across a boundary it is linked
-    over when it sits inside the neighbour's padded hull, its own turf's
-    hull no longer covers it once it has gone (a house mid-row would only
-    swap which side it is foreign to), and the move strictly shrinks the
-    total overlap between the padded hulls (the ones the drawing contests;
-    a concave hull can reshape when a point is added, so the shrink alone
-    is not proof of untangling). The receiving turf stays under the cap,
-    the giving turf stays over the floor and in one piece (connected
-    through links that meet inside its new hull).
+    overlap at their edge. A trade hands buildings from one turf to its
+    neighbour: the ones sitting inside the neighbour's padded hull, plus
+    any that hull would cover once it includes those, moved together as
+    one run, since moving the first house of a street alone only drags the
+    hull over the next. A trade only happens if it strictly shrinks the
+    total overlap between hulls (a concave hull can reshape as points come
+    and go), the giver's hull no longer covers the run, and both turfs stay
+    within cap and floor and in one piece. Street-level trades go before
+    around-the-block ones.
 
-    Moves over a street-level link are tried before moves around the
-    block, so where a cheap move resolves an overlap it is taken before an
-    expensive one.
-
-    Moves are found a round at a time: every legal trade's gain is worked
-    out on the current hulls, and the moves that touch different turfs are
-    applied together. Two moves can still affect each other's overlap, so
-    a round that fails to lower the total is undone in favour of its best
-    move alone, which always lowers it. Every round lowers one
-    non-negative total, so it ends on its own.
+    Each round applies every legal trade that touches different turfs
+    together, undone in favour of its best alone if the total didn't fall;
+    every round lowers one non-negative total, so it ends.
     """
     cap, floor = _CAP * door_target, _FLOOR * door_target
     k = _mercator_scale(conn)
@@ -456,6 +451,24 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
          AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
         WHERE ST_Intersects(a.hull, b.hull)
     """
+    # Unrolled rather than recursive: each step is one grouped hull per pair.
+    grow = ""
+    for i in range(1, _TRADE_GROWTH + 1):
+        grow += f"""
+            h{i} AS (
+                SELECT own, other, {_hull_sql("list(pt)", k)} AS hull
+                FROM (SELECT p.own, p.other, x.pt FROM pairs p JOIN autocut_trade x ON x.turf = p.other
+                      UNION ALL SELECT own, other, pt FROM s{i - 1})
+                GROUP BY own, other
+            ),
+            s{i} AS (
+                SELECT * FROM s{i - 1}
+                UNION ALL
+                SELECT h.own, h.other, x.id, x.pt, x.doors
+                FROM h{i} h JOIN autocut_trade x ON x.turf = h.own AND ST_Within(x.pt, h.hull)
+                WHERE NOT EXISTS (SELECT 1 FROM s{i - 1} s WHERE (s.own, s.other, s.id) = (h.own, h.other, x.id))
+            ),"""
+    last = _TRADE_GROWTH
     moves = 0
     while moves < _TRADE_MOVES:
         found = conn.execute(f"""
@@ -468,56 +481,81 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                  AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
                 WHERE ST_Intersects(a.hull, b.hull)
             ),
-            -- A building linked into a turf whose hull overlaps its own,
-            -- with the cheapest link it would move over.
-            candidates AS (
-                SELECT x.id, x.turf AS own, y.turf AS other, x.doors, min(l.crossing) AS via
-                FROM autocut_links l
-                JOIN autocut_trade x ON x.id = l.u
-                JOIN autocut_trade y ON y.id = l.v AND y.turf <> x.turf
-                JOIN overlapping o ON (o.ta, o.tb) = (least(x.turf, y.turf), greatest(x.turf, y.turf)) AND o.area > 0
-                JOIN hulls ha ON ha.turf = x.turf
-                JOIN hulls hb ON hb.turf = y.turf
-                WHERE hb.doors + x.doors <= {cap} AND ha.doors - x.doors >= {floor}
-                  AND ST_Within(x.pt, hb.hull)
-                GROUP BY x.id, x.turf, y.turf, x.doors
+            pairs AS (
+                SELECT ta AS own, tb AS other FROM overlapping WHERE area > 0
+                UNION ALL
+                SELECT tb, ta FROM overlapping WHERE area > 0
+            ),
+            -- The giver's buildings inside the receiver's hull.
+            s0 AS (
+                SELECT p.own, p.other, x.id, x.pt, x.doors
+                FROM pairs p
+                JOIN hulls hb ON hb.turf = p.other
+                JOIN autocut_trade x ON x.turf = p.own AND ST_Within(x.pt, hb.hull)
+            ),{grow}
+            -- A run is settled when the last step covered nothing new; its
+            -- hull is then the receiver's hull after the move.
+            runs AS (
+                SELECT r.own, r.other, list(r.id) AS ids, sum(r.doors) AS doors
+                FROM s{last - 1} r
+                GROUP BY r.own, r.other
+                HAVING count(*) = (SELECT count(*) FROM s{last} s WHERE (s.own, s.other) = (r.own, r.other))
             ),
             -- The two hulls after the move.
             after AS (
-                SELECT c.id, c.own, c.other,
-                       {_hull_sql("list(p.pt) FILTER (WHERE p.turf = c.own AND p.id <> c.id)", k)} AS ha,
-                       {_hull_sql("list(p.pt) FILTER (WHERE p.turf = c.other OR p.id = c.id)", k)} AS hb
-                FROM candidates c JOIN autocut_trade p ON p.turf IN (c.own, c.other)
-                GROUP BY c.id, c.own, c.other
+                SELECT r.own, r.other, r.ids, r.doors, h.hull AS hb,
+                       {_hull_sql("list(x.pt) FILTER (WHERE NOT list_contains(r.ids, x.id))", k)} AS ha
+                FROM runs r
+                JOIN h{last} h ON (h.own, h.other) = (r.own, r.other)
+                JOIN autocut_trade x ON x.turf = r.own
+                GROUP BY r.own, r.other, r.ids, r.doors, h.hull
+            ),
+            legal AS (
+                SELECT a.own, a.other, a.ids, a.ha, a.hb
+                FROM after a
+                JOIN hulls ga ON ga.turf = a.own
+                JOIN hulls gb ON gb.turf = a.other
+                WHERE gb.doors + a.doors <= {cap} AND ga.doors - a.doors >= {floor}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autocut_trade x
+                      WHERE x.turf = a.own AND list_contains(a.ids, x.id) AND ST_Within(x.pt, a.ha)
+                  )
+            ),
+            -- The cheapest link the run moves over; a run without one stays.
+            via AS (
+                SELECT l.own, l.other, min(k.crossing) AS via
+                FROM legal l
+                JOIN autocut_trade x ON x.turf = l.own AND list_contains(l.ids, x.id)
+                JOIN autocut_links k ON k.u = x.id
+                JOIN autocut_trade y ON y.id = k.v AND y.turf = l.other
+                GROUP BY l.own, l.other
             ),
             -- Overlap involving either turf, before and after (with each
             -- other and with any third turf).
             before AS (
-                SELECT c.id, c.other, coalesce(sum(o.area), 0) AS area
-                FROM candidates c
-                LEFT JOIN overlapping o ON o.ta IN (c.own, c.other) OR o.tb IN (c.own, c.other)
-                GROUP BY c.id, c.other
+                SELECT l.own, l.other, coalesce(sum(o.area), 0) AS area
+                FROM legal l
+                LEFT JOIN overlapping o ON o.ta IN (l.own, l.other) OR o.tb IN (l.own, l.other)
+                GROUP BY l.own, l.other
             ),
             after_area AS (
-                SELECT a.id, a.other,
-                       ST_Area(ST_Intersection(a.ha, a.hb))
-                     + coalesce((SELECT sum(ST_Area(ST_Intersection(a.ha, h.hull))) FROM hulls h
-                                 WHERE h.turf NOT IN (a.own, a.other) AND ST_Intersects(a.ha, h.hull)), 0)
-                     + coalesce((SELECT sum(ST_Area(ST_Intersection(a.hb, h.hull))) FROM hulls h
-                                 WHERE h.turf NOT IN (a.own, a.other) AND ST_Intersects(a.hb, h.hull)), 0) AS area
-                FROM after a
+                SELECT l.own, l.other,
+                       ST_Area(ST_Intersection(l.ha, l.hb))
+                     + coalesce((SELECT sum(ST_Area(ST_Intersection(l.ha, h.hull))) FROM hulls h
+                                 WHERE h.turf NOT IN (l.own, l.other) AND ST_Intersects(l.ha, h.hull)), 0)
+                     + coalesce((SELECT sum(ST_Area(ST_Intersection(l.hb, h.hull))) FROM hulls h
+                                 WHERE h.turf NOT IN (l.own, l.other) AND ST_Intersects(l.hb, h.hull)), 0) AS area
+                FROM legal l
             ),
             gains AS (
-                SELECT c.id, c.own, c.other, c.via, b.area - aa.area AS gain
-                FROM candidates c
-                JOIN before b USING (id, other)
-                JOIN after_area aa USING (id, other)
-                JOIN after a USING (id, other)
-                JOIN autocut_trade p ON p.id = c.id
+                SELECT l.own, l.other, l.ids, v.via, b.area - aa.area AS gain
+                FROM legal l
+                JOIN via v USING (own, other)
+                JOIN before b USING (own, other)
+                JOIN after_area aa USING (own, other)
                 WHERE b.area - aa.area > 0.5
-                  AND NOT ST_Within(p.pt, a.ha)
             )
-            SELECT id, own, other FROM gains ORDER BY via >= {_AROUND_BLOCK}, gain DESC, id
+            SELECT own, other, ids FROM gains ORDER BY via >= {_AROUND_BLOCK}, gain DESC, own, other
         """).fetchall()
         if not found:
             break
@@ -526,7 +564,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
         # only trim it). Checked in Python, in gain order, for the moves
         # that make the batch: the recursive walk is cheap here and dear
         # as a subquery per candidate.
-        givers = ", ".join(map(str, {own for _, own, _ in found}))
+        givers = ", ".join(map(str, {own for own, _, _ in found}))
         members: dict[int, set[int]] = {}
         for turf, building in conn.execute(f"SELECT turf, id FROM autocut_trade WHERE turf IN ({givers})").fetchall():
             members.setdefault(turf, set()).add(building)
@@ -543,23 +581,25 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
 
         touched: set[int] = set()
         batch = []
-        for building, own, other in found:
-            if (
-                own not in touched
-                and other not in touched
-                and _connected(members[own] - {building}, links.get(own, {}))
-            ):
+        for own, other, ids in found:
+            if own not in touched and other not in touched and _connected(members[own] - set(ids), links.get(own, {})):
                 touched.update((own, other))
-                batch.append((building, own, other))
+                batch.append((own, other, ids))
         if not batch:
             break
         (before,) = conn.execute(overlap_sql).fetchone()
-        conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(other, b) for b, _, other in batch])
+        conn.executemany(
+            "UPDATE autocut_trade SET turf = ? WHERE id = ?",
+            [(other, b) for _, other, ids in batch for b in ids],
+        )
         (after,) = conn.execute(overlap_sql).fetchone()
         if after >= before and len(batch) > 1:
-            conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(own, b) for b, own, _ in batch[1:]])
+            conn.executemany(
+                "UPDATE autocut_trade SET turf = ? WHERE id = ?",
+                [(own, b) for own, _, ids in batch[1:] for b in ids],
+            )
             batch = batch[:1]
-        moves += len(batch)
+        moves += sum(len(ids) for _, _, ids in batch)
     conn.execute("""
         UPDATE autocut_turfs SET turf = p.turf FROM autocut_trade p WHERE autocut_turfs.building_id = p.building_id
     """)
