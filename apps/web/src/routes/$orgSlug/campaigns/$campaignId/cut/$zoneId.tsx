@@ -451,6 +451,9 @@ export function Cutter({
   });
 
   const [autocutOpen, setAutocutOpen] = useState(false);
+  // Snapshotted on open: the body reads this, not `turfs`, so the warning
+  // holds still while the dialog animates closed over the new turfs.
+  const [autocutReplacing, setAutocutReplacing] = useState(0);
   const [doorTarget, setDoorTarget] = useState(String(DEFAULT_DOOR_TARGET));
   const [start, setStart] = useState<AutocutStart>("northwest");
   // Enqueues the job, polls it to completion, then swaps in the drafts it
@@ -596,6 +599,7 @@ export function Cutter({
           disabled={!buildings?.length}
           onClick={() => {
             autocutMutation.reset();
+            setAutocutReplacing(turfs.length);
             setAutocutOpen(true);
           }}
         >
@@ -737,10 +741,10 @@ export function Cutter({
               ))}
             </ToggleGroup>
           </div>
-          {turfs.length > 0 ? (
+          {autocutReplacing > 0 ? (
             <Callout tone="warning" className="-mt-1 mb-5">
-              This replaces the <span className="font-bold">{turfs.length}</span> turf
-              {turfs.length === 1 ? "" : "s"} you've cut.
+              This replaces the <span className="font-bold">{autocutReplacing}</span> turf
+              {autocutReplacing === 1 ? "" : "s"} you've cut.
             </Callout>
           ) : null}
           {autocutMutation.error ? (
