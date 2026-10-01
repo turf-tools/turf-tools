@@ -305,23 +305,19 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                 FROM legal
                 WHERE NOT blocked OR under_floor
                 GROUP BY ca
-            )
-            SELECT b1.ca, b1.cb, b1.forced
-            FROM best b1
-            JOIN best b2 ON b2.ca = b1.cb AND b2.cb = b1.ca
-            WHERE b1.ca < b1.cb
-        """).fetchall()
-        if not picked:
-            break
-        conn.execute("CREATE OR REPLACE TEMP TABLE autocut_pairs (ca INT, cb INT, forced BOOLEAN)")
-        conn.executemany("INSERT INTO autocut_pairs VALUES (?, ?, ?)", picked)
-        wrapping = conn.execute(f"""
+            ),
+            mutual AS (
+                SELECT b1.ca, b1.cb, b1.forced
+                FROM best b1
+                JOIN best b2 ON b2.ca = b1.cb AND b2.cb = b1.ca
+                WHERE b1.ca < b1.cb
+            ),
             -- The hull each picked merge would have, with its box for cheap
             -- tests ahead of the real ones.
-            WITH hulls AS (
+            hulls AS (
                 SELECT p.ca, p.cb, h.hull,
                        ST_XMin(h.hull) AS x0, ST_YMin(h.hull) AS y0, ST_XMax(h.hull) AS x1, ST_YMax(h.hull) AS y1
-                FROM autocut_pairs p,
+                FROM mutual p,
                 LATERAL (
                     SELECT ST_ConcaveHull(ST_Collect(list(s.pt)), {_HULL_CONCAVITY}, false) AS hull
                     FROM autocut_merged m JOIN autocut_units u USING (unit_id) JOIN autocut_sites s USING (site)
@@ -335,7 +331,7 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                 FROM autocut_merged m
                 JOIN autocut_links l ON l.u = m.unit_id
                 JOIN autocut_merged o ON o.unit_id = l.v AND o.cid <> m.cid
-                WHERE m.cid IN (SELECT ca FROM autocut_pairs UNION ALL SELECT cb FROM autocut_pairs)
+                WHERE m.cid IN (SELECT ca FROM mutual UNION ALL SELECT cb FROM mutual)
             ),
             around_cells AS (
                 SELECT a.cid, a.unit_id, o.cid AS other, c.geom,
@@ -371,18 +367,27 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                 WHERE ST_XMax(l.edge) >= h.x0 AND ST_XMin(l.edge) <= h.x1
                   AND ST_YMax(l.edge) >= h.y0 AND ST_YMin(l.edge) <= h.y1
                   AND ST_Intersects(l.edge, h.hull)
+            ),
+            wrapping AS (
+                SELECT ca, cb FROM boxed
+                UNION
+                SELECT ca, cb FROM hulls WHERE (ca, cb) NOT IN (SELECT ca, cb FROM meeting)
             )
-            SELECT ca, cb FROM boxed
-            UNION
-            SELECT ca, cb FROM hulls WHERE (ca, cb) NOT IN (SELECT ca, cb FROM meeting)
+            SELECT m.ca, m.cb, m.forced, EXISTS (SELECT 1 FROM wrapping w WHERE (w.ca, w.cb) = (m.ca, m.cb)) AS wraps
+            FROM mutual m
         """).fetchall()
-        wraps = set(wrapping)
-        merges = [(ca, cb) for ca, cb, forced in picked if (ca, cb) not in wraps or forced]
-        blocks = [(ca, cb) for ca, cb, forced in picked if (ca, cb) in wraps and not forced]
+        if not picked:
+            break
+        merges = [(ca, cb) for ca, cb, forced, wraps in picked if not wraps or forced]
+        blocks = [(ca, cb) for ca, cb, forced, wraps in picked if wraps and not forced]
         if merges:
-            conn.executemany("UPDATE autocut_merged SET cid = ? WHERE cid = ?", merges)
+            conn.execute(f"""
+                UPDATE autocut_merged SET cid = v.ca
+                FROM (VALUES {", ".join(f"({ca}, {cb})" for ca, cb in merges)}) v(ca, cb)
+                WHERE autocut_merged.cid = v.cb
+            """)
         if blocks:
-            conn.executemany("INSERT INTO autocut_blocked VALUES (?, ?)", blocks)
+            conn.execute(f"INSERT INTO autocut_blocked VALUES {', '.join(f'({ca}, {cb})' for ca, cb in blocks)}")
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_turfs AS
         WITH kept AS (
