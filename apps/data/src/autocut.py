@@ -413,6 +413,10 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     the cap, the giving turf stays over the floor and in one piece
     (connected through links that meet inside its new hull).
 
+    Moves over a street-level link are tried before moves around the
+    block, so where a cheap move resolves an overlap it is taken before an
+    expensive one.
+
     Moves are found a round at a time: every legal trade's gain is worked
     out on the current hulls, and the moves that touch different turfs are
     applied together. Two moves can still affect each other's overlap, so
@@ -454,9 +458,10 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                  AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
                 WHERE ST_Intersects(a.hull, b.hull)
             ),
-            -- A building linked into a turf whose hull overlaps its own.
+            -- A building linked into a turf whose hull overlaps its own,
+            -- with the cheapest link it would move over.
             candidates AS (
-                SELECT DISTINCT x.id, x.turf AS own, y.turf AS other, x.doors
+                SELECT x.id, x.turf AS own, y.turf AS other, x.doors, min(l.crossing) AS via
                 FROM autocut_links l
                 JOIN autocut_trade x ON x.id = l.u
                 JOIN autocut_trade y ON y.id = l.v AND y.turf <> x.turf
@@ -464,6 +469,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 JOIN hulls ha ON ha.turf = x.turf
                 JOIN hulls hb ON hb.turf = y.turf
                 WHERE hb.doors + x.doors <= {cap} AND ha.doors - x.doors >= {floor}
+                GROUP BY x.id, x.turf, y.turf, x.doors
             ),
             -- The two hulls after the move.
             after AS (
@@ -491,13 +497,13 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 FROM after a
             ),
             gains AS (
-                SELECT c.id, c.own, c.other, b.area - aa.area AS gain
+                SELECT c.id, c.own, c.other, c.via, b.area - aa.area AS gain
                 FROM candidates c
                 JOIN before b USING (id, other)
                 JOIN after_area aa USING (id, other)
                 WHERE b.area - aa.area > 0.5
             )
-            SELECT id, own, other FROM gains ORDER BY gain DESC, id
+            SELECT id, own, other FROM gains ORDER BY via >= {_AROUND_BLOCK}, gain DESC, id
         """).fetchall()
         if not found:
             break

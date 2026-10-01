@@ -29,13 +29,13 @@ ZIPS = {
     "11385": "Ridgewood",
 }
 
-# Captured 2026-09-27 on the fixture of the same date: drafts, doors at
+# Captured 2026-10-01 on the fixture of 2026-09-27: drafts, doors at
 # p10/median/p90, smallest draft, share within ±25% of target, drafts over
 # the cap, vertices median/max. Update deliberately.
 GOLDEN: dict[str, tuple | None] = {
     "10003": (130, (49, 75, 93), 33, 75, 0, 7, 16),
     "10009": (160, (46, 70, 88), 26, 74, 0, 6, 15),
-    "10314": (65, (33, 73, 91), 26, 69, 1, 18, 31),
+    "10314": (65, (33, 73, 91), 25, 69, 1, 18, 31),
     "11201": (209, (44, 75, 99), 28, 65, 2, 6, 23),
     "11385": (138, (48, 73, 90), 26, 79, 0, 13, 29),
 }
