@@ -428,23 +428,16 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
         SELECT t.turf, u.unit_id AS id, u.building_id, u.doors, s.pt
         FROM autocut_turfs t JOIN autocut_units u USING (building_id) JOIN autocut_sites s USING (site)
     """)
-    # Hulls are kept across rounds; a move rebuilds only the two it touched.
-    hull_rows = f"""
+    hulls_sql = f"""
         SELECT turf, {_hull_sql("list(pt)", k)} AS hull, sum(doors) AS doors,
                min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
         FROM autocut_trade GROUP BY turf
     """
-    conn.execute(f"CREATE OR REPLACE TEMP TABLE autocut_trade_hulls AS {hull_rows}")
-
-    def rehull(turfs: list[int]) -> None:
-        ids = ", ".join(map(str, turfs))
-        conn.execute(f"DELETE FROM autocut_trade_hulls WHERE turf IN ({ids})")
-        conn.execute(f"INSERT INTO autocut_trade_hulls {hull_rows} HAVING turf IN ({ids})")
-
     overlap_sql = f"""
+        WITH hulls AS ({hulls_sql})
         SELECT coalesce(sum(ST_Area(ST_Intersection(a.hull, b.hull))), 0)
-        FROM autocut_trade_hulls a
-        JOIN autocut_trade_hulls b ON a.turf < b.turf
+        FROM hulls a
+        JOIN hulls b ON a.turf < b.turf
          AND b.x1 >= a.x0 - {2 * m} AND b.x0 <= a.x1 + {2 * m}
          AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
         WHERE ST_Intersects(a.hull, b.hull)
@@ -452,7 +445,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     moves = 0
     while moves < _TRADE_MOVES:
         found = conn.execute(f"""
-            WITH hulls AS (SELECT * FROM autocut_trade_hulls),
+            WITH hulls AS ({hulls_sql}),
             overlapping AS (
                 SELECT a.turf AS ta, b.turf AS tb, ST_Area(ST_Intersection(a.hull, b.hull)) AS area
                 FROM hulls a
@@ -498,50 +491,71 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 FROM after a
             ),
             gains AS (
-                SELECT c.id, c.own, c.other, b.area - aa.area AS gain, a.ha
+                SELECT c.id, c.own, c.other, b.area - aa.area AS gain
                 FROM candidates c
                 JOIN before b USING (id, other)
                 JOIN after_area aa USING (id, other)
-                JOIN after a USING (id, other)
                 WHERE b.area - aa.area > 0.5
-            ),
-            -- The giving turf stays connected through links that meet inside its new hull.
-            legal AS (
-                SELECT g.id, g.own, g.other, g.gain
-                FROM gains g
-                WHERE (
-                    WITH RECURSIVE rest AS (SELECT id FROM autocut_trade WHERE turf = g.own AND id <> g.id),
-                    inner_links AS (
-                        SELECT l.u, l.v FROM autocut_links l JOIN rest a ON a.id = l.u JOIN rest b ON b.id = l.v
-                        WHERE ST_Intersects(l.edge, g.ha)
-                    ),
-                    walk(id) AS (SELECT min(id) FROM rest UNION SELECT l.v FROM walk w JOIN inner_links l ON l.u = w.id)
-                    SELECT (SELECT count(*) FROM walk) = (SELECT count(*) FROM rest)
-                )
             )
-            SELECT id, own, other FROM legal ORDER BY gain DESC, id
+            SELECT id, own, other FROM gains ORDER BY gain DESC, id
         """).fetchall()
         if not found:
             break
+        # The giving turf must stay in one piece: connected through links
+        # that meet inside its hull (the hull before the move; a move can
+        # only trim it). Checked in Python, in gain order, for the moves
+        # that make the batch: the recursive walk is cheap here and dear
+        # as a subquery per candidate.
+        givers = ", ".join(map(str, {own for _, own, _ in found}))
+        members: dict[int, set[int]] = {}
+        for turf, building in conn.execute(f"SELECT turf, id FROM autocut_trade WHERE turf IN ({givers})").fetchall():
+            members.setdefault(turf, set()).add(building)
+        links: dict[int, dict[int, set[int]]] = {}
+        for turf, u, v in conn.execute(f"""
+            SELECT a.turf, l.u, l.v
+            FROM autocut_links l
+            JOIN autocut_trade a ON a.id = l.u
+            JOIN autocut_trade b ON b.id = l.v AND b.turf = a.turf
+            JOIN (SELECT turf, {_hull_sql("list(pt)", k)} AS hull FROM autocut_trade GROUP BY turf) h ON h.turf = a.turf
+            WHERE a.turf IN ({givers}) AND ST_Intersects(l.edge, h.hull)
+        """).fetchall():
+            links.setdefault(turf, {}).setdefault(u, set()).add(v)
+
         touched: set[int] = set()
         batch = []
         for building, own, other in found:
-            if own not in touched and other not in touched:
+            if (
+                own not in touched
+                and other not in touched
+                and _connected(members[own] - {building}, links.get(own, {}))
+            ):
                 touched.update((own, other))
                 batch.append((building, own, other))
+        if not batch:
+            break
         (before,) = conn.execute(overlap_sql).fetchone()
         conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(other, b) for b, _, other in batch])
-        rehull([t for _, own, other in batch for t in (own, other)])
         (after,) = conn.execute(overlap_sql).fetchone()
         if after >= before and len(batch) > 1:
             conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(own, b) for b, own, _ in batch[1:]])
-            rehull([t for _, own, other in batch[1:] for t in (own, other)])
             batch = batch[:1]
         moves += len(batch)
     conn.execute("""
         UPDATE autocut_turfs SET turf = p.turf FROM autocut_trade p WHERE autocut_turfs.building_id = p.building_id
     """)
     return moves
+
+
+def _connected(nodes: set[int], edges: dict[int, set[int]]) -> bool:
+    """Whether `nodes` is one piece under `edges` (adjacency sets)."""
+    start = min(nodes)
+    seen = {start}
+    frontier = [start]
+    while frontier:
+        found = {v for u in frontier for v in edges.get(u, ()) if v in nodes} - seen
+        seen |= found
+        frontier = list(found)
+    return seen == nodes
 
 
 def _build_polygons(conn: duckdb.DuckDBPyConnection) -> None:
