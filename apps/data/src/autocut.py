@@ -428,15 +428,23 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
         SELECT t.turf, u.unit_id AS id, u.building_id, u.doors, s.pt
         FROM autocut_turfs t JOIN autocut_units u USING (building_id) JOIN autocut_sites s USING (site)
     """)
+    # Hulls are kept across rounds; a move rebuilds only the two it touched.
+    hull_rows = f"""
+        SELECT turf, {_hull_sql("list(pt)", k)} AS hull, sum(doors) AS doors,
+               min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
+        FROM autocut_trade GROUP BY turf
+    """
+    conn.execute(f"CREATE OR REPLACE TEMP TABLE autocut_trade_hulls AS {hull_rows}")
+
+    def rehull(turfs: list[int]) -> None:
+        ids = ", ".join(map(str, turfs))
+        conn.execute(f"DELETE FROM autocut_trade_hulls WHERE turf IN ({ids})")
+        conn.execute(f"INSERT INTO autocut_trade_hulls {hull_rows} HAVING turf IN ({ids})")
+
     overlap_sql = f"""
-        WITH hulls AS (
-            SELECT turf, {_hull_sql("list(pt)", k)} AS hull,
-                   min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
-            FROM autocut_trade GROUP BY turf
-        )
         SELECT coalesce(sum(ST_Area(ST_Intersection(a.hull, b.hull))), 0)
-        FROM hulls a
-        JOIN hulls b ON a.turf < b.turf
+        FROM autocut_trade_hulls a
+        JOIN autocut_trade_hulls b ON a.turf < b.turf
          AND b.x1 >= a.x0 - {2 * m} AND b.x0 <= a.x1 + {2 * m}
          AND b.y1 >= a.y0 - {2 * m} AND b.y0 <= a.y1 + {2 * m}
         WHERE ST_Intersects(a.hull, b.hull)
@@ -444,11 +452,7 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     moves = 0
     while moves < _TRADE_MOVES:
         found = conn.execute(f"""
-            WITH hulls AS (
-                SELECT turf, {_hull_sql("list(pt)", k)} AS hull, sum(doors) AS doors,
-                       min(ST_X(pt)) AS x0, min(ST_Y(pt)) AS y0, max(ST_X(pt)) AS x1, max(ST_Y(pt)) AS y1
-                FROM autocut_trade GROUP BY turf
-            ),
+            WITH hulls AS (SELECT * FROM autocut_trade_hulls),
             overlapping AS (
                 SELECT a.turf AS ta, b.turf AS tb, ST_Area(ST_Intersection(a.hull, b.hull)) AS area
                 FROM hulls a
@@ -527,9 +531,11 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 batch.append((building, own, other))
         (before,) = conn.execute(overlap_sql).fetchone()
         conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(other, b) for b, _, other in batch])
+        rehull([t for _, own, other in batch for t in (own, other)])
         (after,) = conn.execute(overlap_sql).fetchone()
         if after >= before and len(batch) > 1:
             conn.executemany("UPDATE autocut_trade SET turf = ? WHERE id = ?", [(own, b) for b, own, _ in batch[1:]])
+            rehull([t for _, own, other in batch[1:] for t in (own, other)])
             batch = batch[:1]
         moves += len(batch)
     conn.execute("""
