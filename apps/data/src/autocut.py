@@ -40,12 +40,9 @@ from src.tables import resolve
 logger = logging.getLogger("uvicorn")
 
 # Multiples of the door target: merging stops before a turf would pass
-# the cap, anything under the floor joins a neighbour regardless, and a
-# turf that has reached satisfied is passed over for one that hasn't, so
-# the pieces around a small turf aren't eaten by a neighbour already fine.
+# the cap, and anything under the floor joins a neighbour regardless.
 _CAP = 1.25
 _FLOOR = 1 / 3
-_SATISFIED = 0.75
 
 # No merge reaches further than this between the two nearest buildings:
 # a six-minute walk past nobody isn't the same turf, whatever the door
@@ -180,9 +177,7 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
 
     Turfs absorb their neighbours closest first: along the block before
     across a street, across a quiet street before an avenue, shorter
-    distances first within each, never across a barrier; but a neighbour
-    still short of satisfied comes before one that isn't, whatever the
-    crossing, so small turfs get the pieces around them. Merging stops
+    distances first within each, never across a barrier. Merging stops
     before a turf would pass the cap, and keeps every turf drawable as a
     hull: a merge is illegal when the combined turf's hull would box in
     another turf's building (its whole cell inside the hull), or when the
@@ -263,7 +258,7 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
         SELECT u, v, distance, crossing, edge FROM pairs UNION ALL SELECT v, u, distance, crossing, edge FROM pairs
     """)
 
-    cap, floor, satisfied = _CAP * door_target, _FLOOR * door_target, _SATISFIED * door_target
+    cap, floor = _CAP * door_target, _FLOOR * door_target
     conn.execute("CREATE OR REPLACE TEMP TABLE autocut_merged AS SELECT unit_id, unit_id AS cid FROM autocut_units")
     conn.execute("CREATE OR REPLACE TEMP TABLE autocut_blocked (ca INT, cb INT)")
     # Each round, every turf picks its best legal neighbour on doors,
@@ -296,7 +291,6 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
                 SELECT p.ca, p.cb, p.link.crossing AS crossing, p.link.distance AS distance,
                        least(sa.doors, sb.doors) < {floor} AS under_floor,
                        sa.doors + sb.doors > {cap} AS over_cap,
-                       sb.doors >= {satisfied} AS satisfied,
                        EXISTS (
                            SELECT 1 FROM autocut_blocked k
                            WHERE (k.ca, k.cb) = (least(p.ca, p.cb), greatest(p.ca, p.cb))
@@ -308,9 +302,9 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
             -- A blocked pair is a last resort, and only for a turf under the floor.
             best AS (
                 SELECT ca,
-                       arg_min(cb, (NOT under_floor, blocked, over_cap, satisfied, crossing, distance,
+                       arg_min(cb, (NOT under_floor, blocked, over_cap, crossing, distance,
                                     least(ca, cb), greatest(ca, cb))) AS cb,
-                       arg_min(blocked, (NOT under_floor, blocked, over_cap, satisfied, crossing, distance,
+                       arg_min(blocked, (NOT under_floor, blocked, over_cap, crossing, distance,
                                          least(ca, cb), greatest(ca, cb))) AS forced
                 FROM legal
                 WHERE NOT blocked OR under_floor
