@@ -77,18 +77,28 @@ _SIMPLIFY_M = 2.0
 # this is tighter because in sparsely built places cells meet across empty
 # ground and a turf short of doors would grab a house streets away.
 _BALANCE_REACH_M = 150.0
+
 # Every trade round strictly lowers a non-negative total (overlap, then
 # squared distance from the target), so this only bounds the unforeseen;
 # evening out a sprawling zone moves a few hundred buildings.
 _TRADE_MOVES = 1000
+
 # How many steps a transfer may grow by: each redraws the receiver's hull
 # and takes in the giver's buildings it newly covers, about one house of
 # a street per step. A transfer still growing is left alone.
 _TRADE_GROWTH = 5
+
+# The balance pass needs fewer steps. Its transfers start from one house
+# on the edge two turfs share, and the redrawn hull seldom covers more than
+# the next house; an overlap trade can take in a whole row. Each step costs
+# every round, so the balance pass stops sooner.
+_BALANCE_GROWTH = 2
+
 # Dividers between turfs are cut this far past the region they divide, so
 # they cross the hull outlines instead of ending a hair short of them
 # (polygonizing ignores dangling ends). Web Mercator meters.
 _DIVIDER_OVERSHOOT_M = 0.5
+
 # Noding leaves the odd sliver or pinhole; nothing this small is geometry.
 _SLIVER_M2 = 1.0
 
@@ -495,7 +505,7 @@ def _transfers_sql(k: float, keys: str, steps: int = _TRADE_GROWTH) -> str:
     grow = ""
     for i in range(1, steps + 1):
         # Only a transfer that grew last step needs its hull redrawn and
-        # its coverage rechecked; the rest carry the previous step's.
+        # its coverage rechecked; `hull_final` picks each one's latest.
         if i == 1:
             grew = f"grew1 AS (SELECT {keys} FROM transfer0 GROUP BY {keys})"
         else:
@@ -503,14 +513,6 @@ def _transfers_sql(k: float, keys: str, steps: int = _TRADE_GROWTH) -> str:
                 SELECT {keys} FROM transfer{i - 1} t GROUP BY {keys}
                 HAVING count(*) > (SELECT count(*) FROM transfer{i - 2} s WHERE ({s}) = ({t}))
             )"""
-        carried = (
-            ""
-            if i == 1
-            else f"""
-                UNION ALL
-                SELECT {keys}, hull FROM hull{i - 1} h
-                WHERE NOT EXISTS (SELECT 1 FROM grew{i} g WHERE ({g}) = ({h}))"""
-        )
         grow += f"""
             {grew},
             hull{i} AS (
@@ -518,7 +520,7 @@ def _transfers_sql(k: float, keys: str, steps: int = _TRADE_GROWTH) -> str:
                 FROM (SELECT {p}, x.pt FROM pairs p JOIN autocut_trade x ON x.turf = p.other
                       UNION ALL SELECT {keys}, pt FROM transfer{i - 1}) q
                 WHERE EXISTS (SELECT 1 FROM grew{i} g WHERE ({g}) = ({", ".join(f"q.{c}" for c in cols)}))
-                GROUP BY {keys}{carried}
+                GROUP BY {keys}
             ),
             transfer{i} AS (
                 SELECT * FROM transfer{i - 1}
@@ -536,7 +538,15 @@ def _transfers_sql(k: float, keys: str, steps: int = _TRADE_GROWTH) -> str:
                   )
             ),"""
     last = steps
+    steps_union = "\n                UNION ALL\n".join(
+        f"SELECT {keys}, hull, {i} AS step FROM hull{i}" for i in range(1, steps + 1)
+    )
     return f"""{grow}
+            -- Each candidate's hull as of the last step it grew at.
+            hull_final AS (
+                SELECT {keys}, hull FROM ({steps_union})
+                QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY step DESC) = 1
+            ),
             -- A transfer is settled when its hull covers nothing more of the
             -- giver, so a house it can't take (behind a barrier) blocks it;
             -- that hull is then the receiver's hull after the move.
@@ -545,7 +555,7 @@ def _transfers_sql(k: float, keys: str, steps: int = _TRADE_GROWTH) -> str:
                 FROM transfer{last - 1} r
                 GROUP BY {r}
                 HAVING NOT EXISTS (
-                    SELECT 1 FROM hull{last} h JOIN autocut_trade x ON x.turf = h.own AND ST_Within(x.pt, h.hull)
+                    SELECT 1 FROM hull_final h JOIN autocut_trade x ON x.turf = h.own AND ST_Within(x.pt, h.hull)
                     WHERE ({h}) = ({r}) AND NOT list_contains(list(r.id), x.id)
                 )
             ),
@@ -553,7 +563,7 @@ def _transfers_sql(k: float, keys: str, steps: int = _TRADE_GROWTH) -> str:
                 SELECT {r}, r.ids, r.doors, h.hull AS hb,
                        {_hull_sql("list(x.pt) FILTER (WHERE NOT list_contains(r.ids, x.id))", k)} AS ha
                 FROM transfers r
-                JOIN hull{last} h ON ({h}) = ({r})
+                JOIN hull_final h ON ({h}) = ({r})
                 JOIN autocut_trade x ON x.turf = r.own
                 GROUP BY {r}, r.ids, r.doors, h.hull
             ),"""
@@ -788,7 +798,7 @@ def _balance(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
             transfer0 AS (
                 SELECT p.own, p.other, p.seed, x.id, x.pt, x.doors
                 FROM pairs p JOIN autocut_trade x ON x.id = p.seed
-            ),{_transfers_sql(k, "own, other, seed")}
+            ),{_transfers_sql(k, "own, other, seed", _BALANCE_GROWTH)}
             legal AS (
                 SELECT a.own, a.other, a.seed, a.ids, a.doors, ga.doors - gb.doors AS gap, a.ha, a.hb,
                        power(ga.doors - {door_target}, 2) + power(gb.doors - {door_target}, 2)
