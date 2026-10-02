@@ -769,7 +769,9 @@ def _balance(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 JOIN hulls gb ON gb.turf = y.turf
                 WHERE l.crossing < {BARRIER_COST_M} AND ga.doors > gb.doors
                   AND (gb.doors < {lo} OR ga.doors > {hi})
-                GROUP BY ALL
+                GROUP BY x.turf, y.turf, x.id
+                -- Offered to several, a building goes across its cheapest crossing, as in merging.
+                QUALIFY via = min(via) OVER (PARTITION BY x.turf, x.id)
             ),
             transfer0 AS (
                 SELECT p.own, p.other, p.seed, x.id, x.pt, x.doors
