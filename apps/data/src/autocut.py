@@ -302,8 +302,10 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
     # turf under the floor whose every partner is blocked takes one anyway,
     # since a tiny or uncut turf is worse than a hull with a bite in it.
     # Every round merges or blocks at least one pair, so it ends.
-    while True:
-        picked = conn.execute(f"""
+    # The round's statement is prepared once because it never changes.
+    conn.execute(
+        "PREPARE autocut_pick AS "
+        + f"""
             WITH sizes AS (
                 SELECT m.cid, sum(u.doors) AS doors
                 FROM autocut_merged m JOIN autocut_units u USING (unit_id)
@@ -413,7 +415,10 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
             )
             SELECT m.ca, m.cb, m.forced, EXISTS (SELECT 1 FROM wrapping w WHERE (w.ca, w.cb) = (m.ca, m.cb)) AS wraps
             FROM mutual m
-        """).fetchall()
+        """
+    )
+    while True:
+        picked = conn.execute("EXECUTE autocut_pick").fetchall()
         if not picked:
             break
         merges = [(ca, cb) for ca, cb, forced, wraps in picked if not wraps or forced]
@@ -426,6 +431,7 @@ def cut(conn: duckdb.DuckDBPyConnection, door_target: int) -> None:
             """)
         if blocks:
             conn.execute(f"INSERT INTO autocut_blocked VALUES {', '.join(f'({ca}, {cb})' for ca, cb in blocks)}")
+    conn.execute("DEALLOCATE autocut_pick")
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE autocut_turfs AS
         WITH kept AS (
@@ -644,8 +650,9 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     """
     moves = 0
     (total,) = conn.execute(overlap_sql).fetchone()
-    while moves < _TRADE_MOVES:
-        found = conn.execute(f"""
+    conn.execute(
+        "PREPARE autocut_trade_round AS "
+        + f"""
             WITH hulls AS ({_hulls_sql(k)}),
             overlapping AS ({_overlapping_sql(m)}),
             pairs AS (
@@ -706,13 +713,17 @@ def _trade(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
                 WHERE b.area - aa.area > 0.5
             )
             SELECT own, other, ids FROM gains ORDER BY via >= {_AROUND_BLOCK}, gain DESC, own, other
-        """).fetchall()
+        """
+    )
+    while moves < _TRADE_MOVES:
+        found = conn.execute("EXECUTE autocut_trade_round").fetchall()
         if not found:
             break
         batch, total = _apply_transfers(conn, k, found, overlap_sql, total)
         if not batch:
             break
         moves += sum(len(ids) for _, _, ids in batch)
+    conn.execute("DEALLOCATE autocut_trade_round")
     conn.execute("""
         UPDATE autocut_turfs SET turf = p.turf FROM autocut_trade p WHERE autocut_turfs.building_id = p.building_id
     """)
@@ -754,8 +765,9 @@ def _balance(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
     """
     moves = 0
     (total,) = conn.execute(total_sql).fetchone()
-    while moves < _TRADE_MOVES:
-        found = conn.execute(f"""
+    conn.execute(
+        "PREPARE autocut_balance_round AS "
+        + f"""
             WITH hulls AS ({_hulls_sql(k)}),
             overlapping AS ({_overlapping_sql(m)}),
             -- A giver's building linked into a smaller neighbour, where
@@ -830,13 +842,17 @@ def _balance(conn: duckdb.DuckDBPyConnection, door_target: int) -> int:
             FROM packed WHERE taken + doors < gap
             GROUP BY own, other
             ORDER BY min(via), min(grown), own, other
-        """).fetchall()
+        """
+    )
+    while moves < _TRADE_MOVES:
+        found = conn.execute("EXECUTE autocut_balance_round").fetchall()
         if not found:
             break
         batch, total = _apply_transfers(conn, k, found, total_sql, total)
         if not batch:
             break
         moves += sum(len(ids) for _, _, ids in batch)
+    conn.execute("DEALLOCATE autocut_balance_round")
     conn.execute("""
         UPDATE autocut_turfs SET turf = p.turf FROM autocut_trade p WHERE autocut_turfs.building_id = p.building_id
     """)
