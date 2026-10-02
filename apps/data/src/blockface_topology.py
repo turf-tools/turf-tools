@@ -91,6 +91,13 @@ _CROSSING_PENALTIES: dict[str, tuple[str, float]] = {
 _PENALTY_RANK = {"none": 0, "minor": 1, "major": 2, "barrier": 3}
 
 
+def barrier_sql(column: str) -> str:
+    """SQL predicate: the MTFCC in `column` is something a pedestrian can't
+    cross, as `crossing_penalty` judges it."""
+    codes = ", ".join(f"'{c}'" for c, (cls, _) in _CROSSING_PENALTIES.items() if cls == "barrier")
+    return f"({column} IN ({codes}) OR {column} LIKE 'R%' OR {column} LIKE 'H%')"
+
+
 def crossing_penalty(feature_class_code: str | None) -> tuple[str, float]:
     """Return ``(penalty_class, cost_m)`` for crossing one edge.
 

@@ -2,7 +2,8 @@
 
 Runs on the local fixture written by `python -m scripts.autocut_fixture`
 (skipped until it exists), each zip in its own in-memory DuckDB with the
-blockface relationships mounted where `src.autocut` looks for them. The
+blockface relationships and barrier edges mounted where `src.autocut` looks
+for them. The
 invariants are what a draft must never violate; the golden numbers describe
 the quality of the cut and are exact, since the cut is deterministic, so a
 change in results shows up as a diff to accept on purpose.
@@ -17,6 +18,7 @@ import pytest
 
 import duckdb
 from src import autocut
+from src.blockface_topology import BARRIER_COST_M
 from src.dags.tiger import GEO_CATALOG, TIGER_SCHEMA
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "autocut"
@@ -29,15 +31,16 @@ ZIPS = {
     "11385": "Ridgewood",
 }
 
-# Captured 2026-10-01 on the fixture of 2026-09-27: drafts, doors at
+# Captured 2026-10-02 on the fixture of 2026-09-27 (barrier edges added
+# 2026-10-02): drafts, doors at
 # p10/median/p90, smallest draft, share within ±25% of target, drafts over
 # the cap, vertices median/max. Update deliberately.
 GOLDEN: dict[str, tuple | None] = {
-    "10003": (130, (49, 75, 93), 33, 76, 0, 7, 17),
-    "10009": (160, (46, 70, 88), 26, 74, 0, 6, 15),
-    "10314": (65, (33, 73, 91), 26, 69, 1, 19, 32),
-    "11201": (209, (44, 75, 99), 28, 66, 3, 7, 23),
-    "11385": (138, (48, 73, 89), 27, 80, 0, 14, 28),
+    "10003": (130, (57, 71, 93), 34, 82, 0, 7, 17),
+    "10009": (160, (50, 67, 87), 26, 81, 0, 6, 15),
+    "10314": (64, (56, 66, 87), 30, 89, 0, 18, 29),
+    "11201": (210, (53, 72, 99), 25, 70, 1, 7, 30),
+    "11385": (140, (57, 68, 86), 29, 91, 0, 14, 28),
 }
 
 # Generous next to the ~3 s the slowest zip takes, so only a real
@@ -55,6 +58,10 @@ def _connect(zip5: str) -> duckdb.DuckDBPyConnection:
     conn.execute(
         f"CREATE TABLE {GEO_CATALOG}.{TIGER_SCHEMA}.blockface_relationships AS "
         f"SELECT * FROM read_parquet('{FIXTURE / 'relationships.parquet'}')"
+    )
+    conn.execute(
+        f"CREATE TABLE {GEO_CATALOG}.{TIGER_SCHEMA}.edges AS "
+        f"SELECT feature_class_code, ST_GeomFromWKB(geom) AS geom FROM read_parquet('{FIXTURE / 'barriers.parquet'}')"
     )
     conn.execute(f"CREATE TEMP TABLE autocut_buildings AS SELECT * FROM read_parquet('{FIXTURE / f'{zip5}.parquet'}')")
     return conn
@@ -94,6 +101,14 @@ def _stats(conn: duckdb.DuckDBPyConnection) -> dict:
                -- over the cap for a reason other than one building bigger than the cap
                (SELECT count(*) FILTER (WHERE d > {cap} AND d > biggest) FROM drafts) AS over_cap,
                (SELECT coalesce(sum(doors), 0) FROM b WHERE turf IS NULL) AS uncut_doors,
+               -- uncut buildings with a cut building within reach over a passable link
+               (SELECT count(DISTINCT u.building_id)
+                FROM autocut_units u JOIN autocut_links l ON l.u = u.unit_id
+                JOIN autocut_units v ON v.unit_id = l.v
+                LEFT JOIN autocut_turfs tu ON tu.building_id = u.building_id
+                JOIN autocut_turfs tv ON tv.building_id = v.building_id
+                WHERE tu.turf IS NULL AND l.crossing < {BARRIER_COST_M}
+                  AND l.distance <= {autocut._REACH_M}) AS uncut_in_reach,
                (SELECT count(*) FROM per_building WHERE own IS NOT NULL AND n = 0) AS lost,
                (SELECT count(*) FROM per_building WHERE wrong) AS moved,
                (SELECT count(*) FROM per_building WHERE n > 1) AS double,
@@ -111,6 +126,7 @@ def _stats(conn: duckdb.DuckDBPyConnection) -> dict:
         "within",
         "over_cap",
         "uncut_doors",
+        "uncut_in_reach",
         "lost",
         "moved",
         "double",
@@ -134,6 +150,8 @@ def cut(request):
     t = time.time()
     autocut.cut(conn, TARGET)
     autocut._trade(conn, TARGET)
+    autocut._balance(conn, TARGET)
+    autocut._trade(conn, TARGET)
     autocut._build_polygons(conn)
     autocut._absorb_islands(conn)
     autocut._order_drafts(conn, "northwest")
@@ -153,9 +171,11 @@ def test_drafts_tile_without_overlap_or_holes(cut):
     assert (s["overlap_m2"], s["holes"], s["empty"]) == (0, 0, 0)
 
 
-def test_one_draft_per_turf_and_nothing_uncut(cut):
+def test_one_draft_per_turf_and_nothing_cuttable_left_uncut(cut):
+    """A building stays out of the cut only when no cut building is within
+    reach over a passable link (an island behind a highway or a stream)."""
     _, s, _ = cut
-    assert (s["split"], s["uncut_doors"]) == (0, 0)
+    assert (s["split"], s["uncut_in_reach"]) == (0, 0)
 
 
 def test_no_draft_under_the_floor(cut):

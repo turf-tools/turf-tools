@@ -57,6 +57,7 @@ def conn():
         f"INSERT INTO {GEO_CATALOG}.{TIGER_SCHEMA}.blockface_relationships VALUES (?, ?, ?)",
         [("A:left", "A:right", 15.0), ("B:left", "B:right", 15.0)],
     )
+    c.execute(f"CREATE TABLE {GEO_CATALOG}.{TIGER_SCHEMA}.edges (feature_class_code VARCHAR, geom GEOMETRY)")
     c.execute("""
         CREATE TABLE autocut_buildings (
             building_id VARCHAR, longitude DOUBLE, latitude DOUBLE, doors INT, blockface_id VARCHAR
@@ -125,6 +126,8 @@ def test_a_far_building_is_left_out_rather_than_forced_in(conn) -> None:
 def test_every_turf_draws_as_one_polygon_containing_its_buildings(conn) -> None:
     _seed(conn)
     autocut.cut(conn, 20)
+    autocut._trade(conn, 20)
+    autocut._balance(conn, 20)
     autocut._trade(conn, 20)
     autocut._build_polygons(conn)
     autocut._absorb_islands(conn)
