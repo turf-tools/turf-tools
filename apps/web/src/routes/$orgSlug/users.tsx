@@ -87,16 +87,23 @@ function UsersIndex() {
       : (STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? null);
 
   return (
-    <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
+    <Page className={cn("md:flex md:h-[calc(100vh-3.5rem)] md:flex-col", shouldFade)}>
       <EditorHeader title="Users">
-        <Filter
-          icon={<Icon name="tag" className="size-3.5" />}
-          label={roleFilterLabel}
-          value={roleFilter}
-          options={ROLE_OPTIONS}
-          allLabel="All roles"
-          onChange={onRoleChange}
-        />
+        <div className="flex w-full items-center gap-2 md:contents">
+          <Filter
+            icon={<Icon name="tag" className="size-3.5" />}
+            label={roleFilterLabel}
+            value={roleFilter}
+            options={ROLE_OPTIONS}
+            allLabel="All roles"
+            onChange={onRoleChange}
+          />
+          <span className="flex-1 md:hidden" />
+          <Button onClick={() => setInviteOpen(true)} className="md:order-last">
+            <Icon name="user-round-plus" />
+            Invite user
+          </Button>
+        </div>
         <Filter
           icon={<Icon name="activity" className="size-3.5" />}
           label={statusLabel}
@@ -105,10 +112,6 @@ function UsersIndex() {
           allLabel="All current"
           onChange={onStatusChange}
         />
-        <Button onClick={() => setInviteOpen(true)}>
-          <Icon name="user-round-plus" />
-          Invite user
-        </Button>
       </EditorHeader>
       <UsersTable roleFilter={roleFilter} statusFilter={statusFilter} />
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
@@ -133,7 +136,7 @@ function UsersTable({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto md:hidden">
+      <div className="flex flex-col gap-3 md:hidden">
         {rows.length === 0 ? (
           <Pill>
             <span>No results</span>
@@ -271,25 +274,29 @@ function UserRow({ user }: { user: UserRowData }) {
   );
 }
 
-// Name + email, then role, status, and the menu — the invite row's shape.
+// Compact card layout for a user
 function UserCard({ user }: { user: UserRowData }) {
   const { roleCell, menu, archiveDialog } = useUserActions(user);
+  const archived = user.status === "archived";
   return (
     <div
-      className={cn("flex flex-col gap-2", user.status === "archived" && "text-muted-foreground")}
+      className={cn(
+        "rounded-lg border border-border bg-white text-sm dark:bg-transparent",
+        archived && "text-muted-foreground",
+      )}
     >
-      <div className="flex gap-2">
-        <Pill className="min-w-0 flex-2">
-          <span className="truncate">{user.name}</span>
-        </Pill>
-        <Pill className="min-w-0 flex-3">
-          <span className="truncate">{user.email}</span>
-        </Pill>
+      <div className="flex items-center gap-2 px-3 pt-3 pb-1">
+        <span className="min-w-0 flex-1 truncate font-semibold">{user.name}</span>
+        {archived ? (
+          <span className="flex h-7 shrink-0 items-center rounded-md bg-muted px-2">
+            <Icon name="archive" className="size-4 [stroke-width:2.5]" />
+          </span>
+        ) : null}
+        <span className="shrink-0">{roleCell}</span>
       </div>
-      <div className="flex gap-2">
-        <div className="w-36">{roleCell}</div>
-        <Pill className="w-28 capitalize">{user.status}</Pill>
-        <div className="w-11">{menu}</div>
+      <div className="flex items-center gap-2 px-3 pt-1 pb-3">
+        <span className="min-w-0 truncate text-muted-foreground">{user.email}</span>
+        <span className="ml-auto w-8 shrink-0">{menu}</span>
       </div>
       {archiveDialog}
     </div>
