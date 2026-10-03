@@ -6,6 +6,7 @@ import { Button } from "~/components/button";
 import { EditorHeader } from "~/components/editor-header";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
+import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
 import { formatDate, formatPersonName } from "~/lib/format";
 import type { ManifestFieldDef } from "~/lib/manifest";
@@ -112,7 +113,7 @@ function Lookup() {
   }
 
   return (
-    <div className={cn("flex h-[calc(100vh-3.5rem)] flex-col px-5 pt-4 pb-5", shouldFade)}>
+    <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
       <EditorHeader title="Lookup" subtitle="Find a person" />
       <div className="flex min-h-0 flex-1 gap-4">
         <SearchForm fields={fields} onChange={setField} />
@@ -129,7 +130,7 @@ function Lookup() {
         />
         <DetailPanel externalId={selectedId} />
       </div>
-    </div>
+    </Page>
   );
 }
 

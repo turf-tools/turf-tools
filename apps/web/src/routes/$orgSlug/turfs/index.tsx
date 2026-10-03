@@ -231,23 +231,13 @@ function TurfsIndex() {
 
   return (
     <Page className={cn("md:flex md:h-[calc(100vh-3.5rem)] md:flex-col", shouldFade)}>
-      {/* Desktop header */}
-      <div className="hidden md:block">
-        <EditorHeader title="Turfs" subtitle="Sign out and track">
+      <EditorHeader title="Turfs" subtitle="Sign out and track">
+        <div className="flex w-full items-center gap-2 md:w-auto">
           {campaignFilter}
-          {zoneFilter}
-        </EditorHeader>
-      </div>
-      {/* Mobile header: title, then campaign + view toggle, then zone —
-          two filter rows so long campaign/zone names can't push the row
-          off-screen. */}
-      <div className="mb-5 flex flex-col gap-3 md:hidden">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Turfs</h1>
-        <div className="flex items-center gap-2">
-          {campaignFilter}
-          <span className="flex-1" />
+          <span className="flex-1 md:hidden" />
           <ToggleGroup
             variant="outline"
+            className="md:hidden"
             value={[view]}
             onValueChange={(values) => {
               const next = values[0];
@@ -262,8 +252,8 @@ function TurfsIndex() {
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
-        <div className="flex items-center">{zoneFilter}</div>
-      </div>
+        {zoneFilter}
+      </EditorHeader>
       <div className="md:hidden">
         {view === "cards" ? (
           <TurfCards
@@ -840,7 +830,7 @@ function ZoneMapDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] md:w-[720px] md:max-w-[720px]">
+      <DialogContent className="max-w-[720px]">
         {group ? (
           <>
             <DialogTitle className="mb-2.5 pr-10 text-sm leading-tight font-normal tracking-normal text-foreground italic">
@@ -922,7 +912,7 @@ function TurfMapDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] md:w-[720px] md:max-w-[720px]">
+      <DialogContent className="max-w-[720px]">
         {turf ? (
           <>
             <DialogTitle className="mb-2.5 pr-10 text-sm leading-tight font-normal tracking-normal text-foreground italic tabular-nums">
@@ -974,7 +964,7 @@ function WalksDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* pb offsets the last table row's internal height so the visual
           gap below the text matches the top. */}
-      <DialogContent className="max-w-[85vw] pb-3 md:max-w-md">
+      <DialogContent className="pb-3">
         {turf ? (
           <>
             <DialogTitle className="mb-2.5 pr-10 text-sm leading-tight font-normal tracking-normal text-foreground italic tabular-nums">

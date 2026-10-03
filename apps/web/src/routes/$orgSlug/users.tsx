@@ -132,39 +132,55 @@ function UsersTable({
   });
 
   return (
-    <Table containerClassName="min-h-0 flex-1 overflow-y-auto" className="table-fixed">
-      <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
-        <TableRow>
-          <TableHead>Name</TableHead>
-          <TableHead>Email</TableHead>
-          <TableHead className="w-36">Role</TableHead>
-          <TableHead className="w-28">Status</TableHead>
-          <TableHead className="w-28">Joined</TableHead>
-          <TableHead className="w-28">Last login</TableHead>
-          <TableHead className="w-11" />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto md:hidden">
         {rows.length === 0 ? (
-          <TableRow className="h-10">
-            <TableCell colSpan={7}>
-              <Pill>
-                <span>No results</span>
-              </Pill>
-            </TableCell>
-          </TableRow>
+          <Pill>
+            <span>No results</span>
+          </Pill>
         ) : null}
         {rows.map((u) => (
-          <UserRow key={u.userId} user={u} />
+          <UserCard key={u.userId} user={u} />
         ))}
-      </TableBody>
-    </Table>
+      </div>
+      <Table
+        containerClassName="hidden min-h-0 flex-1 overflow-y-auto md:block"
+        className="table-fixed"
+      >
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Email</TableHead>
+            <TableHead className="w-36">Role</TableHead>
+            <TableHead className="w-28">Status</TableHead>
+            <TableHead className="w-28">Joined</TableHead>
+            <TableHead className="w-28">Last login</TableHead>
+            <TableHead className="w-11" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length === 0 ? (
+            <TableRow className="h-10">
+              <TableCell colSpan={7}>
+                <Pill>
+                  <span>No results</span>
+                </Pill>
+              </TableCell>
+            </TableRow>
+          ) : null}
+          {rows.map((u) => (
+            <UserRow key={u.userId} user={u} />
+          ))}
+        </TableBody>
+      </Table>
+    </>
   );
 }
 
 type UserRowData = Awaited<ReturnType<typeof client.users.list>>[number];
 
-function UserRow({ user }: { user: UserRowData }) {
+// Mutations and the archive confirm, shared by the row and card renderings.
+function useUserActions(user: UserRowData) {
   const queryClient = useQueryClient();
   const { session } = Route.useRouteContext();
   const isSelf = user.userId === session?.user.id;
@@ -193,6 +209,38 @@ function UserRow({ user }: { user: UserRowData }) {
     onSuccess: invalidate,
   });
 
+  const menu = (
+    <RowMenu
+      user={user}
+      isSelf={isSelf}
+      onResendInvite={() => resendInvite.mutate()}
+      onArchive={archive.open}
+      onUnarchive={() => unarchive.mutate()}
+    />
+  );
+  const archiveDialog = (
+    <ArchiveDialog
+      open={archive.isOpen}
+      onOpenChange={archive.onOpenChange}
+      userLabel={user.name}
+      pending={archive.isPending}
+      error={archive.error}
+      onConfirm={() => archive.mutate(undefined as void)}
+    />
+  );
+  const roleCell = (
+    <RoleCell
+      role={user.role}
+      archived={user.status === "archived"}
+      onChange={(role) => changeRole.mutate(role)}
+    />
+  );
+
+  return { tz, roleCell, menu, archiveDialog };
+}
+
+function UserRow({ user }: { user: UserRowData }) {
+  const { tz, roleCell, menu, archiveDialog } = useUserActions(user);
   return (
     <>
       <TableRow className={cn(user.status === "archived" && "text-muted-foreground")}>
@@ -206,13 +254,7 @@ function UserRow({ user }: { user: UserRowData }) {
             <span className="truncate">{user.email}</span>
           </Pill>
         </TableCell>
-        <TableCell>
-          <RoleCell
-            role={user.role}
-            archived={user.status === "archived"}
-            onChange={(role) => changeRole.mutate(role)}
-          />
-        </TableCell>
+        <TableCell>{roleCell}</TableCell>
         <TableCell>
           <Pill className="capitalize">{user.status}</Pill>
         </TableCell>
@@ -222,25 +264,35 @@ function UserRow({ user }: { user: UserRowData }) {
         <TableCell>
           <Pill variant="number">{formatDate(user.lastLogin, tz)}</Pill>
         </TableCell>
-        <TableCell>
-          <RowMenu
-            user={user}
-            isSelf={isSelf}
-            onResendInvite={() => resendInvite.mutate()}
-            onArchive={archive.open}
-            onUnarchive={() => unarchive.mutate()}
-          />
-        </TableCell>
+        <TableCell>{menu}</TableCell>
       </TableRow>
-      <ArchiveDialog
-        open={archive.isOpen}
-        onOpenChange={archive.onOpenChange}
-        userLabel={user.name}
-        pending={archive.isPending}
-        error={archive.error}
-        onConfirm={() => archive.mutate(undefined as void)}
-      />
+      {archiveDialog}
     </>
+  );
+}
+
+// Name + email, then role, status, and the menu — the invite row's shape.
+function UserCard({ user }: { user: UserRowData }) {
+  const { roleCell, menu, archiveDialog } = useUserActions(user);
+  return (
+    <div
+      className={cn("flex flex-col gap-2", user.status === "archived" && "text-muted-foreground")}
+    >
+      <div className="flex gap-2">
+        <Pill className="min-w-0 flex-2">
+          <span className="truncate">{user.name}</span>
+        </Pill>
+        <Pill className="min-w-0 flex-3">
+          <span className="truncate">{user.email}</span>
+        </Pill>
+      </div>
+      <div className="flex gap-2">
+        <div className="w-36">{roleCell}</div>
+        <Pill className="w-28 capitalize">{user.status}</Pill>
+        <div className="w-11">{menu}</div>
+      </div>
+      {archiveDialog}
+    </div>
   );
 }
 
@@ -496,52 +548,56 @@ function InviteDialog({
           }}
           className="flex flex-col gap-3"
         >
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-4 md:gap-2">
             {rows.map((row, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Input
-                  type="email"
-                  placeholder="email@example.com"
-                  value={row.email}
-                  onChange={(e) => updateRow(i, { email: e.target.value })}
-                  disabled={pendingDelayed}
-                  autoFocus={i === rows.length - 1}
-                  className="flex-5"
-                />
-                <Input
-                  placeholder="Name (optional)"
-                  value={row.name}
-                  onChange={(e) => updateRow(i, { name: e.target.value })}
-                  disabled={pendingDelayed}
-                  className="flex-4"
-                />
-                <RoleSelect
-                  value={row.role}
-                  onChange={(role) => updateRow(i, { role })}
-                  disabled={pendingDelayed}
-                />
-                <Toggle
-                  variant="outline"
-                  size="lg"
-                  pressed={row.sendEmail}
-                  onPressedChange={(pressed) => updateRow(i, { sendEmail: pressed })}
-                  disabled={pendingDelayed}
-                  aria-label="Send email invite"
-                  className="text-muted-foreground aria-pressed:text-foreground aria-pressed:border-muted-foreground w-21 justify-between"
-                >
-                  <Icon name="mail" />
-                  Email
-                </Toggle>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon-lg"
-                  onClick={() => removeRow(i)}
-                  disabled={pendingDelayed || rows.length === 1}
-                  aria-label="Remove row"
-                >
-                  <Icon name="x" />
-                </Button>
+              <div key={i} className="flex flex-col gap-2 md:flex-row md:items-center">
+                <div className="flex flex-col gap-2 md:contents">
+                  <Input
+                    type="email"
+                    placeholder="email@example.com"
+                    value={row.email}
+                    onChange={(e) => updateRow(i, { email: e.target.value })}
+                    disabled={pendingDelayed}
+                    autoFocus={i === rows.length - 1}
+                    className="flex-5"
+                  />
+                  <Input
+                    placeholder="Name (optional)"
+                    value={row.name}
+                    onChange={(e) => updateRow(i, { name: e.target.value })}
+                    disabled={pendingDelayed}
+                    className="flex-4"
+                  />
+                </div>
+                <div className="flex items-center gap-2 md:contents">
+                  <RoleSelect
+                    value={row.role}
+                    onChange={(role) => updateRow(i, { role })}
+                    disabled={pendingDelayed}
+                  />
+                  <Toggle
+                    variant="outline"
+                    size="lg"
+                    pressed={row.sendEmail}
+                    onPressedChange={(pressed) => updateRow(i, { sendEmail: pressed })}
+                    disabled={pendingDelayed}
+                    aria-label="Send email invite"
+                    className="text-muted-foreground aria-pressed:text-foreground aria-pressed:border-muted-foreground w-21 justify-between"
+                  >
+                    <Icon name="mail" />
+                    Email
+                  </Toggle>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-lg"
+                    onClick={() => removeRow(i)}
+                    disabled={pendingDelayed || rows.length === 1}
+                    aria-label="Remove row"
+                  >
+                    <Icon name="x" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

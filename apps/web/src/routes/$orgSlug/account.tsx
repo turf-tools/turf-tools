@@ -2,6 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button } from "~/components/button";
+import { EditorHeader } from "~/components/editor-header";
 import { Input } from "~/components/input";
 import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
@@ -35,9 +36,7 @@ function AccountPage() {
 
   return (
     <Page className={shouldFade}>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Account</h1>
-      </div>
+      <EditorHeader title="Account" />
 
       <div className="flex max-w-md flex-col gap-4">
         <Field label="Email">

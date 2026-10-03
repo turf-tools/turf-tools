@@ -9,6 +9,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
+import { EditorHeader } from "~/components/editor-header";
 import { Page } from "~/components/page";
 import { DEFAULT_DISPLAY_TIMEZONE, type DisplayTimezone, TIMEZONE_OPTIONS } from "~/lib/timezones";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -43,10 +44,7 @@ function SettingsPage() {
 
   return (
     <Page className={shouldFade}>
-      <div className="mb-4 flex h-8 items-center justify-between">
-        <h1 className="text-xl font-extrabold tracking-wide italic">Settings</h1>
-      </div>
-
+      <EditorHeader title="Settings" />
       <div className="flex max-w-md flex-col gap-4">
         <Field label="Timezone for display">
           <DropdownMenu {...tzDropdown.menu}>

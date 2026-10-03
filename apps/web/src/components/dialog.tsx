@@ -90,7 +90,7 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
         }}
         className={cn(
           "fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-          "w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-[0_0_20px_rgba(0,0,0,0.2)]",
+          "w-[calc(100vw-2rem)] max-w-md rounded-lg border border-border bg-background p-5 shadow-[0_0_20px_rgba(0,0,0,0.2)]",
           "data-[starting-style]:opacity-0 data-[ending-style]:opacity-0",
           "data-[starting-style]:scale-95",
           "transition-[opacity,transform] duration-100",
