@@ -136,7 +136,7 @@ function UsersTable({
 
   return (
     <>
-      <div className="flex flex-col gap-3 md:hidden">
+      <div className="flex flex-col gap-3 pb-8 md:hidden">
         {rows.length === 0 ? (
           <Pill>
             <span>No results</span>
