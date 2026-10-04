@@ -8,7 +8,7 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
-import { subscribe } from "~/lib/server/live";
+import { subscribe, subscriberCount } from "~/lib/server/live";
 import { buildWebContext } from "~/rpc/context";
 
 const HEARTBEAT_MS = 25_000;
@@ -29,6 +29,8 @@ export const Route = createFileRoute("/api/web/$orgSlug/live")({
         }
 
         const organizationId = context.organizationId;
+        const who = context.user.email.slice(0, 3) + "…";
+        const openedAt = Date.now();
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
@@ -43,6 +45,9 @@ export const Route = createFileRoute("/api/web/$orgSlug/live")({
             };
             send("retry: 3000\n\n");
             const unsubscribe = subscribe(organizationId, () => send("data: refresh\n\n"));
+            console.log(
+              `[live] open org=${organizationId} user=${who} subs=${subscriberCount(organizationId)}`,
+            );
             // Comment-frame heartbeat keeps intermediaries from timing
             // out the idle connection.
             const heartbeat = setInterval(() => send(": ping\n\n"), HEARTBEAT_MS);
@@ -50,6 +55,10 @@ export const Route = createFileRoute("/api/web/$orgSlug/live")({
               closed = true;
               clearInterval(heartbeat);
               unsubscribe();
+              const secs = Math.round((Date.now() - openedAt) / 1000);
+              console.log(
+                `[live] close org=${organizationId} user=${who} subs=${subscriberCount(organizationId)} dur=${secs}s`,
+              );
               try {
                 controller.close();
               } catch {

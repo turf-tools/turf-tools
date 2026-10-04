@@ -19,7 +19,13 @@ g.__turfToolsLive ??= new Map<string, Set<Listener>>();
 const channels = g.__turfToolsLive;
 
 export function publish(organizationId: string) {
-  channels.get(organizationId)?.forEach((listener) => listener());
+  const listeners = channels.get(organizationId);
+  console.log(`[live] publish org=${organizationId} subs=${listeners?.size ?? 0}`);
+  listeners?.forEach((listener) => listener());
+}
+
+export function subscriberCount(organizationId: string): number {
+  return channels.get(organizationId)?.size ?? 0;
 }
 
 export function subscribe(organizationId: string, listener: Listener): () => void {
