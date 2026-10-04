@@ -75,12 +75,13 @@ export const Route = createFileRoute("/$orgSlug/turfs/")({
 // or walk mutation lands, and we refetch immediately instead of waiting
 // out the poll. The poll remains the correctness backbone — a dropped
 // stream (backgrounded phone tab) just falls back to poll latency.
+// Nudges aren't replayed, so a (re)connect refetches too.
 function useLiveRefresh() {
   const { orgSlug } = Route.useParams();
   const queryClient = useQueryClient();
   useEffect(() => {
     const source = new EventSource(`/api/web/${orgSlug}/live`);
-    source.onmessage = () => {
+    source.onopen = source.onmessage = () => {
       void queryClient.invalidateQueries({ queryKey: ["walks"] });
     };
     return () => source.close();
