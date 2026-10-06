@@ -16,9 +16,10 @@ function Table({
         data-slot="table"
         className={cn(
           "w-full caption-bottom text-sm",
-          // First column is flush with the table's left edge; other cells
+          // Outer columns are flush with the table's edges; inner cells
           // keep their horizontal padding for inter-cell gaps.
           "[&_tr>th:first-child]:pl-0 [&_tr>td:first-child]:pl-0",
+          "[&_tr>th:last-child]:pr-0 [&_tr>td:last-child]:pr-0",
           className,
         )}
         {...props}

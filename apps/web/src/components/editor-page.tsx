@@ -5,7 +5,7 @@ export function EditorPage({ children, className }: { children?: ReactNode; clas
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-1 flex-col overflow-hidden px-4 pt-4 pb-5 md:px-5",
+        "flex min-w-0 flex-1 flex-col overflow-hidden px-4 pt-4 pb-5 md:pl-5",
         className,
       )}
     >

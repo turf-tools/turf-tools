@@ -158,7 +158,7 @@ function UsersTable({
             <TableHead className="w-28">Status</TableHead>
             <TableHead className="w-28">Joined</TableHead>
             <TableHead className="w-28">Last login</TableHead>
-            <TableHead className="w-11" />
+            <TableHead className="w-9" />
           </TableRow>
         </TableHeader>
         <TableBody>

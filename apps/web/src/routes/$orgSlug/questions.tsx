@@ -134,7 +134,7 @@ function QuestionsTable({
           <TableHead className="w-36">Type</TableHead>
           <TableHead>Text</TableHead>
           <TableHead className="w-24">Used in</TableHead>
-          <TableHead className="w-11" />
+          <TableHead className="w-9" />
         </TableRow>
       </TableHeader>
       <TableBody>

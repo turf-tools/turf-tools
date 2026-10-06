@@ -435,7 +435,7 @@ function VersionsCard({
             <TableHead>People</TableHead>
             <TableHead>Imported</TableHead>
             <TableHead className="w-15">Active</TableHead>
-            <TableHead className="w-11" />
+            <TableHead className="w-9" />
           </TableRow>
         </TableHeader>
         <TableBody>
