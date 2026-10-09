@@ -2,6 +2,7 @@ import meow from "meow";
 import { and, db, eq, isNull } from "@turf-tools/db";
 import { memberships, organizations, users } from "@turf-tools/db/schema";
 import { createLogger } from "./_logging";
+import { isRole, ROLE_NAMES } from "../apps/web/src/lib/permissions";
 
 const log = createLogger("add-user");
 
@@ -33,11 +34,11 @@ const cli = meow(
     --slug    Org slug to add the user to
     --name    User's display name
     --email   User's email
-    --role    Role (default: owner)
+    --role    One of ${ROLE_NAMES.join(", ")} (default: owner)
 
   Examples
     $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com
-    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com --role member
+    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com --role lead
 `,
   {
     importMeta: import.meta,
@@ -57,6 +58,10 @@ const role = cli.flags.role;
 
 if (!slug || !name || !rawEmail) {
   cli.showHelp(1);
+}
+if (!isRole(role)) {
+  log.error(`unknown role "${role}"; expected one of ${ROLE_NAMES.join(", ")}`);
+  process.exit(1);
 }
 
 const email = normalizeEmail(rawEmail);
