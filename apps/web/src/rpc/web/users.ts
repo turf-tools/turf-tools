@@ -4,10 +4,16 @@ import { memberships, users } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { auth } from "~/lib/auth";
 import { normalizeEmail } from "~/lib/normalize-email";
-import { ROLES } from "~/lib/permissions";
-import { checkPermission, webMut, webPub } from "../context";
+import { canManage, ROLE_NAMES } from "~/lib/permissions";
+import { memberMut, webMut, webPub } from "../context";
 
-const roleSchema = z.enum(ROLES);
+const roleSchema = z.enum(ROLE_NAMES);
+const pub = webPub("users.manage");
+const mut = webMut("users.manage");
+
+function checkCanManage(ctx: { role: string }, targetRole: string) {
+  if (!canManage(ctx.role, targetRole)) throw new ORPCError("FORBIDDEN");
+}
 
 async function countActiveOwners(db: Db, organizationId: string): Promise<number> {
   const result = await db
@@ -27,7 +33,7 @@ async function countActiveOwners(db: Db, organizationId: string): Promise<number
 //   archived → membership has archivedAt set
 //   active   → users.emailVerified (BA flips this on first OTP verify)
 //   pending  → invite sent, never verified
-export const list = webPub.input(z.object({}).optional()).handler(async ({ context }) => {
+export const list = pub.input(z.object({}).optional()).handler(async ({ context }) => {
   const rows = await context.db
     .select({
       userId: users.id,
@@ -60,7 +66,7 @@ export const list = webPub.input(z.object({}).optional()).handler(async ({ conte
 
 // Invite a user by email. Throws CONFLICT if a membership already exists —
 // archived members must be restored via `unarchive`, not re-invited.
-export const invite = webMut
+export const invite = mut
   .input(
     z.object({
       email: z.string().email().trim(),
@@ -70,8 +76,7 @@ export const invite = webMut
     }),
   )
   .handler(async ({ context, input }) => {
-    checkPermission(context, "users.manage");
-
+    checkCanManage(context, input.role);
     const email = normalizeEmail(input.email);
     const displayEmail = input.email.toLowerCase();
 
@@ -125,11 +130,9 @@ export const invite = webMut
 
 // Change a member's role. Blocks role changes on archived members and
 // demoting the only active owner.
-export const updateRole = webMut
+export const updateRole = mut
   .input(z.object({ userId: z.string().uuid(), role: roleSchema }))
   .handler(async ({ context, input }) => {
-    checkPermission(context, "users.manage");
-
     const membership = (
       await context.db
         .select()
@@ -147,6 +150,8 @@ export const updateRole = webMut
         message: "Cannot change role of an archived member",
       });
     }
+    checkCanManage(context, membership.role);
+    checkCanManage(context, input.role);
 
     if (membership.role === "owner" && input.role !== "owner") {
       const ownerCount = await countActiveOwners(context.db, context.organizationId);
@@ -164,11 +169,9 @@ export const updateRole = webMut
   });
 
 // Archive a membership. Self-archive and last-active-owner archive are blocked.
-export const archive = webMut
+export const archive = mut
   .input(z.object({ userId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    checkPermission(context, "users.manage");
-
     if (input.userId === context.user.id) {
       throw new ORPCError("BAD_REQUEST", { message: "Cannot archive yourself" });
     }
@@ -185,6 +188,7 @@ export const archive = webMut
         )
     )[0];
     if (!membership) throw new ORPCError("NOT_FOUND");
+    checkCanManage(context, membership.role);
     if (membership.archivedAt) return { ok: true as const };
 
     if (membership.role === "owner") {
@@ -203,11 +207,9 @@ export const archive = webMut
   });
 
 // Restore an archived membership.
-export const unarchive = webMut
+export const unarchive = mut
   .input(z.object({ userId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    checkPermission(context, "users.manage");
-
     const membership = (
       await context.db
         .select()
@@ -220,6 +222,7 @@ export const unarchive = webMut
         )
     )[0];
     if (!membership) throw new ORPCError("NOT_FOUND");
+    checkCanManage(context, membership.role);
     if (!membership.archivedAt) return { ok: true as const };
 
     await context.db
@@ -231,14 +234,12 @@ export const unarchive = webMut
   });
 
 // Re-send the login email for an active member of this org.
-export const resendInvite = webMut
+export const resendInvite = mut
   .input(z.object({ userId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    checkPermission(context, "users.manage");
-
     const row = (
       await context.db
-        .select({ displayEmail: users.displayEmail })
+        .select({ displayEmail: users.displayEmail, role: memberships.role })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.userId))
         .where(
@@ -250,6 +251,7 @@ export const resendInvite = webMut
         )
     )[0];
     if (!row) throw new ORPCError("NOT_FOUND");
+    checkCanManage(context, row.role);
 
     await auth.api.sendVerificationOTP({
       body: { email: row.displayEmail, type: "sign-in" },
@@ -259,9 +261,8 @@ export const resendInvite = webMut
     return { ok: true as const };
   });
 
-// Self-service name edit for the Account page. No permission gate — anyone
-// can update their own display name.
-export const updateOwnName = webMut
+// Self-service name edit for the Account page.
+export const updateOwnName = memberMut
   .input(z.object({ name: z.string().trim().min(1).max(120) }))
   .handler(async ({ context, input }) => {
     await context.db
@@ -276,7 +277,7 @@ export const updateOwnName = webMut
 // authed mount (auto-detect) and by the Account page (manual override).
 // Validates against the curated TIMEZONE_OPTIONS list — IANA strings outside
 // it are rejected to keep storage tidy.
-export const updateOwnDisplayTimezone = webMut
+export const updateOwnDisplayTimezone = memberMut
   .input(
     z.object({
       displayTimezone: z.enum([

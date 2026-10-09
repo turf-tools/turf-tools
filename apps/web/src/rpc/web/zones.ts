@@ -2,7 +2,10 @@ import { ORPCError } from "@orpc/server";
 import { and, asc, desc, eq, type Db } from "@turf-tools/db";
 import { zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("zones.read");
+const mut = webMut("zones.write");
 
 // Zone writes bump the parent group's updatedAt — the change signal
 // report pages fold into their perimeter cache keys.
@@ -60,7 +63,7 @@ export const getById = pub
 // Replace a zone's keys array. Used by the zone editor when the user
 // clicks polygons on the map. Validates org scope through the parent
 // group; throws if the zone doesn't belong to the user's org.
-export const updateKeys = pub
+export const updateKeys = mut
   .input(
     z.object({
       zoneId: z.string().uuid(),
@@ -88,7 +91,7 @@ export const updateKeys = pub
   });
 
 // Rename a zone. Org check via parent group.
-export const rename = pub
+export const rename = mut
   .input(
     z.object({
       zoneId: z.string().uuid(),
@@ -113,7 +116,7 @@ export const rename = pub
   });
 
 // Create an empty zone in a zone group. Org check via the parent group.
-export const create = pub
+export const create = mut
   .input(
     z.object({
       zoneGroupId: z.string().uuid(),
@@ -157,7 +160,7 @@ export const create = pub
 // Persist a full ordering for a group's zones: each zone's `order` becomes
 // its index in `zoneIds`. Org check via the parent group; ids not in the
 // group are ignored by the per-row scope.
-export const reorder = pub
+export const reorder = mut
   .input(
     z.object({
       zoneGroupId: z.string().uuid(),
@@ -188,7 +191,7 @@ export const reorder = pub
   });
 
 // Delete a zone. Org check via parent group.
-export const remove = pub
+export const remove = mut
   .input(z.object({ zoneId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -206,7 +209,7 @@ export const remove = pub
 
 // Delete every zone inside a zone group (group itself stays). Used by the
 // "Clear" button in the zone editor.
-export const removeAllInGroup = pub
+export const removeAllInGroup = mut
   .input(z.object({ zoneGroupId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db

@@ -1,6 +1,6 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Outlet, redirect, useNavigate, useParams } from "@tanstack/react-router";
+import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
@@ -14,7 +14,6 @@ import {
 import { Input } from "~/components/input";
 import { Rail, useShowArchived } from "~/components/rail";
 import { AVAILABLE_IMPORTERS, importFilterFields } from "~/lib/importers";
-import { hasPermission } from "~/lib/permissions";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
@@ -22,11 +21,6 @@ import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/data")({
-  beforeLoad: ({ context, params }) => {
-    if (!hasPermission(context.role, "datasets.manage")) {
-      throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
-    }
-  },
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(datasetsListQuery()),
   component: DataLayout,
 });

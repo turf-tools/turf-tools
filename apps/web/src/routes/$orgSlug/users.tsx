@@ -1,6 +1,6 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -29,7 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { Toggle } from "~/components/toggle";
 import { formatDate } from "~/lib/format";
 import { normalizeEmail } from "~/lib/normalize-email";
-import { hasPermission, ROLE_LABELS, roleLabel, ROLES, type Role } from "~/lib/permissions";
+import { canManage, ROLE_NAMES, roleLabel, type Role } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { usersListQuery } from "~/lib/queries/users";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -50,18 +50,18 @@ const STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
 ];
 
-const ROLE_OPTIONS = ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
+const ROLE_OPTIONS = ROLE_NAMES.map((r) => ({ value: r, label: roleLabel(r) }));
+
+function useAssignableRoles(): Role[] {
+  const { role } = Route.useRouteContext();
+  return ROLE_NAMES.filter((r) => canManage(role, r));
+}
 
 export const Route = createFileRoute("/$orgSlug/users")({
   validateSearch: (search): UsersSearch => ({
     role: typeof search.role === "string" ? search.role : null,
     status: typeof search.status === "string" ? search.status : null,
   }),
-  beforeLoad: ({ context, params }) => {
-    if (!hasPermission(context.role, "users.manage")) {
-      throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
-    }
-  },
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(usersListQuery()),
   component: UsersIndex,
 });
@@ -154,7 +154,7 @@ function UsersTable({
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Email</TableHead>
-            <TableHead className="w-36">Role</TableHead>
+            <TableHead className="w-48">Role</TableHead>
             <TableHead className="w-28">Status</TableHead>
             <TableHead className="w-28">Joined</TableHead>
             <TableHead className="w-28">Last login</TableHead>
@@ -185,8 +185,9 @@ type UserRowData = Awaited<ReturnType<typeof client.users.list>>[number];
 // Mutations and the archive confirm, shared by the row and card renderings.
 function useUserActions(user: UserRowData) {
   const queryClient = useQueryClient();
-  const { session } = Route.useRouteContext();
+  const { session, role } = Route.useRouteContext();
   const isSelf = user.userId === session?.user.id;
+  const manageable = canManage(role, user.role);
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -216,6 +217,7 @@ function useUserActions(user: UserRowData) {
     <RowMenu
       user={user}
       isSelf={isSelf}
+      manageable={manageable}
       onResendInvite={() => resendInvite.mutate()}
       onArchive={archive.open}
       onUnarchive={() => unarchive.mutate()}
@@ -234,7 +236,7 @@ function useUserActions(user: UserRowData) {
   const roleCell = (
     <RoleCell
       role={user.role}
-      archived={user.status === "archived"}
+      editable={user.status !== "archived" && manageable}
       onChange={(role) => changeRole.mutate(role)}
     />
   );
@@ -306,18 +308,20 @@ function UserCard({ user }: { user: UserRowData }) {
 function RowMenu({
   user,
   isSelf,
+  manageable,
   onResendInvite,
   onArchive,
   onUnarchive,
 }: {
   user: UserRowData;
   isSelf: boolean;
+  manageable: boolean;
   onResendInvite: () => void;
   onArchive: () => void;
   onUnarchive: () => void;
 }) {
   // Disabled button keeps row alignment consistent when no actions apply.
-  const hasItems = user.status !== "active" || !isSelf;
+  const hasItems = manageable && (user.status !== "active" || !isSelf);
   if (!hasItems) {
     return (
       <Button variant="outline" size="icon" className="h-8 w-full" disabled>
@@ -330,7 +334,7 @@ function RowMenu({
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
         <Icon name="more-horizontal" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className="w-48">
         {user.status === "archived" ? (
           <DropdownMenuItem onClick={onUnarchive}>
             <Icon name="archive-restore" />
@@ -359,15 +363,16 @@ function RowMenu({
 
 function RoleCell({
   role,
-  archived,
+  editable,
   onChange,
 }: {
   role: string;
-  archived: boolean;
+  editable: boolean;
   onChange: (role: Role) => void;
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v as Role) });
-  if (archived) {
+  const assignable = useAssignableRoles();
+  if (!editable) {
     return <Pill>{roleLabel(role)}</Pill>;
   }
   return (
@@ -376,11 +381,11 @@ function RoleCell({
         <span>{roleLabel(role)}</span>
         <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuRadioGroup {...dd.radio} value={role}>
-          {ROLES.map((r) => (
+          {assignable.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
-              {ROLE_LABELS[r]}
+              {roleLabel(r)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -641,22 +646,23 @@ function RoleSelect({
   disabled?: boolean;
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v as Role) });
+  const assignable = useAssignableRoles();
   return (
     <DropdownMenu {...dd.menu}>
       <DropdownMenuTrigger
         disabled={disabled}
         render={
-          <Button variant="outline" size="lg" type="button" className="w-36 justify-between" />
+          <Button variant="outline" size="lg" type="button" className="w-48 justify-between" />
         }
       >
         <span>{roleLabel(value)}</span>
         <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuRadioGroup {...dd.radio} value={value}>
-          {ROLES.map((r) => (
+          {assignable.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
-              {ROLE_LABELS[r]}
+              {roleLabel(r)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

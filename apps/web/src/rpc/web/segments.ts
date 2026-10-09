@@ -5,8 +5,11 @@ import { z } from "zod";
 import type { Criteria } from "~/lib/filters";
 import { detectSegmentCycles, SegmentRefError, type SegmentLike } from "~/lib/segment-refs";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
 import { activeDatasetId } from "./active-dataset";
+
+const pub = webPub("segments.read");
+const mut = webMut("segments.write");
 
 // Shared guard for create paths: a data-dependent entity can't be created
 // without an active dataset to belong to (the UI gates on this too).
@@ -98,7 +101,7 @@ export const getById = pub
 
 // Create an empty segment with the given name. Criteria starts empty —
 // editor populates it via subsequent updateCriteria calls.
-export const create = pub
+export const create = mut
   .input(z.object({ name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const datasetId = await activeDatasetId(context.db, context.organizationId);
@@ -117,7 +120,7 @@ export const create = pub
   });
 
 // Rename a segment. Org-scoped.
-export const rename = pub
+export const rename = mut
   .input(
     z.object({
       segmentId: z.string().uuid(),
@@ -144,7 +147,7 @@ export const rename = pub
 
 // Clone a segment: creates a new segment with `newName` and copies the
 // source's criteria. Returns the full new row.
-export const clone = pub
+export const clone = mut
   .input(
     z.object({
       segmentId: z.string().uuid(),
@@ -179,7 +182,7 @@ export const clone = pub
 // Soft-retire a segment: it leaves the rail and pickers but stays
 // resolvable for the campaigns and turfs that reference it. Referenced
 // segments live forever; only archived, unreferenced ones can be deleted.
-export const archive = pub
+export const archive = mut
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -196,7 +199,7 @@ export const archive = pub
     return { ok: true as const };
   });
 
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -272,7 +275,7 @@ export const removeCheck = pub
 // nothing has ever referenced carries no history, so deleting it loses
 // nothing. Archived-only keeps the destructive action off live working
 // state. The blocker check re-runs here and the FKs backstop any race.
-export const remove = pub
+export const remove = mut
   .input(z.object({ segmentId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
@@ -324,7 +327,7 @@ export const countCampaigns = pub
 // The criteria shape is otherwise opaque at this layer, but segment
 // references are walked here to reject cycles before they persist —
 // the editor prevents them in the UI, this is a backstop.
-export const updateCriteria = pub
+export const updateCriteria = mut
   .input(
     z.object({
       segmentId: z.string().uuid(),
@@ -403,7 +406,7 @@ export const countCascade = pub
     });
   });
 
-export const sample = pub
+export const sample = webPub("persons.read")
   .input(z.object({ criteria: z.unknown(), limit: z.number().int().positive().optional() }))
   .handler(async ({ context, input }): Promise<PersonsSample> => {
     return dataPostJson<PersonsSample>("/persons/sample", {
@@ -471,7 +474,7 @@ export const countByKey = pub
 
 // Per-building rollups for the turf cutter — one row per building that
 // contains at least one matching person.
-export const listBuildings = pub
+export const listBuildings = webPub("persons.read")
   .input(
     z.object({
       criteria: z.unknown(),

@@ -4,7 +4,10 @@ import { campaigns, jobs, turfDrafts } from "@turf-tools/db/schema";
 import { z } from "zod";
 
 import { AUTOCUT_STARTS } from "~/lib/utils";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("turfs.cut");
+const mut = webMut("turfs.cut");
 
 // Drafts are scoped to `(campaignId, zoneId)`, where `zoneId` is null
 // for zoneless campaigns (cut against the full segment). Drizzle's
@@ -67,7 +70,7 @@ export const list = pub
 // `segmentId` is captured server-side from the campaign rather than
 // trusted from the client, so a stale tab can't poison drafts with
 // a segment that's no longer bound to the campaign.
-export const replaceAll = pub
+export const replaceAll = mut
   .input(
     z.object({
       campaignId: z.string().uuid(),
@@ -125,7 +128,7 @@ export const replaceAll = pub
 // since drafts are inherently scoped to a specific zoneId and would
 // be orphaned by any rebind — even a "functionally identical" new
 // zone group is treated as a fresh slate.
-export const clearForCampaign = pub
+export const clearForCampaign = mut
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -151,7 +154,7 @@ export const clearForCampaign = pub
 // reloads drafts when it completes. The concurrency key runs one job
 // per scope at a time (a reload or second tab can enqueue another), so
 // two runs never interleave their draft replacements.
-export const autocut = pub
+export const autocut = mut
   .input(
     z.object({
       campaignId: z.string().uuid(),

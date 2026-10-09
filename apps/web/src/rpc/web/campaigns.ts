@@ -2,8 +2,11 @@ import { ORPCError } from "@orpc/server";
 import { and, asc, eq, sql, type Db } from "@turf-tools/db";
 import { campaigns, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
 import { activeDatasetId } from "./active-dataset";
+
+const pub = webPub("campaigns.read");
+const mut = webMut("campaigns.write");
 
 const campaignSelect = {
   campaignId: campaigns.campaignId,
@@ -51,7 +54,7 @@ export const getById = pub
 // Create a campaign. The zone group is the one optional binding —
 // omitted, the campaign is zoneless and turfs cut against the whole
 // segment.
-export const create = pub
+export const create = mut
   .input(
     z.object({
       name: z.string().min(1),
@@ -82,7 +85,7 @@ export const create = pub
   });
 
 // Rename a campaign.
-export const rename = pub
+export const rename = mut
   .input(
     z.object({
       campaignId: z.string().uuid(),
@@ -110,7 +113,7 @@ export const rename = pub
 // Rebind a campaign. Undefined leaves a binding untouched; null clears
 // the zone group (→ zoneless), the only binding that can be removed.
 // Used by the dropdown commits in the campaign editor.
-export const update = pub
+export const update = mut
   .input(
     z.object({
       campaignId: z.string().uuid(),
@@ -141,7 +144,7 @@ export const update = pub
 
 // Clone a campaign: copies name + all FKs into a new row with the
 // supplied `newName`. Returns the full new row.
-export const clone = pub
+export const clone = mut
   .input(
     z.object({
       campaignId: z.string().uuid(),
@@ -181,7 +184,7 @@ export const clone = pub
 // of the turfs view, but turf codes keep working and nothing is deleted.
 // Campaigns with turfs are the anchor of turf history and live forever;
 // only archived, turf-less ones can be deleted.
-export const archive = pub
+export const archive = mut
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -198,7 +201,7 @@ export const archive = pub
     return { ok: true as const };
   });
 
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -249,7 +252,7 @@ export const removeCheck = pub
 // Permanently delete an archived campaign that never published a turf
 // (drafts cascade). The blocker check re-runs here and the FKs backstop
 // any race.
-export const remove = pub
+export const remove = mut
   .input(z.object({ campaignId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db

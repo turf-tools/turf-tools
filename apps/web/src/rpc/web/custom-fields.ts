@@ -8,8 +8,11 @@ import {
 } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
 import { activeDatasetId } from "./active-dataset";
+
+const pub = webPub("datasets.read");
+const mut = webMut("datasets.manage");
 
 // Custom fields — user-appended, typed, dataset-scoped columns that float
 // across versions. Values live in the lake;
@@ -57,7 +60,7 @@ export const list = pub
 
 // Rename is a one-row UPDATE with no fallout: criteria and lake values are
 // customFieldId-keyed — labels only exist at display edges.
-export const rename = pub
+export const rename = mut
   .input(z.object({ customFieldId: z.string().uuid(), label: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const field = await guardField(context.db, context.organizationId, input.customFieldId);
@@ -78,7 +81,7 @@ export const rename = pub
 
 // Soft-hide a field from the card / picker — display only, values untouched.
 // Re-appending the label revives it.
-export const archive = pub
+export const archive = mut
   .input(z.object({ customFieldId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     await guardField(context.db, context.organizationId, input.customFieldId);
@@ -89,7 +92,7 @@ export const archive = pub
     return { ok: true as const };
   });
 
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ customFieldId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     await guardField(context.db, context.organizationId, input.customFieldId);
@@ -102,7 +105,7 @@ export const unarchive = pub
 
 // Clear a field — delete its values for everyone (registry row stays at zero
 // coverage, ready for re-append). Synchronous on the data side.
-export const clear = pub
+export const clear = mut
   .input(z.object({ customFieldId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const field = await guardField(context.db, context.organizationId, input.customFieldId);

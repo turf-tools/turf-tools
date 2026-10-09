@@ -16,7 +16,7 @@ export const Route = createFileRoute("/$orgSlug/account")({
 
 function AccountPage() {
   const router = useRouter();
-  const { session } = Route.useRouteContext();
+  const { session, role } = Route.useRouteContext();
   const user = session?.user;
   const shouldFade = useFadeOnce("/account");
 
@@ -47,7 +47,7 @@ function AccountPage() {
 
         <Field label="Role">
           <Pill>
-            <span>{roleLabel(user.role)}</span>
+            <span>{roleLabel(role)}</span>
           </Pill>
         </Field>
 

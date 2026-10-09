@@ -5,7 +5,10 @@ import { z } from "zod";
 import { scansForOrg } from "~/lib/server/scans";
 import { publish } from "~/lib/server/live";
 import { activeDatasetId } from "./active-dataset";
-import { webMut as mut, webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("walks.read");
+const mut = webMut("walks.write");
 
 // Events attributed to this walk. Correlated on turf_id too so the probe
 // rides the events PK instead of needing a walk_id index (which would tax

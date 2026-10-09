@@ -10,7 +10,10 @@ import {
 import { z } from "zod";
 import { AVAILABLE_IMPORTERS, importFilterFields } from "~/lib/importers";
 import type { Manifest } from "~/lib/manifest";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("datasets.read");
+const mut = webMut("datasets.manage");
 
 const importFilterSchema = z.object({
   column: z.string().min(1),
@@ -71,7 +74,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
 
 // Promote a version to the org's active one — the "Make active" action. Only a
 // `ready` version the org is granted can be activated.
-export const makeActive = pub
+export const makeActive = mut
   .input(z.object({ versionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const [v] = await context.db
@@ -107,7 +110,7 @@ export const makeActive = pub
 // granted `ready`/`failed` version except one some org has active (version
 // history is shared state, so the check spans every org attached to the
 // dataset, not just the caller's) and never while it's still importing.
-export const archive = pub
+export const archive = mut
   .input(z.object({ versionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const [activeFor] = await context.db
@@ -149,7 +152,7 @@ export const archive = pub
   });
 
 // Restore an archived version to the default list.
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ versionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const [v] = await context.db
@@ -179,7 +182,7 @@ export const unarchive = pub
 // equivalent of clicking each row, under the same guards: nothing any
 // org has active, nothing mid-import. A fully-archived dataset drops
 // out of the rail (derived — there is no dataset-level flag).
-export const archiveAll = pub
+export const archiveAll = mut
   .input(z.object({ datasetId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const [grant] = await context.db
@@ -230,7 +233,7 @@ export const archiveAll = pub
 // Restore every archived version of a dataset — the round-trip partner
 // of archiveAll, so a whole dataset can be archived and revived without
 // any dataset-level flag. Unarchiving is always safe; no guards.
-export const unarchiveAll = pub
+export const unarchiveAll = mut
   .input(z.object({ datasetId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const [grant] = await context.db
@@ -254,7 +257,7 @@ export const unarchiveAll = pub
 // Rename a dataset. Display-name only — the slug keys physical DuckLake
 // schemas and is fixed at creation. Like version curation, the name is
 // shared state, so a rename is visible to every org attached.
-export const rename = pub
+export const rename = mut
   .input(z.object({ datasetId: z.string().uuid(), name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const [grant] = await context.db
@@ -297,7 +300,7 @@ export const rename = pub
 // org, and open its first version as `importing`. The geocode job lands the
 // manifest + marks it `ready`; the user then promotes it via "Make active".
 // Nothing is disrupted meanwhile — the org keeps running on its current version.
-export const create = pub
+export const create = mut
   .input(
     z.object({
       name: z.string().min(1),
@@ -392,7 +395,7 @@ export const create = pub
 // over a trailing failed row, and enqueues the geocode job; the org keeps
 // running on its current active version until the new one is Ready and
 // explicitly made active. Blocks a second concurrent import on the same dataset.
-export const update = pub
+export const update = mut
   .input(z.object({ datasetId: z.string().uuid(), sourceUri: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     return context.db.transaction(async (tx) => {

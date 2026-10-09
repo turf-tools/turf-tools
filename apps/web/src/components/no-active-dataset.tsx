@@ -10,8 +10,8 @@ import {
 
 // Shown in place of a data-dependent editor (segments/campaigns/zones) when the
 // org has no active dataset version. Those pages can't function until one is
-// imported and activated in Data. Dismissing returns to Overview so the user is
-// never stranded on an empty page.
+// imported and activated in Data. Dismissing returns to the org root, which
+// lands on the role's home tab, so the user is never stranded on an empty page.
 export function NoActiveDataset({
   entity,
   orgSlug,
@@ -26,7 +26,7 @@ export function NoActiveDataset({
     <Dialog
       open
       onOpenChange={(next) => {
-        if (!next) void navigate({ to: "/$orgSlug/overview", params: { orgSlug } });
+        if (!next) void navigate({ to: "/$orgSlug", params: { orgSlug } });
       }}
     >
       <DialogContent>
@@ -37,7 +37,7 @@ export function NoActiveDataset({
             : "No dataset has been set up yet. Ask an admin to import one"}
         </DialogDescription>
         <div className="mt-2 flex justify-end gap-2">
-          <DialogClose render={<Button variant="outline" />}>Back to overview</DialogClose>
+          <DialogClose render={<Button variant="outline" />}>Back</DialogClose>
           {canManage ? (
             <Button render={<Link to="/$orgSlug/data" params={{ orgSlug }} />}>Go to Data</Button>
           ) : null}

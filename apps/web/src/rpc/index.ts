@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { webPub, nativePub } from "./context";
+import { memberPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
 import * as datasets from "./web/datasets";
 import * as persons from "./web/persons";
@@ -22,7 +22,7 @@ import * as nativeScripts from "./native/scripts";
 import * as nativeTurfs from "./native/turfs";
 
 export const webRouter = {
-  healthcheck: webPub.input(z.object({}).optional()).handler(async ({ context }) => {
+  healthcheck: memberPub.input(z.object({}).optional()).handler(async ({ context }) => {
     await context.db.execute("SELECT 1 as ok");
     return { status: "ok", db: "connected" };
   }),

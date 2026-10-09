@@ -1,4 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { homeNavItem, PRIMARY, SECONDARY } from "~/lib/nav";
+import { hasPermission } from "~/lib/permissions";
 import { bumpOrgLastAccessed } from "~/lib/server/landing-org";
 
 export const Route = createFileRoute("/$orgSlug")({
@@ -6,17 +8,16 @@ export const Route = createFileRoute("/$orgSlug")({
     if (!context.session) throw redirect({ to: "/login" });
     const org = context.session.orgsBySlug[params.orgSlug];
     if (!org) throw redirect({ to: "/" });
-    // Field leads get exactly the turfs board plus personal pages;
-    // everything else lands on turfs. The RPC allowlist is the real
-    // boundary — this keeps navigation coherent.
-    if (org.role === "lead") {
-      const section = location.pathname.split("/")[2];
-      if (!section || !["turfs", "settings", "account"].includes(section)) {
-        // `href` (not `to` + params) sidesteps a typed-params inference
-        // failure in this layout beforeLoad; same-origin hrefs are still
-        // internal SPA navigations, not document reloads.
-        throw redirect({ href: `/${params.orgSlug}/turfs` });
-      }
+    // Tabs a role can't see redirect to the first one it can; the server
+    // enforces the same permissions on every call behind them.
+    const section = location.pathname.split("/")[2];
+    const tab = [...PRIMARY, ...SECONDARY].find((i) => i.to === `/$orgSlug/${section}`);
+    if (tab?.requires && !hasPermission(org.role, tab.requires)) {
+      const home = homeNavItem(org.role).to.split("/")[2];
+      // `href` (not `to` + params) sidesteps a typed-params inference
+      // failure in this layout beforeLoad; same-origin hrefs are still
+      // internal SPA navigations, not document reloads.
+      throw redirect({ href: `/${params.orgSlug}/${home}` });
     }
     // Fire-and-forget; powers the "/" landing redirect on next visit.
     // Always bumped (even for single-org users) so the value stays

@@ -14,9 +14,8 @@ import {
   datasetOrganizations,
   datasets,
 } from "@turf-tools/db/schema";
-import { hasPermission } from "~/lib/permissions";
 import { dataFetch } from "~/lib/server/data-proxy";
-import { buildVoterDataContext } from "~/rpc/context";
+import { buildPermittedContext } from "~/rpc/context";
 
 const FIELD_TYPES: CustomFieldType[] = [
   "number",
@@ -47,14 +46,11 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-append")({
         const orgSlug = url.pathname.match(/^\/api\/web\/([^/]+)\/custom-field-append$/)?.[1];
         if (!orgSlug) return new Response("Not Found", { status: 404 });
 
-        let context: Awaited<ReturnType<typeof buildVoterDataContext>>;
+        let context: Awaited<ReturnType<typeof buildPermittedContext>>;
         try {
-          context = await buildVoterDataContext(db, request.headers, orgSlug);
+          context = await buildPermittedContext(db, request.headers, orgSlug, "datasets.manage");
         } catch {
           return new Response("Unauthorized", { status: 401 });
-        }
-        if (!hasPermission(context.role, "datasets.manage")) {
-          return new Response("Forbidden", { status: 403 });
         }
 
         const datasetId = url.searchParams.get("datasetId");

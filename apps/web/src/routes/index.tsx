@@ -15,6 +15,6 @@ export const Route = createFileRoute("/")({
       if (at !== bt) return bt - at;
       return a.orgName.localeCompare(b.orgName);
     })[0]!;
-    throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: recent.orgSlug } });
+    throw redirect({ to: "/$orgSlug", params: { orgSlug: recent.orgSlug } });
   },
 });

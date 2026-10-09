@@ -87,9 +87,7 @@ function OrgSwitcher({
           return (
             <DropdownMenuItem
               key={o.orgSlug}
-              onClick={() =>
-                void navigate({ to: "/$orgSlug/overview", params: { orgSlug: o.orgSlug } })
-              }
+              onClick={() => void navigate({ to: "/$orgSlug", params: { orgSlug: o.orgSlug } })}
             >
               <span className="min-w-0 truncate">{o.orgName}</span>
               {isCurrent ? (

@@ -7,7 +7,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
 import { REPORT_KINDS, type ReportKind } from "~/lib/reports";
 import { dataFetch, passthrough } from "~/lib/server/data-proxy";
-import { buildVoterDataContext } from "~/rpc/context";
+import { buildPermittedContext } from "~/rpc/context";
 
 export const Route = createFileRoute("/api/web/$orgSlug/report-export")({
   server: {
@@ -17,9 +17,9 @@ export const Route = createFileRoute("/api/web/$orgSlug/report-export")({
         const orgSlug = url.pathname.match(/^\/api\/web\/([^/]+)\/report-export$/)?.[1];
         if (!orgSlug) return new Response("Not Found", { status: 404 });
 
-        let context: Awaited<ReturnType<typeof buildVoterDataContext>>;
+        let context: Awaited<ReturnType<typeof buildPermittedContext>>;
         try {
-          context = await buildVoterDataContext(db, request.headers, orgSlug);
+          context = await buildPermittedContext(db, request.headers, orgSlug, "reports.read");
         } catch {
           return new Response("Unauthorized", { status: 401 });
         }

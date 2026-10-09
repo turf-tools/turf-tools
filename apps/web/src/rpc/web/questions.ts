@@ -2,7 +2,10 @@ import { ORPCError } from "@orpc/server";
 import { and, asc, eq, inArray, isNull, sql } from "@turf-tools/db";
 import { scriptSteps, questions, responseOptions, turfs } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("scripts.read");
+const mut = webMut("scripts.write");
 
 const select = {
   questionId: questions.questionId,
@@ -201,7 +204,7 @@ export const liveUsage = pub
     };
   });
 
-export const create = pub
+export const create = mut
   .input(
     z.object({
       name: z.string().min(1),
@@ -222,7 +225,7 @@ export const create = pub
     return rows[0]!;
   });
 
-export const rename = pub
+export const rename = mut
   .input(z.object({ questionId: z.string().uuid(), name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -242,7 +245,7 @@ export const rename = pub
     return { ok: true as const };
   });
 
-export const updateText = pub
+export const updateText = mut
   .input(z.object({ questionId: z.string().uuid(), text: z.string() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -266,7 +269,7 @@ export const updateText = pub
 // cascades to script_steps — referencing steps are deleted so live
 // scripts don't display a stale question. The question row itself
 // remains so historical canvass_events keep a valid reference.
-export const archive = pub
+export const archive = mut
   .input(z.object({ questionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -313,7 +316,7 @@ export const archive = pub
     return { affectedScriptIds };
   });
 
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ questionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -335,7 +338,7 @@ export const unarchive = pub
 
 // --- Response option mutations ---
 
-export const addResponseOption = pub
+export const addResponseOption = mut
   .input(z.object({ questionId: z.string().uuid(), text: z.string() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -367,7 +370,7 @@ export const addResponseOption = pub
     return rows[0]!;
   });
 
-export const removeResponseOption = pub
+export const removeResponseOption = mut
   .input(
     z.object({
       questionId: z.string().uuid(),
@@ -413,7 +416,7 @@ export const removeResponseOption = pub
     return { ok: true as const };
   });
 
-export const reorderResponseOptions = pub
+export const reorderResponseOptions = mut
   .input(
     z.object({
       questionId: z.string().uuid(),
@@ -457,7 +460,7 @@ export const reorderResponseOptions = pub
     return { ok: true as const };
   });
 
-export const updateResponseOptionText = pub
+export const updateResponseOptionText = mut
   .input(
     z.object({
       questionId: z.string().uuid(),

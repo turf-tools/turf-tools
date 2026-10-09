@@ -9,7 +9,10 @@ import {
   turfs,
 } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("scripts.read");
+const mut = webMut("scripts.write");
 
 const scriptSelect = {
   scriptId: scripts.scriptId,
@@ -83,7 +86,7 @@ export const countLiveTurfs = pub
   });
 
 // Create an empty script. Steps are added via the editor.
-export const create = pub
+export const create = mut
   .input(z.object({ name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
@@ -97,7 +100,7 @@ export const create = pub
     return rows[0]!;
   });
 
-export const rename = pub
+export const rename = mut
   .input(z.object({ scriptId: z.string().uuid(), name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -118,7 +121,7 @@ export const rename = pub
   });
 
 // Clone the script row + all step rows under a new scriptId.
-export const clone = pub
+export const clone = mut
   .input(z.object({ scriptId: z.string().uuid(), newName: z.string().min(1) }))
   .handler(async ({ context, input }) => {
     const source = await context.db
@@ -167,7 +170,7 @@ export const clone = pub
 // Soft-retire a script: it leaves the rail and pickers but stays
 // resolvable for the campaigns and turfs that reference it. Referenced
 // scripts live forever; only archived, unreferenced ones can be deleted.
-export const archive = pub
+export const archive = mut
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -184,7 +187,7 @@ export const archive = pub
     return { ok: true as const };
   });
 
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -241,7 +244,7 @@ export const removeCheck = pub
 
 // Permanently delete an archived, unreferenced script (steps cascade).
 // The blocker check re-runs here and the FKs backstop any race.
-export const remove = pub
+export const remove = mut
   .input(z.object({ scriptId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
@@ -304,7 +307,7 @@ const addStepInput = z.discriminatedUnion("stepType", [
 ]);
 
 // Append a step at the end of the script. Order is computed server-side.
-export const addStep = pub.input(addStepInput).handler(async ({ context, input }) => {
+export const addStep = mut.input(addStepInput).handler(async ({ context, input }) => {
   const owned = await context.db
     .select({ scriptId: scripts.scriptId })
     .from(scripts)
@@ -361,7 +364,7 @@ export const addStep = pub.input(addStepInput).handler(async ({ context, input }
   return rows[0]!;
 });
 
-export const removeStep = pub
+export const removeStep = mut
   .input(z.object({ scriptId: z.string().uuid(), scriptStepId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -423,7 +426,7 @@ export const removeStep = pub
 // Reassign `order` to match the provided id sequence. The client sends the
 // full ordered list; we trust it for the rows it owns (org-scoped via the
 // script check) and renumber 0..N-1.
-export const reorderSteps = pub
+export const reorderSteps = mut
   .input(z.object({ scriptId: z.string().uuid(), scriptStepIds: z.array(z.string().uuid()) }))
   .handler(async ({ context, input }) => {
     const owned = await context.db
@@ -505,7 +508,7 @@ export const reorderSteps = pub
     return { ok: true as const };
   });
 
-export const updateTextStep = pub
+export const updateTextStep = mut
   .input(
     z.object({
       scriptId: z.string().uuid(),
@@ -548,7 +551,7 @@ export const updateTextStep = pub
 // belong to an unarchived single-select question that appears as an earlier
 // step in the same script — the invariant that keeps visibility a single
 // forward pass (see schema comment).
-export const setStepCondition = pub
+export const setStepCondition = mut
   .input(
     z.object({
       scriptId: z.string().uuid(),
