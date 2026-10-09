@@ -1,10 +1,23 @@
 import { test, expect } from "vite-plus/test";
-import { homeNavItem, PRIMARY, SECONDARY, visibleNavItems } from "../src/lib/nav";
+import { homeNavItem, PRIMARY, SECONDARY, visibleNavItems, type NavItem } from "../src/lib/nav";
 
-test("a lead sees the turfs board plus personal pages", () => {
-  expect(visibleNavItems(PRIMARY, "lead").map((i) => i.label)).toEqual(["Turfs"]);
-  expect(visibleNavItems(SECONDARY, "lead").map((i) => i.label)).toEqual(["Settings", "Account"]);
-  expect(homeNavItem("lead").label).toBe("Turfs");
+const labels = (items: NavItem[], role: string) => visibleNavItems(items, role).map((i) => i.label);
+
+test("a turf viewer sees the turfs board plus personal pages", () => {
+  expect(labels(PRIMARY, "turf_viewer")).toEqual(["Turfs"]);
+  expect(labels(SECONDARY, "turf_viewer")).toEqual(["Settings", "Account"]);
+  expect(homeNavItem("turf_viewer").label).toBe("Turfs");
+});
+
+test("an analytics viewer sees progress, results and reports", () => {
+  expect(labels(PRIMARY, "analytics_viewer")).toEqual(["Progress", "Results", "Reports"]);
+  expect(labels(SECONDARY, "analytics_viewer")).toEqual(["Settings", "Account"]);
+  expect(homeNavItem("analytics_viewer").label).toBe("Progress");
+});
+
+test("a campaign editor sees everything except users and data", () => {
+  expect(labels(PRIMARY, "campaign_editor")).toEqual(labels(PRIMARY, "admin"));
+  expect(labels(SECONDARY, "campaign_editor")).toEqual(["Settings", "Account"]);
 });
 
 test("owner and admin see every tab", () => {

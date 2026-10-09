@@ -38,7 +38,7 @@ const cli = meow(
 
   Examples
     $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com
-    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com --role lead
+    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com --role turf_viewer
 `,
   {
     importMeta: import.meta,

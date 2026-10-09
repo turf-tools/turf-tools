@@ -38,7 +38,7 @@ async function forbidden(p: Promise<unknown>): Promise<boolean> {
 }
 
 test("a procedure refuses roles without its permission", async () => {
-  const lead = callerAs("lead");
+  const lead = callerAs("turf_viewer");
   expect(await forbidden(lead.users.list())).toBe(true);
   expect(await forbidden(lead.segments.list())).toBe(true);
   expect(await forbidden(lead.turfs.publish({ campaignId: SEEDED_ORG_ID, zoneId: null }))).toBe(

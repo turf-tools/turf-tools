@@ -38,9 +38,28 @@ type RoleSpec = {
 export const ROLES = {
   owner: { rank: 3, label: "Owner", permissions: "all" },
   admin: { rank: 2, label: "Admin", permissions: "all" },
-  lead: {
+  campaign_editor: {
     rank: 1,
-    label: "Field lead",
+    label: "Campaign editor",
+    permissions: PERMISSIONS.filter((p) => p !== "users.manage" && p !== "datasets.manage"),
+  },
+  analytics_viewer: {
+    rank: 1,
+    label: "Analytics viewer",
+    permissions: [
+      "progress.read",
+      "results.read",
+      "reports.read",
+      "datasets.read",
+      "campaigns.read",
+      "segments.read",
+      "zones.read",
+      "scripts.read",
+    ],
+  },
+  turf_viewer: {
+    rank: 1,
+    label: "Turf viewer",
     permissions: ["turfs.read", "campaigns.read", "walks.read", "walks.write"],
   },
 } as const satisfies Record<string, RoleSpec>;

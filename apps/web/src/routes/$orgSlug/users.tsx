@@ -154,7 +154,7 @@ function UsersTable({
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Email</TableHead>
-            <TableHead className="w-36">Role</TableHead>
+            <TableHead className="w-48">Role</TableHead>
             <TableHead className="w-28">Status</TableHead>
             <TableHead className="w-28">Joined</TableHead>
             <TableHead className="w-28">Last login</TableHead>
@@ -334,7 +334,7 @@ function RowMenu({
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" className="h-8 w-full" />}>
         <Icon name="more-horizontal" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className="w-48">
         {user.status === "archived" ? (
           <DropdownMenuItem onClick={onUnarchive}>
             <Icon name="archive-restore" />
@@ -381,7 +381,7 @@ function RoleCell({
         <span>{roleLabel(role)}</span>
         <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuRadioGroup {...dd.radio} value={role}>
           {assignable.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
@@ -652,13 +652,13 @@ function RoleSelect({
       <DropdownMenuTrigger
         disabled={disabled}
         render={
-          <Button variant="outline" size="lg" type="button" className="w-36 justify-between" />
+          <Button variant="outline" size="lg" type="button" className="w-48 justify-between" />
         }
       >
         <span>{roleLabel(value)}</span>
         <Icon name="chevron-down" className="size-3.5" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuRadioGroup {...dd.radio} value={value}>
           {assignable.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
