@@ -4,12 +4,16 @@ import { memberships, users } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { auth } from "~/lib/auth";
 import { normalizeEmail } from "~/lib/normalize-email";
-import { ROLE_NAMES } from "~/lib/permissions";
+import { canManage, ROLE_NAMES } from "~/lib/permissions";
 import { memberMut, webMut, webPub } from "../context";
 
 const roleSchema = z.enum(ROLE_NAMES);
 const pub = webPub("users.manage");
 const mut = webMut("users.manage");
+
+function checkCanManage(ctx: { role: string }, targetRole: string) {
+  if (!canManage(ctx.role, targetRole)) throw new ORPCError("FORBIDDEN");
+}
 
 async function countActiveOwners(db: Db, organizationId: string): Promise<number> {
   const result = await db
@@ -72,6 +76,7 @@ export const invite = mut
     }),
   )
   .handler(async ({ context, input }) => {
+    checkCanManage(context, input.role);
     const email = normalizeEmail(input.email);
     const displayEmail = input.email.toLowerCase();
 
@@ -145,6 +150,8 @@ export const updateRole = mut
         message: "Cannot change role of an archived member",
       });
     }
+    checkCanManage(context, membership.role);
+    checkCanManage(context, input.role);
 
     if (membership.role === "owner" && input.role !== "owner") {
       const ownerCount = await countActiveOwners(context.db, context.organizationId);
@@ -181,6 +188,7 @@ export const archive = mut
         )
     )[0];
     if (!membership) throw new ORPCError("NOT_FOUND");
+    checkCanManage(context, membership.role);
     if (membership.archivedAt) return { ok: true as const };
 
     if (membership.role === "owner") {
@@ -214,6 +222,7 @@ export const unarchive = mut
         )
     )[0];
     if (!membership) throw new ORPCError("NOT_FOUND");
+    checkCanManage(context, membership.role);
     if (!membership.archivedAt) return { ok: true as const };
 
     await context.db
@@ -230,7 +239,7 @@ export const resendInvite = mut
   .handler(async ({ context, input }) => {
     const row = (
       await context.db
-        .select({ displayEmail: users.displayEmail })
+        .select({ displayEmail: users.displayEmail, role: memberships.role })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.userId))
         .where(
@@ -242,6 +251,7 @@ export const resendInvite = mut
         )
     )[0];
     if (!row) throw new ORPCError("NOT_FOUND");
+    checkCanManage(context, row.role);
 
     await auth.api.sendVerificationOTP({
       body: { email: row.displayEmail, type: "sign-in" },

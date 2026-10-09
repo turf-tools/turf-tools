@@ -30,7 +30,6 @@ export const PERMISSIONS = [
 export type Permission = (typeof PERMISSIONS)[number];
 
 type RoleSpec = {
-  // Who may manage whom on the Users page. Equal ranks manage each other.
   rank: number;
   label: string;
   permissions: "all" | readonly Permission[];
@@ -70,9 +69,9 @@ export function hasPermission(
   return wanted.every((p) => (held as readonly Permission[]).includes(p));
 }
 
-// True when the actor may manage a member holding the target role, or
-// assign it. Rank alone decides; the users.manage permission is checked
-// separately.
+// Who may manage whom: a member may be managed, or a role assigned, only
+// when it ranks at or below the caller's own. Equal ranks manage each
+// other. The users.manage permission is checked separately.
 export function canManage(actorRole: string, targetRole: string): boolean {
   if (!isRole(actorRole) || !isRole(targetRole)) return false;
   return ROLES[targetRole].rank <= ROLES[actorRole].rank;

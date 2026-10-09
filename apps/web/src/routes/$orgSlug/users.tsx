@@ -29,7 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { Toggle } from "~/components/toggle";
 import { formatDate } from "~/lib/format";
 import { normalizeEmail } from "~/lib/normalize-email";
-import { ROLE_NAMES, roleLabel, type Role } from "~/lib/permissions";
+import { canManage, ROLE_NAMES, roleLabel, type Role } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { usersListQuery } from "~/lib/queries/users";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -51,6 +51,11 @@ const STATUS_OPTIONS = [
 ];
 
 const ROLE_OPTIONS = ROLE_NAMES.map((r) => ({ value: r, label: roleLabel(r) }));
+
+function useAssignableRoles(): Role[] {
+  const { role } = Route.useRouteContext();
+  return ROLE_NAMES.filter((r) => canManage(role, r));
+}
 
 export const Route = createFileRoute("/$orgSlug/users")({
   validateSearch: (search): UsersSearch => ({
@@ -180,8 +185,9 @@ type UserRowData = Awaited<ReturnType<typeof client.users.list>>[number];
 // Mutations and the archive confirm, shared by the row and card renderings.
 function useUserActions(user: UserRowData) {
   const queryClient = useQueryClient();
-  const { session } = Route.useRouteContext();
+  const { session, role } = Route.useRouteContext();
   const isSelf = user.userId === session?.user.id;
+  const manageable = canManage(role, user.role);
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -211,6 +217,7 @@ function useUserActions(user: UserRowData) {
     <RowMenu
       user={user}
       isSelf={isSelf}
+      manageable={manageable}
       onResendInvite={() => resendInvite.mutate()}
       onArchive={archive.open}
       onUnarchive={() => unarchive.mutate()}
@@ -229,7 +236,7 @@ function useUserActions(user: UserRowData) {
   const roleCell = (
     <RoleCell
       role={user.role}
-      archived={user.status === "archived"}
+      editable={user.status !== "archived" && manageable}
       onChange={(role) => changeRole.mutate(role)}
     />
   );
@@ -301,18 +308,20 @@ function UserCard({ user }: { user: UserRowData }) {
 function RowMenu({
   user,
   isSelf,
+  manageable,
   onResendInvite,
   onArchive,
   onUnarchive,
 }: {
   user: UserRowData;
   isSelf: boolean;
+  manageable: boolean;
   onResendInvite: () => void;
   onArchive: () => void;
   onUnarchive: () => void;
 }) {
   // Disabled button keeps row alignment consistent when no actions apply.
-  const hasItems = user.status !== "active" || !isSelf;
+  const hasItems = manageable && (user.status !== "active" || !isSelf);
   if (!hasItems) {
     return (
       <Button variant="outline" size="icon" className="h-8 w-full" disabled>
@@ -354,15 +363,16 @@ function RowMenu({
 
 function RoleCell({
   role,
-  archived,
+  editable,
   onChange,
 }: {
   role: string;
-  archived: boolean;
+  editable: boolean;
   onChange: (role: Role) => void;
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v as Role) });
-  if (archived) {
+  const assignable = useAssignableRoles();
+  if (!editable) {
     return <Pill>{roleLabel(role)}</Pill>;
   }
   return (
@@ -373,7 +383,7 @@ function RoleCell({
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuRadioGroup {...dd.radio} value={role}>
-          {ROLE_NAMES.map((r) => (
+          {assignable.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
               {roleLabel(r)}
             </DropdownMenuRadioItem>
@@ -636,6 +646,7 @@ function RoleSelect({
   disabled?: boolean;
 }) {
   const dd = useDeferredRadioDropdown({ onCommit: (v) => onChange(v as Role) });
+  const assignable = useAssignableRoles();
   return (
     <DropdownMenu {...dd.menu}>
       <DropdownMenuTrigger
@@ -649,7 +660,7 @@ function RoleSelect({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup {...dd.radio} value={value}>
-          {ROLE_NAMES.map((r) => (
+          {assignable.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
               {roleLabel(r)}
             </DropdownMenuRadioItem>
