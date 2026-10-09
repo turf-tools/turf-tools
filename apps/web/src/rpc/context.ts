@@ -75,28 +75,46 @@ async function loadMembership(db: Db, userId: string, orgSlug: string): Promise<
   };
 }
 
-// buildWebContext plus the voter-data gate — for the non-RPC data routes
-// (exports, point streams, boundaries, custom fields). Field leads never
-// see voter data; the throw lands in each route's existing 401 catch.
-export async function buildVoterDataContext(
-  db: Db,
-  headers: Headers,
-  orgSlug: string,
-): Promise<WebContext> {
-  const ctx = await buildWebContext(db, headers, orgSlug);
-  if (!hasPermission(ctx.role, "voter.read")) throw new ORPCError("FORBIDDEN");
-  return ctx;
-}
-
-export const webBase = os.$context<WebContext>();
-export const webPub = webBase.route({ method: "GET" });
-export const webMut = webBase.route({ method: "POST" });
-
 export function checkPermission(ctx: WebContext, permission: Permission) {
   if (!hasPermission(ctx.role, permission)) {
     throw new ORPCError("FORBIDDEN");
   }
 }
+
+// buildWebContext plus a permission gate, for the non-RPC data routes
+// (exports, point streams, boundaries, custom fields). The throw lands in
+// each route's existing 401 catch.
+export async function buildPermittedContext(
+  db: Db,
+  headers: Headers,
+  orgSlug: string,
+  permission: Permission,
+): Promise<WebContext> {
+  const ctx = await buildWebContext(db, headers, orgSlug);
+  checkPermission(ctx, permission);
+  return ctx;
+}
+
+export const webBase = os.$context<WebContext>();
+
+// Every web procedure names the permission it needs; the middleware runs
+// before the handler. Module files pick a read and a write builder once and
+// override per procedure where a call belongs to a different tab.
+function requirePermission(permission: Permission) {
+  return webBase.use(({ context, next }) => {
+    checkPermission(context, permission);
+    return next();
+  });
+}
+export const webPub = (permission: Permission) =>
+  requirePermission(permission).route({ method: "GET" });
+export const webMut = (permission: Permission) =>
+  requirePermission(permission).route({ method: "POST" });
+
+// Procedures any active member may call: the healthcheck and self-serve
+// account edits.
+export const memberPub = webBase.route({ method: "GET" });
+export const memberMut = webBase.route({ method: "POST" });
 
 // --- Native tier: anonymous, capability-based per turfId ---
 

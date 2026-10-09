@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { webPub as pub } from "../context";
+import { webPub } from "../context";
+
+const pub = webPub("persons.read");
 
 // One person hit from the Quickwit search index (the stored voter-file fields).
 export type PersonHit = {

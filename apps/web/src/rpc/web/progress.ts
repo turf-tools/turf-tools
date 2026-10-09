@@ -3,7 +3,9 @@ import { campaigns, zones } from "@turf-tools/db/schema";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { z } from "zod";
 import { activeDatasetId } from "./active-dataset";
-import { webPub as pub } from "../context";
+import { webPub } from "../context";
+
+const pub = webPub("progress.read");
 
 // Per-turf attempted counts: persons whose *latest* result (by sequence —
 // results are full snapshots, newest wins) has a non-null outcome. The
@@ -34,7 +36,7 @@ type ZoneProgressRow = {
 
 const zoneCache = new Map<string, { at: number; rows: ZoneProgressRow[] }>();
 
-export const forOrg = pub
+export const forOrg = webPub("turfs.read")
   .input(z.object({ campaignId: z.string().uuid().optional() }).optional())
   .handler(async ({ context, input }): Promise<ProgressRow[]> => {
     // Active-dataset scoped like turfs.listForOrg; the dataset is part of the

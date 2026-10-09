@@ -9,8 +9,11 @@ import {
 } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
 import { activeDatasetId } from "./active-dataset";
+
+const pub = webPub("zones.read");
+const mut = webMut("zones.write");
 
 const zoneGroupSelect = {
   zoneGroupId: zoneGroups.zoneGroupId,
@@ -105,7 +108,7 @@ export const removeCheck = pub
 
 // Permanently delete an archived, unreferenced zone group (zones cascade).
 // The blocker check re-runs here and the FKs backstop any race.
-export const remove = pub
+export const remove = mut
   .input(z.object({ zoneGroupId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
@@ -147,7 +150,7 @@ export const getById = pub
 
 // Create an empty zone group with the given name + key group. The key
 // group is immutable once set — to switch, create a new group.
-export const create = pub
+export const create = mut
   .input(
     z.object({
       name: z.string().min(1),
@@ -174,7 +177,7 @@ export const create = pub
   });
 
 // Rename a zone group. Org-scoped.
-export const rename = pub
+export const rename = mut
   .input(
     z.object({
       zoneGroupId: z.string().uuid(),
@@ -197,7 +200,7 @@ export const rename = pub
 // Soft-retire a zone group: it leaves the rail and pickers but stays
 // resolvable for the campaigns and turfs that reference it. There is
 // no delete — turfs and campaigns reference zone groups forever.
-export const archive = pub
+export const archive = mut
   .input(z.object({ zoneGroupId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -214,7 +217,7 @@ export const archive = pub
     return { ok: true as const };
   });
 
-export const unarchive = pub
+export const unarchive = mut
   .input(z.object({ zoneGroupId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const updated = await context.db
@@ -233,7 +236,7 @@ export const unarchive = pub
 
 // Clone a zone group: creates a new group with `newName` and copies every
 // zone from the source. Same key group as the source. Returns the full new row.
-export const clone = pub
+export const clone = mut
   .input(
     z.object({
       zoneGroupId: z.string().uuid(),
@@ -299,7 +302,7 @@ export const clone = pub
 // drift from "what the segment matches now". Same drift applies to
 // any manually-built zone group; we'd address with a "Refresh from
 // segment" affordance if it bites.
-export const createWithDefaultZone = pub
+export const createWithDefaultZone = mut
   .input(
     z.object({
       name: z.string().min(1),

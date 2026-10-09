@@ -1,6 +1,6 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
@@ -29,7 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~
 import { Toggle } from "~/components/toggle";
 import { formatDate } from "~/lib/format";
 import { normalizeEmail } from "~/lib/normalize-email";
-import { hasPermission, ROLE_LABELS, roleLabel, ROLES, type Role } from "~/lib/permissions";
+import { ROLE_NAMES, roleLabel, type Role } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { usersListQuery } from "~/lib/queries/users";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -50,18 +50,13 @@ const STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
 ];
 
-const ROLE_OPTIONS = ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
+const ROLE_OPTIONS = ROLE_NAMES.map((r) => ({ value: r, label: roleLabel(r) }));
 
 export const Route = createFileRoute("/$orgSlug/users")({
   validateSearch: (search): UsersSearch => ({
     role: typeof search.role === "string" ? search.role : null,
     status: typeof search.status === "string" ? search.status : null,
   }),
-  beforeLoad: ({ context, params }) => {
-    if (!hasPermission(context.role, "users.manage")) {
-      throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
-    }
-  },
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(usersListQuery()),
   component: UsersIndex,
 });
@@ -378,9 +373,9 @@ function RoleCell({
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuRadioGroup {...dd.radio} value={role}>
-          {ROLES.map((r) => (
+          {ROLE_NAMES.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
-              {ROLE_LABELS[r]}
+              {roleLabel(r)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -654,9 +649,9 @@ function RoleSelect({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup {...dd.radio} value={value}>
-          {ROLES.map((r) => (
+          {ROLE_NAMES.map((r) => (
             <DropdownMenuRadioItem key={r} value={r}>
-              {ROLE_LABELS[r]}
+              {roleLabel(r)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

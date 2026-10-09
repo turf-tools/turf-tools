@@ -6,9 +6,8 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
-import { hasPermission } from "~/lib/permissions";
 import { dataFetch } from "~/lib/server/data-proxy";
-import { buildVoterDataContext } from "~/rpc/context";
+import { buildPermittedContext } from "~/rpc/context";
 
 export const Route = createFileRoute("/api/web/$orgSlug/custom-field-inspect")({
   server: {
@@ -17,14 +16,10 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-inspect")({
         const url = new URL(request.url);
         const orgSlug = url.pathname.match(/^\/api\/web\/([^/]+)\/custom-field-inspect$/)?.[1];
         if (!orgSlug) return new Response("Not Found", { status: 404 });
-        let context: Awaited<ReturnType<typeof buildVoterDataContext>>;
         try {
-          context = await buildVoterDataContext(db, request.headers, orgSlug);
+          await buildPermittedContext(db, request.headers, orgSlug, "datasets.manage");
         } catch {
           return new Response("Unauthorized", { status: 401 });
-        }
-        if (!hasPermission(context.role, "datasets.manage")) {
-          return new Response("Forbidden", { status: 403 });
         }
         const body = await request.arrayBuffer();
         if (body.byteLength === 0) return new Response("Empty upload.", { status: 400 });

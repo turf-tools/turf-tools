@@ -1,9 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { homeNavItem } from "~/lib/nav";
 
-// Bare `/$orgSlug` lands on the Overview tab so the sidebar's active-link
-// indicator has a route to match against.
+// Bare `/$orgSlug` is the org's home: the first tab the role can see. Every
+// reroute that needs a safe landing targets this route rather than a tab.
 export const Route = createFileRoute("/$orgSlug/")({
-  beforeLoad: ({ params }) => {
-    throw redirect({ to: "/$orgSlug/overview", params: { orgSlug: params.orgSlug } });
+  beforeLoad: ({ context, params }) => {
+    const home = homeNavItem(context.role).to.split("/")[2];
+    throw redirect({ href: `/${params.orgSlug}/${home}` });
   },
 });

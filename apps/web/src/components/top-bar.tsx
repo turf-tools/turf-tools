@@ -1,7 +1,6 @@
 import { Icon } from "~/components/icon";
 import { Link } from "@tanstack/react-router";
 import type { SessionOrg } from "~/lib/server/session";
-import { hasPermission } from "~/lib/permissions";
 import { cn } from "~/lib/utils";
 import { Breadcrumb } from "./breadcrumb";
 import {
@@ -13,7 +12,7 @@ import {
 import { LightDarkToggle } from "./light-dark-toggle";
 import { LoadingIndicator } from "./loading-indicator";
 import { NavStatus } from "./nav-status";
-import { PRIMARY, SECONDARY, type NavItem } from "./sidebar";
+import { PRIMARY, SECONDARY, visibleNavItems, type NavItem } from "~/lib/nav";
 import { UserBadge } from "./user-badge";
 
 // Top chrome: sticky at the top of the Shell's max-width wrapper with a
@@ -50,8 +49,7 @@ export function TopBar({ orgSlug, orgName, orgs, role }: TopBarProps) {
 }
 
 function MobileMenu({ role, orgSlug }: { role: string | null; orgSlug: string }) {
-  const visible = (items: NavItem[]) =>
-    items.filter((i) => !i.requires || (role != null && hasPermission(role, i.requires)));
+  const visible = (items: NavItem[]) => visibleNavItems(items, role);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger

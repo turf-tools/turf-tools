@@ -1,43 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Icon } from "~/components/icon";
-import type { IconName } from "~/lib/icon-names";
-import { hasPermission, type Permission } from "~/lib/permissions";
+import { PRIMARY, SECONDARY, visibleNavItems, type NavItem } from "~/lib/nav";
 import { cn } from "~/lib/utils";
-
-export type NavItem = {
-  to: string;
-  label: string;
-  icon: IconName;
-  requires?: Permission;
-};
-
-// Everything except Turfs requires voter-data access — field leads see
-// only the turfs board (plus Settings/Account below).
-export const PRIMARY: NavItem[] = [
-  { to: "/$orgSlug/overview", label: "Overview", icon: "layout-dashboard", requires: "voter.read" },
-  { to: "/$orgSlug/campaigns", label: "Campaigns", icon: "megaphone", requires: "voter.read" },
-  { to: "/$orgSlug/segments", label: "Segments", icon: "layers", requires: "voter.read" },
-  { to: "/$orgSlug/zones", label: "Zones", icon: "waypoints", requires: "voter.read" },
-  { to: "/$orgSlug/turfs", label: "Turfs", icon: "map" },
-  { to: "/$orgSlug/progress", label: "Progress", icon: "trending-up", requires: "voter.read" },
-  { to: "/$orgSlug/lookup", label: "Lookup", icon: "search", requires: "voter.read" },
-  { to: "/$orgSlug/scripts", label: "Scripts", icon: "clipboard-pen", requires: "voter.read" },
-  { to: "/$orgSlug/questions", label: "Questions", icon: "check-check", requires: "voter.read" },
-  {
-    to: "/$orgSlug/results",
-    label: "Results",
-    icon: "chart-no-axes-column",
-    requires: "voter.read",
-  },
-  { to: "/$orgSlug/reports", label: "Reports", icon: "files", requires: "voter.read" },
-];
-
-export const SECONDARY: NavItem[] = [
-  { to: "/$orgSlug/users", label: "Users", icon: "users", requires: "users.manage" },
-  { to: "/$orgSlug/data", label: "Data", icon: "database", requires: "datasets.manage" },
-  { to: "/$orgSlug/settings", label: "Settings", icon: "settings" },
-  { to: "/$orgSlug/account", label: "Account", icon: "circle-user" },
-];
 
 type SidebarProps = {
   collapsed: boolean;
@@ -53,8 +17,7 @@ type SidebarProps = {
 // the visual center, so icons stay put through the width transition
 // rather than sliding as the container shrinks around them.
 export function Sidebar({ collapsed, onToggle, role, orgSlug }: SidebarProps) {
-  const visible = (items: NavItem[]) =>
-    items.filter((i) => !i.requires || (role != null && hasPermission(role, i.requires)));
+  const visible = (items: NavItem[]) => visibleNavItems(items, role);
 
   return (
     <nav className="flex h-full flex-col gap-6 overflow-y-auto px-2 pt-3.5 pb-4">

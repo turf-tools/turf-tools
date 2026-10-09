@@ -2,7 +2,9 @@ import { and, eq, inArray, sql } from "@turf-tools/db";
 import { campaigns, canvassEvents, turfs, zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { webPub as pub } from "../context";
+import { webPub } from "../context";
+
+const pub = webPub("results.read");
 
 // Cheap freshness probe for the event-log reductions: the newest event
 // sequence in scope. Events arrive from outside the web client (native

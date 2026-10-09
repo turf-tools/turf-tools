@@ -5,7 +5,10 @@ import { z } from "zod";
 import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
 import { activeDatasetId } from "./active-dataset";
 import { walkEvents } from "./walks";
-import { webMut as mut, webPub as pub } from "../context";
+import { webMut, webPub } from "../context";
+
+const pub = webPub("turfs.read");
+const mut = webMut("turfs.publish");
 
 // Admin-scoped turf list: turfs within the current user's org whose campaign
 // belongs to the active dataset (matching campaigns.list, so the board's
@@ -175,7 +178,7 @@ export const statsForCampaign = pub
 // What a publish would supersede: the scope's active turfs and how
 // many of them have been walked, for the publish dialog's warning.
 // Walk visibility matches walks.listForOrg.
-export const publishImpact = pub
+export const publishImpact = webPub("turfs.publish")
   .input(z.object({ campaignId: z.string().uuid(), zoneId: z.string().uuid().nullable() }))
   .handler(async ({ context, input }) => {
     const walked = context.db

@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { REPORT_KINDS, type ReportRows } from "~/lib/reports";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { webPub as pub } from "../context";
+import { webPub } from "../context";
+
+const pub = webPub("reports.read");
 
 // Row-level canvass report preview; the reduction, voter-file columns,
 // and question pivots live in apps/data /reports/<kind>. Downloads go
