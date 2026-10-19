@@ -14,7 +14,8 @@ one typed column per field, keyed by `person_h` (see `rebuild_custom_wide`).
 Rebuilt wholesale after every append/clear, so filters compile to typed column
 predicates behind a single integer semi-join.
 
-Used by the synchronous append and clear endpoints in `main.py`.
+Used by the synchronous append and clear endpoints and the person detail
+endpoint in `main.py`.
 """
 
 from __future__ import annotations
@@ -177,6 +178,26 @@ def custom_fields_table_for(conn: duckdb.DuckDBPyConnection, dataset_slug: str) 
         return None
     _values_table_cache[dataset_slug] = fqn
     return fqn
+
+
+def person_custom_fields(conn: duckdb.DuckDBPyConnection, values_table: str, external_id: str) -> list[dict[str, Any]]:
+    """One person's custom-field values for the Lookup detail pane, read from
+    the long values table and labelled from the registry: one
+    ``{label, fieldType, values}`` per field with a value, in label order, raw
+    stored strings (several only for Multi Category). Archived fields are left
+    out, as they are from the card and picker."""
+    rows = conn.execute(
+        f"""
+        SELECT f.label, f.field_type, list(v.value ORDER BY v.value)
+        FROM {values_table} v
+        JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.custom_field_id::VARCHAR = v.field_id
+        WHERE v.external_id = ? AND f.archived_at IS NULL
+        GROUP BY f.label, f.field_type
+        ORDER BY f.label
+        """,
+        [external_id],
+    ).fetchall()
+    return [{"label": label, "fieldType": field_type, "values": values} for label, field_type, values in rows]
 
 
 def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include_values: bool = True) -> None:

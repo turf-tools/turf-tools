@@ -355,8 +355,8 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
 
   // Detail blocks, in order: identity (DOB + id), a location block (city +
   // county, which the raw manifest splits confusingly), then the manifest's own
-  // field sections, then voting history. All share one divider so they read
-  // uniformly.
+  // field sections, then voting history, then custom fields. All share one
+  // divider so they read uniformly.
   const blocks = useMemo<DetailBlock[]>(() => {
     if (!person) return [];
     const out: DetailBlock[] = [];
@@ -413,6 +413,19 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
         rows: voting.map((e) => ({
           label: `${ELECTION_TYPE_LABELS[e.type] ?? toTitleCase(e.type)} ${e.year}`,
           value: e.date ? formatDate(e.date, TZ) : "—",
+        })),
+      });
+    }
+
+    // Custom fields, appended in the Dataset editor and already in label order.
+    // Dates are stored as YYYY-MM-DD; a Multi Category field lists every value.
+    const custom = person.customFields ?? [];
+    if (custom.length > 0) {
+      out.push({
+        heading: "Custom fields",
+        rows: custom.map((f) => ({
+          label: f.label,
+          value: f.fieldType === "date" ? formatDate(f.values[0], TZ) : f.values.join(", "),
         })),
       });
     }
