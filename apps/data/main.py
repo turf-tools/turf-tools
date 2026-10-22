@@ -34,6 +34,7 @@ from src.custom_fields import (
     custom_fields_fqn,
     custom_fields_table_for,
     load_upload_table,
+    person_custom_fields,
     query_context,
     rebuild_custom_wide,
     sync_registry,
@@ -652,8 +653,10 @@ class _PersonDetailRequest(_WireBaseModel):
 async def person_detail(req: _PersonDetailRequest):
     """The full lake record for one person (by external_id) — the Lookup detail
     pane. The search index only holds name/address; everything else (party,
-    districts, voting history, …) lives in `persons_geocoded`. Returns
-    ``{person: {<column>: value, …, votingHistory: [...]}}`` or ``{person: null}``.
+    districts, voting history, …) lives in `persons_geocoded`; custom-field
+    values come from `person_custom_fields`. Returns ``{person: {<column>: value, …,
+    votingHistory: [...], customFields: [{label, fieldType, values}]}}`` or
+    ``{person: null}``.
     """
 
     def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
@@ -675,6 +678,10 @@ async def person_detail(req: _PersonDetailRequest):
             return {"person": None}
         person = dict(zip([d[0] for d in result.description], row, strict=True))
         person["votingHistory"] = json.loads(person.pop("voting_history") or "[]")
+        values_table = custom_fields_table_for(conn, version.dataset_slug)
+        person["customFields"] = (
+            person_custom_fields(conn, values_table, req.external_id) if values_table is not None else []
+        )
         return {"person": person}
 
     return await run_query(work)
