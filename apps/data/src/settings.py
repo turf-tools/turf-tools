@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # (YYMMDD in the filename) rather than `-latest`, so the cached PBF
     # filename encodes the version and re-runs are reproducible.
     osm_url: str = Field(
-        default="https://download.geofabrik.de/north-america/us/new-york-260501.osm.pbf",
+        default="https://download.geofabrik.de/north-america/us/new-york-261020.osm.pbf",
         description="URL of the Geofabrik OSM PBF extract to ingest (date-pinned).",
     )
     osm_data_dir: str = Field(

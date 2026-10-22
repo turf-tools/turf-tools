@@ -15,6 +15,7 @@ You'll need to have these installed to run the development environment.
 - [Docker](https://www.docker.com/) (for the development Postgres)
 - [uv](https://docs.astral.sh/uv/) `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - [Quickwit](https://quickwit.io/) `curl -L https://install.quickwit.io | sh` (move binary to `/usr/local/bin/`)
+- [osmium-tool](https://osmcode.org/osmium-tool/) (for OSM geocoding)
 - [Xcode](https://developer.apple.com/xcode/) (optional, for iOS simulator)
 
 ## Setup
