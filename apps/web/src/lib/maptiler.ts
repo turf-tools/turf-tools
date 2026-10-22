@@ -3,13 +3,11 @@
 // at maptiler.com and add your key to apps/web/.env. Use the same key as
 // EXPO_PUBLIC_MAPTILER_KEY in apps/native/.env so both apps share the styles.
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY ?? "";
-
-// Custom styles from Maptiler account.
-const STYLE_ID_LIGHT = "01961350-1791-703e-8753-2c795c604620";
-const STYLE_ID_DARK = "019dc276-9981-7168-a043-8a1ae4051996";
+const MAPTILER_STYLE_ID_LIGHT = import.meta.env.VITE_MAPTILER_STYLE_ID_LIGHT ?? "";
+const MAPTILER_STYLE_ID_DARK = import.meta.env.VITE_MAPTILER_STYLE_ID_DARK ?? "";
 
 export function getMaptilerStyleUrl(isDark: boolean): string {
-  const styleId = isDark ? STYLE_ID_DARK : STYLE_ID_LIGHT;
+  const styleId = isDark ? MAPTILER_STYLE_ID_DARK : MAPTILER_STYLE_ID_LIGHT;
   return `https://api.maptiler.com/maps/${styleId}/style.json?key=${MAPTILER_KEY}`;
 }
 
