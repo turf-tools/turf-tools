@@ -72,6 +72,8 @@ from src.zones import (
     MAX_PERIMETER_KEYS,
     boundary_key_counts,
     flatten_zone_keys,
+    parse_zone_file,
+    write_zone_file,
     zone_perimeter_geojson,
     zone_target_counts_sql,
 )
@@ -802,6 +804,78 @@ async def zone_perimeters(req: _ZonePerimetersRequest):
         return {"type": "FeatureCollection", "features": features}
 
     return await run_query(work)
+
+
+class _ZoneFileZone(_WireBaseModel):
+    name: str
+    keys: list[str]
+
+
+class _ZoneExportRequest(_WireBaseModel):
+    zones: list[_ZoneFileZone]
+    format: str = "csv"
+
+
+@app.post("/zones/export")
+async def zones_export(req: _ZoneExportRequest):
+    """Write a zone group's definition as a two-column key → zone file (CSV
+    or Parquet) for download. Zones arrive in the body: the web edge reads
+    and org-scopes them from operational Postgres."""
+    if req.format not in ("csv", "parquet"):
+        raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
+    suffix = ".parquet" if req.format == "parquet" else ".csv"
+
+    def work(conn: duckdb.DuckDBPyConnection) -> tuple[str, int]:
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="zone-export-")
+        os.close(fd)
+        try:
+            rows = write_zone_file(conn, [(z.name, z.keys) for z in req.zones], tmp_path, req.format)
+        except Exception:
+            with suppress(OSError):
+                os.remove(tmp_path)
+            raise
+        return tmp_path, rows
+
+    tmp_path, row_count = await run_query(work)
+    media = "application/octet-stream" if req.format == "parquet" else "text/csv"
+    return FileResponse(
+        tmp_path,
+        media_type=media,
+        filename=f"zones{suffix}",
+        background=BackgroundTask(os.remove, tmp_path),
+        headers={"X-Export-Rows": str(row_count)},
+    )
+
+
+@app.post("/zones/parse")
+async def zones_parse(
+    request: Request,
+    org_slug: str = Query(alias="orgSlug"),
+    key_group: str = Query(alias="keyGroup"),
+):
+    """Parse an uploaded key → zone file against the active version's
+    boundary keys for `keyGroup`: zone definitions plus skip counts out, or
+    400 with the reason. Stateless: the web side previews the result and
+    writes zones itself."""
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+
+    def run(source: str) -> dict:
+        conn = get_connection(settings)
+        try:
+            schema = resolve_version(conn, settings, org_slug).schema
+            return parse_zone_file(conn, source, table_fqn(schema, key_group))
+        finally:
+            conn.close()
+
+    with tempfile.NamedTemporaryFile(suffix=".upload") as tmp:
+        tmp.write(data)
+        tmp.flush()
+        try:
+            return await asyncio.to_thread(run, tmp.name)
+        except (ValueError, duckdb.Error) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class _SegmentPerimeterRequest(_WireBaseModel):

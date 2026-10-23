@@ -1,10 +1,10 @@
 import { Icon } from "~/components/icon";
-import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
-import { DialogError } from "~/components/callout";
+import { Callout, DialogError } from "~/components/callout";
 import {
   Dialog,
   DialogClose,
@@ -13,6 +13,12 @@ import {
   DialogTitle,
 } from "~/components/dialog";
 import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
@@ -21,7 +27,7 @@ import { Rail, useShowArchived } from "~/components/rail";
 import { useFilterCatalog } from "~/lib/manifest";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
-import { zoneGroupsQuery } from "~/lib/queries/zones";
+import { zoneGroupsQuery, zonesQuery } from "~/lib/queries/zones";
 import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
@@ -62,6 +68,11 @@ function ZonesLayout() {
 
   const goToGroup = (id: string) =>
     navigate({ to: "/$orgSlug/zones/$zoneGroupId", params: { orgSlug, zoneGroupId: id } });
+
+  const downloadExport = (format: "csv" | "parquet") => {
+    if (!activeGroupId) return;
+    window.location.href = `/api/web/${orgSlug}/zone-export?zoneGroupId=${activeGroupId}&format=${format}`;
+  };
 
   const renameGroup = useDialogMutation({
     mutationFn: (input: { zoneGroupId: string; name: string }) => client.zoneGroups.rename(input),
@@ -108,6 +119,13 @@ function ZonesLayout() {
           return goToGroup(created.zoneGroupId);
         },
       }),
+  });
+
+  const importZones = useDialogMutation({
+    mutationFn: (input: { zoneGroupId: string; zones: { name: string; keys: string[] }[] }) =>
+      client.zones.replaceGroup(input),
+    onSuccess: (_data, input) =>
+      settleMutation(queryClient, { keys: [["zones", input.zoneGroupId]] }),
   });
 
   const clearZones = useDialogMutation({
@@ -312,6 +330,23 @@ function ZonesLayout() {
 
         <EditorPage>
           <EditorHeader title="Zone Editor" subtitle={activeGroup?.name}>
+            <Button variant="outline" onClick={importZones.open} disabled={!activeGroup}>
+              <Icon name="upload" />
+              Import
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="outline" disabled={!activeGroup} />}>
+                <Icon name="download" />
+                Export
+                <Icon name="chevron-down" className="-mr-1 size-4 text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => downloadExport("csv")}>CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => downloadExport("parquet")}>
+                  Parquet
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="outline" onClick={renameGroup.open} disabled={!activeGroup}>
               <Icon name="pencil" />
               Rename
@@ -369,6 +404,19 @@ function ZonesLayout() {
         onSubmit={(newName) => {
           if (!activeGroupId) return;
           cloneGroup.mutate({ zoneGroupId: activeGroupId, newName });
+        }}
+      />
+
+      <ImportDialog
+        open={importZones.isOpen}
+        onOpenChange={importZones.onOpenChange}
+        orgSlug={orgSlug}
+        zoneGroupId={activeGroupId}
+        pending={importZones.isPending}
+        error={importZones.error}
+        onSubmit={(zones) => {
+          if (!activeGroupId) return;
+          importZones.mutate({ zoneGroupId: activeGroupId, zones });
         }}
       />
 
@@ -701,6 +749,164 @@ function ClearDialog({
             Clear all zones
           </Button>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type ParsedZones = {
+  zones: { name: string; keys: string[] }[];
+  rowCount: number;
+  blankCount: number;
+  unknownCount: number;
+  unknownKeys: string[];
+};
+
+// Import a key → zone file. Picking a file parses it server-side into a
+// preview (nothing written); Import then replaces the group's zones,
+// keeping zones whose names match.
+function ImportDialog({
+  open,
+  onOpenChange,
+  orgSlug,
+  zoneGroupId,
+  pending,
+  error,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  orgSlug: string;
+  zoneGroupId: string | null;
+  pending: boolean;
+  error: string | null;
+  onSubmit: (zones: ParsedZones["zones"]) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<ParsedZones | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const { data: existing } = useQuery({
+    ...zonesQuery(zoneGroupId ?? ""),
+    enabled: open && !!zoneGroupId,
+  });
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setFile(null);
+      setPreview(null);
+      setParseError(null);
+    }
+  }
+
+  const pick = async (next: File | null) => {
+    setFile(next);
+    setPreview(null);
+    setParseError(null);
+    if (!next || !zoneGroupId) return;
+    setParsing(true);
+    try {
+      const res = await fetch(
+        `/api/web/${orgSlug}/zone-import-preview?zoneGroupId=${zoneGroupId}`,
+        { method: "POST", body: next },
+      );
+      if (!res.ok) throw new Error(await res.text());
+      setPreview((await res.json()) as ParsedZones);
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : "Couldn't read the file.");
+      setFile(null);
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const importedNames = new Set(preview?.zones.map((z) => z.name));
+  const removed = preview ? (existing ?? []).filter((z) => !importedNames.has(z.name)) : [];
+  const keyCount = preview?.zones.reduce((n, z) => n + z.keys.length, 0) ?? 0;
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => (pending && !next ? null : onOpenChange(next))}>
+      <DialogContent>
+        <DialogTitle>Import zones</DialogTitle>
+        <DialogDescription>
+          Define this group's zones from a file with two columns, unit keys then zone names, and a
+          header row. Importing replaces the group's zones. Zones with a matching name are kept and
+          take the file's keys.
+        </DialogDescription>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!preview || pending) return;
+            onSubmit(preview.zones);
+          }}
+          className="flex flex-col gap-4"
+        >
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">File</label>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,.tsv,.txt,.parquet"
+              className="hidden"
+              onChange={(e) => {
+                void pick(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="justify-start disabled:opacity-100"
+              disabled={pending || parsing}
+              onClick={() => fileRef.current?.click()}
+            >
+              <span className="truncate">
+                {file ? file.name : "Choose a file (CSV or Parquet)..."}
+              </span>
+            </Button>
+          </div>
+          {preview ? (
+            <div className="flex flex-col gap-2">
+              <Callout tone="neutral">
+                <span className="font-medium">{preview.zones.length.toLocaleString()}</span> zone
+                {preview.zones.length === 1 ? "" : "s"} with{" "}
+                <span className="font-medium">{keyCount.toLocaleString()}</span> unit
+                {keyCount === 1 ? "" : "s"}.
+              </Callout>
+              {preview.unknownCount > 0 ? (
+                <Callout tone="warning">
+                  <span className="font-medium">{preview.unknownCount.toLocaleString()}</span> key
+                  {preview.unknownCount === 1 ? " isn't" : "s aren't"} units of this group and will
+                  be skipped: {preview.unknownKeys.join(", ")}
+                  {preview.unknownCount > preview.unknownKeys.length ? ", ..." : ""}
+                </Callout>
+              ) : null}
+              {preview.blankCount > 0 ? (
+                <Callout tone="warning">
+                  <span className="font-medium">{preview.blankCount.toLocaleString()}</span> row
+                  {preview.blankCount === 1 ? " has" : "s have"} no zone name and will be skipped.
+                </Callout>
+              ) : null}
+              {removed.length > 0 ? (
+                <Callout tone="warning">
+                  Not in the file, so deleted: {removed.map((z) => z.name).join(", ")}
+                </Callout>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogError error={parseError ?? error} />
+          <div className="mt-2 flex justify-end gap-2">
+            <DialogClose render={<Button variant="outline" type="button" disabled={pending} />}>
+              Cancel
+            </DialogClose>
+            <Button type="submit" disabled={!preview || parsing} loading={pending}>
+              Import
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
