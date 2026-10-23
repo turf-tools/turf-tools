@@ -10,6 +10,7 @@ from src.zones import (
     boundary_key_counts,
     flatten_zone_keys,
     perimeter_union_sql,
+    write_zone_file,
     zone_perimeter_geojson,
     zone_target_counts_sql,
 )
@@ -99,3 +100,14 @@ def test_zone_perimeter_geojson_memoizes_across_connections() -> None:
     # A connection with no boundaries table proves the hit runs no SQL.
     bare = duckdb.connect()
     assert zone_perimeter_geojson(bare, "boundaries", ("a", "b")) == first
+
+
+def test_write_zone_file_rows_follow_zone_then_key_order(tmp_path) -> None:
+    zones = [("North", ["36-65-2", "36-65-1"]), ("Empty", []), ("South", ["07030"])]
+    expected = [("36-65-2", "North"), ("36-65-1", "North"), (None, "Empty"), ("07030", "South")]
+    c = duckdb.connect()
+    for fmt, reader in (("csv", "read_csv(?, all_varchar = true)"), ("parquet", "read_parquet(?)")):
+        path = str(tmp_path / f"zones.{fmt}")
+        assert write_zone_file(c, zones, path, fmt) == 4
+        assert [r[0] for r in c.execute(f"DESCRIBE SELECT * FROM {reader}", [path]).fetchall()] == ["key", "zone"]
+        assert c.execute(f"SELECT * FROM {reader}", [path]).fetchall() == expected
