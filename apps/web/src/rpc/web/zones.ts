@@ -232,6 +232,10 @@ export const replaceGroup = mut
         ),
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
+    const names = new Set(input.zones.map((zone) => zone.name));
+    if (names.size < input.zones.length) {
+      throw new ORPCError("BAD_REQUEST", { message: "Two imported zones have the same name." });
+    }
 
     const counts = await context.db.transaction(async (tx) => {
       const existing = await tx

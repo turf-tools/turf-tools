@@ -48,6 +48,31 @@ def test_blank_zone_rows_are_skipped_and_counted(conn, tmp_path):
     assert out["blankCount"] == 1
 
 
+def test_zone_with_blank_key_has_no_units(conn, tmp_path):
+    out = parse_zone_file(conn, _csv(tmp_path, "key,zone\n,Empty\n36-65-1,North\n"), "boundaries")
+    assert out["zones"] == [{"name": "Empty", "keys": []}, {"name": "North", "keys": ["36-65-1"]}]
+    assert out["blankCount"] == 0
+
+
+def test_zone_whose_keys_are_all_unknown_is_kept_empty(conn, tmp_path):
+    out = parse_zone_file(conn, _csv(tmp_path, "key,zone\n99-99-9,Gone\n36-65-1,North\n"), "boundaries")
+    assert out["zones"] == [{"name": "Gone", "keys": []}, {"name": "North", "keys": ["36-65-1"]}]
+    assert out["unknownCount"] == 1
+
+
+def test_trims_whitespace_the_way_javascript_does(conn, tmp_path):
+    src = _csv(tmp_path, 'key,zone\n36-65-1,"North\t"\n36-65-2,"\u00a0North\r"\n')
+    out = parse_zone_file(conn, src, "boundaries")
+    assert out["zones"] == [{"name": "North", "keys": ["36-65-1", "36-65-2"]}]
+
+
+def test_unreadable_file_fails_as_value_error(conn, tmp_path):
+    f = tmp_path / "zones.parquet"
+    f.write_bytes(b"PAR1 not really parquet")
+    with pytest.raises(ValueError, match="Couldn't read this file"):
+        parse_zone_file(conn, str(f), "boundaries")
+
+
 def test_unknown_keys_are_skipped_and_reported(conn, tmp_path):
     out = parse_zone_file(conn, _csv(tmp_path, "key,zone\n36-65-1,North\n99-99-9,North\n"), "boundaries")
     assert out["zones"] == [{"name": "North", "keys": ["36-65-1"]}]
@@ -71,7 +96,7 @@ def test_wrong_column_count_fails(conn, tmp_path):
 
 @pytest.mark.parametrize("fmt", ["csv", "parquet"])
 def test_export_round_trips(conn, tmp_path, fmt):
-    zones = [("North", ["36-65-2", "36-65-1"]), ("South", ["07030"])]
+    zones = [("North", ["36-65-2", "36-65-1"]), ("Empty", []), ("South", ["07030"])]
     path = str(tmp_path / f"zones.{fmt}")
     write_zone_file(conn, zones, path, fmt)
     out = parse_zone_file(conn, path, "boundaries")

@@ -826,6 +826,7 @@ function ImportDialog({
   const importedNames = new Set(preview?.zones.map((z) => z.name));
   const removed = preview ? (existing ?? []).filter((z) => !importedNames.has(z.name)) : [];
   const keyCount = preview?.zones.reduce((n, z) => n + z.keys.length, 0) ?? 0;
+  const emptyCount = preview?.zones.filter((z) => z.keys.length === 0).length ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending && !next ? null : onOpenChange(next))}>
@@ -874,7 +875,8 @@ function ImportDialog({
                 <span className="font-medium">{preview.zones.length.toLocaleString()}</span> zone
                 {preview.zones.length === 1 ? "" : "s"} with{" "}
                 <span className="font-medium">{keyCount.toLocaleString()}</span> unit
-                {keyCount === 1 ? "" : "s"}.
+                {keyCount === 1 ? "" : "s"}
+                {emptyCount > 0 ? ` (${emptyCount.toLocaleString()} with no units)` : ""}.
               </Callout>
               {preview.unknownCount > 0 ? (
                 <Callout tone="warning">

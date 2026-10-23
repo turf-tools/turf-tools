@@ -99,8 +99,10 @@ ZONE_FILE_COLUMNS = ("key", "zone")
 def write_zone_file(conn: duckdb.DuckDBPyConnection, zones: list[tuple[str, list[str]]], path: str, fmt: str) -> int:
     """Write (zone name, keys) pairs as a two-column key → zone file, one
     row per key, in zone order then key order, the shape the zone import
-    reads back. Returns the row count. `path` is server-generated."""
-    names, keys = flatten_zone_keys(zones)
+    reads back. A zone with no keys gets one row with a blank key, so it
+    survives a round trip. Returns the row count. `path` is server-generated."""
+    rows = [(name, key) for name, zone_keys in zones for key in (zone_keys or [None])]
+    names, keys = [name for name, _ in rows], [key for _, key in rows]
     copy_opts = "FORMAT parquet" if fmt == "parquet" else "FORMAT csv, HEADER"
     key_col, zone_col = ZONE_FILE_COLUMNS
     row = conn.execute(
@@ -118,29 +120,41 @@ def write_zone_file(conn: duckdb.DuckDBPyConnection, zones: list[tuple[str, list
 
 
 UNKNOWN_KEY_EXAMPLES = 10
+# Leading/trailing whitespace as JavaScript's String.prototype.trim sees it
+# (ASCII whitespace, Unicode separators, BOM), in RE2 syntax.
+TRIM_PATTERN = r"^[\s\x0B\p{Z}\x{FEFF}]+|[\s\x0B\p{Z}\x{FEFF}]+$"
 DUPLICATE_KEY_EXAMPLES = 5
 
 
 def parse_zone_file(conn: duckdb.DuckDBPyConnection, source: str, boundary_fqn: str) -> dict:
     """Read an uploaded key → zone file (CSV or Parquet, header row, key
     column first) into zone definitions for the zone group whose keys live
-    in `boundary_fqn`. Zones and their keys keep first-appearance order.
-    Blank zone names and keys outside the boundary table are skipped and
-    reported; a key listed under two different zones, or a file with no
-    usable rows, raises ValueError."""
-    cols = load_upload_table(conn, source)
+    in `boundary_fqn`. Every zone named in the file is returned, in
+    first-appearance order with its keys in file order; a row with a zone
+    name and a blank key names a zone with no units. Rows with no zone name
+    and keys outside the boundary table are skipped and reported. A key
+    listed under two different zones, an unreadable file, or a file whose
+    keys match none of the units raises ValueError."""
+    try:
+        cols = load_upload_table(conn, source)
+    except duckdb.Error as exc:
+        raise ValueError("Couldn't read this file as CSV or Parquet.") from exc
     if len(cols) != 2:
         raise ValueError("File must have two columns: unit keys, then zone names.")
     key_col, zone_col = (f'"{c.replace(chr(34), chr(34) * 2)}"' for c in cols)
+    # rowid is file order (the upload table is created with insertion order
+    # preserved). The trim set matches JavaScript's String.prototype.trim,
+    # which the web side applies to zone names before writing them.
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _zone_rows AS
-        SELECT row_number() OVER () AS i,
-               nullif(trim(CAST({key_col} AS VARCHAR)), '') AS key,
-               nullif(trim(CAST({zone_col} AS VARCHAR)), '') AS zone
+        SELECT rowid AS i,
+               nullif(regexp_replace(CAST({key_col} AS VARCHAR), '{TRIM_PATTERN}', '', 'g'), '') AS key,
+               nullif(regexp_replace(CAST({zone_col} AS VARCHAR), '{TRIM_PATTERN}', '', 'g'), '') AS zone
         FROM _upload
     """)
-    row_count, blank_count = conn.execute(
-        "SELECT count(*), count(*) FILTER (key IS NOT NULL AND zone IS NULL) FROM _zone_rows"
+    row_count, blank_count, keyed_count = conn.execute(
+        "SELECT count(*), count(*) FILTER (key IS NOT NULL AND zone IS NULL), "
+        "count(DISTINCT key) FILTER (zone IS NOT NULL) FROM _zone_rows"
     ).fetchone()
 
     conflicts = [
@@ -158,21 +172,24 @@ def parse_zone_file(conn: duckdb.DuckDBPyConnection, source: str, boundary_fqn: 
         WHERE key IS NOT NULL AND zone IS NOT NULL AND key NOT IN (SELECT key FROM {boundary_fqn})
         GROUP BY key ORDER BY min(i)
     """).fetchall()
-
-    assigned = conn.execute(f"""
-        SELECT zone, list(key ORDER BY first_i)
-        FROM (
-            SELECT zone, key, min(i) AS first_i FROM _zone_rows
-            WHERE zone IS NOT NULL AND key IN (SELECT key FROM {boundary_fqn})
-            GROUP BY zone, key
-        )
-        GROUP BY zone ORDER BY min(first_i)
-    """).fetchall()
-    if not assigned:
+    if keyed_count > 0 and len(unknown) == keyed_count:
         raise ValueError(
             "None of the keys in this file match this zone group's units. "
             "Check that the first column holds unit keys of the group's type."
         )
+
+    assigned = conn.execute(f"""
+        SELECT zone, coalesce(list(key ORDER BY first_i) FILTER (key IS NOT NULL), [])
+        FROM (
+            SELECT zone, CASE WHEN key IN (SELECT key FROM {boundary_fqn}) THEN key END AS key,
+                   min(i) AS first_i
+            FROM _zone_rows WHERE zone IS NOT NULL
+            GROUP BY ALL
+        )
+        GROUP BY zone ORDER BY min(first_i)
+    """).fetchall()
+    if not assigned:
+        raise ValueError("No rows in this file name a zone.")
     return {
         "zones": [{"name": name, "keys": keys} for name, keys in assigned],
         "rowCount": int(row_count),

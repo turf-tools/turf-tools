@@ -861,21 +861,22 @@ async def zones_parse(
     if not data:
         raise HTTPException(status_code=400, detail="Empty upload.")
 
-    def run(source: str) -> dict:
-        conn = get_connection(settings)
-        try:
-            schema = resolve_version(conn, settings, org_slug).schema
-            return parse_zone_file(conn, source, table_fqn(schema, key_group))
-        finally:
-            conn.close()
-
     with tempfile.NamedTemporaryFile(suffix=".upload") as tmp:
         tmp.write(data)
         tmp.flush()
-        try:
-            return await asyncio.to_thread(run, tmp.name)
-        except (ValueError, duckdb.Error) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        def work(conn: duckdb.DuckDBPyConnection) -> dict:
+            version, catalog = query_context(conn, org_slug)
+            # keyGroup is interpolated as a table name: only seeded key
+            # groups reach SQL.
+            if key_group not in catalog.key_groups:
+                raise HTTPException(status_code=404, detail=f"No boundary table for key group {key_group!r}.")
+            try:
+                return parse_zone_file(conn, tmp.name, table_fqn(version.schema, key_group))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return await run_query(work)
 
 
 class _SegmentPerimeterRequest(_WireBaseModel):
