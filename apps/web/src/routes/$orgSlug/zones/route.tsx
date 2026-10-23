@@ -879,8 +879,8 @@ function ImportDialog({
               {preview.unknownCount > 0 ? (
                 <Callout tone="warning">
                   <span className="font-medium">{preview.unknownCount.toLocaleString()}</span> key
-                  {preview.unknownCount === 1 ? " isn't" : "s aren't"} units of this group and will
-                  be skipped: {preview.unknownKeys.join(", ")}
+                  {preview.unknownCount === 1 ? " isn't a unit" : "s aren't units"} of this group
+                  and will be skipped: {preview.unknownKeys.join(", ")}
                   {preview.unknownCount > preview.unknownKeys.length ? ", ..." : ""}
                 </Callout>
               ) : null}
@@ -892,7 +892,7 @@ function ImportDialog({
               ) : null}
               {removed.length > 0 ? (
                 <Callout tone="warning">
-                  Not in the file, so deleted: {removed.map((z) => z.name).join(", ")}
+                  Not in the file, so will be deleted: {removed.map((z) => z.name).join(", ")}
                 </Callout>
               ) : null}
             </div>
