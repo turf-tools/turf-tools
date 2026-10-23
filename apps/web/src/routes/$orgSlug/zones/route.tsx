@@ -1,7 +1,7 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { Callout, DialogError } from "~/components/callout";
@@ -882,7 +882,14 @@ function ImportDialog({
                 <Callout tone="warning">
                   <span className="font-medium">{preview.unknownCount.toLocaleString()}</span> key
                   {preview.unknownCount === 1 ? " isn't a unit" : "s aren't units"} of this group
-                  and will be skipped: {preview.unknownKeys.join(", ")}
+                  and will be skipped:{" "}
+                  {preview.unknownKeys.map((key, i) => (
+                    // Keys like 50-024 must not break at their hyphen.
+                    <Fragment key={key}>
+                      {i > 0 ? ", " : ""}
+                      <span className="whitespace-nowrap">{key}</span>
+                    </Fragment>
+                  ))}
                   {preview.unknownCount > preview.unknownKeys.length ? ", ..." : ""}
                 </Callout>
               ) : null}
