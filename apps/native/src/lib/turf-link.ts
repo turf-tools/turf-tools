@@ -8,11 +8,11 @@ export type TurfLink = { host: string; code: string };
 export const RESOLVER_HOST = "to.turf.tools";
 
 // Two more shapes parse: a deployment's own `https://<host>/t/<code>`
-// (older printed codes), and the custom scheme `turf-tools://t/<code>?host=`
-// the resolver's fallback page uses. Regex (not `new URL`) — Hermes URL
-// support is incomplete.
+// (the QR form), and the custom scheme `turf-tools://t/<code>?host=` the
+// fallback pages use (`turf-tools-dev://` on the dev build). Regex (not
+// `new URL`) — Hermes URL support is incomplete.
 const LINK =
-  /^(?:https?:\/\/([^/\s?#]+)\/|turf-tools:\/\/)t\/([A-Za-z0-9-]+)\/?(?:\?([^#\s]*))?(?:#.*)?$/;
+  /^(?:https?:\/\/([^/\s?#]+)\/|turf-tools(?:-dev)?:\/\/)t\/([A-Za-z0-9-]+)\/?(?:\?([^#\s]*))?(?:#.*)?$/;
 
 export function parseTurfLink(data: string): TurfLink | null {
   const match = data.trim().match(LINK);
@@ -54,9 +54,10 @@ export function parseSharedLink(data: string): TurfLink | null {
   return parseTurfLink(trimmed);
 }
 
-// QR codes keep the per-host form: every shipped scanner reads it, and a
-// system-camera scan lands on the deployment's own `/t/<code>` page.
-// localhost/LAN hosts get http to match the RPC client's protocol rule.
+// QR codes carry the deployment's own URL: every shipped scanner reads
+// it, and a system-camera scan lands on that deployment's `/t/<code>`
+// page. localhost/LAN hosts get http to match the RPC client's protocol
+// rule.
 export function buildTurfQr(host: string, code: string): string {
   const protocol = /^localhost(:|$)|^127\.|^192\.168\.|^10\./.test(host) ? "http" : "https";
   return `${protocol}://${host}/t/${code}`;

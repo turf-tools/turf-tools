@@ -55,15 +55,16 @@ export default function LandingScreen() {
 
   // Clear inputs only when the binding transitions from bound → null (i.e.
   // user hit "Download new turf"). Settings round-trips don't change
-  // activeTurf so partial input survives.
+  // activeTurf so partial input survives. A link that releases the turf
+  // unbinds and fills in the same render, and the fill wins.
   const prevActiveTurf = useRef(activeTurf);
   useEffect(() => {
-    if (prevActiveTurf.current !== null && activeTurf === null) {
+    if (prevActiveTurf.current !== null && activeTurf === null && !scanned) {
       setHostInput("");
       setCode("");
     }
     prevActiveTurf.current = activeTurf;
-  }, [activeTurf]);
+  }, [activeTurf, scanned]);
 
   const canvasser = useAtomValue(canvasserAtom);
 

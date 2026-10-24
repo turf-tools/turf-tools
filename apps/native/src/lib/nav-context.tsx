@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -73,7 +74,10 @@ export function NavProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// Combined hook: register both top and bottom nav for the focused screen.
+// Combined hook: register both top and bottom nav for a screen. Runs on
+// mount and again on every focus — a screen's nav is its own from the
+// moment it exists, including a screen that mounts under a transparent
+// prompt and only gains focus later.
 export function useScreenNav(options: {
   title: string;
   titleSuffix?: string | null;
@@ -96,19 +100,20 @@ export function useScreenNav(options: {
   const progressTurfId = options.progressTurfId ?? null;
   const variant = options.topVariant ?? "default";
 
-  useFocusEffect(
-    useCallback(() => {
-      ctxRef.current?.setTopConfig({
-        title: titleKey,
-        titleSuffix,
-        showBack,
-        progressTurfId,
-        variant,
-      });
-      ctxRef.current?.setBottomConfig({
-        buttons: buttonsKey.split(",") as Array<ButtonAction>,
-        onPress: (action) => optionsRef.current.onBottomPress(action),
-      });
-    }, [buttonsKey, titleKey, titleSuffix, showBack, progressTurfId, variant]),
-  );
+  const register = useCallback(() => {
+    ctxRef.current?.setTopConfig({
+      title: titleKey,
+      titleSuffix,
+      showBack,
+      progressTurfId,
+      variant,
+    });
+    ctxRef.current?.setBottomConfig({
+      buttons: buttonsKey.split(",") as Array<ButtonAction>,
+      onPress: (action) => optionsRef.current.onBottomPress(action),
+    });
+  }, [buttonsKey, titleKey, titleSuffix, showBack, progressTurfId, variant]);
+
+  useEffect(register, [register]);
+  useFocusEffect(register);
 }

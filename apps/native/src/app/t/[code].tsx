@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect } from "react";
 import { Alert } from "react-native";
@@ -15,16 +15,22 @@ import { normalizeHost } from "@/lib/turf-link";
 // one as "Download new turf", pending results and all.
 export default function TurfLinkScreen() {
   const { code, host: hostParam } = useLocalSearchParams<{ code: string; host?: string }>();
+  const navigation = useNavigation();
   const activeTurf = useAtomValue(activeTurfAtom);
   const setScanned = useSetAtom(scannedEntryAtom);
   const releaseTurf = useReleaseTurf();
 
   useEffect(() => {
     const host = normalizeHost(hostParam ?? "");
+    // Hand the entry to the landing and get there. When the landing is
+    // already at the bottom of this stack, dismissing down to it keeps the
+    // copy that just filled; otherwise (a cold launch that jumped straight
+    // to the turf) the landing takes the turf's place.
     const open = () => {
       setScanned({ host, code });
+      const landingIsRoot = navigation.getState()?.routes[0]?.name === "index";
       router.dismissAll();
-      router.replace("/");
+      if (!landingIsRoot) router.replace("/");
     };
     const stay = () => {
       if (router.canGoBack()) router.back();

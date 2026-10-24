@@ -1,10 +1,12 @@
 import { router } from "expo-router";
 import { useAtomValue } from "jotai";
-import { Link, X } from "lucide-react-native";
-import { Platform, Pressable, Share, Text, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import { Check, Link, X } from "lucide-react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
 import { Button } from "@/components/button";
 import { themeAtom } from "@/lib/atoms/theme";
@@ -27,6 +29,15 @@ export default function ShareScreen() {
   const turfCode = meta?.turfCode ?? null;
   const qrValue = activeTurf && turfCode ? buildTurfQr(activeTurf.host, turfCode) : null;
   const shareUrl = activeTurf && turfCode ? buildTurfLink(activeTurf.host, turfCode) : null;
+
+  // Copy feedback: the button reads "Link copied" for a beat. Leads
+  // juggle several messaging apps; a copied link pastes into any of them.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
 
   // The X and the content column share this anchor so the title sits a
   // fixed distance below the close button on every device. iOS's deep top
@@ -70,7 +81,7 @@ export default function ShareScreen() {
           className="px-4 mb-6 mt-6 text-center text-xl leading-6 text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
-          Have another canvasser scan this, or send them the link
+          Have another canvasser scan this, or copy the link to send them
         </Text>
 
         {qrValue && shareUrl ? (
@@ -93,17 +104,21 @@ export default function ShareScreen() {
                 Code: {turfCode}
               </Text>
             </View>
-            {/* iOS shares a `url` as a tappable link; Android has only `message`. */}
             <View className="mt-8 w-full max-w-xs">
               <Button
-                title="Share link"
+                title={copied ? "Link copied" : "Copy link"}
                 variant="outline"
-                icon={<Link size={20} color={isDark ? "#ededed" : "#1b1b1b"} />}
-                onPress={() =>
-                  void Share.share(
-                    Platform.OS === "ios" ? { url: shareUrl } : { message: shareUrl },
-                  ).catch(() => {})
+                icon={
+                  copied ? (
+                    <Check size={20} color={isDark ? "#ededed" : "#1b1b1b"} />
+                  ) : (
+                    <Link size={20} color={isDark ? "#ededed" : "#1b1b1b"} />
+                  )
                 }
+                onPress={() => {
+                  void Clipboard.setStringAsync(shareUrl);
+                  setCopied(true);
+                }}
               />
             </View>
           </>

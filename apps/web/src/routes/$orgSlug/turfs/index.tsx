@@ -542,8 +542,9 @@ function labelPoint(f: Feature, label: string): Feature {
 // Dialogs
 // ---------------------------------------------------------------------------
 
-// QR codes keep the per-host form every shipped scanner reads; the
-// copyable link takes the resolver form that opens the app from a tap.
+// QR codes carry the deployment's own URL, which every shipped scanner
+// reads; the copyable link takes the resolver form that opens the app
+// from a tap.
 function qrValue(code: string) {
   return `${window.location.origin}/t/${code}`;
 }
@@ -663,10 +664,9 @@ function QrDialog({
                   className="h-auto w-full"
                 />
               </div>
-              {/* The whole plate copies the turf's link — it carries the
-                  web address too and opens the app from a tap, so it's
-                  what a lead texts. The icon is the affordance (and flips
-                  to a check as feedback). */}
+              {/* The whole plate copies the turf's link: it carries the
+                  web address too and opens the app from a tap. The icon is
+                  the affordance (and flips to a check as feedback). */}
               <button
                 type="button"
                 aria-label="Copy link"
