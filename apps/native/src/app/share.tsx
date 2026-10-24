@@ -1,13 +1,14 @@
 import { router } from "expo-router";
 import { useAtomValue } from "jotai";
-import { X } from "lucide-react-native";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Link, X } from "lucide-react-native";
+import { Platform, Pressable, Share, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
+import { Button } from "@/components/button";
 import { themeAtom } from "@/lib/atoms/theme";
-import { buildTurfQr } from "@/lib/turf-qr";
+import { buildTurfLink, buildTurfQr } from "@/lib/turf-link";
 import { client } from "@/rpc/client";
 
 // Share sheet — the active turf's QR, so a canvasser can hand the turf
@@ -24,7 +25,8 @@ export default function ShareScreen() {
     staleTime: Infinity,
   });
   const turfCode = meta?.turfCode ?? null;
-  const shareUrl = activeTurf && turfCode ? buildTurfQr(activeTurf.host, turfCode) : null;
+  const qrValue = activeTurf && turfCode ? buildTurfQr(activeTurf.host, turfCode) : null;
+  const shareUrl = activeTurf && turfCode ? buildTurfLink(activeTurf.host, turfCode) : null;
 
   // The X and the content column share this anchor so the title sits a
   // fixed distance below the close button on every device. iOS's deep top
@@ -68,21 +70,21 @@ export default function ShareScreen() {
           className="px-4 mb-6 mt-6 text-center text-xl leading-6 text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
-          Have another canvasser scan this
+          Have another canvasser scan this, or send them the link
         </Text>
 
-        {shareUrl ? (
+        {qrValue && shareUrl ? (
           <>
             {/* Plate stays white in dark mode — inverted QR codes scan poorly. */}
             <View className="items-center rounded-2xl bg-white p-8">
-              <QRCode value={shareUrl} size={220} />
+              <QRCode value={qrValue} size={220} />
             </View>
             <View className="mt-6 items-center gap-0.5">
               <Text
                 className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
                 style={{ fontFamily: "Geist_400Regular" }}
               >
-                Server: {activeTurf?.host}
+                Web address: {activeTurf?.host}
               </Text>
               <Text
                 className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
@@ -90,6 +92,19 @@ export default function ShareScreen() {
               >
                 Code: {turfCode}
               </Text>
+            </View>
+            {/* iOS shares a `url` as a tappable link; Android has only `message`. */}
+            <View className="mt-8 w-full max-w-xs">
+              <Button
+                title="Share link"
+                variant="outline"
+                icon={<Link size={20} color={isDark ? "#ededed" : "#1b1b1b"} />}
+                onPress={() =>
+                  void Share.share(
+                    Platform.OS === "ios" ? { url: shareUrl } : { message: shareUrl },
+                  ).catch(() => {})
+                }
+              />
             </View>
           </>
         ) : (

@@ -1,11 +1,12 @@
 import { atom } from "jotai";
-import type { ScannedEntry } from "@/lib/turf-qr";
+import type { TurfLink } from "@/lib/turf-link";
 
-// Handoff from the scan modal to the landing screen: the modal writes the
-// parsed entry and dismisses; the landing screen consumes it into the form
-// fields and clears it. Not persisted — a scan is momentary by design (the
-// user still reviews the fields and hits Open).
-export const scannedEntryAtom = atom<ScannedEntry | null>(null);
+// Handoff from the scan modal or a tapped link to the landing screen: the
+// source writes the parsed entry and dismisses; the landing screen consumes
+// it into the form fields, clears it, and opens the turf — unless the host
+// is empty (a link with only a code), which fills and waits. Not persisted
+// — a scan is momentary by design.
+export const scannedEntryAtom = atom<TurfLink | null>(null);
 
 // Handoff from the landing screen to the identity sheet: a first open on
 // a device with no canvasser parks the resolved turf here, and the

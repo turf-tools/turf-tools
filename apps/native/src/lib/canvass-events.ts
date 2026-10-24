@@ -233,6 +233,18 @@ export async function openTurf(turfId: string) {
   await (collection as unknown as { preload: () => Promise<void> }).preload();
 }
 
+// Results still in the outbox for a turf. Waits for the executor to load
+// its persisted outbox first, so a probe right after boot can't read an
+// empty count that hasn't filled in yet. A non-empty outbox also gets a
+// nudge: the executor retries at once instead of waiting out a backoff.
+export async function pendingResultCount(turfId: string): Promise<number> {
+  const { executor } = getTurfContext(turfId);
+  await executor.waitForInit();
+  const count = executor.getPendingCount();
+  if (count > 0) (executor.getOnlineDetector() as FixedReactNativeOnlineDetector).notifyOnline();
+  return count;
+}
+
 // Wipe the in-memory pull cache for every turf. AsyncStorage.clear() and
 // queryClient.clear() can't reach this module-level Map, so the Settings
 // "Reset app state" hook needs to call this explicitly — otherwise stale

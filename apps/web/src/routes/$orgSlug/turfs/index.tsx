@@ -14,6 +14,7 @@ import { Map as MapView } from "~/components/map";
 import { Page } from "~/components/page";
 import { tintStyle } from "~/components/badge";
 import { BLUE, progressColor } from "~/lib/palette";
+import { buildTurfLink } from "~/lib/turf-link";
 import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
@@ -541,11 +542,13 @@ function labelPoint(f: Feature, label: string): Feature {
 // Dialogs
 // ---------------------------------------------------------------------------
 
-// The payload matches the native scanner's expected format (see
-// parseTurfQr): a real URL so a system-camera scan can someday land on a
-// web page, with `/t/` as the format discriminator.
+// QR codes keep the per-host form every shipped scanner reads; the
+// copyable link takes the resolver form that opens the app from a tap.
 function qrValue(code: string) {
   return `${window.location.origin}/t/${code}`;
+}
+function turfLink(code: string) {
+  return buildTurfLink(window.location.host, code);
 }
 
 // "Prefix First Last +N": the first name truncates to the available
@@ -660,13 +663,15 @@ function QrDialog({
                   className="h-auto w-full"
                 />
               </div>
-              {/* The whole plate copies the code; the icon is the
-                  affordance (and flips to a check as feedback). */}
+              {/* The whole plate copies the turf's link — it carries the
+                  web address too and opens the app from a tap, so it's
+                  what a lead texts. The icon is the affordance (and flips
+                  to a check as feedback). */}
               <button
                 type="button"
-                aria-label="Copy code"
+                aria-label="Copy link"
                 onClick={() => {
-                  void navigator.clipboard.writeText(turf.turfCode!);
+                  void navigator.clipboard.writeText(turfLink(turf.turfCode!));
                   setCopied(true);
                 }}
                 className={cn(
