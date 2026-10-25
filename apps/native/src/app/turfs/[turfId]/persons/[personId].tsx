@@ -40,7 +40,12 @@ import { useAlignedTurfStack } from "@/lib/turf-nav";
 import { client } from "@/rpc/client";
 import type { CanvassEventPayload, ResponseValue, TurfDataPerson } from "@turf-tools/db/schema";
 
-type Mode = "script" | "unavailable" | "note" | "details";
+// The screen shows one disposition panel (script or could-not-reach) with
+// an optional note/details layer over it. Opening and closing a layer never
+// touches the panel, so the panel's selection is what the layer returns to.
+type Panel = "script" | "unavailable";
+type Overlay = "note" | "details";
+type Mode = Panel | Overlay;
 
 // Stable reference so the derivedResponses useEffect doesn't fire
 // every render when the person has no events yet.
@@ -178,10 +183,12 @@ export default function PersonScreen() {
     outcomeRef.current = value;
   };
 
-  const [mode, setMode] = useState<Mode>("script");
+  const [panel, setPanel] = useState<Panel>("script");
+  const [overlay, setOverlay] = useState<Overlay | null>(null);
+  const mode: Mode = overlay ?? panel;
 
   useEffect(() => {
-    if (unavailableOutcome) setMode("unavailable");
+    if (unavailableOutcome) setPanel("unavailable");
   }, [unavailableOutcome]);
 
   // Emit a full result snapshot for the current disposition. An "unavailable"
@@ -246,7 +253,7 @@ export default function PersonScreen() {
   const exitUnavailable = () => {
     Keyboard.dismiss();
     if (outcomeRef.current != null) clearResult();
-    setMode("script");
+    setPanel("script");
   };
 
   // Trailing debounce: reads state fresh (from refs) at fire time so
@@ -519,14 +526,18 @@ export default function PersonScreen() {
           <View className="px-5 py-3 gap-2">
             <WideButton
               label="Could not reach person"
-              icon={<Ban size={18} color={mode === "unavailable" ? iconColor : mutedIconColor} />}
-              selected={mode === "unavailable"}
+              icon={<Ban size={18} color={panel === "unavailable" ? iconColor : mutedIconColor} />}
+              selected={panel === "unavailable"}
               onPress={() => {
-                if (mode === "unavailable") {
+                // Deselecting (which clears a chosen outcome) is only offered
+                // while the options are on screen; from under a note or
+                // details layer the tap just brings the panel back.
+                if (overlay == null && panel === "unavailable") {
                   exitUnavailable();
                 } else {
                   Keyboard.dismiss();
-                  setMode("unavailable");
+                  setOverlay(null);
+                  setPanel("unavailable");
                 }
               }}
             />
@@ -544,7 +555,7 @@ export default function PersonScreen() {
                   selected={mode === "note"}
                   onPress={() => {
                     Keyboard.dismiss();
-                    setMode(mode === "note" ? "script" : "note");
+                    setOverlay(overlay === "note" ? null : "note");
                   }}
                 />
               </View>
@@ -561,7 +572,7 @@ export default function PersonScreen() {
                   selected={mode === "details"}
                   onPress={() => {
                     Keyboard.dismiss();
-                    setMode(mode === "details" ? "script" : "details");
+                    setOverlay(overlay === "details" ? null : "details");
                   }}
                 />
               </View>
@@ -603,9 +614,9 @@ export default function PersonScreen() {
                     kind: "note",
                     payload: { kind: "note", text },
                   });
-                  setMode("script");
+                  setOverlay(null);
                 }}
-                onCancel={() => setMode("script")}
+                onCancel={() => setOverlay(null)}
               />
             )}
             {mode === "details" && <DetailsContent person={person} notes={formattedNotes} />}
@@ -925,7 +936,7 @@ function DetailList({ items }: { items: Array<{ label: string; date: string }> }
             {/* fontVariant via style, not the tabular-nums class — NativeWind
                 drops font-variant-numeric (only -caps is mapped). */}
             <Text
-              className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-20"
+              className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-24"
               style={{ fontVariant: ["tabular-nums"] }}
             >
               {item.date}
