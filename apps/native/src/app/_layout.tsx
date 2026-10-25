@@ -10,7 +10,7 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { Menu } from "lucide-react-native";
 import { useColorScheme } from "nativewind";
 import { useEffect, useState } from "react";
-import { AppState, LogBox, Platform, Pressable } from "react-native";
+import { AppState, Linking, LogBox, Platform, Pressable } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +20,7 @@ import { themeAtom } from "@/lib/atoms/theme";
 import { REQUIRE_ATTRIBUTION } from "@/lib/canvasser";
 import { pullCanvassEvents } from "@/lib/canvass-events";
 import { persister, queryClient } from "@/lib/query-client";
+import { parseTurfLink, type TurfLink } from "@/lib/turf-link";
 import { setHost } from "@/rpc/client";
 
 // Harmless noise silenced to avoid warning popups.
@@ -29,6 +30,12 @@ LogBox.ignoreLogs([
 ]);
 
 void SplashScreen.preventAutoHideAsync();
+
+// The landing is the screen under any deep-linked route. With it declared,
+// a link that arrives while the app is open is pushed onto the existing
+// stack; without it the router rebuilds the stack from the link and
+// remounts everything. Only consulted for deep links.
+export const unstable_settings = { anchor: "index" };
 
 const MENU_SHADOW = {
   shadowColor: "#000",
@@ -150,6 +157,11 @@ function ThemedStack() {
           name="turfs/[turfId]"
           options={{ headerShown: false, gestureEnabled: false }}
         />
+        {/* Transparent: the link's prompt sits over whatever is on screen. */}
+        <Stack.Screen
+          name="t/[code]"
+          options={{ headerShown: false, presentation: "transparentModal", animation: "none" }}
+        />
       </Stack>
     </>
   );
@@ -159,12 +171,27 @@ function BootGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const setActiveTurf = useSetAtom(activeTurfAtom);
   const setCanvasser = useSetAtom(canvasserAtom);
+  // A turf link that launched the app while a turf was bound. The launch
+  // URL was rewritten to the turf (see +native-intent), so the router's
+  // first stack already shows it; the link's prompt is pushed over it once
+  // the stack exists.
+  const [pendingLink, setPendingLink] = useState<TurfLink | null>(null);
+  useEffect(() => {
+    if (!ready || !pendingLink) return;
+    router.push({
+      pathname: "/t/[code]",
+      params: { code: pendingLink.code, host: pendingLink.host },
+    });
+    setPendingLink(null);
+  }, [ready, pendingLink]);
 
   useEffect(() => {
     void (async () => {
       const canvasser = await loadCanvasser();
       if (canvasser) setCanvasser(canvasser);
       const activeTurf = await loadActiveTurf();
+      const launchUrl = await Linking.getInitialURL();
+      const launchLink = launchUrl ? parseTurfLink(launchUrl) : null;
       if (activeTurf) {
         // Bound ⇒ attributed is an invariant of the open flow (the landing
         // gates binding on the canvasser sheet). A stored binding without a
@@ -175,7 +202,8 @@ function BootGate({ children }: { children: React.ReactNode }) {
         } else {
           setHost(activeTurf.host);
           setActiveTurf(activeTurf);
-          router.replace(`/turfs/${activeTurf.turfId}`);
+          if (launchLink) setPendingLink(launchLink);
+          else router.replace(`/turfs/${activeTurf.turfId}`);
         }
       }
       setReady(true);

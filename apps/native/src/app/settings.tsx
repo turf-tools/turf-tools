@@ -43,6 +43,7 @@ import {
   useSyncStatus,
 } from "@/lib/canvass-events";
 import { queryClient } from "@/lib/query-client";
+import { useReleaseTurf } from "@/lib/release-turf";
 import { clearHost, client } from "@/rpc/client";
 
 // Dev-only escape hatch — hidden from the shipped menu but kept wired
@@ -149,22 +150,9 @@ export default function SettingsScreen() {
 
   const syncLabel = SYNC_OPTIONS.find((o) => o.value === syncInterval)?.label ?? "Unknown";
 
-  const handleDownloadNewTurf = () => {
-    // Best-effort close of this device's walk, so the lead's board flips
-    // to available without waiting for the next open. Fire-and-forget
-    // (before clearHost so the request still knows the server): offline
-    // unbinds fall back to implicit close on next open, or lead clear.
-    if (activeTurf && canvasser?.phone) {
-      try {
-        void client.walks
-          .close({ turfId: activeTurf.turfId, canvasserPhone: canvasser.phone })
-          .catch(() => {});
-      } catch {
-        // Uninitialized client throws synchronously — nothing to close.
-      }
-    }
-    setActiveTurf(null);
-    clearHost();
+  const releaseTurf = useReleaseTurf();
+  const handleDownloadNewTurf = async () => {
+    if (!(await releaseTurf())) return;
     router.dismissAll();
     router.replace("/");
   };
@@ -245,7 +233,7 @@ export default function SettingsScreen() {
           <Button
             title="Download new turf"
             variant="outline"
-            onPress={handleDownloadNewTurf}
+            onPress={() => void handleDownloadNewTurf()}
             icon={<Download size={20} color={theme == "light" ? "#1b1b1b" : "#ededed"} />}
           />
           <Button

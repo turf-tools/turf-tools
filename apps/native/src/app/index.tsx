@@ -13,6 +13,7 @@ import { themeAtom } from "@/lib/atoms/theme";
 import { showBindError } from "@/lib/bind-error";
 import { openTurf } from "@/lib/canvass-events";
 import { REQUIRE_ATTRIBUTION } from "@/lib/canvasser";
+import { normalizeHost, parseTurfLink } from "@/lib/turf-link";
 import { client, setHost } from "@/rpc/client";
 
 export default function LandingScreen() {
@@ -28,28 +29,43 @@ export default function LandingScreen() {
   const [activeTurf, setActiveTurf] = useAtom(activeTurfAtom);
   const isDark = useAtomValue(themeAtom) === "dark";
 
-  // A successful scan opens the turf directly. The fields fill first so a
-  // failed open lands back here ready to retry or edit by hand.
+  // A scan or a link opens the turf directly. The fields fill first so a
+  // failed open lands back here ready to retry or edit by hand; an entry
+  // with no host (a link carrying only a code) fills and stops.
   const [scanned, setScanned] = useAtom(scannedEntryAtom);
   useEffect(() => {
     if (!scanned) return;
     setHostInput(scanned.host);
     setCode(scanned.code);
     setScanned(null);
-    void submitRef.current(scanned.host, scanned.code);
+    if (scanned.host) void submitRef.current(scanned.host, scanned.code);
   }, [scanned, setScanned]);
+
+  // A turf link pasted into either field fills both, in any of its forms
+  // (resolver, a deployment's own, custom scheme); everything else is
+  // ordinary typing into that field.
+  const changeField = (setField: (text: string) => void) => (text: string) => {
+    const link = parseTurfLink(text);
+    if (!link) {
+      setField(text);
+      return;
+    }
+    setHostInput(link.host);
+    setCode(link.code);
+  };
 
   // Clear inputs only when the binding transitions from bound → null (i.e.
   // user hit "Download new turf"). Settings round-trips don't change
-  // activeTurf so partial input survives.
+  // activeTurf so partial input survives. A link that releases the turf
+  // unbinds and fills in the same render, and the fill wins.
   const prevActiveTurf = useRef(activeTurf);
   useEffect(() => {
-    if (prevActiveTurf.current !== null && activeTurf === null) {
+    if (prevActiveTurf.current !== null && activeTurf === null && !scanned) {
       setHostInput("");
       setCode("");
     }
     prevActiveTurf.current = activeTurf;
-  }, [activeTurf]);
+  }, [activeTurf, scanned]);
 
   const canvasser = useAtomValue(canvasserAtom);
 
@@ -145,14 +161,17 @@ export default function LandingScreen() {
   submitRef.current = submit;
 
   const handleSubmit = async () => {
-    const trimmedHost = host.trim();
+    const trimmedHost = normalizeHost(host);
     const trimmedCode = code.trim();
     if (!trimmedHost) {
-      Alert.alert("Enter a server", "Please enter the server.");
+      Alert.alert(
+        "Enter a web address",
+        "Please enter the web address of the organization with your turf (e.g. turf.example.org).",
+      );
       return;
     }
     if (!trimmedCode) {
-      Alert.alert("Enter a code", "Please enter a turf code.");
+      Alert.alert("Enter a turf code", "Please enter the code for your turf (e.g. 12345678).");
       return;
     }
     await submit(trimmedHost, trimmedCode);
@@ -174,14 +193,14 @@ export default function LandingScreen() {
           className="mt-2 mb-4 text-center text-xl text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
-          Enter a server and code to start
+          Enter a web address and turf code
         </Text>
 
         <View className="gap-3 w-full max-w-xs">
           <Input
             value={host}
-            onChangeText={setHostInput}
-            placeholder="Server domain"
+            onChangeText={changeField(setHostInput)}
+            placeholder="turf.example.org"
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
@@ -191,8 +210,8 @@ export default function LandingScreen() {
           <Input
             ref={codeRef}
             value={code}
-            onChangeText={setCode}
-            placeholder="Turf code"
+            onChangeText={changeField(setCode)}
+            placeholder="12345678"
             keyboardType="number-pad"
             style={{ fontVariant: ["tabular-nums"] }}
           />

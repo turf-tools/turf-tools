@@ -29,6 +29,7 @@
     "@turf-tools/db": "workspace:^",
     "expo": "~55.0.12",
     "expo-camera": "~55.0.21",
+    "expo-clipboard": "~55.0.17",
     "expo-constants": "~55.0.12",
     "expo-dev-client": "~55.0.37",
     "expo-font": "^55.0.6",

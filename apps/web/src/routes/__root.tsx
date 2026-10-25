@@ -49,17 +49,20 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
   }),
   beforeLoad: async ({ location }) => {
-    // Auth-flow routes can render without a session (that's the whole
-    // point — the verify route is mid-login), so only the redirect is
-    // skipped for them. The session itself is always resolved here:
+    // Auth-flow routes render without a session (that's the whole point —
+    // the verify route is mid-login), as do turf-link pages (a scanned
+    // code's hand-off to the app), so only the redirect is skipped for
+    // them. The session itself is always resolved here:
     // every route must read ONE source of truth for "am I signed in" —
     // /login once ran its own getSession while "/" read this context,
     // and the two disagreeing during a login race produced a redirect
     // loop between them.
-    const isAuthFlow =
-      location.pathname === "/login" || location.pathname.startsWith("/auth/email/");
+    const isPublic =
+      location.pathname === "/login" ||
+      location.pathname.startsWith("/auth/email/") ||
+      location.pathname.startsWith("/t/");
     const session = await getSession();
-    if (!session && !isAuthFlow) throw redirect({ to: "/login" });
+    if (!session && !isPublic) throw redirect({ to: "/login" });
     return { session };
   },
   component: RootComponent,

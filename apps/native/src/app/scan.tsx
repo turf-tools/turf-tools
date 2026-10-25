@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/button";
 import { scannedEntryAtom } from "@/lib/atoms/scan";
 import { themeAtom } from "@/lib/atoms/theme";
-import { parseTurfQr } from "@/lib/turf-qr";
+import { parseTurfLink } from "@/lib/turf-link";
 
 // Modal camera for scanning a turf QR (`https://<host>/t/<code>`). A valid
 // scan writes the handoff atom and dismisses — the landing screen fills its
@@ -77,7 +77,7 @@ export default function ScanScreen() {
   const invalidStyle = useAnimatedStyle(() => ({ opacity: invalidOpacity.value }));
   const handleData = (data: string) => {
     if (handledRef.current) return;
-    const entry = parseTurfQr(data);
+    const entry = parseTurfLink(data);
     if (!entry) {
       setShowInvalid(true);
       if (invalidTimerRef.current) clearTimeout(invalidTimerRef.current);

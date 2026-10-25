@@ -1,18 +1,20 @@
 import { router } from "expo-router";
 import { useAtomValue } from "jotai";
-import { X } from "lucide-react-native";
+import * as Clipboard from "expo-clipboard";
+import { Check, Link, X } from "lucide-react-native";
 import { Platform, Pressable, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { activeTurfAtom } from "@/lib/atoms/active-turf";
+import { Button } from "@/components/button";
 import { themeAtom } from "@/lib/atoms/theme";
-import { buildTurfQr } from "@/lib/turf-qr";
+import { buildTurfLink, buildTurfQr } from "@/lib/turf-link";
 import { client } from "@/rpc/client";
 
-// Share sheet — the active turf's QR, so a canvasser can hand the turf
-// to another device by letting them scan straight off this screen. Same
-// payload as the admin board's printable codes.
+// Share sheet — the active turf's QR or link, so a canvasser can hand the turf
+// to another device. Same payload as the admin turf page's codes.
 export default function ShareScreen() {
   const insets = useSafeAreaInsets();
   const isDark = useAtomValue(themeAtom) === "dark";
@@ -24,7 +26,16 @@ export default function ShareScreen() {
     staleTime: Infinity,
   });
   const turfCode = meta?.turfCode ?? null;
-  const shareUrl = activeTurf && turfCode ? buildTurfQr(activeTurf.host, turfCode) : null;
+  const qrValue = activeTurf && turfCode ? buildTurfQr(activeTurf.host, turfCode) : null;
+  const shareUrl = activeTurf && turfCode ? buildTurfLink(activeTurf.host, turfCode) : null;
+
+  // Copy feedback: the button reads "Link copied" for a beat.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(id);
+  }, [copied]);
 
   // The X and the content column share this anchor so the title sits a
   // fixed distance below the close button on every device. iOS's deep top
@@ -68,21 +79,21 @@ export default function ShareScreen() {
           className="px-4 mb-6 mt-6 text-center text-xl leading-6 text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
-          Have another canvasser scan this
+          Have another canvasser scan this, or copy the link to send them.
         </Text>
 
-        {shareUrl ? (
+        {qrValue && shareUrl ? (
           <>
             {/* Plate stays white in dark mode — inverted QR codes scan poorly. */}
             <View className="items-center rounded-2xl bg-white p-8">
-              <QRCode value={shareUrl} size={220} />
+              <QRCode value={qrValue} size={220} />
             </View>
             <View className="mt-6 items-center gap-0.5">
               <Text
                 className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
                 style={{ fontFamily: "Geist_400Regular" }}
               >
-                Server: {activeTurf?.host}
+                Web address: {activeTurf?.host}
               </Text>
               <Text
                 className="text-xl text-muted-foreground dark:text-muted-foreground-dark"
@@ -90,6 +101,23 @@ export default function ShareScreen() {
               >
                 Code: {turfCode}
               </Text>
+            </View>
+            <View className="mt-8 w-full max-w-xs">
+              <Button
+                title={copied ? "Link copied" : "Copy link"}
+                variant="outline"
+                icon={
+                  copied ? (
+                    <Check size={20} color={isDark ? "#ededed" : "#1b1b1b"} />
+                  ) : (
+                    <Link size={20} color={isDark ? "#ededed" : "#1b1b1b"} />
+                  )
+                }
+                onPress={() => {
+                  void Clipboard.setStringAsync(shareUrl);
+                  setCopied(true);
+                }}
+              />
             </View>
           </>
         ) : (
