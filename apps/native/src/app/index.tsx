@@ -13,7 +13,7 @@ import { themeAtom } from "@/lib/atoms/theme";
 import { showBindError } from "@/lib/bind-error";
 import { openTurf } from "@/lib/canvass-events";
 import { REQUIRE_ATTRIBUTION } from "@/lib/canvasser";
-import { normalizeHost, parseSharedLink } from "@/lib/turf-link";
+import { normalizeHost, parseTurfLink } from "@/lib/turf-link";
 import { client, setHost } from "@/rpc/client";
 
 export default function LandingScreen() {
@@ -41,10 +41,11 @@ export default function LandingScreen() {
     if (scanned.host) void submitRef.current(scanned.host, scanned.code);
   }, [scanned, setScanned]);
 
-  // A shared link pasted into either field fills both; everything else is
+  // A turf link pasted into either field fills both, in any of its forms
+  // (resolver, a deployment's own, custom scheme); everything else is
   // ordinary typing into that field.
   const changeField = (setField: (text: string) => void) => (text: string) => {
-    const link = parseSharedLink(text);
+    const link = parseTurfLink(text);
     if (!link) {
       setField(text);
       return;

@@ -13,9 +13,8 @@ import { themeAtom } from "@/lib/atoms/theme";
 import { buildTurfLink, buildTurfQr } from "@/lib/turf-link";
 import { client } from "@/rpc/client";
 
-// Share sheet — the active turf's QR, so a canvasser can hand the turf
-// to another device by letting them scan straight off this screen. Same
-// payload as the admin board's printable codes.
+// Share sheet — the active turf's QR or link, so a canvasser can hand the turf
+// to another device. Same payload as the admin turf page's codes.
 export default function ShareScreen() {
   const insets = useSafeAreaInsets();
   const isDark = useAtomValue(themeAtom) === "dark";
@@ -30,8 +29,7 @@ export default function ShareScreen() {
   const qrValue = activeTurf && turfCode ? buildTurfQr(activeTurf.host, turfCode) : null;
   const shareUrl = activeTurf && turfCode ? buildTurfLink(activeTurf.host, turfCode) : null;
 
-  // Copy feedback: the button reads "Link copied" for a beat. Leads
-  // juggle several messaging apps; a copied link pastes into any of them.
+  // Copy feedback: the button reads "Link copied" for a beat.
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -81,7 +79,7 @@ export default function ShareScreen() {
           className="px-4 mb-6 mt-6 text-center text-xl leading-6 text-muted-foreground dark:text-muted-foreground-dark"
           style={{ fontFamily: "Geist_400Regular" }}
         >
-          Have another canvasser scan this, or copy the link to send them
+          Have another canvasser scan this, or copy the link to send them.
         </Text>
 
         {qrValue && shareUrl ? (

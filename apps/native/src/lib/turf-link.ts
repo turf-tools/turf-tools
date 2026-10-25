@@ -46,14 +46,6 @@ export function buildTurfLink(host: string, code: string): string {
   return `https://${RESOLVER_HOST}/t/${code}?host=${encodeURIComponent(host)}`;
 }
 
-// A pasted shared link fills both landing fields. Only the resolver form
-// counts: anything else pasted is ordinary input.
-export function parseSharedLink(data: string): TurfLink | null {
-  const trimmed = data.trim();
-  if (!trimmed.toLowerCase().startsWith(`https://${RESOLVER_HOST}/`)) return null;
-  return parseTurfLink(trimmed);
-}
-
 // QR codes carry the deployment's own URL: every shipped scanner reads
 // it, and a system-camera scan lands on that deployment's `/t/<code>`
 // page. localhost/LAN hosts get http to match the RPC client's protocol
