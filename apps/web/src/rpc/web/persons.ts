@@ -1,4 +1,4 @@
-import type { CustomFieldType } from "@turf-tools/db/schema";
+import type { PersonCustomField } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { webPub } from "../context";
@@ -28,10 +28,6 @@ export type PersonsSearchResult = {
 
 // One voting-history entry off the lake record (see persons_geocoded).
 export type VotingHistoryEntry = { year: number; type: string; date?: string | null };
-
-// One custom field (appended in the Dataset editor) the person has a value for.
-// `values` holds the raw stored strings; only Multi Category has more than one.
-export type PersonCustomField = { label: string; fieldType: CustomFieldType; values: string[] };
 
 // The full lake record for one person — every column, keys are the physical
 // snake_case column names (so they line up with the manifest's `column`), plus

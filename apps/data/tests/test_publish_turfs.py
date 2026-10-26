@@ -406,3 +406,61 @@ def test_failed_publish_leaves_prior_generation_active(conn) -> None:
 
     rows = conn.execute(f"SELECT turf_id::VARCHAR, status FROM {APP}.turfs").fetchall()
     assert rows == [(prior, "active")]
+
+
+# ---------------------------------------------------------------------------
+# Custom fields in the per-person payload
+# ---------------------------------------------------------------------------
+
+
+def _persons_by_id(conn) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for (data,) in conn.execute(f"SELECT data::VARCHAR FROM {APP}.turf_data").fetchall():
+        for b in json.loads(data)["buildings"]:
+            for d in b["doors"]:
+                for p in d["persons"]:
+                    out[p["personId"]] = p
+    return out
+
+
+def test_payload_omits_custom_fields_without_a_values_table(conn) -> None:
+    _seed_campaign(conn)
+    _seed_drafts(conn, ZONE, [(0, 0)])
+
+    _run_publish(conn, ZONE, 1)
+
+    assert all("customFields" not in p for p in _persons_by_id(conn).values())
+
+
+def test_payload_carries_each_persons_live_custom_fields(conn) -> None:
+    _seed_campaign(conn)
+    _seed_drafts(conn, ZONE, [(0, 0), (2, 2)])
+    score, tags, old = (str(uuid.uuid4()) for _ in range(3))
+    conn.execute(
+        f"CREATE TABLE {APP}.custom_fields "
+        "(custom_field_id UUID, label VARCHAR, field_type VARCHAR, archived_at TIMESTAMPTZ)"
+    )
+    conn.execute(
+        f"INSERT INTO {APP}.custom_fields VALUES (?, 'support score', 'number', NULL), "
+        "(?, 'issues', 'enum_multi', NULL), (?, 'old list', 'text', now())",
+        [score, tags, old],
+    )
+    conn.execute(
+        "CREATE TABLE custom_values_src (external_id VARCHAR, field_id VARCHAR, value VARCHAR, upload_id VARCHAR)"
+    )
+    conn.execute(
+        "INSERT INTO custom_values_src VALUES ('p1', ?, '0.8', 'u1'), ('p1', ?, 'rent', 'u2'), "
+        "('p1', ?, 'housing', 'u2'), ('p1', ?, 'x', 'u3'), ('p4', ?, '0.1', 'u1'), ('zz', ?, '0.5', 'u1')",
+        [score, tags, tags, old, score, score],
+    )
+
+    scope = _scope(ZONE)
+    _publish(conn, _request(ZONE), scope, 2, scope.criteria, SCHEMA, "", [], [], VERSION, "custom_values_src")
+
+    persons = _persons_by_id(conn)
+    assert persons["p1"]["customFields"] == [
+        {"label": "issues", "fieldType": "enum_multi", "values": ["housing", "rent"]},
+        {"label": "support score", "fieldType": "number", "values": ["0.8"]},
+    ]
+    assert persons["p2"]["customFields"] == []
+    assert persons["p4"]["customFields"] == [{"label": "support score", "fieldType": "number", "values": ["0.1"]}]

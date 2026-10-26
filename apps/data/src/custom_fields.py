@@ -15,11 +15,13 @@ Rebuilt wholesale after every append/clear, so filters compile to typed column
 predicates behind a single integer semi-join.
 
 Used by the synchronous append and clear endpoints and the person detail
-endpoint in `main.py`.
+endpoint in `main.py`, and by the turf publish (`publish_turfs.py`), which
+carries each person's values into the canvasser payload.
 """
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from src.dsl.criteria import FieldCatalog, build_field_catalog, person_h_sql, wide_column
@@ -180,24 +182,39 @@ def custom_fields_table_for(conn: duckdb.DuckDBPyConnection, dataset_slug: str) 
     return fqn
 
 
+def custom_fields_json_sql(values_table: str) -> str:
+    """SELECT of ``(external_id, custom_fields)`` — one row per person with a
+    value on a live field, `custom_fields` a JSON array of
+    ``{label, fieldType, values}`` in label order: raw stored strings, sorted,
+    several only for Multi Category. Archived fields are left out, as they are
+    from the card and picker. The one definition of the wire shape, so the
+    Lookup pane and the canvasser payload can't drift."""
+    return f"""
+        SELECT
+            external_id,
+            to_json(list(
+                json_object('label', label, 'fieldType', field_type, 'values', to_json(vals))
+                ORDER BY label
+            )) AS custom_fields
+        FROM (
+            SELECT v.external_id, f.label, f.field_type, list(v.value ORDER BY v.value) AS vals
+            FROM {values_table} v
+            JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.custom_field_id::VARCHAR = v.field_id
+            WHERE f.archived_at IS NULL
+            GROUP BY v.external_id, f.custom_field_id, f.label, f.field_type
+        )
+        GROUP BY external_id
+    """
+
+
 def person_custom_fields(conn: duckdb.DuckDBPyConnection, values_table: str, external_id: str) -> list[dict[str, Any]]:
-    """One person's custom-field values for the Lookup detail pane, read from
-    the long values table and labelled from the registry: one
-    ``{label, fieldType, values}`` per field with a value, in label order, raw
-    stored strings (several only for Multi Category). Archived fields are left
-    out, as they are from the card and picker."""
-    rows = conn.execute(
-        f"""
-        SELECT f.label, f.field_type, list(v.value ORDER BY v.value)
-        FROM {values_table} v
-        JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.custom_field_id::VARCHAR = v.field_id
-        WHERE v.external_id = ? AND f.archived_at IS NULL
-        GROUP BY f.label, f.field_type
-        ORDER BY f.label
-        """,
+    """One person's custom-field values for the Lookup detail pane (see
+    `custom_fields_json_sql` for the shape)."""
+    row = conn.execute(
+        f"SELECT custom_fields FROM ({custom_fields_json_sql(values_table)}) WHERE external_id = ?",
         [external_id],
-    ).fetchall()
-    return [{"label": label, "fieldType": field_type, "values": values} for label, field_type, values in rows]
+    ).fetchone()
+    return json.loads(row[0]) if row else []
 
 
 def sync_registry(conn: duckdb.DuckDBPyConnection, dataset_slug: str, *, include_values: bool = True) -> None:

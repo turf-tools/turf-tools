@@ -1,5 +1,6 @@
 import { jsonb, timestamp, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
+import type { PersonCustomField } from "./custom-fields";
 import { type GeoJsonPolygon, turfs } from "./turfs";
 
 // Per-turf payload — the buildings → doors → persons hierarchy a
@@ -55,6 +56,9 @@ export type TurfDataPerson = {
   gender?: string | null;
   dateOfBirth?: string | null; // ISO 8601 YYYY-MM-DD
   votingHistory?: VotingHistoryEntry[];
+  // Present only once the dataset has custom fields appended; empty for a
+  // person with no values.
+  customFields?: PersonCustomField[];
 };
 
 export type TurfDataDoor = {
