@@ -182,13 +182,17 @@ def custom_fields_table_for(conn: duckdb.DuckDBPyConnection, dataset_slug: str) 
     return fqn
 
 
-def custom_fields_json_sql(values_table: str) -> str:
+def custom_fields_json_sql(values_table: str, scope: str) -> str:
     """SELECT of ``(external_id, custom_fields)`` — one row per person with a
     value on a live field, `custom_fields` a JSON array of
     ``{label, fieldType, values}`` in label order: raw stored strings, sorted,
     several only for Multi Category. Archived fields are left out, as they are
     from the card and picker. The one definition of the wire shape, so the
-    Lookup pane and the canvasser payload can't drift."""
+    Lookup pane and the canvasser payload can't drift.
+
+    `scope` is a predicate on the values row `v` naming the people wanted,
+    applied before aggregation so a dense field (a value for most of the
+    file) is only ever aggregated for them."""
     return f"""
         SELECT
             external_id,
@@ -200,7 +204,7 @@ def custom_fields_json_sql(values_table: str) -> str:
             SELECT v.external_id, f.label, f.field_type, list(v.value ORDER BY v.value) AS vals
             FROM {values_table} v
             JOIN {OPERATIONAL_PG_ALIAS}.app.custom_fields f ON f.custom_field_id::VARCHAR = v.field_id
-            WHERE f.archived_at IS NULL
+            WHERE f.archived_at IS NULL AND ({scope})
             GROUP BY v.external_id, f.custom_field_id, f.label, f.field_type
         )
         GROUP BY external_id
@@ -211,7 +215,7 @@ def person_custom_fields(conn: duckdb.DuckDBPyConnection, values_table: str, ext
     """One person's custom-field values for the Lookup detail pane (see
     `custom_fields_json_sql` for the shape)."""
     row = conn.execute(
-        f"SELECT custom_fields FROM ({custom_fields_json_sql(values_table)}) WHERE external_id = ?",
+        f"SELECT custom_fields FROM ({custom_fields_json_sql(values_table, 'v.external_id = ?')})",
         [external_id],
     ).fetchone()
     return json.loads(row[0]) if row else []

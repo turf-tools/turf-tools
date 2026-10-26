@@ -430,7 +430,8 @@ def _build_publish_temp_table_sql(
     optional_cols = "".join(f"            {select},\n" for _, select, _ in present_optional)
     optional_json = "".join(f",\n                {entry}" for _, _, entry in present_optional)
     if values_table is not None:
-        custom_cte = f"custom_values AS ({custom_fields_json_sql(values_table)}),\n    "
+        scope = "v.external_id IN (SELECT external_id FROM filtered_persons)"
+        custom_cte = f"custom_values AS ({custom_fields_json_sql(values_table, scope)}),\n    "
         optional_cols += "            coalesce(cv.custom_fields, json('[]')) AS custom_fields,\n"
         custom_join = "        LEFT JOIN custom_values cv ON cv.external_id = p.external_id\n"
         optional_json += ",\n                'customFields', custom_fields"
