@@ -38,12 +38,20 @@ SHORT="$(git rev-parse --short HEAD)"
 SHA_TAG="sha-${SHORT}"
 MOVING_TAG="${TAG:-latest}"
 
-# Inlined into the client bundle at build time; without it the map renders blank
-# with no error.
-MAPTILER_KEY="${VITE_MAPTILER_KEY:-}"
-if [[ -z "$MAPTILER_KEY" && -f apps/web/.env ]]; then
-  MAPTILER_KEY="$(grep -E '^VITE_MAPTILER_KEY=' apps/web/.env | cut -d= -f2- || true)"
-fi
+# `VITE_*` values are inlined into the client bundle at build time: taken from
+# the environment, else from apps/web/.env. Without the key the map renders
+# blank with no error; without style ids the web app uses MapTiler's public
+# default rather than this account's custom styles.
+web_env() {
+  local value="${!1:-}"
+  if [[ -z "$value" && -f apps/web/.env ]]; then
+    value="$(grep -E "^$1=" apps/web/.env | cut -d= -f2- || true)"
+  fi
+  printf '%s' "$value"
+}
+MAPTILER_KEY="$(web_env VITE_MAPTILER_KEY)"
+MAPTILER_STYLE_ID_LIGHT="$(web_env VITE_MAPTILER_STYLE_ID_LIGHT)"
+MAPTILER_STYLE_ID_DARK="$(web_env VITE_MAPTILER_STYLE_ID_DARK)"
 if [[ -z "$MAPTILER_KEY" && "$ONLY" != "data" ]]; then
   echo "warning: no VITE_MAPTILER_KEY; the map will be blank" >&2
 fi
@@ -131,7 +139,10 @@ build_image() {
 }
 
 [[ "$ONLY" == "web" ]] || build_image data apps/data/Dockerfile
-[[ "$ONLY" == "data" ]] || build_image web apps/web/Dockerfile --build-arg "VITE_MAPTILER_KEY=${MAPTILER_KEY}"
+[[ "$ONLY" == "data" ]] || build_image web apps/web/Dockerfile \
+  --build-arg "VITE_MAPTILER_KEY=${MAPTILER_KEY}" \
+  --build-arg "VITE_MAPTILER_STYLE_ID_LIGHT=${MAPTILER_STYLE_ID_LIGHT}" \
+  --build-arg "VITE_MAPTILER_STYLE_ID_DARK=${MAPTILER_STYLE_ID_DARK}"
 
 echo
 echo "built ${SHA_TAG}"

@@ -12,9 +12,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-# `VITE_*` is inlined into the client bundle at build time, so it has to be a
-# build arg rather than a runtime env var. Shared across deployments.
+# `VITE_*` is inlined into the client bundle at build time, so these have to be
+# build args rather than runtime env vars. Shared across deployments.
 ARG VITE_MAPTILER_KEY=""
+ARG VITE_MAPTILER_STYLE_ID_LIGHT=""
+ARG VITE_MAPTILER_STYLE_ID_DARK=""
 
 COPY . .
 
@@ -22,7 +24,10 @@ COPY . .
 # native's Expo tree entirely.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter web...
-RUN VITE_MAPTILER_KEY=$VITE_MAPTILER_KEY pnpm -F web build
+RUN VITE_MAPTILER_KEY=$VITE_MAPTILER_KEY \
+    VITE_MAPTILER_STYLE_ID_LIGHT=$VITE_MAPTILER_STYLE_ID_LIGHT \
+    VITE_MAPTILER_STYLE_ID_DARK=$VITE_MAPTILER_STYLE_ID_DARK \
+    pnpm -F web build
 
 # Nitro bundles the server and its dependencies into .output, so the runtime
 # stage needs neither node_modules nor pnpm.

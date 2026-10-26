@@ -32,7 +32,7 @@ Then create local env files from the committed examples:
 for d in apps/web apps/data apps/native packages/db; do cp $d/.env.example $d/.env; done
 ```
 
-Two things to fill in: a [MapTiler](https://www.maptiler.com/) API key (`VITE_MAPTILER_KEY` in `apps/web/.env` and `EXPO_PUBLIC_MAPTILER_KEY` in `apps/native/.env`), and `AUTH_DISABLED=1` uncommented in `apps/web/.env` to skip magic-link auth during development. Everything else works with the defaults.
+Two things to fill in: a [MapTiler](https://www.maptiler.com/) API key (`VITE_MAPTILER_KEY` in `apps/web/.env` and `EXPO_PUBLIC_MAPTILER_KEY` in `apps/native/.env`), and `AUTH_DISABLED=1` uncommented in `apps/web/.env` to skip magic-link auth during development. Everything else works with the defaults, including the basemap: `VITE_MAPTILER_STYLE_ID_LIGHT` and `VITE_MAPTILER_STYLE_ID_DARK` pick custom MapTiler styles, and the public `streets-v4` serves when they're unset.
 
 ## Architecture
 
