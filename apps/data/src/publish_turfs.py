@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from src.campaign_scope import CampaignScope, ScopeError, load_campaign_scope
-from src.custom_fields import catalog_for
+from src.custom_fields import catalog_for, custom_fields_json_sql, custom_fields_table_for
 from src.dsl.compile import criteria_to_where
 from src.dsl.resolve import resolve_criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres
@@ -91,6 +91,9 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     # out of the per-person blob so publish works for any importer.
     persons_columns = {row[0] for row in conn.execute(f"DESCRIBE {resolve('{persons_geocoded}', schema)}").fetchall()}
     present_optional = [f for f in _OPTIONAL_PAYLOAD_FIELDS if f[0] in persons_columns]
+    # Custom-field values ride along the same way: only once the dataset has
+    # any appended (the values table exists), else the key is left out.
+    values_table = custom_fields_table_for(conn, version.dataset_slug)
 
     return _publish(
         conn,
@@ -103,6 +106,7 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
         where_params,
         present_optional,
         version.dataset_version_id,
+        values_table,
     )
 
 
@@ -117,6 +121,7 @@ def _publish(
     where_params: list[Any],
     present_optional: list[tuple[str, str, str]],
     dataset_version_id: str,
+    values_table: str | None = None,
 ) -> dict[str, Any]:
     """The publish transaction: supersede the scope's active turfs, then
     insert one turf (+ turf_data row) per draft. Atomic, so a republish
@@ -135,7 +140,7 @@ def _publish(
             conn.execute("BEGIN TRANSACTION")
             superseded = _supersede_active(conn, req)
             conn.execute(
-                _build_publish_temp_table_sql(schema, where_sql, present_optional),
+                _build_publish_temp_table_sql(schema, where_sql, present_optional, values_table),
                 [
                     req.campaignId,
                     req.zoneId,
@@ -390,7 +395,12 @@ _OPTIONAL_PAYLOAD_FIELDS: list[tuple[str, str, str]] = [
 ]
 
 
-def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional: list[tuple[str, str, str]]) -> str:
+def _build_publish_temp_table_sql(
+    schema: str,
+    where_sql: str,
+    present_optional: list[tuple[str, str, str]],
+    values_table: str | None = None,
+) -> str:
     """Build the per-draft payload in a DuckDB TEMP TABLE.
 
     One row per draft, with: a generated turf_id, its minted 8-digit
@@ -401,7 +411,9 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
 
     `present_optional` is the subset of `_OPTIONAL_PAYLOAD_FIELDS` the dataset
     actually has — its members are added to the per-person payload; the rest
-    are left out entirely.
+    are left out entirely. `values_table` (the dataset's custom-field values
+    table, None before any append) adds a per-person `customFields` array the
+    same way.
 
     Parameter order (positional `?`):
       $1 campaign_id (UUID)         — for the drafts CTE
@@ -417,6 +429,14 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
     buildings_table = resolve("{buildings_geocoded}", schema)
     optional_cols = "".join(f"            {select},\n" for _, select, _ in present_optional)
     optional_json = "".join(f",\n                {entry}" for _, _, entry in present_optional)
+    if values_table is not None:
+        scope = "v.external_id IN (SELECT external_id FROM filtered_persons)"
+        custom_cte = f"custom_values AS ({custom_fields_json_sql(values_table, scope)}),\n    "
+        optional_cols += "            coalesce(cv.custom_fields, json('[]')) AS custom_fields,\n"
+        custom_join = "        LEFT JOIN custom_values cv ON cv.external_id = p.external_id\n"
+        optional_json += ",\n                'customFields', custom_fields"
+    else:
+        custom_cte = custom_join = ""
     return f"""
     CREATE OR REPLACE TEMP TABLE published_turf_rows AS
     WITH drafts AS (
@@ -433,7 +453,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
     filtered_persons AS (
         SELECT * FROM {persons_table} {where_sql}
     ),
-    assigned AS (
+    {custom_cte}assigned AS (
         -- Each building goes into its (unique) containing polygon. The
         -- ambiguity pre-check upstream guarantees no building is in
         -- more than one polygon, so MIN(idx) is just "the one match."
@@ -447,7 +467,7 @@ def _build_publish_temp_table_sql(schema: str, where_sql: str, present_optional:
             b.address_line_1 AS street, b.city, b.state, b.zip5 AS zip
         FROM filtered_persons p
         JOIN {buildings_table} b ON b.building_id = p.building_id
-        JOIN LATERAL (
+{custom_join}        JOIN LATERAL (
             SELECT MIN(d.idx) AS polygon_idx
             FROM drafts d
             WHERE ST_Contains(d.geom, ST_Point(b.longitude, b.latitude))

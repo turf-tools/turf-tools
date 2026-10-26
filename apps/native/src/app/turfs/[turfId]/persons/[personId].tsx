@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { Ban, Check, Pencil, Scroll, X } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -877,7 +877,9 @@ function NoteContent({
         </View>
       </View>
       <View className="mt-5">
-        <DetailSection title="Previous notes" items={noteItems(notes)} />
+        <DetailSection title="Previous notes" count={notes.length}>
+          <DetailList items={noteItems(notes)} />
+        </DetailSection>
       </View>
     </View>
   );
@@ -892,7 +894,8 @@ function DetailsContent({
 }) {
   const voting = votingHistoryItems(person.votingHistory);
   const notesList = noteItems(notes);
-  if (voting.length === 0 && notesList.length === 0) {
+  const custom = customFieldItems(person.customFields);
+  if (voting.length === 0 && notesList.length === 0 && custom.length === 0) {
     return (
       <Text className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark -mt-[1px]">
         No details available
@@ -901,8 +904,15 @@ function DetailsContent({
   }
   return (
     <View className="gap-6 -mt-[2px]">
-      <DetailSection title="Notes" items={notesList} />
-      <DetailSection title="Voting history" items={voting} />
+      <DetailSection title="Notes" count={notesList.length}>
+        <DetailList items={notesList} />
+      </DetailSection>
+      <DetailSection title="Voting history" count={voting.length}>
+        <DetailList items={voting} />
+      </DetailSection>
+      <DetailSection title="Other info" count={custom.length}>
+        <DetailList items={custom} />
+      </DetailSection>
     </View>
   );
 }
@@ -910,39 +920,44 @@ function DetailsContent({
 // Auto-hides when there are no items so empty sections don't render.
 function DetailSection({
   title,
-  items,
+  count,
+  children,
 }: {
   title: string;
-  items: Array<{ label: string; date: string }>;
+  count: number;
+  children: ReactNode;
 }) {
-  if (items.length === 0) return null;
+  if (count === 0) return null;
   return (
     <View>
       <Text className="font-sans-bold text-lg text-foreground dark:text-foreground-dark mb-[2px]">
         {title}
       </Text>
-      <DetailList items={items} />
+      {children}
     </View>
   );
 }
 
-function DetailList({ items }: { items: Array<{ label: string; date: string }> }) {
+// Label/value rows: muted label (a date or a field name) left, value
+// right-aligned. The value grows into whatever width the label leaves and
+// wraps there, so the label is capped to keep that width from reaching zero.
+function DetailList({ items }: { items: Array<{ label: string; value: string }> }) {
   return (
     <View>
       {items.map((item, idx) => (
         <View key={idx}>
           {idx > 0 && <View className="h-px bg-border dark:bg-border-dark" />}
-          <View className="flex-row py-3 gap-8">
+          <View className="flex-row justify-between py-3 gap-8">
             {/* fontVariant via style, not the tabular-nums class — NativeWind
                 drops font-variant-numeric (only -caps is mapped). */}
             <Text
-              className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark w-24"
+              className="font-sans text-lg text-muted-foreground dark:text-muted-foreground-dark shrink max-w-[60%]"
               style={{ fontVariant: ["tabular-nums"] }}
             >
-              {item.date}
-            </Text>
-            <Text className="font-sans text-lg text-foreground dark:text-foreground-dark flex-1">
               {item.label}
+            </Text>
+            <Text className="font-sans text-lg text-foreground dark:text-foreground-dark flex-1 text-right">
+              {item.value}
             </Text>
           </View>
         </View>
@@ -955,8 +970,8 @@ function DetailList({ items }: { items: Array<{ label: string; date: string }> }
 
 function noteItems(
   notes: Array<{ text: string; createdAt: string }>,
-): Array<{ label: string; date: string }> {
-  return notes.map((n) => ({ label: n.text, date: formatShortDate(n.createdAt) }));
+): Array<{ label: string; value: string }> {
+  return notes.map((n) => ({ label: formatShortDate(n.createdAt), value: n.text }));
 }
 
 const ELECTION_TYPE_LABELS: Record<string, string> = {
@@ -967,7 +982,7 @@ const ELECTION_TYPE_LABELS: Record<string, string> = {
 
 function votingHistoryItems(
   history: TurfDataPerson["votingHistory"],
-): Array<{ label: string; date: string }> {
+): Array<{ label: string; value: string }> {
   // Sort most-recent first; fall back to year when `date` is missing. Absent
   // (dataset without voting history) → no items, so the section hides.
   const sorted = [...(history ?? [])].sort((a, b) => {
@@ -976,8 +991,18 @@ function votingHistoryItems(
     return bKey.localeCompare(aKey);
   });
   return sorted.slice(0, 5).map((e) => ({
-    label: `${ELECTION_TYPE_LABELS[e.type] ?? e.type} ${e.year}`,
-    date: e.date ? formatShortDate(e.date) : String(e.year),
+    label: e.date ? formatShortDate(e.date) : String(e.year),
+    value: `${ELECTION_TYPE_LABELS[e.type] ?? e.type} ${e.year}`,
+  }));
+}
+
+// Dates are stored as YYYY-MM-DD; a Multi Category field lists every value.
+function customFieldItems(
+  fields: TurfDataPerson["customFields"],
+): Array<{ label: string; value: string }> {
+  return (fields ?? []).map((f) => ({
+    label: f.label,
+    value: f.fieldType === "date" ? formatShortDate(f.values[0] ?? "") : f.values.join(", "),
   }));
 }
 

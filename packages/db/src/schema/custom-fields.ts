@@ -13,6 +13,11 @@ import { datasets } from "./datasets";
 // type for comma-separated cells: a person holds several values at once.
 export type CustomFieldType = "number" | "date" | "text" | "text_multi" | "enum" | "enum_multi";
 
+// One custom field a person has a value for, as the Lookup pane and the
+// canvasser payload carry it. `values` holds the raw stored strings; only
+// Multi Category has more than one.
+export type PersonCustomField = { label: string; fieldType: CustomFieldType; values: string[] };
+
 // A custom field — a user-appended, dataset-scoped, typed column that floats
 // across dataset versions. One row per field; values live in the lake's
 // long-format `<slug>_custom_fields` table.
