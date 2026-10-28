@@ -202,31 +202,25 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         # Index persons into Quickwit for the search / Lookup feature — a
         # per-version index (`persons_<schema>`). Create it first (local-ingest
         # appends), then the DAG node bulk-loads via CLI local-ingest, publishing
-        # to the shared Postgres metastore the searcher reads. Best-effort: search
-        # is an add-on, so a Quickwit hiccup must not sink an expensive geocode
-        # import — the version still becomes usable (segments/zones/canvass), and
-        # search can be backfilled by reindexing. Failure is logged loudly.
+        # to the shared Postgres metastore the searcher reads.
         index_id = persons_index_id(schema)
-        try:
-            ensure_index(settings, index_id)
-            # Hook-less driver: this is one progress unit (the explicit advance
-            # below). Running it through the shared `dr` (with ProgressNodeHook)
-            # would advance once per Quickwit node and blow past 100%.
-            driver.Builder().with_modules(quickwit).build().execute(
-                final_vars=["quickwit_build_manifest_stub"],
-                inputs={
-                    "persons_table_ref": result["persons_geocoded"],
-                    "quickwit_binary_path": settings.quickwit_binary,
-                    "quickwit_config_path": settings.quickwit_config_path,
-                    "quickwit_index_id": index_id,
-                    "quickwit_batch_size": settings.quickwit_batch_size,
-                    "conn": conn,
-                },
-            )
-            log.write("Search index built")
-        except Exception as exc:  # noqa: BLE001 — search indexing is non-fatal
-            print(f"WARNING: Quickwit indexing failed for {index_id}: {exc}", flush=True)
-            log.write(f"Search indexing failed (non-fatal): {exc}", level="warning")
+
+        ensure_index(settings, index_id)
+        # Hook-less driver: this is one progress unit (the explicit advance
+        # below). Running it through the shared `dr` (with ProgressNodeHook)
+        # would advance once per Quickwit node and blow past 100%.
+        driver.Builder().with_modules(quickwit).build().execute(
+            final_vars=["quickwit_build_manifest_stub"],
+            inputs={
+                "persons_table_ref": result["persons_geocoded"],
+                "quickwit_binary_path": settings.quickwit_binary,
+                "quickwit_config_path": settings.quickwit_config_path,
+                "quickwit_index_id": index_id,
+                "quickwit_batch_size": settings.quickwit_batch_size,
+                "conn": conn,
+            },
+        )
+        log.write("Search index built")
         progress.advance()
 
         geocoded_fqn = result["persons_geocoded"].fqn
