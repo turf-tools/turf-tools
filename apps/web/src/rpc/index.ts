@@ -96,6 +96,7 @@ export const webRouter = {
     create: zones.create,
     remove: zones.remove,
     removeAllInGroup: zones.removeAllInGroup,
+    replaceGroup: zones.replaceGroup,
     reorder: zones.reorder,
   },
   turfs: {
