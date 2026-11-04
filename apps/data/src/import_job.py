@@ -25,7 +25,7 @@ from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
 from src.importers.base import ImportFilter  # noqa: TC001 — pydantic resolves the payload annotation at runtime
 from src.importers.registry import get_importer
 from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContext, job
-from src.quickwit import ensure_index, persons_index_id
+from src.quickwit import persons_index_id, recreate_index
 from src.settings import get_settings
 from src.tables import dataset_version_schema, drop_schema, ensure_schema, finalize_version
 
@@ -120,6 +120,10 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         # `ready`, so starting empty is always safe.
         drop_schema(conn, schema)
         ensure_schema(conn, schema)
+        # The version's Quickwit index (`persons_<schema>`), created up front so
+        # an unreachable search node fails the import before the slow geocode.
+        index_id = persons_index_id(schema)
+        recreate_index(settings, index_id)
 
         importer = get_importer(importer_name)()
         manifest = importer.manifest()
@@ -199,13 +203,9 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
             groups = len(key_group_sources)
             log.write(f"Built boundaries for {groups} key group{'s' if groups != 1 else ''}")
 
-        # Index persons into Quickwit for the search / Lookup feature — a
-        # per-version index (`persons_<schema>`). Create it first (local-ingest
-        # appends), then the DAG node bulk-loads via CLI local-ingest, publishing
-        # to the shared Postgres metastore the searcher reads.
-        index_id = persons_index_id(schema)
-
-        ensure_index(settings, index_id)
+        # Index persons into Quickwit for the search / Lookup feature: the DAG
+        # node bulk-loads via CLI local-ingest into the index created above,
+        # publishing to the shared Postgres metastore the searcher reads.
         # Hook-less driver: this is one progress unit (the explicit advance
         # below). Running it through the shared `dr` (with ProgressNodeHook)
         # would advance once per Quickwit node and blow past 100%.

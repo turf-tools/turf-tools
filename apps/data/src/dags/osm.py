@@ -19,6 +19,7 @@ import json
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -52,18 +53,44 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 # ---------------------------------------------------------------------------
 
 
-def osm_pbf(osm_url: str, osm_data_dir: str) -> Path:
-    """Download the Geofabrik PBF into ``osm_data_dir`` if not present."""
+# The tables built from the PBF; each node below returns early once its table
+# has rows, so the PBF is only read on a deployment's first build.
+_PBF_TABLES = ("buildings_polygons", "addresses", "landuse_residential")
+
+
+def _pbf_tables_built(conn: duckdb.DuckDBPyConnection) -> bool:
+    try:
+        cols = {c[0] for c in conn.execute(f"DESCRIBE {_fqn('buildings_polygons')}").fetchall()}
+        if "geom" in cols:
+            return False  # osm_buildings_polygons drops and rebuilds this layout from the PBF
+        return all(conn.execute(f"SELECT count(*) FROM {_fqn(t)}").fetchone()[0] > 0 for t in _PBF_TABLES)
+    except duckdb.CatalogException:
+        return False
+
+
+def osm_pbf(osm_url: str, osm_data_dir: str, conn: duckdb.DuckDBPyConnection) -> Path:
+    """Download the Geofabrik PBF into ``osm_data_dir`` if not present. Skipped
+    when every PBF-derived table is already built, since nothing will read it."""
     cache = Path(osm_data_dir)
     cache.mkdir(parents=True, exist_ok=True)
     filename = osm_url.rsplit("/", 1)[-1]
     pbf_path = cache / filename
+    if _pbf_tables_built(conn):
+        print(f"OSM PBF: {filename} not needed, OSM tables already built")
+        return pbf_path
     if pbf_path.exists():
         size_mb = pbf_path.stat().st_size / (1024 * 1024)
         print(f"OSM PBF: {filename} ({size_mb:.1f} MB, cached)")
         return pbf_path
     print(f"Downloading OSM PBF: {osm_url}")
-    urllib.request.urlretrieve(osm_url, pbf_path)
+    try:
+        urllib.request.urlretrieve(osm_url, pbf_path)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise RuntimeError(
+                f"OSM snapshot {filename} is no longer on Geofabrik; point osm_url at a newer YY0101 snapshot."
+            ) from exc
+        raise
     size_mb = pbf_path.stat().st_size / (1024 * 1024)
     print(f"  done ({size_mb:.1f} MB)")
     return pbf_path

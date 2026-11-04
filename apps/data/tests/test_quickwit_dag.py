@@ -160,7 +160,7 @@ def test_quickwit_index_and_search(dual_conn, tmp_path):
         with _running_searcher(config_path, endpoint):
             # Create the per-version index, then bulk-index the sample via the real
             # DAG node — concurrently with the running searcher (safe on Postgres).
-            qw_client.ensure_index(qw_settings, index_id)
+            qw_client.recreate_index(qw_settings, index_id)
             persons_ref = _seed_table(dual_conn)
             result = (
                 driver.Builder()

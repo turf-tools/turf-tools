@@ -24,7 +24,7 @@ from src.importers.base import ImportFilter
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.models import TableRef, quote_ident
 from src.perf import TimingHook
-from src.quickwit import ensure_index, persons_index_id
+from src.quickwit import persons_index_id, recreate_index
 from src.settings import get_settings
 from src.tables import (
     PERSON_CATALOG,
@@ -171,7 +171,7 @@ def seed_search() -> None:
     settings = get_settings()
     conn = get_connection(settings)
     index_id = persons_index_id(args.schema)
-    ensure_index(settings, index_id)
+    recreate_index(settings, index_id)
     persons_ref = TableRef(catalog=PERSON_CATALOG, schema=args.schema, table="persons_geocoded", version=0)
     result = (
         driver.Builder()

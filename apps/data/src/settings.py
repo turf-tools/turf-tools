@@ -98,11 +98,13 @@ class Settings(BaseSettings):
         ),
     )
 
-    # OSM refinement layer. Pin a specific Geofabrik daily snapshot
-    # (YYMMDD in the filename) rather than `-latest`, so the cached PBF
-    # filename encodes the version and re-runs are reproducible.
+    # OSM refinement layer. Pin a Geofabrik Jan-1 snapshot (YY0101 in the
+    # filename): dailies and monthlies rotate out within weeks to months,
+    # while Jan-1 files stay up for years. The cached PBF filename encodes
+    # the version, so re-runs are reproducible. Only read when a deployment
+    # first builds its OSM tables; bumping it doesn't refresh existing ones.
     osm_url: str = Field(
-        default="https://download.geofabrik.de/north-america/us/new-york-261020.osm.pbf",
+        default="https://download.geofabrik.de/north-america/us/new-york-260101.osm.pbf",
         description="URL of the Geofabrik OSM PBF extract to ingest (date-pinned).",
     )
     osm_data_dir: str = Field(

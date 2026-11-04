@@ -97,7 +97,7 @@ def _request(method: str, url: str, data: bytes | None = None, content_type: str
         return resp.status, resp.read()
 
 
-def ensure_index(settings: Settings, index_id: str) -> None:
+def recreate_index(settings: Settings, index_id: str) -> None:
     """Create a fresh per-version index on the running Quickwit node via its REST
     control plane (index management must go through the node, not a competing
     standalone `index create` process). The node serves the same metastore
@@ -111,6 +111,8 @@ def ensure_index(settings: Settings, index_id: str) -> None:
     except urllib.error.HTTPError as exc:
         if exc.code != 404:  # 404 = didn't exist yet, which is fine
             raise RuntimeError(f"quickwit: delete index {index_id!r} failed ({exc.code})") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"quickwit: search node unreachable at {settings.quickwit_url} ({exc.reason})") from exc
     mapping = _INDEX_TEMPLATE.read_text(encoding="utf-8").replace("index_id: persons", f"index_id: {index_id}")
     try:
         _request("POST", f"{settings.quickwit_url}/api/v1/indexes", mapping.encode("utf-8"), "application/yaml")
