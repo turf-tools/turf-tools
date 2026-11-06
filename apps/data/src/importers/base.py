@@ -1,10 +1,9 @@
 """The importer contract + the field manifest model.
 
-The `Manifest` is the per-dataset-version field catalog. It replaces the
-hardcoded, web/data-duplicated catalogs — `apps/web/src/lib/filters.ts`
-(`FILTER_SECTIONS`/`FilterDef`) and this package's former `dsl/criteria.py`
-`FIELDS` + `KEY_GROUPS` — with one structure both sides consume: the web fetches
-it to render the segment/zone editors, the data server reads it to compile SQL.
+The `Manifest` is the per-dataset-version field catalog, the one structure both
+sides consume: the web fetches it to render the segment/zone editors
+(`apps/web/src/lib/manifest.ts`), and the data server derives its SQL compiler's
+catalog from it (`dsl/criteria.py`).
 
 Scope principle: **fields become data, kinds stay code.** The *set* of filter
 kinds (below) and their per-kind logic (how each renders an input / compiles to
@@ -81,9 +80,8 @@ class FieldDef(_CamelModel):
     # `enum` / `text-multi` value catalog. None → no fixed catalog (freetext
     # code entry, or values not yet derived).
     values: list[EnumValue] | None = None
-    # Marks this field as a zone boundary key for the named key group (replaces
-    # the old `KEY_GROUPS` map). The zone editor offers a key group only when a
-    # dataset has a field carrying it. `zip5` always carries one; others are
+    # Marks this field as a zone boundary key for the named key group. The zone
+    # editor offers a key group only when a dataset has a field carrying it. `zip5` always carries one; others are
     # present only if the source provides the column. Exactly one field carries a
     # given key group, so `key_group_label` (the group's display name in the zone
     # editor, e.g. "Election districts") rides alongside it. Compiler ignores both.

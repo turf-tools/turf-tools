@@ -1,16 +1,10 @@
 """The NYS voter-file field manifest.
 
-This is the relocation of what was hardcoded and duplicated across
-`apps/web/src/lib/filters.ts` (`FILTER_SECTIONS`) and `dsl/criteria.py`
-(`FIELDS` + `KEY_GROUPS`) — the filterable fields a NYS voter file produces,
-now owned by the importer that produces them. System filters (`all`,
-`canvass-outcome`, `canvass-response`, `segment`) are dataset-independent and
-live outside the manifest.
-
-Not yet consumed for compilation — the editor + SQL compiler still read the
-legacy catalogs until they're switched over to the manifest (that's the
-manifest-consumption chunk). Defined here now to co-locate the fields with
-their importer and validate the model against the real NYS field set.
+The filterable fields a NYS voter file produces, owned by the importer that
+produces them. The web renders the segment/zone editors from it and the data
+server compiles filters against it. System filters (`all`, `canvass-outcome`,
+`canvass-response`, `segment`) are dataset-independent and live outside the
+manifest.
 """
 
 from __future__ import annotations
