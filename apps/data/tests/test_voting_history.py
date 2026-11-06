@@ -233,7 +233,7 @@ def test_registration_status_known_codes():
 
 
 def test_enrollment_top_level_codes():
-    """Top-level NYS enrollment codes resolve without the OTH+other_party two-step."""
+    """Top-level NYS enrollment codes resolve without the OTH+OTHERPARTY two-step."""
     assert NYS_ENROLLMENT_LABELS[("DEM", None)] == "democratic"
     assert NYS_ENROLLMENT_LABELS[("REP", None)] == "republican"
     assert NYS_ENROLLMENT_LABELS[("CON", None)] == "conservative"
@@ -242,7 +242,7 @@ def test_enrollment_top_level_codes():
 
 
 def test_enrollment_oth_resolves_to_specific_parties():
-    """`OTH` + `other_party` resolves to specific cross-state-portable labels."""
+    """`OTH` + `OTHERPARTY` resolves to specific cross-state-portable labels."""
     assert NYS_ENROLLMENT_LABELS[("OTH", "IND")] == "independence"
     assert NYS_ENROLLMENT_LABELS[("OTH", "Ind")] == "independence"  # case variant
     assert NYS_ENROLLMENT_LABELS[("OTH", "GRE")] == "green"

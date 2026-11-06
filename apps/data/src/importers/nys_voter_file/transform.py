@@ -27,7 +27,7 @@ NYS_REGISTRATION_STATUS_LABELS: dict[str, str] = {
     "17": "preregistered",
 }
 
-# NYS encodes party as (enrollment, other_party); flatten the two-step
+# NYS encodes party as (ENROLLMENT, OTHERPARTY); flatten the two-step
 # into a canonical label.
 NYS_ENROLLMENT_LABELS: dict[tuple[str, str | None], str] = {
     ("DEM", None): "democratic",
@@ -55,8 +55,8 @@ def _case_from_map(col: str, mapping: dict[str, str], default: str | None = None
 
 
 def _enrollment_case_sql() -> str:
-    """SQL CASE resolving NY's (enrollment, other_party) two-step into a
-    canonical party label. Unmatched `OTH` + other_party values fall back
+    """SQL CASE resolving NY's (ENROLLMENT, OTHERPARTY) two-step into a
+    canonical party label. Unmatched `OTH` + OTHERPARTY values fall back
     to `other`."""
     pairs_by_enrollment: dict[str, list[tuple[str | None, str]]] = {}
     for (enr, other), canonical in NYS_ENROLLMENT_LABELS.items():
@@ -66,7 +66,7 @@ def _enrollment_case_sql() -> str:
     for enr, pairs in pairs_by_enrollment.items():
         if enr == "OTH":
             inner_branches = "\n                ".join(
-                f"WHEN raw.other_party = '{op}' THEN '{canonical}'" for op, canonical in pairs
+                f"WHEN raw.otherparty = '{op}' THEN '{canonical}'" for op, canonical in pairs
             )
             parts.append(
                 f"WHEN raw.enrollment = 'OTH' THEN CASE\n"
@@ -114,61 +114,61 @@ def nys_sboe_transformation_query(
 
     return f"""
 SELECT
-    raw.sboe_id AS external_id,
+    raw.sboeid AS external_id,
     'ny_sboe' AS external_id_type,
-    raw.first_name,
-    raw.last_name,
-    nullif(raw.middle_name, '') AS middle_name,
-    nullif(raw.name_suffix, '') AS name_suffix,
+    raw.firstname AS first_name,
+    raw.lastname AS last_name,
+    nullif(raw.middlename, '') AS middle_name,
+    nullif(raw.namesuffix, '') AS name_suffix,
     -- concat_ws skips NULL but emits empty strings as separators-with-blanks,
     -- so wrap every column in nullif(CAST..., '') to convert empty inputs into
-    -- NULL. Without this, an empty res_post_direction leaves a trailing space
+    -- NULL. Without this, an empty rpostdirection leaves a trailing space
     -- on address_line_1, and an empty middle field leaves a double space —
     -- both observed at meaningful rates in real SBOE data.
     concat_ws(
         ' ',
-        nullif(raw.res_house_number, ''),
-        nullif(CAST(raw.res_pre_direction AS VARCHAR), ''),
-        nullif(raw.res_street_name, ''),
-        nullif(CAST(raw.res_post_direction AS VARCHAR), '')
+        nullif(raw.raddnumber, ''),
+        nullif(CAST(raw.rpredirection AS VARCHAR), ''),
+        nullif(raw.rstreetname, ''),
+        nullif(CAST(raw.rpostdirection AS VARCHAR), '')
     ) AS address_line_1,
     CASE
-        WHEN raw.res_apartment IS NOT NULL AND raw.res_apartment != ''
+        WHEN raw.rapartment IS NOT NULL AND raw.rapartment != ''
         THEN concat_ws(
             ' ',
-            nullif(CAST(raw.res_apartment_type AS VARCHAR), ''),
-            raw.res_apartment
+            nullif(CAST(raw.rapartmenttype AS VARCHAR), ''),
+            raw.rapartment
         )
         ELSE NULL
     END AS address_line_2,
     -- Kept out of address_line_1 so street-name tokenisation doesn't see
     -- the "1/2" digits as match material (they'd cross-match "1st St" /
     -- "2nd St"). Reassembled into the canonical address downstream.
-    nullif(CAST(raw.res_half_code AS VARCHAR), '') AS half_code,
-    raw.res_city AS city,
+    nullif(CAST(raw.rhalfcode AS VARCHAR), '') AS half_code,
+    raw.rcity AS city,
     'NY' AS state,
-    raw.res_zip5 AS zip5,
-    nullif(raw.res_zip4, '') AS zip4,
+    raw.rzip5 AS zip5,
+    nullif(raw.rzip4, '') AS zip4,
     -- Canonical voter-file scalars. Top-level columns so filters on them
     -- hit Parquet column pruning + Bloom filters.
     {enrollment_sql} AS enrollment,
     raw.gender AS gender,
-    {_iso_date_sql("raw.date_of_birth")} AS date_of_birth,
-    {_iso_date_sql("raw.registration_date")} AS registration_date,
+    {_iso_date_sql("raw.dob")} AS date_of_birth,
+    {_iso_date_sql("raw.regdate")} AS registration_date,
     {_case_from_map("raw.status", NYS_REGISTRATION_STATUS_LABELS, default="unknown")} AS registration_status,
-    {_iso_date_sql("raw.last_voted_date")} AS last_voted_date,
-    raw.county_code AS county_code,
+    {_iso_date_sql("raw.lastvoterdate")} AS last_voted_date,
+    raw.countycode AS county_code,
     -- `precinct` is the smallest political unit. NYC uses the
-    -- "AA-EEE" assembly+election composite; bare election_district is
+    -- "AA-EEE" assembly+election composite; a bare ED is
     -- meaningless across assembly districts.
-    (lpad(CAST(raw.assembly_district AS VARCHAR), 2, '0')
-        || '-' || lpad(CAST(raw.election_district AS VARCHAR), 3, '0')) AS precinct,
-    raw.assembly_district AS assembly_district,
-    raw.senate_district AS senate_district,
-    raw.congressional_district AS congressional_district,
-    -- Transient raw column consumed by the downstream `persons_voting_history`
-    -- node, which parses it into the structured `voting_history` STRUCT[].
-    raw.voter_history AS voter_history
+    (lpad(CAST(raw.ad AS VARCHAR), 2, '0')
+        || '-' || lpad(CAST(raw.ed AS VARCHAR), 3, '0')) AS precinct,
+    raw.ad AS assembly_district,
+    raw.sd AS senate_district,
+    raw.cd AS congressional_district,
+    -- Transient raw column; the importer's load parses it into the structured
+    -- `voting_history` STRUCT[] and drops it.
+    raw.voterhistory AS voter_history
 FROM {source_table} AS raw
 {where}
 """

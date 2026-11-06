@@ -1,8 +1,8 @@
 """Voting-history parsing and canonical-label maps.
 
-The parser handles the NYS SBOE `voter_history` column's five legacy
+The parser handles the NYS SBOE `VoterHistory` field's five legacy
 formats. The label maps normalize state-specific raw codes to canonical
-cross-state labels; `transformations.py` consumes them to generate SQL
+cross-state labels; `transform.py` consumes them to generate SQL
 CASE expressions.
 """
 
@@ -73,7 +73,7 @@ def _yyyymmdd_to_iso(date: str | None) -> str | None:
 
 
 def parse_entry(entry: str) -> dict | None:
-    """Parse one voter_history entry. Returns dict with year/type/date/method, or None."""
+    """Parse one VoterHistory entry. Returns dict with year/type/date/method, or None."""
     entry = entry.strip()
     if not entry:
         return None
@@ -128,7 +128,7 @@ def parse_entry(entry: str) -> dict | None:
 
 
 def parse_voting_history(raw: str | None) -> list[dict]:
-    """Parse a semicolon-separated voter_history string into a list of
+    """Parse a semicolon-separated VoterHistory string into a list of
     structured entries. Unparseable entries are silently dropped."""
     if not raw:
         return []

@@ -1,5 +1,4 @@
-"""CLI entrypoints for the data package.
-"""
+"""CLI entrypoints for the data package."""
 
 import argparse
 from pathlib import Path
