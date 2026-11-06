@@ -136,7 +136,7 @@ async def _refresh_s3_secret_forever() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # A read-only attach can't create a DuckLake catalog that doesn't exist yet
-    # (a fresh box, before any import or seed). Build a write connection first —
+    # (a fresh box, before any import). Build a write connection first —
     # its attach creates the empty catalogs if missing — so the read-only warmup
     # and serving paths can attach them. Idempotent; a no-op once they exist.
     try:
@@ -277,13 +277,13 @@ async def ducklake_status():
 async def key_group_geojson(key_group: str, org_slug: str):
     """Serve all polygons for a key group as a GeoJSON FeatureCollection.
 
-    Reads from ``ducklake.{org_slug}.{key_group}`` (populated by the
-    `seed-boundaries` CLI). Polygons are pre-simplified at load time, so the
-    response is sized for map rendering rather than raw fidelity.
+    Reads ``{key_group}`` from the org's active dataset version (built by the
+    import). Polygons are pre-simplified at load time, so the response is
+    sized for map rendering rather than raw fidelity.
 
-    Cached aggressively — boundary tables only change when an admin
-    re-seeds them. When that happens, append a bumped `?v=` query param at
-    the call site to bust browser caches.
+    Cached aggressively — boundary tables only change when the active version
+    does. When that happens, append a bumped `?v=` query param at the call
+    site to bust browser caches.
     """
 
     def build(conn: duckdb.DuckDBPyConnection) -> str:
@@ -297,7 +297,7 @@ async def key_group_geojson(key_group: str, org_slug: str):
             raise HTTPException(
                 status_code=404,
                 detail=f"No boundary table for org_slug={org_slug}, "
-                f"key_group={key_group}. Run `uv run seed-boundaries`.",
+                f"key_group={key_group} in its active dataset version.",
             ) from e
 
         # Build the FeatureCollection in DuckDB to avoid pulling raw geometry

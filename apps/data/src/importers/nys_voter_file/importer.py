@@ -132,7 +132,7 @@ class NysVoterFileImporter:
                 FROM {transformed_fqn}
             """)
         finally:
-            # The connection outlives this load (seeds reuse it); leave no name behind.
+            # The connection outlives this load (the pipeline reuses it); leave no name behind.
             conn.remove_function("parse_voting_history_json")
 
         # 4. Validate the result carries the Person-required columns + a sample of

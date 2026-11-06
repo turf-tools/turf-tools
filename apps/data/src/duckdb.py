@@ -35,7 +35,7 @@ def get_connection(settings: Settings, *, read_only: bool = False) -> duckdb.Duc
     returned object — that would destroy the shared instance and break
     every subsequent request until the cache rebuilt.
 
-    For ``read_only=False`` (seeds and other writers), returns a fresh
+    For ``read_only=False`` (the import job and other writers), returns a fresh
     connection each call. Callers are responsible for ``close()``.
     """
     global _shared_ro_conn

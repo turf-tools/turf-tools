@@ -3,8 +3,8 @@
 Keyed off a `dataset_versions` row: resolve its dataset (slug + importer) and
 version number → schema, run the importer's `load` (source → persons_validated),
 then the shared geocode DAG, then `finalize_version` (manifest + row_count +
-`ready`). This is the production analogue of `seed-persons`, enqueued by the web
-when an admin imports a dataset. The importing org is auto-activated onto the
+`ready`). Enqueued by the web when an admin imports a dataset — the only path
+voter data takes into the lake. The importing org is auto-activated onto the
 new version by `finalize_version` when it has nothing active; otherwise the
 user promotes it via "Make active".
 """

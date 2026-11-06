@@ -11,8 +11,8 @@ same destination shape:
 
 Boundaries live in the org catalog (alongside `persons_geocoded`,
 `buildings_geocoded`, etc.) rather than the geo catalog, because they're
-derived from each org's voter scope — two orgs running `seed-boundaries`
-with different fixtures produce different `nyc_eds` tables. The shared
+derived from each org's voter scope — two orgs importing different voter
+files produce different `nyc_eds` tables. The shared
 TIGER reference data stays under `ducklake_geo.tiger.*`, and OSM under
 `ducklake_geo.osm.*`.
 

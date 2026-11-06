@@ -69,9 +69,7 @@ This starts:
 - `data` — FastAPI data service (including DuckDB/DuckLake) (port 8000)
 - `search` — Quickwit search engine (port 7280)
 
-The first time you run `dev`, the web server automatically pushes the Drizzle schema and seeds reference data once Postgres is up.
-
-To work with voter data, create a dataset in the admin UI and import it from a source URL.
+The first time you run `dev`, the web server automatically pushes the Drizzle schema and seeds reference tables plus two dev organizations, an admin user, and sample scripts once Postgres is up. It seeds no voter data.
 
 You can also start individual services with the following commands:
 
@@ -84,6 +82,10 @@ pnpm dev:ios
 ```
 
 The `dev:ios` command is required to build and connect to the native app for iOS, but once it's been built, if you just run `dev:native` it should automatically bundle and connect to the latest version.
+
+## Importing voter data
+
+Voter files or other sources of voter data are imported through the admin UI, in development as well as production. When importing a dataset you specify its source as a URL, an `s3://` path, or a local path on the machine running the data service (relative paths resolve from `apps/data`). The import geocodes the file, builds its boundaries, and indexes it for search. A first import on a fresh machine also downloads TIGER and OSM reference data, which takes extra time depending on download speeds.
 
 ## Testing
 
@@ -107,7 +109,7 @@ These subcommands help manage data lifecycle during testing:
 
 ```bash
 pnpm db:push     # push drizzle schema to the dev Postgres
-pnpm db:mock     # populate Postgres with sample data
+pnpm db:mock     # dev orgs, admin user, sample scripts
 pnpm db:clear    # wipe the dev Postgres (drops the Docker volume)
 pnpm data:clear  # wipe DuckLake + local turf blobs
 pnpm clear       # wipe everything (Postgres + DuckLake + turf blobs)

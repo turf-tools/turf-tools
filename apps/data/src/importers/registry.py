@@ -2,7 +2,7 @@
 
 Kept in its own module (not `importers/__init__`) so importing the base contract
 doesn't pull in every concrete importer, which would cycle back through
-`src.tables`. The import job and seed CLI resolve importers through here.
+`src.tables`. The import job resolves importers through here.
 """
 
 from __future__ import annotations

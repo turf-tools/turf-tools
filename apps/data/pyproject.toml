@@ -18,9 +18,6 @@ dependencies = [
 
 [project.scripts]
 update-visualizations = "src.cli:update_visualizations"
-seed-boundaries = "src.cli:seed_boundaries"
-seed-persons = "src.cli:seed_persons"
-seed-search = "src.cli:seed_search"
 rename-schema = "src.cli:rename_schema"
 drop-schema = "src.cli:drop_schema"
 

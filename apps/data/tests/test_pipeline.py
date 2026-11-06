@@ -1,6 +1,6 @@
 """Full-pipeline test.
 
-Runs the same DAG `seed-persons` runs — `voter_file_loader` → `tiger` →
+Runs the same chain the import job runs — `NysVoterFileImporter` → `tiger` →
 `osm` → `matching` → `geocode` → `assembly` → `aggregate` — against the
 full NYC voter fixture (`ny-voters-2026-03-08-nyc.parquet`, ~5.4M
 voters) in an isolated tempdir DuckLake.
@@ -107,7 +107,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
                 "schema": "default",
                 "tiger_year": "2024",
                 "tiger_state_fips": "36",
-                # All five NYC counties — matches the seed-persons default.
+                # All five NYC counties — matches the `tiger_county_fips` default.
                 "tiger_county_fips": ["061", "005", "047", "081", "085"],
                 "tiger_data_dir": tiger_cache_dir,
                 "osm_url": ("https://download.geofabrik.de/north-america/us/new-york-260501.osm.pbf"),

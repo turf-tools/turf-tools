@@ -230,28 +230,6 @@ def load_manifest(
     return _parse_manifest(row[0])
 
 
-def version_id_for_schema(
-    conn: "duckdb.DuckDBPyConnection",
-    settings: "Settings",
-    schema: str,
-) -> str | None:
-    """Find the `dataset_versions` row whose `<slug>_v<n>` schema equals
-    `schema`. Returns None when no version row exists yet (e.g. the dev seed run
-    before `db:mock`), letting the caller skip the manifest write rather than
-    fail."""
-    attach_operational_postgres(conn, settings)
-    row = conn.execute(
-        f"""
-        SELECT v.dataset_version_id
-        FROM {OPERATIONAL_PG_ALIAS}.app.dataset_versions v
-        JOIN {OPERATIONAL_PG_ALIAS}.app.datasets d ON d.dataset_id = v.dataset_id
-        WHERE d.slug || '_v' || v.version_number = ?
-        """,
-        [schema],
-    ).fetchone()
-    return str(row[0]) if row else None
-
-
 def finalize_version(
     conn: "duckdb.DuckDBPyConnection",
     settings: "Settings",
@@ -261,8 +239,7 @@ def finalize_version(
     activate_for_organization_id: str | None = None,
 ) -> None:
     """Land a version's `manifest` + `derived_metadata` and mark it `ready`, once
-    its DuckLake tables are built. The single write point for both callers: the
-    `import_dataset_version` job (production) and `seed-persons` (dev). The
+    its DuckLake tables are built. Called by the `import_dataset_version` job. The
     importer *derives* the manifest and the DuckDB connection already has the
     Postgres attach, so writing it here — rather than handing it back for the web
     to persist — keeps the version's data and its manifest landed in one place.

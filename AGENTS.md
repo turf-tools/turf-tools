@@ -4,6 +4,7 @@ Use pnpm for everything: workspace scripts and dependency management (`pnpm dev`
 
 - Never commit files under `apps/data/fixtures/`, we sometimes stash voter data sample data here but it's gitignored.
 - After editing Python in `apps/data` or Javascript in `apps/web`, run `pnpm check` from the repo root.
+- Voter data enters only through the admin UI's import (`apps/data/src/import_job.py`), in dev too. There is no seed script for voter files; don't write one.
 
 # Comment style
 

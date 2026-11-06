@@ -1,14 +1,16 @@
 #!/bin/sh
-# Hourly pg_dump of the app database and both DuckLake catalogs into /backups,
-# which the backup-sync service mirrors to the deployment's bucket. Each dump
+# Hourly pg_dump of the app database, both DuckLake catalogs, and the Quickwit
+# metastore into /backups, which the backup-sync service mirrors to the
+# deployment's bucket. Each dump
 # lands in a slot named by hour (24) and, once a day, by day of month (31);
 # slots overwrite in place, so retention needs no listing or lifecycle rules.
 # Runs in the postgres image so pg_dump always matches the server.
 #
 # Catalogs first: an import landing mid-run then leaves a version row whose
 # catalog tables are missing (visible, re-importable), never the reverse.
+# Quickwit last, so its failure never skips the app database.
 DIR=/backups
-DATABASES="turf_tools_ducklake turf_tools_ducklake_geo turf_tools"
+DATABASES="turf_tools_ducklake turf_tools_ducklake_geo turf_tools quickwit"
 # UTC hour whose dump also fills the daily slot — 07:00 UTC is overnight in
 # New York, after any canvass day has synced.
 DAILY_HOUR=07

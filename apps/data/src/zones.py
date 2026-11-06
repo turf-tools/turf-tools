@@ -5,7 +5,7 @@ from __future__ import annotations
 import duckdb
 from src.cache import singleflight_lru
 
-# Boundary polygons are simplified per feature at seed time, so adjacent
+# Boundary polygons are simplified per feature at load time, so adjacent
 # shapes disagree along shared edges by up to the simplification
 # tolerance (0.0001°) — a plain union inherits that as slivers and
 # hairline cracks, which the renderer's per-zoom re-simplification shows

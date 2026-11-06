@@ -8,8 +8,8 @@ when the crossing-cost table or classification rules intentionally
 change.
 
 Skips when the TIGER cache is cold so the default suite never hits the
-network — run the full pipeline integration test (or `seed-persons`)
-once to warm `apps/data/tiger_cache/`.
+network — run the full pipeline integration test (or a dev import) once
+to warm `apps/data/tiger_cache/`.
 
 The whole module (load + two derivations + assertions) runs in a few
 seconds; a hard 30s ceiling on the scoped derivation guards against

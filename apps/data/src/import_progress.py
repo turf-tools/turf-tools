@@ -68,7 +68,7 @@ class JobLog:
 
 
 class NullProgress:
-    """No-op for callers without a version row to update (e.g. the dev seed)."""
+    """No-op for callers without a version row to update (e.g. tests)."""
 
     def start(self, total: int) -> None: ...
 

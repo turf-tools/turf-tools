@@ -80,22 +80,14 @@ class Settings(BaseSettings):
     )
     tiger_county_fips: list[str] = Field(
         # All five NYC counties: New York (Manhattan), Bronx, Kings (Brooklyn),
-        # Queens, Richmond (Staten Island). Matches the
-        # `ny-voters-2026-03-08-10k-sample` seed fixture so geocoding has
-        # TIGER coverage for every borough out of the box.
+        # Queens, Richmond (Staten Island), so NYC imports have TIGER coverage
+        # for every borough out of the box.
         default=["061", "005", "047", "081", "085"],
         description="County FIPS codes within the state (e.g. 061 for New York County/Manhattan).",
     )
     tiger_data_dir: str = Field(
         default="./tiger_cache",
         description="Local directory to cache downloaded TIGER shapefiles.",
-    )
-    voter_zip5_filter: list[str] | None = Field(
-        default=None,
-        description=(
-            "When set, restrict seed-persons to voters whose residential ZIP5 is in this list. "
-            "Used to scope dev runs to a small set of test areas for fast iteration."
-        ),
     )
 
     # OSM refinement layer. Pin a Geofabrik Jan-1 snapshot (YY0101 in the
