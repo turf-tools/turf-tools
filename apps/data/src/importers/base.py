@@ -15,6 +15,7 @@ field is free manifest data; adding a kind is the expensive cross-language chang
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
@@ -143,6 +144,15 @@ class Progress(Protocol):
     plus the DAG's node count."""
 
     def advance(self, n: int = 1) -> None: ...
+
+
+def raw_column_name(field: str) -> str:
+    """A source field's column name in `persons_raw`: the source's own name,
+    lowercased, with each run of anything but letters and digits as `_` — so
+    `RZIP5` → `rzip5`, `Residence Zipcode` → `residence_zipcode`. Every importer
+    names its raw columns this way and renames only in its transform, onto the
+    `Person` schema. Also normalizes a tabular source's header for matching."""
+    return re.sub(r"[^a-z0-9]+", "_", field.strip().lstrip("\ufeff").lower()).strip("_")
 
 
 def redact_source(source: str) -> str:

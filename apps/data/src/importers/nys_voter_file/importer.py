@@ -1,8 +1,9 @@
 """The NYS voter-file importer.
 
 `source → (persons_validated, manifest)` for the New York State statewide voter
-file. Owns the full front of the pipeline: decode the raw fixed-width `.txt`
-distribution (or read an already-decoded parquet/CSV), transform to the canonical
+file. Owns the full front of the pipeline: decode the raw headerless layout
+(`.txt`, or a `.csv` without a header), or read a CSV-with-header / parquet whose
+columns carry the layout's field names, then transform to the canonical
 `Person` schema, parse the voting-history string into a `STRUCT[]`, and validate.
 Everything below the returned `persons_validated` (geocode → assembly → aggregate)
 is the shared, source-agnostic pipeline.
@@ -16,7 +17,12 @@ from typing import TYPE_CHECKING
 
 import duckdb
 from src.importers.base import ImportFilter, InvalidImportFilterError, SourceUnreadableError, redact_source
-from src.importers.nys_voter_file.decode import decode_txt_to_table
+from src.importers.nys_voter_file.decode import (
+    csv_has_header,
+    decode_raw_to_table,
+    load_tabular_to_table,
+    source_format,
+)
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 from src.importers.nys_voter_file.transform import nys_sboe_transformation_query
 from src.importers.nys_voter_file.voting_history import parse_voting_history
@@ -34,7 +40,7 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 
 def _voting_history_json(raw: str | None) -> str:
-    """Scalar-UDF body: one raw voter_history blob → JSON array of entries."""
+    """Scalar-UDF body: one raw VoterHistory blob → JSON array of entries."""
     return json.dumps(parse_voting_history(raw))
 
 
@@ -60,9 +66,7 @@ class NysVoterFileImporter:
     PROGRESS_STEPS = 3  # decode, transform, parse+validate
     # Geographic slices worth fixing a dataset to. Election district is left
     # out: it's only unique within a county.
-    FILTER_COLUMNS = frozenset(
-        {"congressional_district", "assembly_district", "senate_district", "county_code", "res_zip5"}
-    )
+    FILTER_COLUMNS = frozenset({"cd", "ad", "sd", "countycode", "rzip5"})
 
     def manifest(self) -> Manifest:
         return NYS_MANIFEST
@@ -78,14 +82,19 @@ class NysVoterFileImporter:
         """Decode/read `source` → transform → parse voting history → validate.
         Returns the `persons_validated` TableRef the shared pipeline reads from.
         Reports one progress step per stage (`PROGRESS_STEPS`)."""
-        # Expand `~` and verify a local source exists up front. A missing path
-        # would otherwise *deadlock* the fixed-width decode: the transcode feeder
-        # can't open the file, so it never opens the FIFO's write end and
-        # `read_csv` blocks forever. Fail fast instead. (`://` = object-storage key.)
         if filter is not None and filter.column not in self.FILTER_COLUMNS:
             raise InvalidImportFilterError(
                 f"Import filter column {filter.column!r} is not available for this dataset type."
             )
+        fmt = source_format(source)
+        if fmt is None:
+            raise SourceUnreadableError(
+                f"Unsupported file type for {redact_source(source)!r}: expected .txt, .csv, or .parquet."
+            )
+        # Expand `~` and verify a local source exists up front. A missing path
+        # would otherwise *deadlock* the fixed-width decode: the transcode feeder
+        # can't open the file, so it never opens the FIFO's write end and
+        # `read_csv` blocks forever. Fail fast instead. (`://` = object-storage key.)
         source = os.path.expanduser(source)
         if "://" not in source and not os.path.exists(source):
             raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
@@ -94,16 +103,15 @@ class NysVoterFileImporter:
         transformed_fqn = table_fqn(schema, "persons_transformed")
         validated_fqn = table_fqn(schema, "persons_validated")
 
-        # 1. Source → persons_raw. Raw `.txt` gets the fixed-width decode; an
-        #    already-tabular parquet/CSV loads directly.
+        # 1. Source → persons_raw. The headerless layout gets the raw decode; a
+        #    CSV-with-header or parquet is mapped by column name.
         #    A remote source can't be checked up front the way a local path can,
         #    so this is where a bad URL surfaces.
         try:
-            if source.lower().endswith(".txt"):
-                decode_txt_to_table(source, raw_fqn, conn)
+            if fmt == "txt" or (fmt == "csv" and not csv_has_header(source)):
+                decode_raw_to_table(source, raw_fqn, conn)
             else:
-                conn.execute(f"DROP TABLE IF EXISTS {raw_fqn}")
-                conn.read_parquet(source).create(raw_fqn)
+                load_tabular_to_table(source, fmt, raw_fqn, conn)
         except (duckdb.Error, OSError) as exc:
             raise SourceUnreadableError(
                 f"Could not read the import source {redact_source(source)!r}. Check that it exists and is reachable."

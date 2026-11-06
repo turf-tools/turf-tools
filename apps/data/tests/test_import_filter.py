@@ -22,12 +22,12 @@ def test_no_filter_compiles_to_no_where() -> None:
 
 
 def test_filter_compiles_to_in_clause_with_quotes_escaped() -> None:
-    sql = nys_sboe_transformation_query("raw_t", ImportFilter(column="congressional_district", values=["13", "1'4"]))
-    assert "WHERE raw.congressional_district IN ('13', '1''4')" in sql
+    sql = nys_sboe_transformation_query("raw_t", ImportFilter(column="cd", values=["13", "1'4"]))
+    assert "WHERE raw.cd IN ('13', '1''4')" in sql
 
 
 def test_empty_values_means_no_filter() -> None:
-    assert "WHERE" not in nys_sboe_transformation_query("raw_t", ImportFilter(column="county_code", values=[]))
+    assert "WHERE" not in nys_sboe_transformation_query("raw_t", ImportFilter(column="countycode", values=[]))
 
 
 def test_unlisted_column_is_rejected_before_the_source_is_read() -> None:

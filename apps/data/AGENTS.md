@@ -61,10 +61,10 @@ don't need to know whether a fresh table was written.
 
 ### voter vs person
 
-The input is a **voter file** — a parquet dump from a state BOE. The
+The input is a **voter file** — a state's voter roll export. The
 downstream canonical schema is **Person** (`src/models.py`). We keep
-"voter_file" in input-side names (`voter_file_loader.py`, `{slug}_voters_raw`,
-`NysVoterFileImporter`) because that's literally what's being loaded.
+"voter_file" in input-side names (`nys_voter_file`, `NysVoterFileImporter`)
+because that's literally what's being loaded.
 Everything after validation uses "person" because rows conform to the
 Person schema regardless of source.
 
@@ -79,32 +79,32 @@ across all orgs in the same state.
 
 ## The Hamilton modules
 
-| Module              | Role                                                                                     | Output catalog            |
-| ------------------- | ---------------------------------------------------------------------------------------- | ------------------------- |
-| `voter_file_loader` | Parse voter parquet → Person schema                                                      | `ducklake.{org}`          |
-| `tiger`             | TIGER shapefiles → `blockface_final`                                                     | `ducklake_geo.tiger`      |
-| `osm`               | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `ducklake_geo.osm`        |
-| `matching`          | Voter ↔ TIGER blockface (`persons_best_match`)                                           | `ducklake.{org}`          |
-| `geocode`           | Lat/lon assignment (`refined_positions`, `osm_only_matches`)                             | `ducklake.{org}`          |
-| `assembly`          | Canonical Person record (`canonical_addresses`, `persons_geocoded`, `geocoding_summary`) | `ducklake.{org}`          |
-| `aggregate`         | `persons_geocoded` → `buildings_geocoded` + `doors_geocoded`                             | `ducklake.{org}`          |
-| `boundaries`        | Derive polygons (EDs, zips) from voter data + TIGER blocks                               | `ducklake_geo.boundaries` |
-| `quickwit`          | Stream Person records into a Quickwit search index                                       | external                  |
+| Module       | Role                                                                                     | Output catalog            |
+| ------------ | ---------------------------------------------------------------------------------------- | ------------------------- |
+| `tiger`      | TIGER shapefiles → `blockface_final`                                                     | `ducklake_geo.tiger`      |
+| `osm`        | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `ducklake_geo.osm`        |
+| `matching`   | Voter ↔ TIGER blockface (`persons_best_match`)                                           | `ducklake.{org}`          |
+| `geocode`    | Lat/lon assignment (`refined_positions`, `osm_only_matches`)                             | `ducklake.{org}`          |
+| `assembly`   | Canonical Person record (`canonical_addresses`, `persons_geocoded`, `geocoding_summary`) | `ducklake.{org}`          |
+| `aggregate`  | `persons_geocoded` → `buildings_geocoded` + `doors_geocoded`                             | `ducklake.{org}`          |
+| `boundaries` | Derive polygons (EDs, zips) from voter data + TIGER blocks                               | `ducklake_geo.boundaries` |
+| `quickwit`   | Stream Person records into a Quickwit search index                                       | external                  |
 
 `tiger` and `osm` are symmetric — both extract geographic reference
 data into `ducklake_geo`. `matching`, `geocode`, `assembly`, and
 `aggregate` form the per-voter pipeline that consumes those references.
 
-### voter_file_loader
+### Importers (ahead of the DAG)
 
 ```
-voters_raw → persons_transformed → persons_validated
+source → persons_raw → persons_transformed → persons_validated
 ```
 
-`voters_raw` ingests the parquet as-is. `persons_transformed` runs the
-state-specific SQL in `src/transformations.py` to map raw fields to
-the Person schema. `persons_validated` is a passthrough that runs Pydantic
-checks.
+Importers (`src/importers/`) sit outside Hamilton and hand the DAG its
+`persons_validated` input. Each reads its format into `persons_raw`, runs
+its state-specific SQL to map raw fields to the Person schema, and
+validates the result. Formats and the testing convention are in
+`src/importers/README.md`.
 
 ### tiger
 
@@ -463,8 +463,7 @@ When a Hamilton module is added or modified, regenerate the visualizations:
 uv run update-visualizations
 ```
 
-Writes one PNG per module (`voter_file_loader_graph.png`, `tiger_graph.png`,
-`osm_graph.png`, `matching_graph.png`, `geocode_graph.png`,
-`assembly_graph.png`, `aggregate_graph.png`, `boundaries_graph.png`,
-`quickwit_graph.png`) plus a combined `pipeline_graph.png` into `docs/`.
+Writes one PNG per module (`tiger_graph.png`, `osm_graph.png`,
+`matching_graph.png`, `geocode_graph.png`, `assembly_graph.png`,
+`aggregate_graph.png`, `boundaries_graph.png`, `quickwit_graph.png`) plus a combined `pipeline_graph.png` into `docs/`.
 Graphviz must be installed (`brew install graphviz`).

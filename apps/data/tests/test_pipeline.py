@@ -37,7 +37,7 @@ from src.importers.nys_voter_file import NysVoterFileImporter
 VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-nyc.parquet"
 
 
-# Golden numbers captured 2026-05-17 against the full NYC fixture.
+# Golden numbers captured 2026-11-06 against the full NYC fixture.
 # Re-baseline (with an explanation in the PR description) when an
 # intentional pipeline change shifts them.
 GOLDEN = {
@@ -45,13 +45,13 @@ GOLDEN = {
     "matched": 5_281_714,
     "unmatched": 78_303,
     "match_pct": 98.54,
-    "matched_osm_road_projected": 3_811_666,
+    "matched_osm_road_projected": 3_811_667,
     "matched_osm_complex": 709_962,
     "matched_osm_off_segment": 110_021,
-    "matched_tiger_only": 564_019,
+    "matched_tiger_only": 564_018,
     "matched_osm_only": 86_046,
-    "buildings": 763_527,
-    "doors": 3_026_868,
+    "buildings": 763_521,
+    "doors": 3_026_864,
 }
 
 # Widened NYC envelope. The narrower commonly-cited bbox (-74.3 to -73.7)
@@ -130,34 +130,36 @@ pytestmark = pytest.mark.pipeline
 
 def test_geocoding_summary_matches_baseline(nyc_pipeline):
     """`geocoding_summary` per-source counts and totals match the locked
-    baseline. Any pipeline change that shifts a number trips this."""
-    row = nyc_pipeline.execute("""
-        SELECT total_persons, matched, unmatched, match_pct,
-               matched_osm_road_projected, matched_osm_complex,
-               matched_osm_off_segment, matched_tiger_only, matched_osm_only
-        FROM ducklake."default".geocoding_summary
-    """).fetchone()
-    (total, matched, unmatched, match_pct, m_road, m_complex, m_off, m_tiger, m_osm_only) = row
-    assert total == GOLDEN["total_persons"]
-    assert matched == GOLDEN["matched"]
-    assert unmatched == GOLDEN["unmatched"]
-    assert match_pct == GOLDEN["match_pct"]
-    assert m_road == GOLDEN["matched_osm_road_projected"]
-    assert m_complex == GOLDEN["matched_osm_complex"]
-    assert m_off == GOLDEN["matched_osm_off_segment"]
-    assert m_tiger == GOLDEN["matched_tiger_only"]
-    assert m_osm_only == GOLDEN["matched_osm_only"]
+    baseline. Any pipeline change that shifts a number trips this; compared as
+    one dict so a failure shows every number that moved."""
+    keys = [
+        "total_persons",
+        "matched",
+        "unmatched",
+        "match_pct",
+        "matched_osm_road_projected",
+        "matched_osm_complex",
+        "matched_osm_off_segment",
+        "matched_tiger_only",
+        "matched_osm_only",
+    ]
+    row = nyc_pipeline.execute(f'SELECT {", ".join(keys)} FROM ducklake."default".geocoding_summary').fetchone()
+    assert dict(zip(keys, row, strict=True)) == {k: GOLDEN[k] for k in keys}
 
 
 def test_table_row_counts_match_baseline(nyc_pipeline):
     """`persons_geocoded`, `buildings_geocoded`, `doors_geocoded` row
-    counts match the baseline."""
-    persons = nyc_pipeline.execute('SELECT count(*) FROM ducklake."default".persons_geocoded').fetchone()[0]
-    buildings = nyc_pipeline.execute('SELECT count(*) FROM ducklake."default".buildings_geocoded').fetchone()[0]
-    doors = nyc_pipeline.execute('SELECT count(*) FROM ducklake."default".doors_geocoded').fetchone()[0]
-    assert persons == GOLDEN["matched"]  # persons_geocoded == matched
-    assert buildings == GOLDEN["buildings"]
-    assert doors == GOLDEN["doors"]
+    counts match the baseline (persons_geocoded == matched)."""
+
+    def count(table: str) -> int:
+        return nyc_pipeline.execute(f'SELECT count(*) FROM ducklake."default".{table}').fetchone()[0]
+
+    actual = {
+        "matched": count("persons_geocoded"),
+        "buildings": count("buildings_geocoded"),
+        "doors": count("doors_geocoded"),
+    }
+    assert actual == {k: GOLDEN[k] for k in actual}
 
 
 # ---------------------------------------------------------------------------

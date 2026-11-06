@@ -4,13 +4,13 @@ import type { ImportFilter } from "@turf-tools/db/schema";
 // file's own codes.
 export type ImportFilterField = { column: string; label: string };
 
-// Mirrors `NysVoterFileImporter.FILTER_COLUMNS` (decoded source column names).
+// Mirrors `NysVoterFileImporter.FILTER_COLUMNS` (raw column names).
 const NYS_FILTER_FIELDS: ReadonlyArray<ImportFilterField> = [
-  { column: "congressional_district", label: "Congressional district" },
-  { column: "assembly_district", label: "Assembly district" },
-  { column: "senate_district", label: "Senate district" },
-  { column: "county_code", label: "County" },
-  { column: "res_zip5", label: "ZIP code" },
+  { column: "cd", label: "Congressional district" },
+  { column: "ad", label: "Assembly district" },
+  { column: "sd", label: "Senate district" },
+  { column: "countycode", label: "County" },
+  { column: "rzip5", label: "ZIP code" },
 ];
 
 // Curated importers available in the import picker, mirroring the data-side
