@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, desc, eq, type Db } from "@turf-tools/db";
+import { and, asc, desc, eq, inArray, type Db } from "@turf-tools/db";
 import { zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webMut, webPub } from "../context";
@@ -205,6 +205,79 @@ export const remove = mut
     await context.db.delete(zones).where(eq(zones.zoneId, input.zoneId));
     await touchZoneGroup(context.db, owned[0]!.zoneGroupId);
     return { ok: true as const };
+  });
+
+// Replace a group's zones with an imported definition. Zones whose name
+// already exists in the group keep their row (and id, which turfs and
+// cutter drafts are filed under) and take the imported keys; new names
+// become new zones; zones absent from the import are deleted. Order
+// follows the import.
+export const replaceGroup = mut
+  .input(
+    z.object({
+      zoneGroupId: z.string().uuid(),
+      zones: z
+        .array(z.object({ name: z.string().trim().min(1), keys: z.array(z.string()) }))
+        .min(1),
+    }),
+  )
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ zoneGroupId: zoneGroups.zoneGroupId })
+      .from(zoneGroups)
+      .where(
+        and(
+          eq(zoneGroups.zoneGroupId, input.zoneGroupId),
+          eq(zoneGroups.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
+    const names = new Set(input.zones.map((zone) => zone.name));
+    if (names.size < input.zones.length) {
+      throw new ORPCError("BAD_REQUEST", { message: "Two imported zones have the same name." });
+    }
+
+    const counts = await context.db.transaction(async (tx) => {
+      const existing = await tx
+        .select({ zoneId: zones.zoneId, name: zones.name })
+        .from(zones)
+        .where(eq(zones.zoneGroupId, input.zoneGroupId))
+        .orderBy(asc(zones.order), asc(zones.createdAt));
+      const unmatched = [...existing];
+      let updated = 0;
+      let created = 0;
+      for (const [index, zone] of input.zones.entries()) {
+        const at = unmatched.findIndex((e) => e.name === zone.name);
+        if (at >= 0) {
+          const [match] = unmatched.splice(at, 1);
+          await tx
+            .update(zones)
+            .set({ keys: zone.keys, order: index, updatedAt: new Date() })
+            .where(eq(zones.zoneId, match!.zoneId));
+          updated++;
+        } else {
+          await tx.insert(zones).values({
+            zoneGroupId: input.zoneGroupId,
+            name: zone.name,
+            keys: zone.keys,
+            order: index,
+            createdBy: context.user.id,
+          });
+          created++;
+        }
+      }
+      if (unmatched.length > 0) {
+        await tx.delete(zones).where(
+          inArray(
+            zones.zoneId,
+            unmatched.map((e) => e.zoneId),
+          ),
+        );
+      }
+      return { updated, created, deleted: unmatched.length };
+    });
+    await touchZoneGroup(context.db, input.zoneGroupId);
+    return counts;
   });
 
 // Delete every zone inside a zone group (group itself stays). Used by the
