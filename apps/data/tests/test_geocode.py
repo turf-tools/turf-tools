@@ -26,6 +26,7 @@ from src.addressing import (
 )
 from src.dags import geocode, tiger
 from src.models import TableRef
+from src.projection import utm_crs_sql
 from src.tables import ensure_schema, table_fqn
 
 ORG = "geocode_test"
@@ -94,7 +95,8 @@ def _create_blockface_final(conn) -> TableRef:
             street_tokens_lookup  VARCHAR[],
             from_node_id          VARCHAR,
             to_node_id            VARCHAR,
-            geom                  GEOMETRY
+            geom                  GEOMETRY,
+            utm_crs               VARCHAR
         )
     """)
     return TableRef(catalog="ducklake_geo", schema="tiger", table="blockface_final", version=0)
@@ -228,10 +230,11 @@ def _insert_blockface(
     # set — the test fixture must do the same so canonical_key derivation
     # on the voter side hits the OSM lookup.
     expanded = _expanded_tokens(conn, full_name)
+    zone = utm_crs_sql(f"ST_X(ST_Centroid(ST_GeomFromText('{geom}')))")
     conn.execute(
         "INSERT INTO ducklake_geo.tiger.blockface_final VALUES "
         "(?, ?, 1, 199, '', 'odd', ?, ?, ?, ?, ?, 'n1', 'n2', "
-        f"ST_GeomFromText('{geom}'))",
+        f"ST_GeomFromText('{geom}'), {zone})",
         [blockface_id, side, zip_code, full_name, tiger_line_id, expanded, expanded],
     )
 

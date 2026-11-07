@@ -142,7 +142,8 @@ def refined_positions(
         SELECT DISTINCT ON (blockface_id, COALESCE(house_num_prefix, ''))
             blockface_id,
             COALESCE(house_num_prefix, '') AS house_num_prefix,
-            street_tokens_lookup
+            street_tokens_lookup,
+            utm_crs
         FROM {bf_}
         WHERE geom IS NOT NULL
         ORDER BY blockface_id, COALESCE(house_num_prefix, ''),
@@ -160,7 +161,8 @@ def refined_positions(
             d.zip5,
             {canonical_key_sql("b.street_tokens_lookup")} AS canonical_key,
             {hn_display} AS housenumber_str,
-            {housenumber_norm_sql(hn_display)} AS housenumber_norm
+            {housenumber_norm_sql(hn_display)} AS housenumber_norm,
+            b.utm_crs AS crs
         FROM {pbm} m
         JOIN {pd_} d ON d.external_id = m.external_id
         JOIN _bf_for_voters b
@@ -200,17 +202,13 @@ def refined_positions(
     # geographic degrees gives a non-perpendicular foot on non-cardinal
     # streets — the rotated grid skews along-street by up to ~20% of the
     # perpendicular offset.
-    bf_crs = utm_crs_sql("ST_X(ST_Centroid(bf_geom))")
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         -- Pre-compute the UTM-transformed geometry and OSM projection
         -- fraction once per voter. Doing this up-front lets us route
         -- clamping-OSM voters to the OSM-centroid branch before they
         -- enter the projection/shove pipeline.
-        WITH voter_crs AS (
-            SELECT *, {bf_crs} AS crs FROM _voter_with_osm
-        ),
-        voter_geo AS (
+        WITH voter_geo AS (
             SELECT
                 external_id, blockface_id, bf_side, tiger_line_id,
                 house_num_prefix, person_house_number, half_code,
@@ -220,7 +218,7 @@ def refined_positions(
                      THEN ST_Transform(ST_Point(osm_lon, osm_lat), 'OGC:CRS84', crs)
                      ELSE NULL
                 END AS osm_pt_m
-            FROM voter_crs
+            FROM _voter_with_osm
         ),
         with_osm_frac AS (
             SELECT *,
@@ -538,8 +536,8 @@ def osm_only_matches(
         -- snapped side when the zip has no blockface on the other.
         lines AS (
             SELECT blockface_id, ANY_VALUE(tiger_line_id) AS tiger_line_id,
-                   ANY_VALUE(ST_Transform(geom, 'OGC:CRS84', {utm_crs_sql("ST_X(ST_Centroid(geom))")})) AS line_m,
-                   ANY_VALUE({utm_crs_sql("ST_X(ST_Centroid(geom))")}) AS crs
+                   ANY_VALUE(ST_Transform(geom, 'OGC:CRS84', utm_crs)) AS line_m,
+                   ANY_VALUE(utm_crs) AS crs
             FROM {bf_}
             WHERE blockface_id IN (SELECT blockface_id FROM loc_snaps)
             GROUP BY blockface_id

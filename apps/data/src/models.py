@@ -128,11 +128,15 @@ class Person(BaseModel):
     state: str
     zip5: str
     zip4: str | None = None
+    # 5-digit county FIPS (`36061`), when the source knows it: scopes which
+    # counties' reference data the import fetches. NULL falls back to the ZIP.
+    county_fips: str | None = None
 
 
 # The exported columns, in order, under their own names — the Person contract
-# above as it survives assembly. No half_code: assembly consumes it into
-# canonical address_line_1 ("123 1/2 MAIN ST"). Required-contract columns are
+# above as it survives assembly. No half_code or county_fips: assembly consumes
+# half_code into canonical address_line_1 ("123 1/2 MAIN ST"), and county_fips
+# is read only by the import's geo extent. Required-contract columns are
 # always selected, so genuine pipeline drift fails loudly; the contract-optional
 # four are included only when the version's table has them. Dataset-specific
 # columns are not exported. Shared by /segments/export and the /reports/*

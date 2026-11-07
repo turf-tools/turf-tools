@@ -218,13 +218,14 @@ def persons_geocoded(
         CREATE TABLE {fqn} AS
         WITH normalized_persons AS (
           -- Carry every importer-produced column through generically so any
-          -- manifest field reaches persons_geocoded with no pipeline edit. Only
-          -- the address columns assembly rewrites are excluded and re-derived:
+          -- manifest field reaches persons_geocoded with no pipeline edit.
+          -- Excluded: the address columns assembly rewrites and re-derives —
           -- address_line_1 (canonical), address_line_2 (normalized), half_code
-          -- (consumed into the canonical address). These three are Person-core,
-          -- so EXCLUDE always finds them.
+          -- (consumed into the canonical address) — and county_fips, which only
+          -- the import's geo extent reads. All are Person-core, so EXCLUDE
+          -- always finds them.
           SELECT
-              p.* EXCLUDE (address_line_1, address_line_2, half_code),
+              p.* EXCLUDE (address_line_1, address_line_2, half_code, county_fips),
               TRIM(UPPER(p.address_line_2)) AS address_line_2
           FROM {persons_fqn} p
         ),

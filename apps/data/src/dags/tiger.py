@@ -22,6 +22,7 @@ from zipfile import ZipFile
 import duckdb
 from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
 from src.models import GeoExtent, TableRef
+from src.projection import utm_crs_sql
 
 GEO_CATALOG = "ducklake_geo"
 TIGER_SCHEMA = "tiger"
@@ -137,8 +138,8 @@ def geo_extent(
     """The counties the import's addresses fall in, read off the addresses
     before anything is geocoded.
 
-    A row whose importer emits a `county_fips` (5-digit, e.g. `36061`) uses
-    that county. Other rows fall back to their (state, ZIP): the counties
+    A row with a `county_fips` (5-digit, e.g. `36061`) uses that county.
+    Rows without one fall back to their (state, ZIP): the counties
     that ZIP overlaps within that state. A ZIP straddling a county line
     brings in every county it touches, since the ZIP alone can't say which
     side a voter lives on, and scoping to the row's state keeps a mistyped
@@ -149,15 +150,13 @@ def geo_extent(
     persons = persons_validated.fqn
     crosswalk = zcta_counties.fqn
     states = ", ".join(f"('{abbr}', '{fips}')" for abbr, fips in STATE_FIPS.items())
-    columns = {c[0] for c in conn.execute(f"DESCRIBE {persons}").fetchall()}
-    county_fips = "county_fips" if "county_fips" in columns else "CAST(NULL AS VARCHAR)"
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _extent_addresses AS
         WITH known_counties AS (
             SELECT DISTINCT state_fips || county_fips AS county_fips FROM {crosswalk}
         )
         SELECT a.zip5, s.state_fips, k.county_fips, count(*) AS persons
-        FROM (SELECT zip5, upper(trim(state)) AS state, {county_fips} AS county_fips FROM {persons}) a
+        FROM (SELECT zip5, upper(trim(state)) AS state, county_fips FROM {persons}) a
         LEFT JOIN (VALUES {states}) s(state, state_fips) USING (state)
         LEFT JOIN known_counties k USING (county_fips)
         GROUP BY ALL
@@ -617,17 +616,6 @@ def blockface_normalized(
         )
     """)
 
-    # Collapse repeated copies of a row, so the incremental steps below always
-    # add to a clean table.
-    copy_key = "blockface_id, side, house_num_prefix, from_house_num, to_house_num, zip_code, full_name"
-    total, distinct = conn.execute(f"SELECT count(*), count(DISTINCT ({copy_key})) FROM {fqn}").fetchone()
-    if total > distinct:
-        conn.execute(f"""
-            CREATE OR REPLACE TABLE {fqn} AS
-            SELECT DISTINCT ON ({copy_key}) * FROM {fqn} ORDER BY {copy_key}
-        """)
-        print(f"blockface_normalized: collapsed {total - distinct:,} repeated rows")
-
     conn.execute(f"CREATE OR REPLACE TEMP TABLE _bfn_loaded AS SELECT DISTINCT blockface_id FROM {fqn}")
 
     # Step 1: rows where both ends parse directly as integers.
@@ -755,6 +743,9 @@ def blockface_final(
        ``address_tokens`` lookup so abbreviations match full forms
        (st↔street, ave↔avenue, 1st↔first, …).
 
+    Also carries ``utm_crs``, the UTM zone of the blockface's line
+    (`projection.utm_crs_sql`), which geocoding does its metre math in.
+
     Non-incremental: the collapse needs to see all rows at once.
     """
     table = "blockface_final"
@@ -860,7 +851,8 @@ def blockface_final(
                                                                        AS street_tokens_lookup,
             c.from_node_id,
             c.to_node_id,
-            c.geom
+            c.geom,
+            {utm_crs_sql("ST_X(ST_Centroid(c.geom))")}                AS utm_crs
         FROM collapsed c
         LEFT JOIN merged_extras   m  ON m.bf_row = c.bf_row
         LEFT JOIN canonical_extras ce ON ce.bf_row = c.bf_row

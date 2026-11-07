@@ -44,6 +44,7 @@ def _create_persons_validated(conn) -> TableRef:
             state                  VARCHAR,
             zip5                   VARCHAR,
             zip4                   VARCHAR,
+            county_fips            VARCHAR,
             enrollment             VARCHAR,
             gender                 VARCHAR,
             date_of_birth          VARCHAR,

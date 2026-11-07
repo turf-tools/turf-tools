@@ -8,9 +8,9 @@ OSM comes in Geofabrik's per-state extracts. Each state the import's
 addresses fall in (`geo_extent`) is built once, tagged `state_fips`, and
 serves every later import that touches it.
 
-                 ┌─► osm_buildings_polygons   (building polygon centroids)
-    osm_pbfs ────┼─► osm_addresses            (addressed OSM elements)
-                 └─► osm_landuse_residential  (residential land-use polygons)
+    osm_states_built ─► osm_pbfs ─┬─► osm_buildings_polygons   (building polygon centroids)
+                                  ├─► osm_addresses            (addressed OSM elements)
+                                  └─► osm_landuse_residential  (residential land-use polygons)
 
     osm_addresses + osm_landuse_residential + address_tokens
         ─► osm_building_lookup               (per-building, keyed for join)
@@ -119,38 +119,36 @@ _PBF_TABLES = ("buildings_polygons", "addresses", "landuse_residential")
 
 
 def _ensure_state_table(conn: duckdb.DuckDBPyConnection, table: str, columns: str) -> str:
-    """Create `table` with `columns` plus `state_fips`, and return its fqn. A
-    table without `state_fips` can't say which states it holds, so it's
-    dropped and rebuilt from the PBFs."""
+    """Create `table` with `columns` plus `state_fips` if missing, and return its fqn."""
     fqn = _fqn(table)
     _ensure_schema(conn)
-    try:
-        cols = {c[0] for c in conn.execute(f"DESCRIBE {fqn}").fetchall()}
-        if "state_fips" not in cols:
-            conn.execute(f"DROP TABLE {fqn}")
-    except duckdb.CatalogException:
-        pass  # table doesn't exist yet — fresh install
     conn.execute(f"CREATE TABLE IF NOT EXISTS {fqn} ({columns}, state_fips VARCHAR)")
     return fqn
 
 
-def _states_built(conn: duckdb.DuckDBPyConnection, table: str) -> set[str]:
-    try:
-        return {r[0] for r in conn.execute(f"SELECT DISTINCT state_fips FROM {_fqn(table)}").fetchall()}
-    except (duckdb.CatalogException, duckdb.BinderException):
-        return set()
+def osm_states_built(conn: duckdb.DuckDBPyConnection) -> dict[str, set[str]]:
+    """The states each PBF-derived table already holds, read once per import
+    and shared by every node below."""
+    built: dict[str, set[str]] = {}
+    for table in _PBF_TABLES:
+        try:
+            rows = conn.execute(f"SELECT DISTINCT state_fips FROM {_fqn(table)}").fetchall()
+        except duckdb.CatalogException:
+            rows = []  # table doesn't exist yet — fresh install
+        built[table] = {r[0] for r in rows}
+    return built
 
 
 def osm_pbfs(
     geo_extent: GeoExtent,
+    osm_states_built: dict[str, set[str]],
     osm_snapshot: str,
     osm_data_dir: str,
-    conn: duckdb.DuckDBPyConnection,
 ) -> dict[str, Path]:
     """The Geofabrik PBF of each extent state whose OSM tables aren't all built
     yet, keyed by state FIPS, downloaded into ``osm_data_dir`` if not present.
     States already built in every table need no PBF and are left out."""
-    built = set.intersection(*(_states_built(conn, t) for t in _PBF_TABLES))
+    built = set.intersection(*osm_states_built.values())
     cache = Path(osm_data_dir)
     cache.mkdir(parents=True, exist_ok=True)
     pbfs: dict[str, Path] = {}
@@ -205,6 +203,7 @@ def _require_osmium() -> str:
 
 def osm_buildings_polygons(
     osm_pbfs: dict[str, Path],
+    osm_states_built: dict[str, set[str]],
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Building polygons with area-weighted centroids.
@@ -232,7 +231,7 @@ def osm_buildings_polygons(
         table,
         "osm_id BIGINT, centroid_lat DOUBLE, centroid_lon DOUBLE",
     )
-    built = _states_built(conn, table)
+    built = osm_states_built[table]
 
     for state, osm_pbf in osm_pbfs.items():
         if state in built:
@@ -327,6 +326,7 @@ def osm_buildings_polygons(
 
 def osm_addresses(
     osm_pbfs: dict[str, Path],
+    osm_states_built: dict[str, set[str]],
     osm_buildings_polygons: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
@@ -360,7 +360,7 @@ def osm_addresses(
             lon           DOUBLE
         """,
     )
-    built = _states_built(conn, table)
+    built = osm_states_built[table]
     polys_fqn = osm_buildings_polygons.fqn
 
     for state, osm_pbf in osm_pbfs.items():
@@ -424,6 +424,7 @@ def osm_addresses(
 
 def osm_landuse_residential(
     osm_pbfs: dict[str, Path],
+    osm_states_built: dict[str, set[str]],
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Assembled `landuse=residential` polygons. Way-only — multipolygon
@@ -437,7 +438,7 @@ def osm_landuse_residential(
     """
     table = "landuse_residential"
     fqn = _ensure_state_table(conn, table, "landuse_id BIGINT, name VARCHAR, geom GEOMETRY")
-    built = _states_built(conn, table)
+    built = osm_states_built[table]
 
     for state, osm_pbf in osm_pbfs.items():
         if state in built:
