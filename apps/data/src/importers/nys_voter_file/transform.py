@@ -27,6 +27,23 @@ NYS_REGISTRATION_STATUS_LABELS: dict[str, str] = {
     "17": "preregistered",
 }
 
+# NYS BOE county code → 5-digit county FIPS (state 36 + county), so the
+# geo extent loads each voter's own county. BOE codes run alphabetically
+# with St. Lawrence after Seneca; FIPS files it as "Saint", before Saratoga.
+NYS_COUNTY_FIPS: dict[str, str] = {
+    "01": "36001", "02": "36003", "03": "36005", "04": "36007", "05": "36009", "06": "36011",
+    "07": "36013", "08": "36015", "09": "36017", "10": "36019", "11": "36021", "12": "36023",
+    "13": "36025", "14": "36027", "15": "36029", "16": "36031", "17": "36033", "18": "36035",
+    "19": "36037", "20": "36039", "21": "36041", "22": "36043", "23": "36045", "24": "36047",
+    "25": "36049", "26": "36051", "27": "36053", "28": "36055", "29": "36057", "30": "36059",
+    "31": "36061", "32": "36063", "33": "36065", "34": "36067", "35": "36069", "36": "36071",
+    "37": "36073", "38": "36075", "39": "36077", "40": "36079", "41": "36081", "42": "36083",
+    "43": "36085", "44": "36087", "45": "36091", "46": "36093", "47": "36095", "48": "36097",
+    "49": "36099", "50": "36089", "51": "36101", "52": "36103", "53": "36105", "54": "36107",
+    "55": "36109", "56": "36111", "57": "36113", "58": "36115", "59": "36117", "60": "36119",
+    "61": "36121", "62": "36123",
+}  # fmt: skip
+
 # NYS encodes party as (ENROLLMENT, OTHERPARTY); flatten the two-step
 # into a canonical label.
 NYS_ENROLLMENT_LABELS: dict[tuple[str, str | None], str] = {
@@ -158,6 +175,7 @@ SELECT
     {_case_from_map("raw.status", NYS_REGISTRATION_STATUS_LABELS, default="unknown")} AS registration_status,
     {_iso_date_sql("raw.lastvoterdate")} AS last_voted_date,
     raw.countycode AS county_code,
+    {_case_from_map("raw.countycode", NYS_COUNTY_FIPS)} AS county_fips,
     -- `precinct` is the smallest political unit. NYC uses the
     -- "AA-EEE" assembly+election composite; a bare ED is
     -- meaningless across assembly districts.

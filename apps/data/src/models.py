@@ -52,6 +52,25 @@ class TableRef:
 
 
 @dataclass(frozen=True)
+class GeoExtent:
+    """The counties an import's addresses fall in, as `(state_fips, county_fips)`
+    pairs (`("36", "061")`). Decides which TIGER counties and OSM states the
+    import needs, and scopes its boundary census blocks."""
+
+    counties: tuple[tuple[str, str], ...]
+
+    @property
+    def states(self) -> tuple[str, ...]:
+        return tuple(sorted({state for state, _ in self.counties}))
+
+    def counties_sql(self) -> str:
+        """Predicate keeping this extent's rows of a table with `state_fips` and
+        `county_fips` columns."""
+        geoids = ", ".join(f"'{state}{county}'" for state, county in self.counties)
+        return f"state_fips || county_fips IN ({geoids})"
+
+
+@dataclass(frozen=True)
 class QuickwitIngestResult:
     """Summary of one Quickwit local-ingest build run."""
 

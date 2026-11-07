@@ -36,6 +36,7 @@ from src.blockface_topology import (
 )
 from src.dags.tiger import GEO_CATALOG, TIGER_SCHEMA
 from src.models import TableRef
+from src.projection import utm_crs_sql
 
 # How far along the edge (meters) to sample when computing the departure
 # bearing at a node. Sampling in from the endpoint — rather than using
@@ -145,30 +146,33 @@ def blockface_relationships(
     # yield a bearing; those ends are dropped and the node classifies
     # from the remaining edges.
     edge_end_rows = conn.execute(f"""
+        -- Each end projects in the zone of its node, so every edge meeting at
+        -- a node measures its bearing in the same frame.
         WITH prepared AS (
             SELECT
                 tiger_line_id,
                 feature_class_code,
                 from_node_id,
                 to_node_id,
-                ST_Transform(geom, 'OGC:CRS84', 'EPSG:32618') AS geom_m
+                ST_Transform(geom, 'OGC:CRS84', {utm_crs_sql("ST_X(ST_StartPoint(geom))")}) AS from_m,
+                ST_Transform(geom, 'OGC:CRS84', {utm_crs_sql("ST_X(ST_EndPoint(geom))")}) AS to_m
             FROM _bfrel_edges
         ),
         measured AS (
-            SELECT *, ST_Length(geom_m) AS len_m FROM prepared
+            SELECT *, ST_Length(from_m) AS len_m FROM prepared
         ),
         ends AS (
             SELECT
                 from_node_id AS node_id, tiger_line_id, 'from' AS which_end, feature_class_code,
-                ST_StartPoint(geom_m) AS origin,
-                ST_LineInterpolatePoint(geom_m, LEAST({_BEARING_SAMPLE_M} / len_m, 0.5)) AS sample
+                ST_StartPoint(from_m) AS origin,
+                ST_LineInterpolatePoint(from_m, LEAST({_BEARING_SAMPLE_M} / len_m, 0.5)) AS sample
             FROM measured
             WHERE len_m > 0 AND from_node_id IN (SELECT node_id FROM _bfrel_nodes)
             UNION ALL
             SELECT
                 to_node_id, tiger_line_id, 'to', feature_class_code,
-                ST_EndPoint(geom_m),
-                ST_LineInterpolatePoint(geom_m, GREATEST(1.0 - {_BEARING_SAMPLE_M} / len_m, 0.5))
+                ST_EndPoint(to_m),
+                ST_LineInterpolatePoint(to_m, GREATEST(1.0 - {_BEARING_SAMPLE_M} / len_m, 0.5))
             FROM measured
             WHERE len_m > 0 AND to_node_id IN (SELECT node_id FROM _bfrel_nodes)
         )
@@ -218,47 +222,41 @@ def blockface_relationships(
         relationships.extend(classify_node(current_node, current_ends, blockfaces_by_line_side))
 
     # -- 6. Bulk write-back ------------------------------------------------
+    # Turf cutting reads this table live from other connections; one
+    # CREATE OR REPLACE statement swaps it in a single commit.
+    result_df = pd.DataFrame(
+        [
+            (
+                r.blockface_id_a,
+                r.blockface_id_b,
+                r.kind,
+                r.node_id,
+                list(r.crossed_line_ids),
+                list(r.crossed_classes),
+                r.penalty_class,
+                r.crossing_cost_m,
+            )
+            for r in relationships
+        ],
+        columns=_RESULT_COLUMNS,
+    )
     conn.execute(f"CREATE SCHEMA IF NOT EXISTS {GEO_CATALOG}.{TIGER_SCHEMA}")
-    conn.execute(f"DROP TABLE IF EXISTS {fqn}")
-    conn.execute(f"""
-        CREATE TABLE {fqn} (
-            blockface_id_a    VARCHAR,
-            blockface_id_b    VARCHAR,
-            kind              VARCHAR,
-            node_id           VARCHAR,
-            crossed_line_ids  VARCHAR[],
-            crossed_classes   VARCHAR[],
-            penalty_class     VARCHAR,
-            crossing_cost_m   DOUBLE
-        )
-    """)
-    if relationships:
-        result_df = pd.DataFrame(
-            [
-                (
-                    r.blockface_id_a,
-                    r.blockface_id_b,
-                    r.kind,
-                    r.node_id,
-                    list(r.crossed_line_ids),
-                    list(r.crossed_classes),
-                    r.penalty_class,
-                    r.crossing_cost_m,
-                )
-                for r in relationships
-            ],
-            columns=_RESULT_COLUMNS,
-        )
-        conn.register("_bfrel_result_df", result_df)
+    conn.register("_bfrel_result_df", result_df)
+    try:
         conn.execute(f"""
-            INSERT INTO {fqn}
+            CREATE OR REPLACE TABLE {fqn} AS
             SELECT
-                blockface_id_a, blockface_id_b, kind, node_id,
-                CAST(crossed_line_ids AS VARCHAR[]),
-                CAST(crossed_classes AS VARCHAR[]),
-                penalty_class, crossing_cost_m
+                CAST(blockface_id_a AS VARCHAR)     AS blockface_id_a,
+                CAST(blockface_id_b AS VARCHAR)     AS blockface_id_b,
+                CAST(kind AS VARCHAR)               AS kind,
+                CAST(node_id AS VARCHAR)            AS node_id,
+                CAST(crossed_line_ids AS VARCHAR[]) AS crossed_line_ids,
+                CAST(crossed_classes AS VARCHAR[])  AS crossed_classes,
+                CAST(penalty_class AS VARCHAR)      AS penalty_class,
+                CAST(crossing_cost_m AS DOUBLE)     AS crossing_cost_m
             FROM _bfrel_result_df
         """)
+    finally:
         conn.unregister("_bfrel_result_df")
 
     version = _current_version(conn)

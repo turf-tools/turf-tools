@@ -37,7 +37,7 @@ from src.importers.nys_voter_file import NysVoterFileImporter
 VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-nyc.parquet"
 
 
-# Golden numbers captured 2026-11-06 against the full NYC fixture.
+# Golden numbers captured 2026-11-07 against the full NYC fixture.
 # Re-baseline (with an explanation in the PR description) when an
 # intentional pipeline change shifts them.
 GOLDEN = {
@@ -45,10 +45,10 @@ GOLDEN = {
     "matched": 5_281_714,
     "unmatched": 78_303,
     "match_pct": 98.54,
-    "matched_osm_road_projected": 3_811_667,
-    "matched_osm_complex": 709_962,
-    "matched_osm_off_segment": 110_021,
-    "matched_tiger_only": 564_018,
+    "matched_osm_road_projected": 3_815_423,
+    "matched_osm_complex": 710_502,
+    "matched_osm_off_segment": 110_150,
+    "matched_tiger_only": 559_593,
     "matched_osm_only": 86_046,
     "buildings": 763_521,
     "doors": 3_026_864,
@@ -106,11 +106,8 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
                 "persons_validated": persons_validated,
                 "schema": "default",
                 "tiger_year": "2024",
-                "tiger_state_fips": "36",
-                # All five NYC counties — matches the `tiger_county_fips` default.
-                "tiger_county_fips": ["061", "005", "047", "081", "085"],
                 "tiger_data_dir": tiger_cache_dir,
-                "osm_url": ("https://download.geofabrik.de/north-america/us/new-york-260501.osm.pbf"),
+                "osm_snapshot": "260501",
                 "osm_data_dir": osm_cache_dir,
                 "conn": conn,
             },

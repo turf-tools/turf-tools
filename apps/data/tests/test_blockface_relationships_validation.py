@@ -37,6 +37,7 @@ import pytest
 import duckdb
 from src.dags.tiger import blockface_unpivoted, tiger_addrfeat_raw, tiger_edges_raw
 from src.dags.topology import blockface_relationships
+from src.models import GeoExtent
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "sample-turf-east-village.json"
 
@@ -70,8 +71,9 @@ def setup(tiger_cache_dir):
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/voter.ducklake' AS ducklake (DATA_PATH '{tmpdir}/voter_data/')")
         conn.execute("USE ducklake")
 
-        addrfeat = tiger_addrfeat_raw("2024", "36", ["061"], tiger_cache_dir, conn)
-        edges = tiger_edges_raw("2024", "36", ["061"], tiger_cache_dir, conn)
+        manhattan = GeoExtent(counties=(("36", "061"),))
+        addrfeat = tiger_addrfeat_raw("2024", manhattan, tiger_cache_dir, conn)
+        edges = tiger_edges_raw("2024", manhattan, tiger_cache_dir, conn)
         unpivoted = blockface_unpivoted(addrfeat, edges, conn)
         rels = blockface_relationships(unpivoted, edges, conn, ["10003", "10009"])
 
