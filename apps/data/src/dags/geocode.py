@@ -33,6 +33,7 @@ from src.addressing import (
     tokenize_street_sql,
 )
 from src.models import TableRef
+from src.projection import utm_crs_sql
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 
@@ -40,7 +41,7 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
 
 
-# Geometric constants for road-projected positioning (meters, UTM-18N).
+# Geometric constants for road-projected positioning (metres, in the blockface's UTM zone).
 #
 # `MIN_BUILDING_SPACING_M` — minimum desired along-line distance between
 # distinct buildings on the same blockface side. The shove logic tries to
@@ -195,27 +196,31 @@ def refined_positions(
 
     print("  computing fractions + final positions…")
     t0 = time.time()
-    # All math in UTM-18N. ST_LineLocatePoint in geographic degrees gives
-    # a non-perpendicular foot on non-cardinal streets — the rotated
-    # grid skews along-street by up to ~20% of the perpendicular offset.
+    # All math in the blockface's UTM zone (`crs`). ST_LineLocatePoint in
+    # geographic degrees gives a non-perpendicular foot on non-cardinal
+    # streets — the rotated grid skews along-street by up to ~20% of the
+    # perpendicular offset.
+    bf_crs = utm_crs_sql("ST_X(ST_Centroid(bf_geom))")
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         -- Pre-compute the UTM-transformed geometry and OSM projection
         -- fraction once per voter. Doing this up-front lets us route
         -- clamping-OSM voters to the OSM-centroid branch before they
         -- enter the projection/shove pipeline.
-        WITH voter_geo AS (
+        WITH voter_crs AS (
+            SELECT *, {bf_crs} AS crs FROM _voter_with_osm
+        ),
+        voter_geo AS (
             SELECT
                 external_id, blockface_id, bf_side, tiger_line_id,
                 house_num_prefix, person_house_number, half_code,
-                osm_lat, osm_lon, osm_street, osm_housenumber, in_complex,
-                ST_Transform(bf_geom, 'OGC:CRS84', 'EPSG:32618') AS bf_m,
+                osm_lat, osm_lon, osm_street, osm_housenumber, in_complex, crs,
+                ST_Transform(bf_geom, 'OGC:CRS84', crs) AS bf_m,
                 CASE WHEN osm_lat IS NOT NULL
-                     THEN ST_Transform(ST_Point(osm_lon, osm_lat),
-                                       'OGC:CRS84', 'EPSG:32618')
+                     THEN ST_Transform(ST_Point(osm_lon, osm_lat), 'OGC:CRS84', crs)
                      ELSE NULL
                 END AS osm_pt_m
-            FROM _voter_with_osm
+            FROM voter_crs
         ),
         with_osm_frac AS (
             SELECT *,
@@ -256,7 +261,7 @@ def refined_positions(
             FROM ranked
         ),
         with_frac AS (
-            SELECT external_id, blockface_id, bf_side, tiger_line_id, bf_m,
+            SELECT external_id, blockface_id, bf_side, tiger_line_id, bf_m, crs,
                 house_rank,
                 CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
                      THEN 'osm_matched' ELSE 'tiger_only'
@@ -285,7 +290,7 @@ def refined_positions(
             -- prevents buildings clustered near the end of a
             -- blockface from all piling at 0.95 when the forward
             -- pass overshoots.
-            SELECT external_id, bf_side, bf_m, position_source,
+            SELECT external_id, bf_side, bf_m, crs, position_source,
                 LEAST(GREATEST(
                     LEAST(
                         MAX(frac - rn * sep_frac)
@@ -317,7 +322,7 @@ def refined_positions(
             )
         ),
         offset_geom AS (
-            SELECT external_id, bf_side, position_source,
+            SELECT external_id, bf_side, crs, position_source,
                 ST_LineInterpolatePoint(bf_m, frac) AS pt_m,
                 ST_X(ST_LineInterpolatePoint(bf_m, LEAST(frac + 0.01, 1.0)))
                   - ST_X(ST_LineInterpolatePoint(bf_m, frac)) AS dx_m,
@@ -337,7 +342,7 @@ def refined_positions(
                     )
                   ELSE pt_m
                   END,
-                  'EPSG:32618', 'OGC:CRS84'
+                  crs, 'OGC:CRS84'
                 ) AS pt_4326
             FROM offset_geom
         )
@@ -505,16 +510,15 @@ def osm_only_matches(
     conn.execute(f"""
         CREATE TABLE {fqn} AS
         WITH distinct_locs AS (
-            SELECT DISTINCT zip5, latitude, longitude
-            FROM _miss_with_osm
+            SELECT zip5, latitude, longitude, {utm_crs_sql("longitude")} AS crs
+            FROM (SELECT DISTINCT zip5, latitude, longitude FROM _miss_with_osm)
         ),
         candidates AS (
             SELECT v.zip5, v.latitude, v.longitude,
                    b.blockface_id,
                    ST_Distance(
-                       ST_Transform(b.geom, 'OGC:CRS84', 'EPSG:32618'),
-                       ST_Transform(ST_Point(v.longitude, v.latitude),
-                                    'OGC:CRS84', 'EPSG:32618')
+                       ST_Transform(b.geom, 'OGC:CRS84', v.crs),
+                       ST_Transform(ST_Point(v.longitude, v.latitude), 'OGC:CRS84', v.crs)
                    ) AS d_m
             FROM distinct_locs v
             JOIN {bf_} b ON b.zip_code = v.zip5
@@ -534,7 +538,8 @@ def osm_only_matches(
         -- snapped side when the zip has no blockface on the other.
         lines AS (
             SELECT blockface_id, ANY_VALUE(tiger_line_id) AS tiger_line_id,
-                   ANY_VALUE(ST_Transform(geom, 'OGC:CRS84', 'EPSG:32618')) AS line_m
+                   ANY_VALUE(ST_Transform(geom, 'OGC:CRS84', {utm_crs_sql("ST_X(ST_Centroid(geom))")})) AS line_m,
+                   ANY_VALUE({utm_crs_sql("ST_X(ST_Centroid(geom))")}) AS crs
             FROM {bf_}
             WHERE blockface_id IN (SELECT blockface_id FROM loc_snaps)
             GROUP BY blockface_id
@@ -545,7 +550,7 @@ def osm_only_matches(
                    ST_LineInterpolatePoint(l.line_m, LEAST(ST_LineLocatePoint(l.line_m, p.pt_m) + 0.02, 1.0)) AS p1
             FROM loc_snaps s
             JOIN lines l USING (blockface_id),
-            LATERAL (SELECT ST_Transform(ST_Point(s.longitude, s.latitude), 'OGC:CRS84', 'EPSG:32618') AS pt_m) p
+            LATERAL (SELECT ST_Transform(ST_Point(s.longitude, s.latitude), 'OGC:CRS84', l.crs) AS pt_m) p
         ),
         sided AS (
             SELECT p.zip5, p.latitude, p.longitude, p.snap_distance_m,

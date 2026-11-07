@@ -3,7 +3,7 @@
 `blockface_final` collapses TIGER addrfeat rows that share
 `(tiger_line_id, side, house_num_prefix, from_house_num, to_house_num)`
 into one row. The canonical `full_name` is the alias that appears most
-often across the dataset (alphabetical tiebreak).
+often in the line's own county (alphabetical tiebreak).
 
 It emits two token columns:
   - `street_tokens_match`  — union of every alias row's tokens
@@ -15,8 +15,8 @@ It emits two token columns:
                               OSM canonical_key lookup so voters at the
                               same building converge on the same OSM record.
 
-These tests build a small synthetic blockface_normalized table by hand
-and run `tiger.blockface_final` against it.
+These tests build small synthetic blockface_normalized and addrfeat
+(line → county) tables by hand and run `tiger.blockface_final` against them.
 """
 
 import pytest
@@ -44,6 +44,13 @@ CREATE TABLE ducklake_geo.tiger.blockface_normalized (
     geom                GEOMETRY
 )
 """
+_ADDRFEAT_DDL = """
+CREATE TABLE ducklake_geo.tiger.addrfeat (
+    tiger_line_id VARCHAR,
+    state_fips    VARCHAR,
+    county_fips   VARCHAR
+)
+"""
 
 
 def _insert_row(
@@ -55,8 +62,9 @@ def _insert_row(
     hn_to: int,
     full_name: str,
     zip_code: str = "10001",
+    county: tuple[str, str] = ("36", "061"),
 ) -> None:
-    """Insert one synthetic blockface_normalized row."""
+    """Insert one synthetic blockface_normalized row, and its line's county."""
     bf_id = f"{tlid}:{side}"
     number_type = (
         "odd"
@@ -76,6 +84,7 @@ def _insert_row(
         """,
         [bf_id, side, hn_from, hn_to, prefix, number_type, zip_code, full_name, tlid, tokens, "n1", "n2"],
     )
+    conn.execute("INSERT INTO ducklake_geo.tiger.addrfeat VALUES (?, ?, ?)", [tlid, *county])
 
 
 @pytest.fixture()
@@ -89,6 +98,7 @@ def bf_conn(dual_conn):
     """
     dual_conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.tiger")
     dual_conn.execute(_BF_NORM_DDL)
+    dual_conn.execute(_ADDRFEAT_DDL)
     # Seed the equivalency-groups table so blockface_final can JOIN on it.
     tiger.address_tokens(conn=dual_conn)
     return dual_conn
@@ -100,6 +110,11 @@ def _run_blockface_final(conn):
         (),
         {"fqn": "ducklake_geo.tiger.blockface_normalized"},
     )()
+    addrfeat_ref = type(
+        "Ref",
+        (),
+        {"fqn": "ducklake_geo.tiger.addrfeat"},
+    )()
     tokens_ref = type(
         "Ref",
         (),
@@ -107,6 +122,7 @@ def _run_blockface_final(conn):
     )()
     return tiger.blockface_final(
         blockface_normalized=norm_ref,
+        tiger_addrfeat_raw=addrfeat_ref,
         address_tokens=tokens_ref,
         conn=conn,
     )
@@ -127,7 +143,7 @@ class TestAliasCollapse:
         assert count == 1, "alias collapse should produce a single row"
 
     def test_canonical_full_name_is_more_frequent_alias(self, bf_conn):
-        """Across the whole dataset, the canonical full_name is the more
+        """Within the line's county, the canonical full_name is the more
         common one. Alphabetical breaks ties."""
         # T1 + T2 both have "7 Av" / "Adam Clayton Powell Jr Blvd" pairings.
         # Add a third T3 also using "7 Av" so it appears 3× total; "Adam
@@ -146,6 +162,30 @@ class TestAliasCollapse:
         names = {r[0] for r in bf_conn.execute(f"SELECT full_name FROM {ref.fqn}").fetchall()}
         # Every collapsed group's canonical_name should be "7 Av".
         assert names == {"7 Av"}
+
+    def test_other_counties_do_not_vote_on_canonical_name(self, bf_conn):
+        """Only names on lines in the block's own county count toward its
+        canonical pick."""
+        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="Malcolm X Blvd")
+        _insert_row(bf_conn, tlid="T1", side="left", prefix="", hn_from=1, hn_to=99, full_name="Lenox Ave")
+        _insert_row(bf_conn, tlid="T2", side="left", prefix="", hn_from=101, hn_to=199, full_name="Malcolm X Blvd")
+        # Two more "Lenox Ave" lines, but in Nassau.
+        for tlid in ("N1", "N2"):
+            _insert_row(
+                bf_conn,
+                tlid=tlid,
+                side="left",
+                prefix="",
+                hn_from=1,
+                hn_to=99,
+                full_name="Lenox Ave",
+                zip_code="11001",
+                county=("36", "059"),
+            )
+
+        ref = _run_blockface_final(bf_conn)
+        name = bf_conn.execute(f"SELECT full_name FROM {ref.fqn} WHERE tiger_line_id = 'T1'").fetchone()[0]
+        assert name == "Malcolm X Blvd"
 
     def test_different_address_ranges_stay_separate(self, bf_conn):
         """Two rows with the same TIGER line + side but different address

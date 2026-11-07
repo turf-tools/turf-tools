@@ -75,20 +75,22 @@ The slug is the URL/SQL-safe identifier stored alongside `organizationId`
 in `organizations` (`packages/db/src/schema/organizations.ts`).
 
 `ducklake_geo` is organization-agnostic — TIGER and OSM data is shared
-across all orgs in the same state.
+across every org and dataset on a deployment. Each import fetches what its
+own addresses need (`tiger.geo_extent`): TIGER per county, OSM per state,
+each loaded once and reused by later imports.
 
 ## The Hamilton modules
 
-| Module       | Role                                                                                     | Output catalog            |
-| ------------ | ---------------------------------------------------------------------------------------- | ------------------------- |
-| `tiger`      | TIGER shapefiles → `blockface_final`                                                     | `ducklake_geo.tiger`      |
-| `osm`        | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `ducklake_geo.osm`        |
-| `matching`   | Voter ↔ TIGER blockface (`persons_best_match`)                                           | `ducklake.{org}`          |
-| `geocode`    | Lat/lon assignment (`refined_positions`, `osm_only_matches`)                             | `ducklake.{org}`          |
-| `assembly`   | Canonical Person record (`canonical_addresses`, `persons_geocoded`, `geocoding_summary`) | `ducklake.{org}`          |
-| `aggregate`  | `persons_geocoded` → `buildings_geocoded` + `doors_geocoded`                             | `ducklake.{org}`          |
-| `boundaries` | Derive polygons (EDs, zips) from voter data + TIGER blocks                               | `ducklake_geo.boundaries` |
-| `quickwit`   | Stream Person records into a Quickwit search index                                       | external                  |
+| Module       | Role                                                                                     | Output catalog       |
+| ------------ | ---------------------------------------------------------------------------------------- | -------------------- |
+| `tiger`      | TIGER shapefiles → `blockface_final`                                                     | `ducklake_geo.tiger` |
+| `osm`        | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `ducklake_geo.osm`   |
+| `matching`   | Voter ↔ TIGER blockface (`persons_best_match`)                                           | `ducklake.{org}`     |
+| `geocode`    | Lat/lon assignment (`refined_positions`, `osm_only_matches`)                             | `ducklake.{org}`     |
+| `assembly`   | Canonical Person record (`canonical_addresses`, `persons_geocoded`, `geocoding_summary`) | `ducklake.{org}`     |
+| `aggregate`  | `persons_geocoded` → `buildings_geocoded` + `doors_geocoded`                             | `ducklake.{org}`     |
+| `boundaries` | Derive polygons (EDs, zips) from voter data + TIGER blocks                               | `ducklake.{schema}`  |
+| `quickwit`   | Stream Person records into a Quickwit search index                                       | external             |
 
 `tiger` and `osm` are symmetric — both extract geographic reference
 data into `ducklake_geo`. `matching`, `geocode`, `assembly`, and
@@ -109,14 +111,18 @@ validates the result. Formats and the testing convention are in
 ### tiger
 
 ```
+persons_validated + zcta_counties → geo_extent ─► (counties to fetch)
+
 tiger_addrfeat_raw ─┐
                     ├─► blockface_unpivoted → blockface_normalized → blockface_final
 tiger_edges_raw  ───┘
 address_tokens ──────────────────────────────────────────► blockface_final
 ```
 
-Downloads TIGER/Line shapefiles per state/county/year, joins them into one
-blockface table. Each TIGER edge has both a left and right side with
+`geo_extent` maps each address's (state, ZIP) to the counties that ZIP
+overlaps, through the Census ZCTA-to-county crosswalk (`zcta_counties`).
+The TIGER loaders download those counties' shapefiles (skipping any
+already loaded) and join them into one blockface table. Each TIGER edge has both a left and right side with
 independent house-number ranges; `blockface_unpivoted` splits each edge
 into two rows (one per side).
 
@@ -138,8 +144,8 @@ into two rows (one per side).
 blockface under multiple names (a street and its commemorative co-name,
 abbreviation variants of the same name, …), those rows share
 `(tlid, side, prefix, from, to)`. `blockface_final` collapses them into
-one row, picking the canonical `full_name` by global frequency across
-the dataset (alphabetical tiebreak).
+one row, picking the canonical `full_name` by its frequency in the
+line's own county (alphabetical tiebreak).
 
 Equivalency expansion uses `EQUIVALENT_TOKEN_GROUPS` from
 `src/addressing.py`. Non-incremental: the collapse needs all rows.
@@ -147,16 +153,17 @@ Equivalency expansion uses `EQUIVALENT_TOKEN_GROUPS` from
 ### osm
 
 ```
-osm_pbf → osm_buildings_polygons    (osmium-derived building polygons + area centroids)
-        → osm_addresses              (raw OSM addressed elements)
-        → osm_landuse_residential    (assembled landuse polygons)
+osm_pbfs → osm_buildings_polygons    (osmium-derived building polygons + area centroids)
+         → osm_addresses              (raw OSM addressed elements)
+         → osm_landuse_residential    (assembled landuse polygons)
 
 osm_addresses + osm_landuse_residential + address_tokens
     → osm_building_lookup            (per-building keyed for fast join)
 ```
 
 Symmetric to `tiger`: extracts OSM reference data into
-`ducklake_geo.osm`. The downstream `geocode` module consumes
+`ducklake_geo.osm`, from the Geofabrik extract of each `geo_extent` state
+not yet loaded (rows carry `state_fips`). The downstream `geocode` module consumes
 `osm_building_lookup` along with `blockface_final` for coordinate
 assignment.
 
@@ -291,7 +298,7 @@ coordinates match within float noise.
 ### boundaries
 
 Loads administrative polygons (NYC Election Districts, ZIP areas, Census
-tracts, etc.) into `ducklake_geo.boundaries.{key_group}`. Three loaders
+tracts, etc.) into the version's `ducklake.{schema}.{key_group}`. Three loaders
 write to the same shape:
 
 - `boundary_from_blocks` (preferred) — union the TIGER census blocks where

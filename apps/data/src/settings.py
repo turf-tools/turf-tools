@@ -69,39 +69,28 @@ class Settings(BaseSettings):
     ducklake_prefix: str = Field(default="ducklake", description="Key prefix for the person lake.")
     ducklake_geo_prefix: str = Field(default="ducklake-geo", description="Key prefix for the geo lake.")
 
-    # TIGER download settings
+    # Reference-data vintages. Each import fetches the counties and states its
+    # own addresses need (`tiger.geo_extent`).
     tiger_year: str = Field(
         default="2024",
         description="TIGER/Line vintage year to download.",
-    )
-    tiger_state_fips: str = Field(
-        default="36",
-        description="State FIPS code for TIGER data (e.g. 36 for New York).",
-    )
-    tiger_county_fips: list[str] = Field(
-        # All five NYC counties: New York (Manhattan), Bronx, Kings (Brooklyn),
-        # Queens, Richmond (Staten Island), so NYC imports have TIGER coverage
-        # for every borough out of the box.
-        default=["061", "005", "047", "081", "085"],
-        description="County FIPS codes within the state (e.g. 061 for New York County/Manhattan).",
     )
     tiger_data_dir: str = Field(
         default="./tiger_cache",
         description="Local directory to cache downloaded TIGER shapefiles.",
     )
 
-    # OSM refinement layer. Pin a Geofabrik Jan-1 snapshot (YY0101 in the
-    # filename): dailies and monthlies rotate out within weeks to months,
-    # while Jan-1 files stay up for years. The cached PBF filename encodes
-    # the version, so re-runs are reproducible. Only read when a deployment
-    # first builds its OSM tables; bumping it doesn't refresh existing ones.
-    osm_url: str = Field(
-        default="https://download.geofabrik.de/north-america/us/new-york-260101.osm.pbf",
-        description="URL of the Geofabrik OSM PBF extract to ingest (date-pinned).",
+    # Pin a Geofabrik Jan-1 snapshot (YYMMDD): dailies and monthlies rotate
+    # out within weeks to months, while Jan-1 files stay up for years. Only
+    # read when a state's OSM tables are first built; bumping it doesn't
+    # refresh states already built.
+    osm_snapshot: str = Field(
+        default="260101",
+        description="Geofabrik snapshot date (YYMMDD) of the per-state OSM extracts to ingest.",
     )
     osm_data_dir: str = Field(
         default="./osm_cache",
-        description="Local directory to cache the downloaded OSM PBF.",
+        description="Local directory to cache downloaded OSM PBFs.",
     )
 
     quickwit_batch_size: int = Field(

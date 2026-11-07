@@ -98,7 +98,9 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
 # Geocode-pipeline outputs, plus `tiger_tabblock_raw` — the census blocks the
 # boundary step unions over (not otherwise built during import) — and
 # `blockface_relationships`, the walkable blockface graph turf cutting reads.
+# `geo_extent` is the counties the boundary step scopes its blocks to.
 _FINAL_VARS = [
+    "geo_extent",
     "persons_geocoded",
     "geocoding_summary",
     "buildings_geocoded",
@@ -141,10 +143,8 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         dag_inputs = {
             "schema": schema,
             "tiger_year": settings.tiger_year,
-            "tiger_state_fips": settings.tiger_state_fips,
-            "tiger_county_fips": settings.tiger_county_fips,
             "tiger_data_dir": settings.tiger_data_dir,
-            "osm_url": settings.osm_url,
+            "osm_snapshot": settings.osm_snapshot,
             "osm_data_dir": settings.osm_data_dir,
             "conn": conn,
         }
@@ -181,7 +181,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
 
         # Build each key group's polygons before finalize, so a `ready` version
         # is always zonable and the map's boundary fetch never 404s. Override the
-        # two heavy inputs with the tables just built so each group runs only the
+        # inputs with what the main run just built so each group runs only the
         # union.
         for source in key_group_sources:
             dr.execute(
@@ -191,10 +191,9 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
                     "conn": conn,
                     "key_group": source["key_group"],
                     "key_expression": source["key_expression"],
-                    "tiger_state_fips": settings.tiger_state_fips,
-                    "tiger_county_fips": settings.tiger_county_fips,
                 },
                 overrides={
+                    "geo_extent": result["geo_extent"],
                     "persons_geocoded": result["persons_geocoded"],
                     "tiger_tabblock_raw": result["tiger_tabblock_raw"],
                 },

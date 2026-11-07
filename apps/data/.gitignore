@@ -26,14 +26,11 @@ tiger_cache/
 # OSM PBF cache (~700 MB; ad-hoc spike work, regeneratable via Geofabrik).
 osm_cache/
 
-# Voter-file fixtures are never committed — they hold real NYS voter data
+# Voter-file fixtures are never committed — they hold real voter data
 # (PII). Local-only; ask a maintainer for the NYC pull the integration
-# test reads.
-fixtures/*.parquet
-fixtures/*.txt
-fixtures/*.json
-# Autocut battery inputs, cut from the voter data; regenerate via `python -m scripts.autocut_fixture`.
-fixtures/autocut/
+# test reads. Autocut battery inputs live here too; regenerate via
+# `python -m scripts.autocut_fixture`.
+fixtures/
 
 # Quickwit local data
 qwdata/

@@ -4,9 +4,13 @@ Parallels `tiger.py`: extracts OSM-derived data into `ducklake_geo`
 for the geocoding pipeline. The actual lat/lon assignment (using
 both TIGER blockfaces and OSM buildings) lives in `geocode.py`.
 
-                ┌─► osm_buildings_polygons   (building polygon centroids)
-    osm_pbf ────┼─► osm_addresses            (addressed OSM elements)
-                └─► osm_landuse_residential  (residential land-use polygons)
+OSM comes in Geofabrik's per-state extracts. Each state the import's
+addresses fall in (`geo_extent`) is built once, tagged `state_fips`, and
+serves every later import that touches it.
+
+                 ┌─► osm_buildings_polygons   (building polygon centroids)
+    osm_pbfs ────┼─► osm_addresses            (addressed OSM elements)
+                 └─► osm_landuse_residential  (residential land-use polygons)
 
     osm_addresses + osm_landuse_residential + address_tokens
         ─► osm_building_lookup               (per-building, keyed for join)
@@ -30,10 +34,67 @@ from src.addressing import (
     street_rewrite_sql,
     tokenize_street_sql,
 )
-from src.models import TableRef
+from src.models import GeoExtent, TableRef
 
 GEO_CATALOG = "ducklake_geo"
 OSM_SCHEMA = "osm"
+
+GEOFABRIK_US_URL = "https://download.geofabrik.de/north-america/us"
+# State FIPS → Geofabrik extract name: the 50 states, DC, and Puerto Rico.
+GEOFABRIK_REGIONS: dict[str, str] = {
+    "01": "alabama",
+    "02": "alaska",
+    "04": "arizona",
+    "05": "arkansas",
+    "06": "california",
+    "08": "colorado",
+    "09": "connecticut",
+    "10": "delaware",
+    "11": "district-of-columbia",
+    "12": "florida",
+    "13": "georgia",
+    "15": "hawaii",
+    "16": "idaho",
+    "17": "illinois",
+    "18": "indiana",
+    "19": "iowa",
+    "20": "kansas",
+    "21": "kentucky",
+    "22": "louisiana",
+    "23": "maine",
+    "24": "maryland",
+    "25": "massachusetts",
+    "26": "michigan",
+    "27": "minnesota",
+    "28": "mississippi",
+    "29": "missouri",
+    "30": "montana",
+    "31": "nebraska",
+    "32": "nevada",
+    "33": "new-hampshire",
+    "34": "new-jersey",
+    "35": "new-mexico",
+    "36": "new-york",
+    "37": "north-carolina",
+    "38": "north-dakota",
+    "39": "ohio",
+    "40": "oklahoma",
+    "41": "oregon",
+    "42": "pennsylvania",
+    "44": "rhode-island",
+    "45": "south-carolina",
+    "46": "south-dakota",
+    "47": "tennessee",
+    "48": "texas",
+    "49": "utah",
+    "50": "vermont",
+    "51": "virginia",
+    "53": "washington",
+    "54": "west-virginia",
+    "55": "wisconsin",
+    "56": "wyoming",
+    "72": "puerto-rico",
+}
 
 
 def _fqn(table: str) -> str:
@@ -49,51 +110,80 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Node 1 – download (or reuse) the OSM PBF
+# Node 1 – download (or reuse) each needed state's PBF
 # ---------------------------------------------------------------------------
 
 
-# The tables built from the PBF; each node below returns early once its table
-# has rows, so the PBF is only read on a deployment's first build.
+# The tables built from the PBFs, one state at a time.
 _PBF_TABLES = ("buildings_polygons", "addresses", "landuse_residential")
 
 
-def _pbf_tables_built(conn: duckdb.DuckDBPyConnection) -> bool:
+def _ensure_state_table(conn: duckdb.DuckDBPyConnection, table: str, columns: str) -> str:
+    """Create `table` with `columns` plus `state_fips`, and return its fqn. A
+    table without `state_fips` can't say which states it holds, so it's
+    dropped and rebuilt from the PBFs."""
+    fqn = _fqn(table)
+    _ensure_schema(conn)
     try:
-        cols = {c[0] for c in conn.execute(f"DESCRIBE {_fqn('buildings_polygons')}").fetchall()}
-        if "geom" in cols:
-            return False  # osm_buildings_polygons drops and rebuilds this layout from the PBF
-        return all(conn.execute(f"SELECT count(*) FROM {_fqn(t)}").fetchone()[0] > 0 for t in _PBF_TABLES)
+        cols = {c[0] for c in conn.execute(f"DESCRIBE {fqn}").fetchall()}
+        if "state_fips" not in cols:
+            conn.execute(f"DROP TABLE {fqn}")
     except duckdb.CatalogException:
-        return False
+        pass  # table doesn't exist yet — fresh install
+    conn.execute(f"CREATE TABLE IF NOT EXISTS {fqn} ({columns}, state_fips VARCHAR)")
+    return fqn
 
 
-def osm_pbf(osm_url: str, osm_data_dir: str, conn: duckdb.DuckDBPyConnection) -> Path:
-    """Download the Geofabrik PBF into ``osm_data_dir`` if not present. Skipped
-    when every PBF-derived table is already built, since nothing will read it."""
+def _states_built(conn: duckdb.DuckDBPyConnection, table: str) -> set[str]:
+    try:
+        return {r[0] for r in conn.execute(f"SELECT DISTINCT state_fips FROM {_fqn(table)}").fetchall()}
+    except (duckdb.CatalogException, duckdb.BinderException):
+        return set()
+
+
+def osm_pbfs(
+    geo_extent: GeoExtent,
+    osm_snapshot: str,
+    osm_data_dir: str,
+    conn: duckdb.DuckDBPyConnection,
+) -> dict[str, Path]:
+    """The Geofabrik PBF of each extent state whose OSM tables aren't all built
+    yet, keyed by state FIPS, downloaded into ``osm_data_dir`` if not present.
+    States already built in every table need no PBF and are left out."""
+    built = set.intersection(*(_states_built(conn, t) for t in _PBF_TABLES))
     cache = Path(osm_data_dir)
     cache.mkdir(parents=True, exist_ok=True)
-    filename = osm_url.rsplit("/", 1)[-1]
-    pbf_path = cache / filename
-    if _pbf_tables_built(conn):
-        print(f"OSM PBF: {filename} not needed, OSM tables already built")
-        return pbf_path
-    if pbf_path.exists():
+    pbfs: dict[str, Path] = {}
+    for state in geo_extent.states:
+        if state in built:
+            continue
+        region = GEOFABRIK_REGIONS.get(state)
+        if region is None:
+            raise ValueError(f"No OpenStreetMap extract is available for state FIPS {state}.")
+        filename = f"{region}-{osm_snapshot}.osm.pbf"
+        pbf_path = cache / filename
+        pbfs[state] = pbf_path
+        if pbf_path.exists():
+            size_mb = pbf_path.stat().st_size / (1024 * 1024)
+            print(f"OSM PBF: {filename} ({size_mb:.1f} MB, cached)")
+            continue
+        url = f"{GEOFABRIK_US_URL}/{filename}"
+        print(f"Downloading OSM PBF: {url}")
+        # Download beside the target and rename, so an interrupted download
+        # never looks cached.
+        partial = pbf_path.with_name(f"{filename}.part")
+        try:
+            urllib.request.urlretrieve(url, partial)
+            partial.rename(pbf_path)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise RuntimeError(
+                    f"OSM snapshot {filename} is no longer on Geofabrik; set osm_snapshot to a newer YY0101 date."
+                ) from exc
+            raise
         size_mb = pbf_path.stat().st_size / (1024 * 1024)
-        print(f"OSM PBF: {filename} ({size_mb:.1f} MB, cached)")
-        return pbf_path
-    print(f"Downloading OSM PBF: {osm_url}")
-    try:
-        urllib.request.urlretrieve(osm_url, pbf_path)
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            raise RuntimeError(
-                f"OSM snapshot {filename} is no longer on Geofabrik; point osm_url at a newer YY0101 snapshot."
-            ) from exc
-        raise
-    size_mb = pbf_path.stat().st_size / (1024 * 1024)
-    print(f"  done ({size_mb:.1f} MB)")
-    return pbf_path
+        print(f"  done ({size_mb:.1f} MB)")
+    return pbfs
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +204,7 @@ def _require_osmium() -> str:
 
 
 def osm_buildings_polygons(
-    osm_pbf: Path,
+    osm_pbfs: dict[str, Path],
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Building polygons with area-weighted centroids.
@@ -128,110 +218,104 @@ def osm_buildings_polygons(
     `ST_PointOnSurface` fallback when the centroid lands outside a
     concave polygon (L-buildings, courtyard apartment blocks).
 
-    Two on-disk caches live next to the PBF:
+    Two on-disk caches live next to each PBF:
       - `<stem>-buildings.osm.pbf`     (filtered PBF, building-tagged
                                         ways/relations + their refs)
       - `<stem>-buildings.geojsonseq`  (assembled polygon features)
 
-    Idempotent. Delete the geojsonseq to force re-extraction.
+    Incremental per state: skips states already loaded. Delete a
+    geojsonseq to force its re-extraction.
     """
     table = "buildings_polygons"
-    fqn = _fqn(table)
-
-    _ensure_schema(conn)
-
-    # Schema migration: older versions stored the full polygon `geom`,
-    # but nothing downstream reads it (osm_addresses only consumes
-    # centroid_lat/centroid_lon). Drop+rebuild without it so the
-    # DuckLake parquet write doesn't serialize ~1M WKB blobs.
-    try:
-        cols = {c[0] for c in conn.execute(f"DESCRIBE {fqn}").fetchall()}
-        if "geom" in cols:
-            conn.execute(f"DROP TABLE {fqn}")
-    except duckdb.CatalogException:
-        pass  # table doesn't exist yet — fresh install
-
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            osm_id        BIGINT,
-            centroid_lat  DOUBLE,
-            centroid_lon  DOUBLE
-        )
-    """)
-
-    existing = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    if existing > 0:
-        return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))
-
-    filtered_pbf = osm_pbf.with_name(f"{osm_pbf.stem}-buildings.osm.pbf")
-    geojson_path = osm_pbf.with_name(f"{osm_pbf.stem}-buildings.geojsonseq")
-    config_path = osm_pbf.with_name("osmium-export-buildings.json")
-
-    osmium = _require_osmium()
-
-    # osmium-export config (https://docs.osmcode.org/osmium/latest/osmium-export.html):
-    #   - emit @id and @type as the only attributes
-    #   - linear_tags=false: skip linestrings entirely
-    #   - area_tags=true:    export every area in the filtered PBF
-    #   - include_tags=[building]: keep only the `building` tag as a
-    #     property column. Avoids GDAL's case-insensitive collision
-    #     between `fixme` / `FIXME` etc. when loading the geojsonseq.
-    # Always rewrite so config edits take effect on next run.
-    config_path.write_text(
-        json.dumps(
-            {
-                "attributes": {"id": True, "type": True},
-                "linear_tags": False,
-                "area_tags": True,
-                "include_tags": ["building"],
-            }
-        )
+    fqn = _ensure_state_table(
+        conn,
+        table,
+        "osm_id BIGINT, centroid_lat DOUBLE, centroid_lon DOUBLE",
     )
+    built = _states_built(conn, table)
 
-    if not filtered_pbf.exists():
-        print(f"Filtering buildings from {osm_pbf.name}…")
-        subprocess.run(
-            [osmium, "tags-filter", str(osm_pbf), "wr/building", "-o", str(filtered_pbf)],
-            check=True,
-        )
-        size_mb = filtered_pbf.stat().st_size / (1024 * 1024)
-        print(f"  done ({size_mb:.1f} MB)")
+    for state, osm_pbf in osm_pbfs.items():
+        if state in built:
+            continue
+        filtered_pbf = osm_pbf.with_name(f"{osm_pbf.stem}-buildings.osm.pbf")
+        geojson_path = osm_pbf.with_name(f"{osm_pbf.stem}-buildings.geojsonseq")
+        config_path = osm_pbf.with_name("osmium-export-buildings.json")
 
-    if not geojson_path.exists():
-        print("Exporting building polygons to GeoJSONSeq…")
-        subprocess.run(
-            [osmium, "export", str(filtered_pbf), "-c", str(config_path), "-f", "geojsonseq", "-o", str(geojson_path)],
-            check=True,
-        )
-        size_mb = geojson_path.stat().st_size / (1024 * 1024)
-        print(f"  done ({size_mb:.1f} MB)")
-    else:
-        size_mb = geojson_path.stat().st_size / (1024 * 1024)
-        print(f"Building GeoJSONSeq: {geojson_path.name} ({size_mb:.1f} MB, cached)")
+        osmium = _require_osmium()
 
-    print("Loading building polygons + computing centroids…")
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        WITH polys AS (
-            SELECT TRY_CAST("@id" AS BIGINT) AS osm_id, geom
-            FROM ST_Read('{geojson_path}')
-            WHERE geom IS NOT NULL
-        ),
-        centroided AS (
-            SELECT osm_id, geom, ST_Centroid(geom) AS c FROM polys
-        ),
-        anchored AS (
-            SELECT osm_id,
-                CASE WHEN ST_Contains(geom, c) THEN c
-                     ELSE ST_PointOnSurface(geom) END AS pt
-            FROM centroided
+        # osmium-export config (https://docs.osmcode.org/osmium/latest/osmium-export.html):
+        #   - emit @id and @type as the only attributes
+        #   - linear_tags=false: skip linestrings entirely
+        #   - area_tags=true:    export every area in the filtered PBF
+        #   - include_tags=[building]: keep only the `building` tag as a
+        #     property column. Avoids GDAL's case-insensitive collision
+        #     between `fixme` / `FIXME` etc. when loading the geojsonseq.
+        # Always rewrite so config edits take effect on next run.
+        config_path.write_text(
+            json.dumps(
+                {
+                    "attributes": {"id": True, "type": True},
+                    "linear_tags": False,
+                    "area_tags": True,
+                    "include_tags": ["building"],
+                }
+            )
         )
-        SELECT osm_id, ST_Y(pt) AS centroid_lat, ST_X(pt) AS centroid_lon
-        FROM anchored
-        WHERE osm_id IS NOT NULL
-    """)
-    n = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    print(f"  {n:,} building polygons loaded")
+
+        if not filtered_pbf.exists():
+            print(f"Filtering buildings from {osm_pbf.name}…")
+            subprocess.run(
+                [osmium, "tags-filter", str(osm_pbf), "wr/building", "-o", str(filtered_pbf)],
+                check=True,
+            )
+            size_mb = filtered_pbf.stat().st_size / (1024 * 1024)
+            print(f"  done ({size_mb:.1f} MB)")
+
+        if not geojson_path.exists():
+            print("Exporting building polygons to GeoJSONSeq…")
+            subprocess.run(
+                [
+                    osmium,
+                    "export",
+                    str(filtered_pbf),
+                    "-c",
+                    str(config_path),
+                    "-f",
+                    "geojsonseq",
+                    "-o",
+                    str(geojson_path),
+                ],
+                check=True,
+            )
+            size_mb = geojson_path.stat().st_size / (1024 * 1024)
+            print(f"  done ({size_mb:.1f} MB)")
+        else:
+            size_mb = geojson_path.stat().st_size / (1024 * 1024)
+            print(f"Building GeoJSONSeq: {geojson_path.name} ({size_mb:.1f} MB, cached)")
+
+        print("Loading building polygons + computing centroids…")
+        conn.execute(f"""
+            INSERT INTO {fqn}
+            WITH polys AS (
+                SELECT TRY_CAST("@id" AS BIGINT) AS osm_id, geom
+                FROM ST_Read('{geojson_path}')
+                WHERE geom IS NOT NULL
+            ),
+            centroided AS (
+                SELECT osm_id, geom, ST_Centroid(geom) AS c FROM polys
+            ),
+            anchored AS (
+                SELECT osm_id,
+                    CASE WHEN ST_Contains(geom, c) THEN c
+                         ELSE ST_PointOnSurface(geom) END AS pt
+                FROM centroided
+            )
+            SELECT osm_id, ST_Y(pt) AS centroid_lat, ST_X(pt) AS centroid_lon, '{state}' AS state_fips
+            FROM anchored
+            WHERE osm_id IS NOT NULL
+        """)
+        n = conn.execute(f"SELECT count(*) FROM {fqn} WHERE state_fips = ?", [state]).fetchone()[0]
+        print(f"  {n:,} building polygons loaded")
 
     return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))
 
@@ -242,7 +326,7 @@ def osm_buildings_polygons(
 
 
 def osm_addresses(
-    osm_pbf: Path,
+    osm_pbfs: dict[str, Path],
     osm_buildings_polygons: TableRef,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
@@ -254,14 +338,15 @@ def osm_addresses(
     addresses whose polygon couldn't be assembled (multipolygon
     relations not yet supported, or otherwise) are dropped.
 
-    Idempotent: returns the existing TableRef when the table is populated.
+    Incremental per state: skips states already loaded. An element in
+    more than one state's extract gets a row per state;
+    `osm_building_lookup` keeps one per address.
     """
     table = "addresses"
-    fqn = _fqn(table)
-
-    _ensure_schema(conn)
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
+    fqn = _ensure_state_table(
+        conn,
+        table,
+        """
             osm_id        BIGINT,
             kind          VARCHAR,
             housenumber   VARCHAR,
@@ -273,61 +358,61 @@ def osm_addresses(
             building      VARCHAR,
             lat           DOUBLE,
             lon           DOUBLE
-        )
-    """)
-
-    existing = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    if existing > 0:
-        return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))
-
+        """,
+    )
+    built = _states_built(conn, table)
     polys_fqn = osm_buildings_polygons.fqn
 
-    print("Loading addressed OSM elements…")
-    conn.execute(f"""
-        CREATE OR REPLACE TEMP TABLE _addressed AS
-        SELECT
-            id, kind, lat, lon,
-            list_extract(map_extract(tags, 'addr:housenumber'), 1) AS housenumber,
-            list_extract(map_extract(tags, 'addr:street'),       1) AS street,
-            list_extract(map_extract(tags, 'addr:unit'),         1) AS unit,
-            list_extract(map_extract(tags, 'addr:postcode'),     1) AS zip_code,
-            list_extract(map_extract(tags, 'addr:city'),         1) AS city,
-            list_extract(map_extract(tags, 'addr:state'),        1) AS state,
-            list_extract(map_extract(tags, 'building'),          1) AS building
-        FROM ST_ReadOSM('{osm_pbf}')
-        WHERE kind IN ('node', 'way')
-          AND list_extract(map_extract(tags, 'addr:housenumber'), 1) IS NOT NULL
-          AND list_extract(map_extract(tags, 'addr:street'),       1) IS NOT NULL
-    """)
+    for state, osm_pbf in osm_pbfs.items():
+        if state in built:
+            continue
+        print(f"Loading addressed OSM elements from {osm_pbf.name}…")
+        conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _addressed AS
+            SELECT
+                id, kind, lat, lon,
+                list_extract(map_extract(tags, 'addr:housenumber'), 1) AS housenumber,
+                list_extract(map_extract(tags, 'addr:street'),       1) AS street,
+                list_extract(map_extract(tags, 'addr:unit'),         1) AS unit,
+                list_extract(map_extract(tags, 'addr:postcode'),     1) AS zip_code,
+                list_extract(map_extract(tags, 'addr:city'),         1) AS city,
+                list_extract(map_extract(tags, 'addr:state'),        1) AS state,
+                list_extract(map_extract(tags, 'building'),          1) AS building
+            FROM ST_ReadOSM('{osm_pbf}')
+            WHERE kind IN ('node', 'way')
+              AND list_extract(map_extract(tags, 'addr:housenumber'), 1) IS NOT NULL
+              AND list_extract(map_extract(tags, 'addr:street'),       1) IS NOT NULL
+        """)
 
-    print(f"  writing to {fqn}…")
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        SELECT
-            a.id   AS osm_id,
-            a.kind,
-            a.housenumber,
-            a.street,
-            a.unit,
-            a.zip_code,
-            a.city,
-            a.state,
-            a.building,
-            CASE WHEN a.kind = 'way' THEN p.centroid_lat ELSE a.lat END AS lat,
-            CASE WHEN a.kind = 'way' THEN p.centroid_lon ELSE a.lon END AS lon
-        FROM _addressed a
-        LEFT JOIN {polys_fqn} p ON p.osm_id = a.id
-        WHERE (a.kind = 'way'  AND p.centroid_lat IS NOT NULL)
-           OR (a.kind = 'node' AND a.lat IS NOT NULL)
-    """)
+        print(f"  writing to {fqn}…")
+        conn.execute(f"""
+            INSERT INTO {fqn}
+            SELECT
+                a.id   AS osm_id,
+                a.kind,
+                a.housenumber,
+                a.street,
+                a.unit,
+                a.zip_code,
+                a.city,
+                a.state,
+                a.building,
+                CASE WHEN a.kind = 'way' THEN p.centroid_lat ELSE a.lat END AS lat,
+                CASE WHEN a.kind = 'way' THEN p.centroid_lon ELSE a.lon END AS lon,
+                '{state}' AS state_fips
+            FROM _addressed a
+            LEFT JOIN {polys_fqn} p ON p.osm_id = a.id AND p.state_fips = '{state}'
+            WHERE (a.kind = 'way'  AND p.centroid_lat IS NOT NULL)
+               OR (a.kind = 'node' AND a.lat IS NOT NULL)
+        """)
 
-    total = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    by_kind = conn.execute(f"""
-        SELECT kind, count(*) AS n FROM {fqn} GROUP BY 1 ORDER BY n DESC
-    """).fetchall()
-    print(f"  loaded {total:,} OSM addresses:")
-    for kind, n in by_kind:
-        print(f"    {kind:>4}: {n:,}")
+        by_kind = conn.execute(
+            f"SELECT kind, count(*) AS n FROM {fqn} WHERE state_fips = ? GROUP BY 1 ORDER BY n DESC",
+            [state],
+        ).fetchall()
+        print(f"  loaded {sum(n for _, n in by_kind):,} OSM addresses:")
+        for kind, n in by_kind:
+            print(f"    {kind:>4}: {n:,}")
 
     return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))
 
@@ -338,7 +423,7 @@ def osm_addresses(
 
 
 def osm_landuse_residential(
-    osm_pbf: Path,
+    osm_pbfs: dict[str, Path],
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Assembled `landuse=residential` polygons. Way-only — multipolygon
@@ -346,81 +431,72 @@ def osm_landuse_residential(
 
     Used downstream as the test for "is this voter inside a residential
     complex" — the complex-centroid override step that bypasses the
-    blockface projection. Not yet wired through `refined_positions`.
+    blockface projection.
 
-    Idempotent: returns the existing TableRef when the table is populated.
+    Incremental per state: skips states already loaded.
     """
     table = "landuse_residential"
-    fqn = _fqn(table)
+    fqn = _ensure_state_table(conn, table, "landuse_id BIGINT, name VARCHAR, geom GEOMETRY")
+    built = _states_built(conn, table)
 
-    _ensure_schema(conn)
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {fqn} (
-            landuse_id  BIGINT,
-            name        VARCHAR,
-            geom        GEOMETRY
-        )
-    """)
+    for state, osm_pbf in osm_pbfs.items():
+        if state in built:
+            continue
+        print(f"Loading landuse=residential ways from {osm_pbf.name}…")
+        conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _landuse_res AS
+            SELECT id, refs,
+                   list_extract(map_extract(tags, 'name'), 1) AS name
+            FROM ST_ReadOSM('{osm_pbf}') o
+            WHERE kind = 'way'
+              AND list_extract(map_extract(tags, 'landuse'), 1) = 'residential'
+        """)
 
-    existing = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    if existing > 0:
-        return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))
+        print("  reading node positions for landuse refs…")
+        conn.execute("""
+            CREATE OR REPLACE TEMP TABLE _needed_node_ids AS
+            SELECT DISTINCT u.ref_id AS id FROM _landuse_res, UNNEST(refs) AS u(ref_id)
+        """)
+        conn.execute(f"""
+            CREATE OR REPLACE TEMP TABLE _landuse_node_pos AS
+            SELECT o.id, o.lat, o.lon
+            FROM ST_ReadOSM('{osm_pbf}') o
+            JOIN _needed_node_ids n ON n.id = o.id
+            WHERE o.kind = 'node'
+        """)
 
-    print("Loading landuse=residential ways…")
-    conn.execute(f"""
-        CREATE OR REPLACE TEMP TABLE _landuse_res AS
-        SELECT id, refs,
-               list_extract(map_extract(tags, 'name'), 1) AS name
-        FROM ST_ReadOSM('{osm_pbf}') o
-        WHERE kind = 'way'
-          AND list_extract(map_extract(tags, 'landuse'), 1) = 'residential'
-    """)
-
-    print("  reading node positions for landuse refs…")
-    conn.execute("""
-        CREATE OR REPLACE TEMP TABLE _needed_node_ids AS
-        SELECT DISTINCT u.ref_id AS id FROM _landuse_res, UNNEST(refs) AS u(ref_id)
-    """)
-    conn.execute(f"""
-        CREATE OR REPLACE TEMP TABLE _landuse_node_pos AS
-        SELECT o.id, o.lat, o.lon
-        FROM ST_ReadOSM('{osm_pbf}') o
-        JOIN _needed_node_ids n ON n.id = o.id
-        WHERE o.kind = 'node'
-    """)
-
-    print("  assembling polygons (close-aware)…")
-    conn.execute(f"""
-        INSERT INTO {fqn}
-        WITH ordered_pts AS (
-            SELECT lr.id AS landuse_id, lr.name, u.idx, np.lat, np.lon
-            FROM _landuse_res lr,
-                 UNNEST(lr.refs) WITH ORDINALITY AS u(ref_id, idx)
-            JOIN _landuse_node_pos np ON np.id = u.ref_id
-        ),
-        agg AS (
+        print("  assembling polygons (close-aware)…")
+        conn.execute(f"""
+            INSERT INTO {fqn}
+            WITH ordered_pts AS (
+                SELECT lr.id AS landuse_id, lr.name, u.idx, np.lat, np.lon
+                FROM _landuse_res lr,
+                     UNNEST(lr.refs) WITH ORDINALITY AS u(ref_id, idx)
+                JOIN _landuse_node_pos np ON np.id = u.ref_id
+            ),
+            agg AS (
+                SELECT landuse_id, name,
+                       CASE WHEN list_extract(list(lat ORDER BY idx), 1)
+                              = list_extract(list(lat ORDER BY idx DESC), 1)
+                            AND list_extract(list(lon ORDER BY idx), 1)
+                              = list_extract(list(lon ORDER BY idx DESC), 1)
+                            THEN list(ST_Point(lon, lat) ORDER BY idx)
+                            ELSE list_concat(
+                                list(ST_Point(lon, lat) ORDER BY idx),
+                                [list_extract(list(ST_Point(lon, lat) ORDER BY idx), 1)]
+                            )
+                       END AS closed_pts
+                FROM ordered_pts GROUP BY 1, 2
+            )
             SELECT landuse_id, name,
-                   CASE WHEN list_extract(list(lat ORDER BY idx), 1)
-                          = list_extract(list(lat ORDER BY idx DESC), 1)
-                        AND list_extract(list(lon ORDER BY idx), 1)
-                          = list_extract(list(lon ORDER BY idx DESC), 1)
-                        THEN list(ST_Point(lon, lat) ORDER BY idx)
-                        ELSE list_concat(
-                            list(ST_Point(lon, lat) ORDER BY idx),
-                            [list_extract(list(ST_Point(lon, lat) ORDER BY idx), 1)]
-                        )
-                   END AS closed_pts
-            FROM ordered_pts GROUP BY 1, 2
-        )
-        SELECT landuse_id, name,
-               TRY_CAST(ST_MakePolygon(ST_MakeLine(closed_pts)) AS GEOMETRY) AS geom
-        FROM agg
-        WHERE len(closed_pts) >= 4
-    """)
+                   TRY_CAST(ST_MakePolygon(ST_MakeLine(closed_pts)) AS GEOMETRY) AS geom,
+                   '{state}' AS state_fips
+            FROM agg
+            WHERE len(closed_pts) >= 4
+        """)
 
-    total = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    named = conn.execute(f"SELECT count(*) FROM {fqn} WHERE name IS NOT NULL").fetchone()[0]
-    print(f"  loaded {total:,} landuse=residential polygons ({named:,} named)")
+        total, named = conn.execute(f"SELECT count(*), count(name) FROM {fqn} WHERE state_fips = ?", [state]).fetchone()
+        print(f"  loaded {total:,} landuse=residential polygons ({named:,} named)")
 
     return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))
 

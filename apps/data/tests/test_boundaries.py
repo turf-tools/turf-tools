@@ -7,7 +7,7 @@ columns between hold no voters. Only the enclosed centre should backfill.
 from __future__ import annotations
 
 from src.dags.boundaries import boundary_from_blocks
-from src.models import TableRef
+from src.models import GeoExtent, TableRef
 
 
 def _ref(schema: str, table: str) -> TableRef:
@@ -41,8 +41,7 @@ def test_backfill_stays_inside_the_voter_footprint(conn) -> None:
     boundary_from_blocks(
         persons_geocoded=_ref("t", "persons_geocoded"),
         tiger_tabblock_raw=_ref("t", "tiger_tabblock_raw"),
-        tiger_state_fips="36",
-        tiger_county_fips=["061"],
+        geo_extent=GeoExtent(counties=(("36", "061"),)),
         key_group="eds",
         key_expression="precinct",
         schema="t",
