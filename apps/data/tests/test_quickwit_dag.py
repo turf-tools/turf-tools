@@ -44,7 +44,7 @@ _SAMPLE = [
     ("id1", "test", "JANE", "DOE", "1 MAIN STREET", None, "NEW YORK", "NY", "10001", None),
     ("id2", "test", "JOHN", "SMITH", "2 OAK AVENUE", None, "NEW YORK", "NY", "10002", None),
     ("id3", "test", "JANE", "SMITH", "3 ELM STREET", None, "NEW YORK", "NY", "10003", None),
-    ("id4", "test", "MARIA", "GARCIA", "4 PINE STREET", None, "BROOKLYN", "NY", "11201", None),
+    ("id4", "test", "MARIA", "GARCIA", "31-15 STEINWAY STREET", None, "ASTORIA", "NY", "11103", None),
     ("id5", "test", "JOHN", "DOE", "5 MAIN STREET", None, "BROOKLYN", "NY", "11202", None),
 ]
 
@@ -195,6 +195,14 @@ def test_quickwit_index_and_search(dual_conn, tmp_path):
             main_st = qw_client.search(qw_settings, index_id, "address_line_1:MAIN")
             assert main_st["numHits"] == 2
             assert {h["first_name"] for h in main_st["hits"]} == {"JANE", "JOHN"}
+
+            # Lookup input splits like the index's tokenizer, so a hyphenated
+            # house number finds its address.
+            hyphenated = qw_client.search(qw_settings, index_id, qw_client.build_person_query(address="31-15 steinway"))
+            assert [h["external_id"] for h in hyphenated["hits"]] == ["id4"]
+            # A number before the last token is exact: `1` doesn't match the `15` in 31-15.
+            one_street = qw_client.search(qw_settings, index_id, qw_client.build_person_query(address="1 street"))
+            assert [h["external_id"] for h in one_street["hits"]] == ["id1"]
 
             # Alphabetical (last, first) order via the packed u64 sort keys. On
             # 0.8.2 the `-` prefix ascends, so this is A→Z.

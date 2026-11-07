@@ -52,12 +52,20 @@ def _escape_term(term: str) -> str:
 
 
 def _prefix_clause(field: str, value: str) -> str | None:
-    """AND of prefix matches over the value's whitespace tokens, so typing part
-    of a name/address matches (`free` → `freeman`). None if the value is blank."""
-    tokens = [t for t in re.split(r"\s+", value.strip()) if t]
+    """AND of matches over the value's tokens, so typing part of a name/address
+    matches (`free` → `freeman`). Tokens split on anything but letters and
+    digits, as the fields' default tokenizer does at index time, so `32-14`
+    searches `32` and `14`. Words and the last token are prefixes; a number
+    before the last token is exact, so `14` doesn't match `147` and `32` isn't
+    met by `32nd`. None if the value has no tokens."""
+    tokens = re.findall(r"[^\W_]+", value)
     if not tokens:
         return None
-    return " AND ".join(f"{field}:{_escape_term(tok)}*" for tok in tokens)
+    last = len(tokens) - 1
+    return " AND ".join(
+        f"{field}:{_escape_term(tok)}" if tok.isdigit() and i < last else f"{field}:{_escape_term(tok)}*"
+        for i, tok in enumerate(tokens)
+    )
 
 
 def build_person_query(
