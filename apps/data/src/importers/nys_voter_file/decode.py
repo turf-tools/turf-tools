@@ -29,14 +29,12 @@ import shutil
 import tempfile
 import threading
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 from urllib.parse import urlsplit
 
+import duckdb
 from src.importers.base import SourceUnreadableError, raw_column_name
 from src.models import quote_ident
-
-if TYPE_CHECKING:
-    import duckdb
 
 SourceFormat = Literal["txt", "csv", "parquet"]
 
@@ -131,6 +129,11 @@ REQUIRED_COLUMNS: frozenset[str] = frozenset(
         "voterhistory",
     }
 )
+
+# Layout codes that are fixed-width with leading zeros (`03` for the Bronx).
+# A tabular source that stores one as a number has lost those zeros; they're
+# padded back on read.
+ZERO_PADDED_WIDTHS: dict[str, int] = {"countycode": 2, "rzip5": 5, "rzip4": 4}
 
 # Space is the only padding the state uses, but defend against stray tabs / bare
 # CR/LF that survive a malformed export.
@@ -264,15 +267,51 @@ def load_tabular_to_table(
     table_fqn: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> None:
-    """Read a CSV-with-header (UTF-8) or parquet into `table_fqn`, matching its
+    """Read a CSV-with-header (UTF-8 or Latin-1) or parquet into `table_fqn`, matching its
     columns to the layout by `raw_column_name` (so case doesn't matter).
 
     Values get the raw decode's trim + blank-to-NULL; layout fields the source
     leaves out load as NULL, unless the transform needs them. Columns outside the
     layout are ignored."""
-    quoted = sql_str(source)
-    reader = f"read_parquet({quoted})" if fmt == "parquet" else f"read_csv({quoted}, header=true, all_varchar=true)"
-    source_columns = [row[0] for row in conn.execute(f"DESCRIBE SELECT * FROM {reader}").fetchall()]
+    if fmt == "parquet":
+        _load_tabular(f"read_parquet({sql_str(source)})", table_fqn, conn)
+        return
+    # The state's own export is Latin-1; a re-saved CSV may be either.
+    for encoding in ("utf-8", "latin-1"):
+        reader = f"read_csv({sql_str(source)}, header=true, all_varchar=true, encoding={sql_str(encoding)})"
+        try:
+            _load_tabular(reader, table_fqn, conn)
+            return
+        except duckdb.InvalidInputException as exc:
+            if encoding != "utf-8" or "not utf-8 encoded" not in str(exc):
+                raise
+
+
+_NUMERIC_TYPES = ("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT")
+_FRACTIONAL_TYPES = ("FLOAT", "DOUBLE", "DECIMAL")
+
+
+def _text_sql(column: str, source_column: str, source_type: str) -> str:
+    """SQL reading `source_column` as the layout's text. Numbers read as their
+    digits (`3.0` → `3`), and a zero-padded code gets its zeros back."""
+    ident = quote_ident(source_column)
+    if source_type.startswith(_NUMERIC_TYPES):
+        text = f"CAST({ident} AS VARCHAR)"
+    elif source_type.startswith(_FRACTIONAL_TYPES):
+        text = (
+            f"CASE WHEN {ident} = trunc({ident}) THEN CAST(CAST({ident} AS HUGEINT) AS VARCHAR) "
+            f"ELSE CAST({ident} AS VARCHAR) END"
+        )
+    else:
+        return f"CAST({ident} AS VARCHAR)"
+    width = ZERO_PADDED_WIDTHS.get(column)
+    return f"lpad({text}, {width}, '0')" if width else text
+
+
+def _load_tabular(reader: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
+    described = conn.execute(f"DESCRIBE SELECT * FROM {reader}").fetchall()
+    source_columns = [row[0] for row in described]
+    source_types = {row[0]: row[1] for row in described}
 
     # DuckDB suffixes a case-variant duplicate (`rzip5_1`), so names are unique
     # here and a duplicate simply doesn't match.
@@ -296,7 +335,8 @@ def load_tabular_to_table(
 
     trim_set = sql_str(TRIM_CHARS)
     projections = ",\n    ".join(
-        f"NULLIF(trim(CAST({quote_ident(source_by_column[column])} AS VARCHAR), {trim_set}), '') AS {column}"
+        f"NULLIF(trim({_text_sql(column, source_by_column[column], source_types[source_by_column[column]])}, "
+        f"{trim_set}), '') AS {column}"
         if column in source_by_column
         else f"CAST(NULL AS VARCHAR) AS {column}"
         for column in COLUMNS

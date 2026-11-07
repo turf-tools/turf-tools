@@ -11,10 +11,10 @@ Below we document the currently supported importer formats. We plan to expand th
 The NYSVOTER statewide export, laid out per the state's "Data File Layout for voter list exports from NYSVOTER". It includes 47 fields, with a list and order specified in `nys_voter_file/decode.py`. Accepted formats are:
 
 - **`.txt`** — the raw export as the state ships it: no header, every field quoted, Latin-1. Fields are read by position.
-- **`.csv`** — either the raw export (no header, read like the `.txt`) or a UTF-8 CSV whose first row names the columns.
+- **`.csv`** — either the raw export (no header, read like the `.txt`) or a CSV (UTF-8 or Latin-1) whose first row names the columns.
 - **`.parquet`** — columns named after the layout's fields.
 
-Named columns match the layout's raw field names case-insensitively (`RZIP5`, `rzip5`, and `RZip5` are all fine). The fields the transform reads are required; the rest of the layout is optional, and columns outside it are ignored. A file missing required fields fails with the list of what's missing.
+A parquet may store codes as numbers: county and ZIP codes get their leading zeros back. Named columns match the layout's raw field names case-insensitively (`RZIP5`, `rzip5`, and `RZip5` are all fine). The fields the transform reads are required; the rest of the layout is optional, and columns outside it are ignored. A file missing required fields fails with the list of what's missing.
 
 ## Adding an importer
 

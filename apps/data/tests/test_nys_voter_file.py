@@ -155,6 +155,39 @@ def test_optional_layout_fields_may_be_left_out(conn, tmp_path) -> None:
     assert conn.sql(f"SELECT * FROM {VALIDATED} ORDER BY external_id").fetchall() == expected
 
 
+def test_numeric_codes_in_a_parquet_keep_their_leading_zeros(conn, tmp_path) -> None:
+    """A parquet that stores codes as numbers reads back as the layout's text:
+    the Bronx's `3` → `03`, ZIP+4 `123.0` → `0123`, ED `7.0` → `7`."""
+    _load(conn, SAMPLE)
+    numeric = tmp_path / "numeric.parquet"
+    as_numbers = {"countycode": "3::INTEGER", "rzip4": "123::DOUBLE", "ed": "TRY_CAST(ed AS DOUBLE)"}
+    _write_variant(
+        conn,
+        numeric,
+        ", ".join(
+            f'{as_numbers.get(column, column)} AS "{field}"' for field, column in zip(LAYOUT, COLUMNS, strict=True)
+        ),
+    )
+    _load(conn, numeric)
+
+    assert conn.sql(f"SELECT DISTINCT countycode, rzip4 FROM {RAW}").fetchall() == [("03", "0123")]
+    assert {r[0] for r in conn.sql(f"SELECT DISTINCT ed FROM {RAW}").fetchall()} == {"39", "7", "53"}
+    assert conn.sql(f"SELECT DISTINCT county_fips FROM {VALIDATED}").fetchall() == [("36005",)]
+
+
+def test_latin1_csv_with_a_header_reads_like_utf8(conn, tmp_path) -> None:
+    _load(conn, SAMPLE)
+    expected = conn.sql(f"SELECT * FROM {VALIDATED} ORDER BY external_id").fetchall()
+
+    utf8 = tmp_path / "utf8.csv"
+    _write_variant(conn, utf8, _layout_select(only=frozenset(COLUMNS)))
+    latin1 = tmp_path / "latin1.csv"
+    latin1.write_bytes(utf8.read_text(encoding="utf-8").encode("latin-1"))
+    _load(conn, latin1)
+
+    assert conn.sql(f"SELECT * FROM {VALIDATED} ORDER BY external_id").fetchall() == expected
+
+
 def test_csv_header_detection(tmp_path) -> None:
     assert csv_has_header(str(SAMPLE_DATA / "sample.csv"))  # BOM + the layout's own spelling
 
