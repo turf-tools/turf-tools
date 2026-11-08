@@ -1109,10 +1109,15 @@ async def segments_export(req: _SegmentExportRequest):
     background task removes the temp file after the response is sent.
     `X-Export-Rows` carries the row count so the caller can log it.
     """
-    if req.format not in ("csv", "parquet"):
-        raise HTTPException(status_code=400, detail="format must be 'csv' or 'parquet'.")
+    if req.format not in ("csv", "excel", "parquet"):
+        raise HTTPException(status_code=400, detail="format must be 'csv' or 'excel' or 'parquet'.")
 
-    suffix = ".parquet" if req.format == "parquet" else ".csv"
+    if req.format == "excel":
+        suffix = ".xlsx"
+    elif req.format == "parquet":
+        suffix = ".parquet"
+    else:
+        suffix = ".csv"
 
     def work(conn: duckdb.DuckDBPyConnection) -> tuple[str, int]:
         version, catalog = query_context(conn, req.org_slug)
@@ -1131,7 +1136,13 @@ async def segments_export(req: _SegmentExportRequest):
         os.close(fd)
         # `tmp_path` is server-generated and the COPY options are from a fixed
         # allowlist, so the only untrusted input (criteria) stays in bound `params`.
-        copy_opts = "FORMAT parquet" if req.format == "parquet" else "FORMAT csv, HEADER"
+        if req.format == "excel":
+            copy_opts = "FORMAT xlsx, HEADER true"
+        elif req.format == "parquet":
+            copy_opts = "FORMAT parquet"
+        else:
+            copy_opts = "FORMAT csv, HEADER"
+
         copy_sql = f"COPY ({select_sql}) TO '{tmp_path}' ({copy_opts})"
         try:
             row = conn.execute(copy_sql, params).fetchone()
@@ -1143,7 +1154,7 @@ async def segments_export(req: _SegmentExportRequest):
 
     tmp_path, row_count = await run_query(work)
 
-    media = "application/octet-stream" if req.format == "parquet" else "text/csv"
+    media = "application/octet-stream" if req.format == "parquet" or req.format == "excel" else "text/csv"
     return FileResponse(
         tmp_path,
         media_type=media,

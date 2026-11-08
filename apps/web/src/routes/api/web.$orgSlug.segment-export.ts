@@ -26,7 +26,11 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
         }
 
         const segmentId = url.searchParams.get("segmentId");
-        const format = url.searchParams.get("format") === "parquet" ? "parquet" : "csv";
+
+        const format = url.searchParams.get("format");
+        const effectiveFormat = format === "parquet" || format === "excel" ? format : "csv";
+        const formatExtension = effectiveFormat === "excel" ? "xlsx" : effectiveFormat;
+
         if (!segmentId) return new Response("Bad Request", { status: 400 });
 
         const [seg] = await db
@@ -46,7 +50,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
           body: JSON.stringify({
             criteria: seg.criteria ?? { steps: [] },
             orgSlug: context.orgSlug,
-            format,
+            format: effectiveFormat,
           }),
         });
         if (!upstream.ok) {
@@ -60,7 +64,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
             userId: context.user.id,
             orgId: context.organizationId,
             segmentId,
-            format,
+            format: effectiveFormat,
             rows: upstream.headers.get("X-Export-Rows"),
           }),
         );
@@ -68,7 +72,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
         const date = new Date().toISOString().slice(0, 10);
         const safeName = (seg.name || "segment").replace(/[^\w.-]+/g, "_").slice(0, 80);
         return passthrough(upstream, {
-          "Content-Disposition": `attachment; filename="${safeName}-${date}.${format}"`,
+          "Content-Disposition": `attachment; filename="${safeName}-${date}.${formatExtension}"`,
         });
       },
     },
