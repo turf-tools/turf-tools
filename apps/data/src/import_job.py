@@ -26,6 +26,7 @@ from src.importers.base import ImportFilter  # noqa: TC001 — pydantic resolves
 from src.importers.registry import get_importer
 from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContext, job
 from src.quickwit import persons_index_id, recreate_index
+from src.redact import redact_secrets
 from src.settings import get_settings
 from src.tables import dataset_version_schema, drop_schema, ensure_schema, finalize_version
 
@@ -89,7 +90,7 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
     except Exception as exc:
         # Mark the version failed, then re-raise so the job framework records it
         # on the job row too.
-        await _mark_version_failed(payload.dataset_version_id, str(exc))
+        await _mark_version_failed(payload.dataset_version_id, redact_secrets(str(exc)))
         raise
     await ctx.message("Import complete", **result)
     return result
