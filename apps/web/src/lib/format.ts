@@ -44,6 +44,15 @@ export function formatDateTime(value: Date | string | null | undefined, timezone
   return `${formatDate(value, timezone)} ${formatTime(value, timezone)}`;
 }
 
+// "42s", "14m 3s", "1h 12m" — elapsed time at the precision that matters.
+export function formatDuration(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 // MM/DD — for badge-sized contexts (the walked-date chip) where the
 // year is noise.
 export function formatMonthDay(value: Date | string | null | undefined, timezone: string) {

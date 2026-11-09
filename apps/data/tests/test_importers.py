@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from src.importers.base import ImportFilter
+from src.importers.base import ImportFilter, importer_spec
 from src.importers.registry import IMPORTERS
 from src.models import Person
 from src.tables import table_fqn
@@ -43,9 +43,14 @@ class _Progress:
         self.steps += n
 
 
+def _filter_columns(importer_cls) -> set[str]:
+    return {f.column for f in importer_cls.FILTERS}
+
+
 def _load(importer_cls, sample: Path, conn, filter: ImportFilter | None = None) -> _Progress:
     progress = _Progress()
-    importer_cls().load(str(sample), SCHEMA, conn, progress, filter)
+    (source,) = importer_cls.SOURCES
+    importer_cls().load({source.key: str(sample)}, SCHEMA, conn, progress, filter)
     return progress
 
 
@@ -86,7 +91,7 @@ def test_every_manifest_column_is_in_the_output(importer_cls, sample, conn) -> N
 @samples
 def test_filter_columns_exist_on_the_raw_table(importer_cls, sample, conn) -> None:
     _load(importer_cls, sample, conn)
-    assert _columns(conn, "persons_raw") >= importer_cls.FILTER_COLUMNS
+    assert _columns(conn, "persons_raw") >= _filter_columns(importer_cls)
 
 
 @samples
@@ -94,7 +99,7 @@ def test_filter_keeps_exactly_the_matching_rows(importer_cls, sample, conn) -> N
     _load(importer_cls, sample, conn)
     raw = table_fqn(SCHEMA, "persons_raw")
     total = conn.sql(f"SELECT count(*) FROM {raw}").fetchone()[0]
-    for column in sorted(importer_cls.FILTER_COLUMNS):
+    for column in sorted(_filter_columns(importer_cls)):
         value, expected = conn.sql(
             f"SELECT {column}, count(*) FROM {raw} WHERE {column} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 1"
         ).fetchone()
@@ -104,6 +109,16 @@ def test_filter_keeps_exactly_the_matching_rows(importer_cls, sample, conn) -> N
         _load(importer_cls, sample, conn, ImportFilter(column=column, values=[value]))
         kept = conn.sql(f"SELECT count(*) FROM {table_fqn(SCHEMA, 'persons_validated')}").fetchone()[0]
         assert kept == expected, column
+
+
+@importers
+def test_spec_keys_are_unique_and_a_source_is_required(importer_cls) -> None:
+    spec = importer_spec(importer_cls)
+    keys = [s.key for s in spec.sources]
+    assert len(keys) == len(set(keys))
+    assert any(s.required for s in spec.sources)
+    columns = [f.column for f in spec.filters]
+    assert len(columns) == len(set(columns))
 
 
 @importers

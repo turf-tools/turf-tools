@@ -34,5 +34,9 @@ def test_unlisted_column_is_rejected_before_the_source_is_read() -> None:
     # No connection needed: the allowlist check precedes the source check.
     with pytest.raises(InvalidImportFilterError, match="not available"):
         NysVoterFileImporter().load(
-            "/nope/not-here.parquet", "irrelevant", None, _Progress(), ImportFilter(column="status", values=["A"])
+            {"file": "/nope/not-here.parquet"},
+            "irrelevant",
+            None,
+            _Progress(),
+            ImportFilter(column="status", values=["A"]),
         )

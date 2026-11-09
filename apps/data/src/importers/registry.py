@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.importers.base import ImporterSpec, importer_spec
 from src.importers.nys_voter_file import NysVoterFileImporter
 
 if TYPE_CHECKING:
@@ -25,3 +26,8 @@ def get_importer(name: str) -> type[Importer]:
     if importer is None:
         raise ValueError(f"Unknown importer: {name!r} (known: {sorted(IMPORTERS)})")
     return importer
+
+
+def importer_specs() -> list[ImporterSpec]:
+    """Every registered importer as the web offers it, in registry order."""
+    return [importer_spec(importer) for importer in IMPORTERS.values()]

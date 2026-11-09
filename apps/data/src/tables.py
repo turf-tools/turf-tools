@@ -268,7 +268,7 @@ def finalize_version(
         f"CALL postgres_execute('{OPERATIONAL_PG_ALIAS}', $ft$"
         f"UPDATE app.dataset_versions "
         f"SET manifest = '{manifest_literal}'::jsonb, "
-        f"derived_metadata = '{derived_literal}'::jsonb, status = 'ready' "
+        f"derived_metadata = '{derived_literal}'::jsonb, status = 'ready', finished_at = now() "
         f"WHERE dataset_version_id = '{dataset_version_id}'"
         f"$ft$)"
     )

@@ -11,17 +11,30 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "~/components/dropdown-menu";
 import { Input } from "~/components/input";
 import { Rail, useShowArchived } from "~/components/rail";
-import { AVAILABLE_IMPORTERS, importFilterFields } from "~/lib/importers";
+import { cleanSources, findImporter, sourcesComplete, type ImporterSpec } from "~/lib/importers";
 import { datasetsListQuery } from "~/lib/queries/datasets";
+import { importersQuery } from "~/lib/queries/importers";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { useDialogMutation } from "~/lib/use-dialog-mutation";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/data")({
-  loader: ({ context: { queryClient } }) => queryClient.fetchQuery(datasetsListQuery()),
+  loader: ({ context: { queryClient } }) =>
+    Promise.all([
+      queryClient.fetchQuery(datasetsListQuery()),
+      queryClient.fetchQuery(importersQuery()),
+    ]),
   component: DataLayout,
 });
 
@@ -226,9 +239,10 @@ function CreateDatasetDialog({
   takenNames: ReadonlyArray<string>;
   onCreated: (datasetId: string) => void;
 }) {
+  const { data: importers } = useSuspenseQuery(importersQuery());
   const [name, setName] = useState("");
-  const [importer, setImporter] = useState<string>(AVAILABLE_IMPORTERS[0].name);
-  const [source, setSource] = useState("");
+  const [importerName, setImporterName] = useState<string | null>(null);
+  const [sources, setSources] = useState<Record<string, string>>({});
   // Optional fixed slice, like type: a field of the selected importer plus the
   // values to keep, as the file's own codes in comma-separated text, parsed on
   // submit.
@@ -242,8 +256,8 @@ function CreateDatasetDialog({
     setWasOpen(open);
     if (open) {
       setName("");
-      setImporter(AVAILABLE_IMPORTERS[0].name);
-      setSource("");
+      setImporterName(null);
+      setSources({});
       setFilterColumn(null);
       setFilterText("");
       setError(null);
@@ -251,8 +265,18 @@ function CreateDatasetDialog({
     }
   }
 
-  const filterFields = importFilterFields(importer);
-  const filterField = filterFields.find((f) => f.column === filterColumn) ?? null;
+  const importer = importerName ? findImporter(importers, importerName) : null;
+  const typeDropdown = useDeferredRadioDropdown({
+    onCommit: (next) => {
+      if (next === importerName) return;
+      setError(null);
+      setImporterName(next);
+      setSources({});
+      setFilterColumn(null);
+      setFilterText("");
+    },
+  });
+  const filterField = importer?.filters.find((f) => f.column === filterColumn) ?? null;
   const parsedFilterValues = Array.from(
     new Set(
       filterText
@@ -270,8 +294,8 @@ function CreateDatasetDialog({
     mutationFn: () =>
       client.datasets.create({
         name: name.trim(),
-        importer,
-        sourceUri: source.trim(),
+        importer: importerName!,
+        sources: cleanSources(sources),
         importFilter,
       }),
     onSuccess: (res) => {
@@ -289,7 +313,8 @@ function CreateDatasetDialog({
   const duplicate = takenNames.some((n) => n.trim().toLowerCase() === name.trim().toLowerCase());
   const valid =
     name.trim().length > 0 &&
-    source.trim().length > 0 &&
+    importer != null &&
+    sourcesComplete(importer, sources) &&
     (filterField == null || importFilter != null);
 
   return (
@@ -334,81 +359,82 @@ function CreateDatasetDialog({
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium">Type</label>
-            <div className="flex flex-wrap gap-1.5">
-              {AVAILABLE_IMPORTERS.map((imp) => {
-                const sel = importer === imp.name;
-                return (
-                  <button
-                    type="button"
-                    key={imp.name}
-                    onClick={() => {
-                      setImporter(imp.name);
-                      setFilterColumn(null);
-                      setFilterText("");
-                    }}
-                    disabled={pending}
-                    className={cn(
-                      "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                      sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                    )}
-                  >
-                    {imp.label}
-                  </button>
-                );
-              })}
-            </div>
+            <DropdownMenu {...typeDropdown.menu}>
+              <DropdownMenuTrigger
+                disabled={pending}
+                className={cn(
+                  "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
+                  "enabled:hover:bg-muted disabled:cursor-not-allowed",
+                )}
+              >
+                <span className="truncate">{importer?.label ?? "Choose a type..."}</span>
+                <Icon name="chevron-down" className="size-3.5 shrink-0" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[var(--anchor-width)]">
+                <DropdownMenuRadioGroup {...typeDropdown.radio} value={importerName ?? ""}>
+                  {importers.map((imp) => (
+                    <DropdownMenuRadioItem key={imp.name} value={imp.name}>
+                      {imp.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {importer ? (
+              <span className="text-sm text-muted-foreground italic">{importer.description}</span>
+            ) : null}
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Source</label>
-            <Input
-              value={source}
-              onChange={(e) => {
-                setError(null);
-                setSource(e.target.value);
-              }}
-              placeholder="e.g. https://example.com/voters.parquet"
-              disabled={pending}
-            />
-            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
-          </div>
-          {filterFields.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Filter</label>
-              <div className="flex flex-wrap gap-1.5">
-                {[{ column: null, label: "None" }, ...filterFields].map((f) => {
-                  const sel = filterColumn === f.column;
-                  return (
-                    <button
-                      type="button"
-                      key={f.column ?? "none"}
-                      onClick={() => {
+          {importer ? (
+            <>
+              <SourceInputs
+                importer={importer}
+                sources={sources}
+                onChange={(next) => {
+                  setError(null);
+                  setSources(next);
+                }}
+                disabled={pending}
+              />
+              {importer.filters.length > 0 ? (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium">Filter</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[{ column: null, label: "None" }, ...importer.filters].map((f) => {
+                      const sel = filterColumn === f.column;
+                      return (
+                        <button
+                          type="button"
+                          key={f.column ?? "none"}
+                          onClick={() => {
+                            setError(null);
+                            setFilterColumn(f.column);
+                            setFilterText("");
+                          }}
+                          disabled={pending}
+                          className={cn(
+                            "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
+                            sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
+                          )}
+                        >
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {filterField ? (
+                    <Input
+                      value={filterText}
+                      onChange={(e) => {
                         setError(null);
-                        setFilterColumn(f.column);
-                        setFilterText("");
+                        setFilterText(e.target.value);
                       }}
+                      placeholder="single or comma-separated"
                       disabled={pending}
-                      className={cn(
-                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                        sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                      )}
-                    >
-                      {f.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {filterField ? (
-                <Input
-                  value={filterText}
-                  onChange={(e) => {
-                    setError(null);
-                    setFilterText(e.target.value);
-                  }}
-                  placeholder="single or comma-separated"
-                  disabled={pending}
-                />
+                    />
+                  ) : null}
+                </div>
               ) : null}
-            </div>
+            </>
           ) : null}
           {error ? <DialogError error={error} /> : null}
           <div className="mt-2 flex justify-end gap-2">
@@ -421,4 +447,37 @@ function CreateDatasetDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+// One input per file the importer reads. Shared by create and the dataset
+// page's update, where the importer is fixed.
+export function SourceInputs({
+  importer,
+  sources,
+  onChange,
+  disabled,
+  autoFocus,
+}: {
+  importer: ImporterSpec;
+  sources: Record<string, string>;
+  onChange: (sources: Record<string, string>) => void;
+  disabled: boolean;
+  autoFocus?: boolean;
+}) {
+  return importer.sources.map((source, i) => (
+    <div key={source.key} className="flex flex-col gap-1.5">
+      <label className="text-sm font-medium">
+        {source.label}
+        {source.required ? null : <span className="text-muted-foreground"> (optional)</span>}
+      </label>
+      <Input
+        autoFocus={autoFocus && i === 0}
+        value={sources[source.key] ?? ""}
+        onChange={(e) => onChange({ ...sources, [source.key]: e.target.value })}
+        placeholder="https://..."
+        disabled={disabled}
+      />
+      <span className="text-sm text-muted-foreground italic">{source.description}</span>
+    </div>
+  ));
 }

@@ -1,38 +1,54 @@
 import type { ImportFilter } from "@turf-tools/db/schema";
 
+// One file an importer reads.
+export type ImporterSource = {
+  key: string;
+  label: string;
+  description: string;
+  required: boolean;
+};
+
 // A source column an import filter may fix a dataset to. Values are the
 // file's own codes.
-export type ImportFilterField = { column: string; label: string };
+export type ImporterFilter = { column: string; label: string };
 
-// Mirrors `NysVoterFileImporter.FILTER_COLUMNS` (raw column names).
-const NYS_FILTER_FIELDS: ReadonlyArray<ImportFilterField> = [
-  { column: "cd", label: "Congressional district" },
-  { column: "ad", label: "Assembly district" },
-  { column: "sd", label: "Senate district" },
-  { column: "countycode", label: "County" },
-  { column: "rzip5", label: "ZIP code" },
-];
+// An importer as the data server's registry describes it (`GET /importers`,
+// `ImporterSpec` in apps/data/src/importers/base.py).
+export type ImporterSpec = {
+  name: string;
+  label: string;
+  description: string;
+  sources: ImporterSource[];
+  filters: ImporterFilter[];
+};
 
-// Curated importers available in the import picker, mirroring the data-side
-// registry (apps/data/src/importers). Will become an `importers.list` rpc once
-// generic (mapping-driven) importers need runtime config.
-export const AVAILABLE_IMPORTERS = [
-  { name: "nys_voter_file", label: "New York State Voter File", filters: NYS_FILTER_FIELDS },
-] as const;
-
-export type ImporterName = (typeof AVAILABLE_IMPORTERS)[number]["name"];
-
-export function importerLabel(name: string): string {
-  return AVAILABLE_IMPORTERS.find((i) => i.name === name)?.label ?? name;
+export function findImporter(importers: ReadonlyArray<ImporterSpec>, name: string) {
+  return importers.find((i) => i.name === name) ?? null;
 }
 
-export function importFilterFields(importer: string): ReadonlyArray<ImportFilterField> {
-  return AVAILABLE_IMPORTERS.find((i) => i.name === importer)?.filters ?? [];
+export function importerLabel(importers: ReadonlyArray<ImporterSpec>, name: string): string {
+  return findImporter(importers, name)?.label ?? name;
 }
 
 // "Congressional district 13"; null when the dataset imports the whole source.
-export function importFilterLabel(importer: string, filter: ImportFilter | null | undefined) {
+export function importFilterLabel(
+  importer: ImporterSpec | null,
+  filter: ImportFilter | null | undefined,
+) {
   if (!filter || filter.values.length === 0) return null;
-  const field = importFilterFields(importer).find((f) => f.column === filter.column);
+  const field = importer?.filters.find((f) => f.column === filter.column);
   return `${field?.label ?? filter.column} ${filter.values.join(", ")}`;
+}
+
+// Trimmed, non-empty entries only, so an untouched optional input isn't sent.
+export function cleanSources(sources: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(sources)
+      .map(([k, v]) => [k, v.trim()] as const)
+      .filter(([, v]) => v.length > 0),
+  );
+}
+
+export function sourcesComplete(importer: ImporterSpec, sources: Record<string, string>): boolean {
+  return importer.sources.every((s) => !s.required || (sources[s.key] ?? "").trim().length > 0);
 }

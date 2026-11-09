@@ -8,9 +8,9 @@ import {
   organizations,
 } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { AVAILABLE_IMPORTERS, importFilterFields } from "~/lib/importers";
 import type { Manifest } from "~/lib/manifest";
 import { webMut, webPub } from "../context";
+import { checkImportInputs } from "./importers";
 
 const pub = webPub("datasets.read");
 const mut = webMut("datasets.manage");
@@ -50,9 +50,10 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       versionNumber: datasetVersions.versionNumber,
       status: datasetVersions.status,
       error: datasetVersions.error,
-      sourceUri: datasetVersions.sourceUri,
+      sources: datasetVersions.sources,
       derivedMetadata: datasetVersions.derivedMetadata,
       importedAt: datasetVersions.createdAt,
+      finishedAt: datasetVersions.finishedAt,
       archivedAt: datasetVersions.archivedAt,
       importStep: datasetVersions.importStep,
       importTotalSteps: datasetVersions.importTotalSteps,
@@ -304,8 +305,8 @@ export const create = mut
   .input(
     z.object({
       name: z.string().min(1),
-      importer: z.enum(AVAILABLE_IMPORTERS.map((i) => i.name) as [string, ...string[]]),
-      sourceUri: z.string().min(1),
+      importer: z.string().min(1),
+      sources: z.record(z.string(), z.string()),
       importFilter: importFilterSchema.nullish(),
     }),
   )
@@ -314,13 +315,7 @@ export const create = mut
     if (!base)
       throw new ORPCError("BAD_REQUEST", { message: "Name must contain letters or numbers." });
     const importFilter = input.importFilter ?? null;
-    if (
-      importFilter &&
-      !importFilterFields(input.importer).some((f) => f.column === importFilter.column)
-    )
-      throw new ORPCError("BAD_REQUEST", {
-        message: "That filter field isn't available for this dataset type.",
-      });
+    const sources = await checkImportInputs(input.importer, input.sources, importFilter);
 
     // A duplicate name *within the org* almost certainly means "update the
     // existing dataset", so reject with that pointer. Name reuse across orgs
@@ -370,7 +365,7 @@ export const create = mut
           datasetId: ds!.datasetId,
           versionNumber: 1,
           status: "importing",
-          sourceUri: input.sourceUri,
+          sources,
           createdBy: context.user.id,
         })
         .returning({ datasetVersionId: datasetVersions.datasetVersionId });
@@ -381,7 +376,7 @@ export const create = mut
         task: "import_dataset_version",
         payload: {
           dataset_version_id: version!.datasetVersionId,
-          source: input.sourceUri,
+          sources,
           organization_id: context.organizationId,
           filter: importFilter,
         },
@@ -396,12 +391,16 @@ export const create = mut
 // running on its current active version until the new one is Ready and
 // explicitly made active. Blocks a second concurrent import on the same dataset.
 export const update = mut
-  .input(z.object({ datasetId: z.string().uuid(), sourceUri: z.string().min(1) }))
+  .input(z.object({ datasetId: z.string().uuid(), sources: z.record(z.string(), z.string()) }))
   .handler(async ({ context, input }) => {
     return context.db.transaction(async (tx) => {
       // Must be a dataset the org is granted.
       const [grant] = await tx
-        .select({ datasetId: datasets.datasetId, importFilter: datasets.importFilter })
+        .select({
+          datasetId: datasets.datasetId,
+          importer: datasets.importer,
+          importFilter: datasets.importFilter,
+        })
         .from(datasets)
         .innerJoin(datasetOrganizations, eq(datasetOrganizations.datasetId, datasets.datasetId))
         .where(
@@ -412,6 +411,7 @@ export const update = mut
         )
         .limit(1);
       if (!grant) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
+      const sources = await checkImportInputs(grant.importer, input.sources, grant.importFilter);
 
       const versions = await tx
         .select({
@@ -442,8 +442,9 @@ export const update = mut
           .update(datasetVersions)
           .set({
             status: "importing",
-            sourceUri: input.sourceUri,
+            sources,
             error: null,
+            finishedAt: null,
             importStep: null,
             importTotalSteps: null,
             // Reset so the UI times this attempt, not the one that failed.
@@ -475,7 +476,7 @@ export const update = mut
                 datasetId: input.datasetId,
                 versionNumber: (versions[0]?.versionNumber ?? 0) + 1,
                 status: "importing",
-                sourceUri: input.sourceUri,
+                sources,
                 createdBy: context.user.id,
               })
               .returning({ datasetVersionId: datasetVersions.datasetVersionId })
@@ -484,7 +485,7 @@ export const update = mut
         task: "import_dataset_version",
         payload: {
           dataset_version_id: version!.datasetVersionId,
-          source: input.sourceUri,
+          sources,
           organization_id: context.organizationId,
           // The dataset's fixed slice — every version imports the same one.
           filter: grant.importFilter,

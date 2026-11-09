@@ -2,6 +2,7 @@ import { z } from "zod";
 import { memberPub, nativePub } from "./context";
 import * as campaigns from "./web/campaigns";
 import * as datasets from "./web/datasets";
+import * as importers from "./web/importers";
 import * as persons from "./web/persons";
 import * as scripts from "./web/scripts";
 import * as segments from "./web/segments";
@@ -51,6 +52,9 @@ export const webRouter = {
     manifest: datasets.manifest,
     baseFields: datasets.baseFields,
     elections: datasets.elections,
+  },
+  importers: {
+    list: importers.list,
   },
   segments: {
     list: segments.list,

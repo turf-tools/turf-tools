@@ -67,7 +67,8 @@ export const datasetVersions = app.table(
     // Derived-once-at-import cache (see `DerivedMetadata`); read like `manifest`.
     // Holds `rowCount`, `elections`, and `bounds`.
     derivedMetadata: jsonb().$type<DerivedMetadata>(),
-    sourceUri: text(),
+    // Path or URL per file the importer reads, keyed by its source keys.
+    sources: jsonb().$type<Record<string, string>>(),
     // Coarse import progress (step / total), shown as a % while `importing`.
     importStep: integer(),
     importTotalSteps: integer(),
@@ -76,6 +77,8 @@ export const datasetVersions = app.table(
     // import job alongside the status flip.
     error: text(),
     createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+    // When the import became `ready` or `failed`; null while importing.
+    finishedAt: timestamp({ withTimezone: true }),
     createdBy: uuid()
       .notNull()
       .references(() => users.id),

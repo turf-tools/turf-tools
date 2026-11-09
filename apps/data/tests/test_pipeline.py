@@ -87,7 +87,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
         conn.execute(f"ATTACH 'ducklake:{tmpdir}/geo.ducklake' AS ducklake_geo (DATA_PATH '{tmpdir}/geo_data/')")
         conn.execute("USE ducklake")
 
-        persons_validated = NysVoterFileImporter().load(str(VOTER_FILE), "default", conn, NullProgress())
+        persons_validated = NysVoterFileImporter().load({"file": str(VOTER_FILE)}, "default", conn, NullProgress())
         dr = (
             driver.Builder()
             .with_modules(

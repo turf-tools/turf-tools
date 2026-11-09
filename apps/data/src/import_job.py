@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 
 class ImportDatasetVersionPayload(BaseModel):
     dataset_version_id: str
-    source: str  # path or object-storage key of the raw file the importer decodes
+    # Path or URL per file the importer reads, keyed by its `SOURCES` keys.
+    sources: dict[str, str]
     # Org that initiated the import — auto-activated onto the new version when it
     # has no active one.
     organization_id: str
@@ -50,7 +51,7 @@ async def _mark_version_failed(dataset_version_id: str, error: str) -> None:
     DuckLake attach is what failed. Guarded on `importing` so a late write can't
     clobber a version that already finished."""
     await postgres.execute(
-        "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000) "
+        "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000), finished_at = now() "
         "WHERE dataset_version_id = $1::uuid AND status = 'importing'",
         dataset_version_id,
         error,
@@ -66,7 +67,7 @@ async def fail_interrupted_versions() -> None:
     await postgres.execute(
         """
         UPDATE app.dataset_versions
-        SET status = 'failed', error = $1
+        SET status = 'failed', error = $1, finished_at = now()
         WHERE status = 'importing'
           AND NOT EXISTS (
               SELECT 1 FROM app.jobs
@@ -170,7 +171,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 2)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
-        persons_validated = importer.load(payload.source, schema, conn, progress, payload.filter)
+        persons_validated = importer.load(payload.sources, schema, conn, progress, payload.filter)
         decoded = conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()
         log.write(f"Decoded {decoded[0]:,} people from source" if decoded else "Source decoded")
         if decoded is not None and decoded[0] == 0 and payload.filter is not None:

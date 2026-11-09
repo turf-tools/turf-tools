@@ -16,7 +16,14 @@ import os
 from typing import TYPE_CHECKING
 
 import duckdb
-from src.importers.base import ImportFilter, InvalidImportFilterError, SourceUnreadableError, redact_source
+from src.importers.base import (
+    FilterSpec,
+    ImportFilter,
+    SourceSpec,
+    SourceUnreadableError,
+    check_import_inputs,
+    redact_source,
+)
 from src.importers.nys_voter_file.decode import (
     csv_has_header,
     decode_raw_to_table,
@@ -30,6 +37,8 @@ from src.models import Person, TableRef
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.importers.base import Manifest, Progress
 
 _EXPECTED_COLUMNS = set(Person.model_fields.keys())
@@ -63,29 +72,42 @@ class NysVoterFileImporter:
     """Curated importer for the NYS statewide voter file. Implements `Importer`."""
 
     name = "nys_voter_file"
-    PROGRESS_STEPS = 3  # decode, transform, parse+validate
+    LABEL = "New York State Voter File"
+    DESCRIPTION = "The statewide voter file from the New York State Board of Elections."
+    SOURCES = (
+        SourceSpec(
+            key="file",
+            label="Voter file",
+            description="URL of the file (the distributed .txt or a .csv or .parquet with its columns)",
+        ),
+    )
     # Geographic slices worth fixing a dataset to. Election district is left
     # out: it's only unique within a county.
-    FILTER_COLUMNS = frozenset({"cd", "ad", "sd", "countycode", "rzip5"})
+    FILTERS = (
+        FilterSpec(column="cd", label="Congressional district"),
+        FilterSpec(column="ad", label="Assembly district"),
+        FilterSpec(column="sd", label="Senate district"),
+        FilterSpec(column="countycode", label="County"),
+        FilterSpec(column="rzip5", label="ZIP code"),
+    )
+    PROGRESS_STEPS = 3  # decode, transform, parse+validate
 
     def manifest(self) -> Manifest:
         return NYS_MANIFEST
 
     def load(
         self,
-        source: str,
+        sources: Mapping[str, str],
         schema: str,
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
         filter: ImportFilter | None = None,
     ) -> TableRef:
-        """Decode/read `source` → transform → parse voting history → validate.
+        """Decode/read the voter file → transform → parse voting history → validate.
         Returns the `persons_validated` TableRef the shared pipeline reads from.
         Reports one progress step per stage (`PROGRESS_STEPS`)."""
-        if filter is not None and filter.column not in self.FILTER_COLUMNS:
-            raise InvalidImportFilterError(
-                f"Import filter column {filter.column!r} is not available for this dataset type."
-            )
+        check_import_inputs(self, sources, filter)
+        source = sources["file"].strip()
         fmt = source_format(source)
         if fmt is None:
             raise SourceUnreadableError(

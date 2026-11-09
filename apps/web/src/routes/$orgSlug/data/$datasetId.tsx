@@ -37,8 +37,14 @@ import { Input } from "~/components/input";
 import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { formatDateTime } from "~/lib/format";
-import { importerLabel, importFilterLabel } from "~/lib/importers";
+import { formatDateTime, formatDuration } from "~/lib/format";
+import {
+  cleanSources,
+  findImporter,
+  importerLabel,
+  importFilterLabel,
+  sourcesComplete,
+} from "~/lib/importers";
 import { useRememberSelection } from "~/lib/last-selected";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
 import type { CustomFieldType } from "@turf-tools/db/schema";
@@ -48,10 +54,11 @@ import {
   customFieldsQuery,
 } from "~/lib/queries/custom-fields";
 import { datasetsListQuery } from "~/lib/queries/datasets";
+import { importersQuery } from "~/lib/queries/importers";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
-import { RenameDatasetDialog, useDatasetRename } from "./route";
+import { RenameDatasetDialog, SourceInputs, useDatasetRename } from "./route";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   importing: { label: "Importing", color: YELLOW },
@@ -169,6 +176,7 @@ function DatasetEditor({
   const queryClient = useQueryClient();
   // Loader-prefetched; suspense keeps the card from painting incomplete.
   const { data: fields } = useSuspenseQuery(customFieldsQuery(dataset.datasetId));
+  const { data: importers } = useSuspenseQuery(importersQuery());
   // Versions arrive newest-first, so this is the latest ready version. The
   // key flips when an import lands — keep the old list up while the new
   // version's fields load instead of suspending the whole route.
@@ -251,7 +259,7 @@ function DatasetEditor({
 
   return (
     <EditorPage>
-      <EditorHeader title={dataset.name} subtitle={importerLabel(dataset.importer)}>
+      <EditorHeader title={dataset.name} subtitle={importerLabel(importers, dataset.importer)}>
         {allVersionsArchived ? (
           <Button variant="outline" onClick={() => unarchiveAll.mutate()}>
             <Icon name="archive-restore" className="size-4" />
@@ -582,29 +590,52 @@ function DetailsDialog({
   version: VersionRow | null;
   timezone: string;
 }) {
+  const { data: importers } = useSuspenseQuery(importersQuery());
+  const importer = version ? findImporter(importers, version.importer) : null;
+  const sources = Object.entries(version?.sources ?? {});
+  const started = formatDateTime(version?.importedAt, timezone);
+  const elapsed =
+    version?.finishedAt && version.importedAt
+      ? formatDuration(
+          new Date(version.finishedAt).getTime() - new Date(version.importedAt).getTime(),
+        )
+      : null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>Details</DialogTitle>
         <DialogCloseX />
-        <DialogDescription>
-          {version?.status === "ready" ? `Imported v${version.versionNumber} of ` : "Import of "}
-          {version?.name} with type {importerLabel(version?.importer ?? "")}, started{" "}
-          {formatDateTime(version?.importedAt, timezone)}
-          {version?.sourceUri ? (
-            <>
-              {", from "}
-              <span className="break-all">{version.sourceUri}</span>
-            </>
+        <DialogDescription render={<div />} className="flex flex-col gap-2">
+          <p>
+            {version?.status === "ready" ? `Imported v${version.versionNumber} of ` : "Import of "}
+            {version?.name} with type {importerLabel(importers, version?.importer ?? "")}.
+          </p>
+          <p>
+            {version?.status === "importing"
+              ? `Started ${started}, still running.`
+              : version?.finishedAt
+                ? `Started ${started} and ${version.status === "failed" ? "failed" : "finished"} ${formatDateTime(version.finishedAt, timezone)} (duration ${elapsed}).`
+                : `Started ${started}.`}
+          </p>
+          {sources.length > 0 ? (
+            <p className="break-all">
+              {sources.length === 1 ? "Source: " : "Sources: "}
+              {sources.map(([key, value], i) => (
+                <span key={key}>
+                  {i === 0 ? null : i === sources.length - 1 ? " and " : ", "}
+                  {value} (“{importer?.sources.find((s) => s.key === key)?.label ?? key}”)
+                </span>
+              ))}
+              .
+            </p>
           ) : null}
-          .
         </DialogDescription>
         {version?.status === "failed" ? (
           <Callout tone="error">
             {version.error ?? "Failed, but no error message was recorded."}
           </Callout>
         ) : version?.status === "importing" ? (
-          <Callout tone="pending">Import in progress — no errors so far.</Callout>
+          <Callout tone="pending">Import in progress with no errors so far.</Callout>
         ) : (
           <Callout tone="success">Completed with no errors.</Callout>
         )}
@@ -648,6 +679,7 @@ function FieldsCard({
   onSelect: (f: FieldRow) => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: importers } = useSuspenseQuery(importersQuery());
   const [showArchived, setShowArchived] = useState(false);
   const visible = fields.filter((f) => showArchived || !f.isArchived);
   const sorted = [...visible].sort(
@@ -667,8 +699,11 @@ function FieldsCard({
         <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Dataset info</div>
         <div className="flex flex-col gap-1 p-2 pt-1 pb-3">
           {[
-            { label: "Type", value: importerLabel(importer) },
-            { label: "Filter", value: importFilterLabel(importer, importFilter) },
+            { label: "Type", value: importerLabel(importers, importer) },
+            {
+              label: "Filter",
+              value: importFilterLabel(findImporter(importers, importer), importFilter),
+            },
           ]
             .filter((r) => r.value)
             .map((r) => (
@@ -979,21 +1014,23 @@ function UpdateDialog({
   hasReadyVersion: boolean;
   onUpdated: () => void;
 }) {
-  const filterLabel = importFilterLabel(importer, importFilter);
-  const [source, setSource] = useState("");
+  const { data: importers } = useSuspenseQuery(importersQuery());
+  const spec = findImporter(importers, importer);
+  const filterLabel = importFilterLabel(spec, importFilter);
+  const [sources, setSources] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      setSource("");
+      setSources({});
       setError(null);
     }
   }
 
   const update = useMutation({
-    mutationFn: () => client.datasets.update({ datasetId, sourceUri: source.trim() }),
+    mutationFn: () => client.datasets.update({ datasetId, sources: cleanSources(sources) }),
     onSuccess: () => {
       onUpdated();
       onOpenChange(false);
@@ -1002,7 +1039,7 @@ function UpdateDialog({
   });
 
   const pending = update.isPending;
-  const valid = source.trim().length > 0;
+  const valid = spec != null && sourcesComplete(spec, sources);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1021,7 +1058,7 @@ function UpdateDialog({
               available once the import finishes.
             </>
           )}{" "}
-          Type {importerLabel(importer)}
+          Type {spec?.label ?? importer}
           {filterLabel ? <>, filtered to {filterLabel}</> : null}.
         </DialogDescription>
         <form
@@ -1032,20 +1069,20 @@ function UpdateDialog({
           }}
           className="flex flex-col gap-4"
         >
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Source</label>
-            <Input
-              autoFocus
-              value={source}
-              onChange={(e) => {
+          {spec ? (
+            <SourceInputs
+              importer={spec}
+              sources={sources}
+              onChange={(next) => {
                 setError(null);
-                setSource(e.target.value);
+                setSources(next);
               }}
-              placeholder="e.g. https://example.com/voters.parquet"
               disabled={pending}
+              autoFocus
             />
-            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
-          </div>
+          ) : (
+            <Callout tone="error">This dataset type is no longer available.</Callout>
+          )}
           {error ? <DialogError error={error} /> : null}
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>

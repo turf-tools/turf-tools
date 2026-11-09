@@ -32,7 +32,7 @@ class _Progress:
 
 
 def _load(conn, source: Path | str) -> None:
-    NysVoterFileImporter().load(str(source), SCHEMA, conn, _Progress())
+    NysVoterFileImporter().load({"file": str(source)}, SCHEMA, conn, _Progress())
 
 
 def _rows(conn, table: str, key: str) -> dict[str, dict]:

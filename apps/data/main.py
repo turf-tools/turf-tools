@@ -52,6 +52,7 @@ from src.duckdb import (
     s3_secret_expires,
 )
 from src.import_job import fail_interrupted_versions, import_dataset_version
+from src.importers.registry import importer_specs
 from src.job_runner import JobManager
 from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
@@ -271,6 +272,11 @@ async def ducklake_status():
         }
 
     return await run_query(work)
+
+
+@app.get("/importers")
+async def importers():
+    return [spec.model_dump(by_alias=True) for spec in importer_specs()]
 
 
 @app.get("/key-groups/{key_group}/geojson")
