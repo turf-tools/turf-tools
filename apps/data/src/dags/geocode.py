@@ -32,7 +32,8 @@ from src.addressing import (
     street_rewrite_sql,
     tokenize_street_sql,
 )
-from src.models import TableRef
+from src.geo_tables import scoped
+from src.models import GeoExtent, TableRef
 from src.projection import utm_crs_sql
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
@@ -66,6 +67,7 @@ def refined_positions(
     osm_building_lookup: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
     """Per-voter (latitude, longitude, position_source, osm_street).
 
@@ -117,8 +119,8 @@ def refined_positions(
 
     pbm = persons_best_match.fqn
     pd_ = persons_decomposed.fqn
-    bf_ = blockface_final.fqn
-    obl = osm_building_lookup.fqn
+    bf_ = scoped(blockface_final.fqn, geo_extent)
+    obl = scoped(osm_building_lookup.fqn, geo_extent)
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
 
@@ -407,6 +409,7 @@ def osm_only_matches(
     address_tokens: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
     """Voters TIGER couldn't match, rescued by direct OSM lookup.
 
@@ -434,8 +437,8 @@ def osm_only_matches(
 
     pd_ = persons_decomposed.fqn
     pbm = persons_best_match.fqn
-    obl = osm_building_lookup.fqn
-    bf_ = blockface_final.fqn
+    obl = scoped(osm_building_lookup.fqn, geo_extent)
+    bf_ = scoped(blockface_final.fqn, geo_extent)
     tok = address_tokens.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")

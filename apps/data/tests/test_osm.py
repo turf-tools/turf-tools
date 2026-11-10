@@ -43,7 +43,8 @@ def _create_osm_addresses(conn) -> TableRef:
             state         VARCHAR,
             building      VARCHAR,
             lat           DOUBLE,
-            lon           DOUBLE
+            lon           DOUBLE,
+            state_fips    VARCHAR
         )
     """)
     return TableRef(catalog="ducklake_geo", schema="osm", table="addresses", version=0)
@@ -57,7 +58,8 @@ def _create_osm_landuse_residential(conn) -> TableRef:
         CREATE TABLE ducklake_geo.osm.landuse_residential (
             landuse_id  BIGINT,
             name        VARCHAR,
-            geom        GEOMETRY
+            geom        GEOMETRY,
+            state_fips  VARCHAR
         )
     """)
     return TableRef(catalog="ducklake_geo", schema="osm", table="landuse_residential", version=0)
@@ -77,10 +79,11 @@ def _insert_addr(
     city="NEW YORK",
     state="NY",
     building="yes",
+    state_fips="36",
 ):
     conn.execute(
-        "INSERT INTO ducklake_geo.osm.addresses VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [osm_id, kind, housenumber, street, unit, zip_code, city, state, building, lat, lon],
+        "INSERT INTO ducklake_geo.osm.addresses VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        [osm_id, kind, housenumber, street, unit, zip_code, city, state, building, lat, lon, state_fips],
     )
 
 
@@ -241,7 +244,8 @@ class TestResidentialComplex:
                 42, 'Test Complex',
                 ST_GeomFromText('POLYGON((-73.999 40.745, -73.989 40.745,
                                           -73.989 40.755, -73.999 40.755,
-                                          -73.999 40.745))')
+                                          -73.999 40.745))'),
+                '36'
             )
         """)
         ref = _run(conn, addr, res, tokens)
@@ -257,7 +261,8 @@ class TestResidentialComplex:
                 42, 'Test Complex',
                 ST_GeomFromText('POLYGON((-73.999 40.745, -73.989 40.745,
                                           -73.989 40.755, -73.999 40.755,
-                                          -73.999 40.745))')
+                                          -73.999 40.745))'),
+                '36'
             )
         """)
         ref = _run(conn, addr, res, tokens)

@@ -16,7 +16,8 @@ from src.addressing import (
     street_rewrite_sql,
     tokenize_street_sql,
 )
-from src.models import TableRef
+from src.geo_tables import scoped
+from src.models import GeoExtent, TableRef
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
 _GENERIC_SQL = "[" + ", ".join(f"'{t}'" for t in GENERIC_STREET_TOKENS) + "]"
@@ -135,6 +136,7 @@ def persons_candidates(
     blockface_final: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
     """Match each decomposed person address to candidate blockfaces.
 
@@ -188,7 +190,7 @@ def persons_candidates(
     ensure_schema(conn, schema)
     fqn = table_fqn(schema, table_suffix)
     persons_fqn = persons_decomposed.fqn
-    blockface_fqn = blockface_final.fqn
+    blockface_fqn = scoped(blockface_final.fqn, geo_extent)
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
