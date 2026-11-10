@@ -93,8 +93,9 @@ def refined_positions(
          centroid directly. This avoids snapping voters to the wrong
          end of a too-short blockface.
       5. Else (no OSM match): `fraction = rank / (max_rank + 1)` via
-         DENSE_RANK ordering by (prefix, housenumber, half_code) —
-         the original TIGER linear-ramp behavior.
+         DENSE_RANK ordering by (prefix, housenumber, half_code),
+         measured from the end where the side's TIGER range starts —
+         the line's far end when its numbers fall along it.
       6. Road-projected positions (cases 3 and 5) get a perpendicular
          offset (`ROAD_OFFSET_M`) and a 1D shove so distinct buildings
          stay ≥ `MIN_BUILDING_SPACING_M` apart.
@@ -158,6 +159,9 @@ def refined_positions(
             m.external_id, m.blockface_id, m.geom AS bf_geom, m.side AS bf_side,
             m.tiger_line_id,
             m.person_house_number,
+            -- TIGER draws a line in either direction; a range whose numbers
+            -- fall along it (from > to) runs from the line's far end.
+            m.from_house_num > m.to_house_num AS bf_descending,
             COALESCE(d.half_code, '') AS half_code,
             COALESCE(d.house_num_prefix, '') AS house_num_prefix,
             d.zip5,
@@ -213,7 +217,7 @@ def refined_positions(
         WITH voter_geo AS (
             SELECT
                 external_id, blockface_id, bf_side, tiger_line_id,
-                house_num_prefix, person_house_number, half_code,
+                house_num_prefix, person_house_number, half_code, bf_descending,
                 osm_lat, osm_lon, osm_street, osm_housenumber, in_complex, crs,
                 ST_Transform(bf_geom, 'OGC:CRS84', crs) AS bf_m,
                 CASE WHEN osm_lat IS NOT NULL
@@ -257,18 +261,24 @@ def refined_positions(
         ),
         fracced AS (
             SELECT *,
-                MAX(house_rank) OVER (PARTITION BY tiger_line_id, bf_side) AS max_rank
+                MAX(house_rank) OVER (PARTITION BY tiger_line_id, bf_side) AS max_rank,
+                -- A side whose ranges mostly descend along the line ramps
+                -- from its far end, so house numbers run the way TIGER says.
+                AVG(bf_descending::INT) OVER (PARTITION BY tiger_line_id, bf_side) > 0.5
+                    AS side_descending
             FROM ranked
         ),
         with_frac AS (
             SELECT external_id, blockface_id, bf_side, tiger_line_id, bf_m, crs,
-                house_rank,
+                house_rank, side_descending,
                 CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
                      THEN 'osm_matched' ELSE 'tiger_only'
                 END AS position_source,
                 LEAST(GREATEST(
                     CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
                          THEN osm_frac
+                         WHEN side_descending
+                         THEN 1.0 - house_rank::DOUBLE / (1 + max_rank)
                          ELSE house_rank::DOUBLE / (1 + max_rank)
                     END,
                     0.05
@@ -314,7 +324,10 @@ def refined_positions(
                         SELECT *,
                             DENSE_RANK() OVER (PARTITION BY tiger_line_id,
                                                             bf_side
-                                               ORDER BY frac, house_rank) AS rn,
+                                               ORDER BY frac,
+                                                        CASE WHEN side_descending
+                                                             THEN -house_rank
+                                                             ELSE house_rank END) AS rn,
                             ST_Length(bf_m) AS bf_len_m
                         FROM with_frac
                     )

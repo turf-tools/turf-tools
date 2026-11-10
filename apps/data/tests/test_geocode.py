@@ -209,14 +209,16 @@ def _insert_best_match(
     side="left",
     tiger_line_id=None,
     bf_geom="LINESTRING(0 0, 0 0.01)",
+    from_hn=1,
+    to_hn=199,
 ):
     if tiger_line_id is None:
         tiger_line_id = blockface_id.split(":")[0]
     conn.execute(
         f"INSERT INTO {table_fqn(ORG, 'persons_best_match')} VALUES "
-        "(?, ?, ?, ?, 1, 199, ?, ?, 'n1', 'n2', "
+        "(?, ?, ?, ?, ?, ?, ?, ?, 'n1', 'n2', "
         f"ST_GeomFromText('{bf_geom}'), ?, 2)",
-        [eid, blockface_id, tiger_line_id, side, prefix, full_name, hn],
+        [eid, blockface_id, tiger_line_id, side, from_hn, to_hn, prefix, full_name, hn],
     )
 
 
@@ -378,6 +380,30 @@ class TestRefinedPositionsRankPartition:
             for r in conn.execute(f"SELECT external_id, latitude, longitude FROM {ref.fqn}").fetchall()
         }
         assert rows["v1"] != rows["v2"], "voters with distinct house numbers should get distinct positions"
+
+    @pytest.mark.parametrize(("from_hn", "to_hn", "increasing"), [(1, 199, True), (199, 1, False)])
+    def test_ramp_follows_the_range_direction(self, synth, from_hn, to_hn, increasing):
+        """A side whose TIGER range falls along the line (from > to) ramps
+        from the line's far end, so higher numbers sit nearer its start."""
+        conn, pd, pbm, bf, obl, _ = synth
+        bf_geom = "LINESTRING(-74.01 40.75, -73.99 40.75)"  # drawn west to east
+        for eid, hn in (("v1", 101), ("v2", 103), ("v3", 105)):
+            _insert_decomposed(conn, eid, hn, "WEST 42 STREET")
+            _insert_best_match(
+                conn, eid, "T1:left", "West 42 Street", hn, bf_geom=bf_geom, from_hn=from_hn, to_hn=to_hn
+            )
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom=bf_geom)
+        ref = geocode.refined_positions(
+            persons_best_match=pbm,
+            persons_decomposed=pd,
+            blockface_final=bf,
+            osm_building_lookup=obl,
+            schema=ORG,
+            conn=conn,
+        )
+        lons = [r[0] for r in conn.execute(f"SELECT longitude FROM {ref.fqn} ORDER BY external_id").fetchall()]
+        assert lons == sorted(lons, reverse=not increasing)
+        assert len(set(lons)) == 3
 
 
 # ---------------------------------------------------------------------------
