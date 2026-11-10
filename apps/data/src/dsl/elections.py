@@ -45,15 +45,6 @@ VOTING_HISTORY_COLUMN = "voting_history"
 # voter_count). Written by assembly, read back by derived-metadata computation.
 ELECTIONS_TABLE = "elections"
 
-_TYPE_LABELS = {
-    "general": "General",
-    "primary": "Primary",
-    "presidential_primary": "Presidential Primary",
-    "special": "Special",
-    "runoff": "Runoff",
-    "other": "Other",
-}
-
 
 def election_key_sql(entry: str) -> str:
     """DuckDB expression mapping a voting_history STRUCT entry (bound as `entry`)
@@ -63,8 +54,10 @@ def election_key_sql(entry: str) -> str:
 
 
 def election_label(year: int, type_: str) -> str:
-    """Human label for an election, e.g. "2024 General" or "2022 Primary"."""
-    return f"{year} {_TYPE_LABELS.get(type_, type_.replace('_', ' ').title())}"
+    """Human label for an election, e.g. "2024 General" or "2022 Presidential
+    Primary": the type name is its own label, so clients title-case it the same
+    way."""
+    return f"{year} {type_.replace('_', ' ').title()}"
 
 
 def election_year(key: str) -> int:

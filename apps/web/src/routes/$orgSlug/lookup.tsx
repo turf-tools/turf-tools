@@ -62,12 +62,6 @@ const HEADER_COLUMNS = new Set([
   "enrollment",
 ]);
 
-const ELECTION_TYPE_LABELS: Record<string, string> = {
-  general: "General",
-  primary: "Primary",
-  presidential_primary: "Pres. primary",
-};
-
 function Lookup() {
   const { orgSlug } = Route.useParams();
   const { role } = Route.useRouteContext();
@@ -411,7 +405,7 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
       out.push({
         heading: "Voting history",
         rows: voting.map((e) => ({
-          label: `${ELECTION_TYPE_LABELS[e.type] ?? toTitleCase(e.type)} ${e.year}`,
+          label: `${toTitleCase(e.type.replace(/_/g, " "))} ${e.year}`,
           value: e.date ? formatDate(e.date, TZ) : "—",
         })),
       });
