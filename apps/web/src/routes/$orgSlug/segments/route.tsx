@@ -85,7 +85,7 @@ function SegmentsLayout() {
   const goToSegment = (id: string) =>
     navigate({ to: "/$orgSlug/segments/$segmentId", params: { orgSlug, segmentId: id } });
 
-  const downloadExport = (format: "csv" | "parquet") => {
+  const downloadExport = (format: "csv" | "excel" | "parquet") => {
     if (!activeSegmentId) return;
     // Content-Disposition on the /api route makes the browser download rather
     // than navigate, so the SPA stays put.
@@ -95,7 +95,7 @@ function SegmentsLayout() {
   // Split open-boolean from the value so the confirm body keeps its count
   // during the close animation instead of flashing empty.
   const [exportConfirm, setExportConfirm] = useState<{
-    format: "csv" | "parquet";
+    format: "csv" | "excel" | "parquet";
     count: number;
   } | null>(null);
   const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
@@ -103,7 +103,7 @@ function SegmentsLayout() {
   // Fetch the live person count (a cache hit while the editor is open) to gate
   // large exports behind a confirm; small ones download straight away — the
   // browser's own download UI is the only feedback needed.
-  const onExport = async (format: "csv" | "parquet") => {
+  const onExport = async (format: "csv" | "excel" | "parquet") => {
     if (!activeSegmentId) return;
     try {
       const detail = await queryClient.fetchQuery(segmentDetailQuery(activeSegmentId));
@@ -384,6 +384,7 @@ function SegmentsLayout() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => onExport("csv")}>CSV</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("excel")}>Excel</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onExport("parquet")}>Parquet</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
