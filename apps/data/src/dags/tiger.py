@@ -773,6 +773,15 @@ def _blockface_final_sql(norm_fqn: str, addrfeat_fqn: str, tokens_fqn: str, stat
             SELECT DISTINCT tiger_line_id, state_fips, county_fips FROM {addrfeat_fqn}
             WHERE state_fips = '{state}'
         ),
+        -- Each (line, name) in each county the line sits in. Built before the
+        -- county counts are joined, so that join keys on county and name
+        -- together and can't pair every line with every name in its county.
+        line_names AS (
+            SELECT DISTINCT n.tiger_line_id, n.full_name, lc.state_fips, lc.county_fips
+            FROM {norm_fqn} n
+            JOIN line_counties lc USING (tiger_line_id)
+            WHERE n.full_name IS NOT NULL
+        ),
         county_name_freq AS (
             SELECT lc.state_fips, lc.county_fips, n.full_name, count(*) AS freq
             FROM {norm_fqn} n
@@ -782,12 +791,8 @@ def _blockface_final_sql(norm_fqn: str, addrfeat_fqn: str, tokens_fqn: str, stat
         ),
         name_freq AS (
             SELECT ln.tiger_line_id, ln.full_name, sum(f.freq) AS freq
-            FROM (SELECT DISTINCT tiger_line_id, full_name FROM {norm_fqn} WHERE full_name IS NOT NULL) ln
-            JOIN line_counties lc USING (tiger_line_id)
-            JOIN county_name_freq f
-              ON f.state_fips = lc.state_fips
-             AND f.county_fips = lc.county_fips
-             AND f.full_name = ln.full_name
+            FROM line_names ln
+            JOIN county_name_freq f USING (state_fips, county_fips, full_name)
             GROUP BY ALL
         ),
         -- Each blockface_normalized row enriched with the frequency of its
