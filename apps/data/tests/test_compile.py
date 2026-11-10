@@ -20,11 +20,13 @@ from src.dsl.criteria import (
     CanvassResponseFilter,
     Criteria,
     DateRangeFilter,
+    EmailFilter,
     EnumFilter,
     KeyFilter,
     NestedFilter,
     NumberRangeFilter,
     PersonIdSetFilter,
+    PhoneFilter,
     Step,
     TextFilter,
     TextMultiFilter,
@@ -32,6 +34,7 @@ from src.dsl.criteria import (
     VotingHistoryDetailFilter,
     build_field_catalog,
 )
+from src.importers.fl_voter_file.manifest import FL_MANIFEST
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 
 # The compiler is manifest-driven; exercise it against the real NYS field set.
@@ -123,6 +126,57 @@ def test_text_filter_contains_on_top_level_column() -> None:
     )
     assert where == "WHERE last_name ILIKE ?"
     assert params == ["%smith%"]
+
+
+FL_CATALOG = build_field_catalog(FL_MANIFEST)
+
+
+def test_phone_filter_matches_typed_digits_from_the_start() -> None:
+    params: list = []
+    criteria = _narrow(PhoneFilter(kind="phone", key="phone", value="(305) 555-"))
+    where = criteria_to_where(FL_CATALOG, criteria, None, params)
+    assert where == "WHERE starts_with(phone, ?)"
+    assert params == ["305555"]
+
+
+def test_phone_filter_exists_alone_and_with_digits() -> None:
+    params: list = []
+    where = criteria_to_where(FL_CATALOG, _narrow(PhoneFilter(kind="phone", key="phone", exists=True)), None, params)
+    assert where == "WHERE phone IS NOT NULL"
+    assert params == []
+    where = criteria_to_where(
+        FL_CATALOG, _narrow(PhoneFilter(kind="phone", key="phone", value="305", exists=True)), None, params
+    )
+    assert where == "WHERE phone IS NOT NULL AND starts_with(phone, ?)"
+    assert params == ["305"]
+
+
+def test_contact_filter_not_exists_ignores_the_value() -> None:
+    params: list = []
+    criteria = _narrow(EmailFilter(kind="email", key="email", value="@gmail.com", exists=False))
+    assert criteria_to_where(FL_CATALOG, criteria, None, params) == "WHERE email IS NULL"
+    assert params == []
+
+
+def test_email_filter_is_a_case_insensitive_substring() -> None:
+    params: list = []
+    where = criteria_to_where(
+        FL_CATALOG, _narrow(EmailFilter(kind="email", key="email", value=" @Gmail.com ")), None, params
+    )
+    assert where == "WHERE contains(email, ?)"
+    assert params == ["@gmail.com"]
+
+
+def test_contact_filters_without_value_or_toggle_are_inactive() -> None:
+    params: list = []
+    criteria = _narrow(PhoneFilter(kind="phone", key="phone", value=" - "), EmailFilter(kind="email", key="email"))
+    assert criteria_to_where(FL_CATALOG, criteria, None, params) == ""
+    assert params == []
+
+
+def test_phone_filter_on_a_non_phone_field_raises() -> None:
+    with pytest.raises(CriteriaError):
+        criteria_to_where(FL_CATALOG, _narrow(PhoneFilter(kind="phone", key="email", value="305")), None, [])
 
 
 def test_age_range_with_both_bounds() -> None:

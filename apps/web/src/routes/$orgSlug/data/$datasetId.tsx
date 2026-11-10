@@ -76,6 +76,8 @@ const BASE_KIND_LABELS: Record<string, string> = {
   "voting-history-count": "Voting history",
   "voting-history-detail": "Voting history",
   address: "Address",
+  phone: "Phone",
+  email: "Email",
 };
 
 const FIELD_TYPE_META: Record<CustomFieldType, string> = {

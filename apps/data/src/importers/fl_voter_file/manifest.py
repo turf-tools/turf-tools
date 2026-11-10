@@ -54,6 +54,11 @@ FL_MANIFEST = Manifest(
             ),
             FieldDef(column="date_of_birth", label="Age", filter_kind="age-range"),
         ],
+        # Contact
+        [
+            FieldDef(column="phone", label="Phone", filter_kind="phone"),
+            FieldDef(column="email", label="Email", filter_kind="email"),
+        ],
         # Geographic divisions — precinct is the `fl_precincts` boundary key.
         # Precincts carry their county (`DAD-135`).
         [

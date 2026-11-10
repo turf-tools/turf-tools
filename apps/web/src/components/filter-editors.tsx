@@ -21,10 +21,12 @@ import {
   type CanvassOutcomeFilter,
   type Criteria,
   type DateRangeFilter,
+  type EmailFilter,
   type EnumFilter,
   type Filter,
   type FilterDef,
   type NumberRangeFilter,
+  type PhoneFilter,
   type SegmentFilter,
   type TextFilter,
   type TextMultiFilter,
@@ -74,6 +76,10 @@ export function FilterValueEditor({
       ) : null}
       {filter.kind === "text-multi" && def?.kind === "text-multi" ? (
         <TextMultiFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {(filter.kind === "phone" && def?.kind === "phone") ||
+      (filter.kind === "email" && def?.kind === "email") ? (
+        <ContactFilterEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "date-range" && def?.kind === "date-range" ? (
         <DateRangeFilterEditor filter={filter} onChange={onChange} />
@@ -139,6 +145,67 @@ function TextFilterEditor({
         className="h-7 px-2"
         placeholder="any substring"
       />
+    </div>
+  );
+}
+
+// Phone / email: an Exists Yes/No row (neither pressed = either) over a match
+// input (phone matches digits from the start, email anywhere). "No" disables the
+// match — a missing value can't match anything. Same commit-on-blur pattern as
+// TextFilterEditor.
+function ContactFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: PhoneFilter | EmailFilter;
+  onChange: (next: Filter) => void;
+}) {
+  const [local, setLocal] = useState(filter.value);
+  useEffect(() => setLocal(filter.value), [filter.value]);
+  const commit = () => {
+    if (local !== filter.value) onChange({ ...filter, value: local });
+  };
+  const phone = filter.kind === "phone";
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">Exists</span>
+        {[
+          { exists: true, label: "Yes" },
+          { exists: false, label: "No" },
+        ].map((o) => (
+          <Toggle
+            key={o.label}
+            size="sm"
+            variant="outline"
+            pressed={filter.exists === o.exists}
+            onPressedChange={(pressed) =>
+              onChange({ ...filter, exists: pressed ? o.exists : null })
+            }
+            className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+          >
+            {o.label}
+          </Toggle>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-muted-foreground">{phone ? "Starts with" : "Contains"}</span>
+        <Input
+          disabled={filter.exists === false}
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            }
+          }}
+          inputMode={phone ? "tel" : "email"}
+          className="h-7 px-2"
+          placeholder={phone ? "leading digits" : "any substring"}
+        />
+      </div>
     </div>
   );
 }

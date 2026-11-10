@@ -36,6 +36,24 @@ export type TextMultiFilter = {
   values: string[];
 };
 
+// Contact filters — a typed match, an exists constraint, or both. Phone matches
+// digits from the start (punctuation ignored); email is a case-insensitive
+// substring. `exists`: true = has one, false = has none (the match is ignored),
+// null = either.
+export type PhoneFilter = {
+  kind: "phone";
+  key: string;
+  value: string;
+  exists: boolean | null;
+};
+
+export type EmailFilter = {
+  kind: "email";
+  key: string;
+  value: string;
+  exists: boolean | null;
+};
+
 export type DateRangeFilter = {
   kind: "date-range";
   key: string;
@@ -130,6 +148,8 @@ export type Filter =
   | AgeRangeFilter
   | TextFilter
   | TextMultiFilter
+  | PhoneFilter
+  | EmailFilter
   | DateRangeFilter
   | VotingHistoryCountFilter
   | VotingHistoryDetailFilter
@@ -160,6 +180,8 @@ export type FilterDef =
   | { kind: "age-range"; key: string; label: string }
   | { kind: "text"; key: string; label: string }
   | { kind: "text-multi"; key: string; label: string }
+  | { kind: "phone"; key: string; label: string }
+  | { kind: "email"; key: string; label: string }
   | { kind: "date-range"; key: string; label: string }
   | { kind: "voting-history-count"; key: string; label: string }
   | { kind: "voting-history-detail"; key: string; label: string }
@@ -222,6 +244,8 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "age-range") return { kind: "age-range", key: def.key, min: null, max: null };
   if (def.kind === "text") return { kind: "text", key: def.key, value: "" };
   if (def.kind === "text-multi") return { kind: "text-multi", key: def.key, values: [] };
+  if (def.kind === "phone" || def.kind === "email")
+    return { kind: def.kind, key: def.key, value: "", exists: null };
   if (def.kind === "date-range") return { kind: "date-range", key: def.key, min: null, max: null };
   if (def.kind === "address")
     return { kind: "address", key: "address", line1: "", city: "", state: "", zip: "" };
@@ -251,6 +275,8 @@ export function isActiveFilter(f: Filter): boolean {
   if (f.kind === "enum") return f.values.length > 0;
   if (f.kind === "text") return f.value.trim().length > 0;
   if (f.kind === "text-multi") return f.values.length > 0;
+  if (f.kind === "phone") return f.exists != null || f.value.replace(/\D/g, "").length > 0;
+  if (f.kind === "email") return f.exists != null || f.value.trim().length > 0;
   if (f.kind === "age-range") return f.min != null || f.max != null;
   if (f.kind === "date-range") return f.min != null || f.max != null;
   if (f.kind === "address")
