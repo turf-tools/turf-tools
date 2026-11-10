@@ -13,10 +13,11 @@ serves every later import that touches it.
                                   └─► osm_landuse_residential  (residential land-use polygons)
 
     osm_addresses + osm_landuse_residential + address_tokens
-        ─► osm_building_lookup               (per-building, keyed for join)
+        ─► osm_addresses_keyed               (per element, keyed for voter lookup)
 
-`osm_building_lookup` is the consumer-facing output — one row per
-OSM-known building, keyed on `(zip_code, canonical_key, housenumber_norm)`.
+`osm_addresses_keyed` is the consumer-facing output — one row per addressed
+OSM element, keyed on `(canonical_key, housenumber_norm)` with its ZIP when
+it has one. `src/osm_lookup.py` is how geocoding picks a voter's record.
 """
 
 import json
@@ -348,8 +349,8 @@ def osm_addresses(
     relations not yet supported, or otherwise) are dropped.
 
     Incremental per state: skips states already loaded. An element in
-    more than one state's extract gets a row per state;
-    `osm_building_lookup` keeps one per address.
+    more than one state's extract gets a row per state; voter lookups
+    pick one record per address (`src/osm_lookup.py`).
     """
     table = "addresses"
     fqn = _ensure_state_table(
@@ -513,41 +514,42 @@ def osm_landuse_residential(
 
 
 # ---------------------------------------------------------------------------
-# Per-building OSM lookup keyed by (zip, canonical_key, housenumber_norm).
-# Built once per run from osm_addresses + osm_landuse_residential, consumed
-# by refined_positions and osm_only_matches.
+# Addressed OSM elements keyed for voter lookup. Rebuilt per state by every
+# import that touches the state, consumed by refined_positions and
+# osm_only_matches (see src/osm_lookup.py).
 # ---------------------------------------------------------------------------
 
 
-def osm_building_lookup(
+def osm_addresses_keyed(
     osm_addresses: TableRef,
     osm_landuse_residential: TableRef,
     address_tokens: TableRef,
     conn: duckdb.DuckDBPyConnection,
     geo_extent: GeoExtent | None = None,
 ) -> TableRef:
-    """One row per OSM-known building, keyed for fast voter lookup.
+    """Every addressed OSM element with a street, keyed for voter lookup: one
+    row per element, with or without a ZIP.
 
-    Schema: (zip_code, canonical_key, housenumber, housenumber_norm,
-              street, osm_lat, osm_lon, in_residential_complex)
+    Schema: (osm_id, kind, zip_code, canonical_key, housenumber,
+             housenumber_norm, street, lat, lon, in_residential_complex)
 
-    Derives canonical_key by tokenizing the OSM `street` (with
-    STREET_REWRITES applied), equivalency-expanding via
-    `address_tokens`, stripping generics, sorting, and joining with '|'.
-    housenumber_norm strips leading zeros after hyphens then strips
-    hyphens entirely (matches the voter-side normalization).
-    in_residential_complex is true when the building centroid falls
-    inside a landuse=residential polygon.
+    `canonical_key` tokenizes the OSM `street` (with STREET_REWRITES applied),
+    expands it with every `address_tokens` equivalency group it touches, and
+    sorts and `|`-joins the result; every token participates. Voters derive
+    the same key from their matched blockface. `housenumber_norm` strips
+    leading zeros after hyphens, then hyphens (the voter-side normalization).
+    `in_residential_complex` is true when the element's point falls inside a
+    landuse=residential polygon.
 
     Rebuilt per state (`geo_tables.replace_state_rows`) by every import that
     touches the state, so changes to STREET_REWRITES or address_tokens take
     effect on a state's next import. Other states' rows are untouched.
     """
-    table = "building_lookup"
+    table = "addresses_keyed"
     fqn = _fqn(table)
     _ensure_schema(conn)
 
-    print("Building OSM building lookup…")
+    print("Keying OSM addresses…")
     t0 = time.time()
 
     osm = osm_addresses.fqn
@@ -558,110 +560,68 @@ def osm_building_lookup(
         # STREET_REWRITES (see src/addressing.py) normalize OSM's surface
         # form toward TIGER's before tokenizing.
         conn.execute(f"""
-            CREATE OR REPLACE TEMP TABLE _bl_raw_tokens AS
+            CREATE OR REPLACE TEMP TABLE _ak_raw_tokens AS
             SELECT
                 osm_id, kind, housenumber, zip_code, lat, lon, street,
                 {tokenize_street_sql(street_rewrite_sql("street"))} AS raw_tokens
             FROM {osm}
             WHERE state_fips = '{state}'
-              AND zip_code IS NOT NULL
-              AND street   IS NOT NULL
+              AND street IS NOT NULL
         """)
         # Inverted-index equivalency expansion: explode raw_tokens to
-        # (osm_id, token) and address_tokens groups to (group_array, token),
-        # equi-join on token, dedupe by (osm_id, group_array), then flatten
-        # the matched group arrays into `extra`. Replaces a cross-product
-        # filtered by `len(list_intersect(...)) > 0` that doesn't scale.
-        conn.execute(f"""
-            CREATE OR REPLACE TEMP TABLE _bl_keyed AS
+        # (element, token) and address_tokens groups to (group_array, token),
+        # equi-join on token, dedupe by (element, group_array), then flatten
+        # the matched group arrays into `extra`. Elements are (osm_id, kind):
+        # OSM numbers nodes and ways separately, so an id alone can name two.
+        replace_state_rows(
+            conn,
+            fqn,
+            state,
+            f"""
             WITH b_tok AS (
-                SELECT osm_id, t
-                FROM _bl_raw_tokens, UNNEST(raw_tokens) AS u(t)
+                SELECT osm_id, kind, t
+                FROM _ak_raw_tokens, UNNEST(raw_tokens) AS u(t)
             ),
             g_tok AS (
                 SELECT equivalent_tokens, t
                 FROM {tok}, UNNEST(equivalent_tokens) AS u(t)
             ),
             matched AS (
-                SELECT DISTINCT b.osm_id, g.equivalent_tokens
+                SELECT DISTINCT b.osm_id, b.kind, g.equivalent_tokens
                 FROM b_tok b JOIN g_tok g ON g.t = b.t
             ),
             extras AS (
-                SELECT osm_id, flatten(list(equivalent_tokens)) AS extra
+                SELECT osm_id, kind, flatten(list(equivalent_tokens)) AS extra
                 FROM matched
-                GROUP BY osm_id
+                GROUP BY osm_id, kind
             ),
-            combined AS (
+            keyed AS (
                 SELECT
-                    b.osm_id, b.kind, b.housenumber, b.zip_code, b.lat, b.lon, b.street,
-                    list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, []))) AS expanded
-                FROM _bl_raw_tokens b LEFT JOIN extras e USING (osm_id)
-            )
-            SELECT osm_id, kind, housenumber, zip_code, lat, lon, street,
-                   {canonical_key_sql("expanded")} AS canonical_key
-            FROM combined
-            WHERE expanded IS NOT NULL
-        """)
-
-        # Group by housenumber_norm (not the raw `housenumber` string) so
-        # OSM tagging variants for the same physical building — `90-2` /
-        # `90-02`, `1115` / `11-15` — merge into one row.
-        #
-        # Pick the OSM record per group via ROW_NUMBER: prefer way (polygon
-        # centroid) over node (doorway point); break ties on osm_id ASC for
-        # deterministic output.
-        #
-        # in_residential_complex is computed as a one-shot spatial
-        # semi-join rather than per-row correlated EXISTS so DuckDB's
-        # spatial bbox pre-filter applies.
-        replace_state_rows(
-            conn,
-            fqn,
-            state,
-            f"""
-            WITH keyed_norm AS (
-                SELECT osm_id, zip_code, canonical_key, housenumber, street, lat, lon, kind,
-                       {housenumber_norm_sql("housenumber")} AS housenumber_norm
-                FROM _bl_keyed
-                WHERE canonical_key != ''
+                    b.osm_id, b.kind, b.zip_code, b.housenumber, b.street, b.lat, b.lon,
+                    {canonical_key_sql("list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, [])))")}
+                        AS canonical_key,
+                    {housenumber_norm_sql("b.housenumber")} AS housenumber_norm
+                FROM _ak_raw_tokens b LEFT JOIN extras e USING (osm_id, kind)
             ),
-            -- Deterministic pick per (zip, canonical_key, housenumber_norm):
-            -- prefer way over node (way = polygon centroid > doorway point);
-            -- on ties (multiple ways for the same canonical address — rare but
-            -- happens when OSM tags two polygons with the same addr:housenumber),
-            -- break by osm_id ASC. Without the osm_id tiebreaker, arg_max picks
-            -- arbitrarily and the chosen lat/lon can shift between runs.
-            ranked AS (
-                SELECT *,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY zip_code, canonical_key, housenumber_norm
-                        ORDER BY (kind = 'way') DESC, osm_id
-                    ) AS rn
-                FROM keyed_norm
-            ),
-            agg AS (
-                SELECT zip_code, canonical_key, housenumber_norm,
-                       housenumber, lat AS osm_lat, lon AS osm_lon, street
-                FROM ranked
-                WHERE rn = 1
-            ),
+            -- A one-shot spatial semi-join rather than a per-row correlated
+            -- EXISTS, so DuckDB's spatial bbox pre-filter applies.
             in_complex AS (
-                SELECT DISTINCT a.zip_code, a.canonical_key, a.housenumber_norm
-                FROM agg a
+                SELECT DISTINCT k.osm_id, k.kind
+                FROM keyed k
                 JOIN {res} r
                   ON r.state_fips = '{state}'
-                 AND ST_Contains(r.geom, ST_Point(a.osm_lon, a.osm_lat))
+                 AND ST_Contains(r.geom, ST_Point(k.lon, k.lat))
             )
-            SELECT a.zip_code, a.canonical_key, a.housenumber, a.housenumber_norm,
-                   a.street, a.osm_lat, a.osm_lon,
-                   c.zip_code IS NOT NULL AS in_residential_complex,
+            SELECT k.osm_id, k.kind, k.zip_code, k.canonical_key, k.housenumber,
+                   k.housenumber_norm, k.street, k.lat, k.lon,
+                   c.osm_id IS NOT NULL AS in_residential_complex,
                    '{state}' AS state_fips
-            FROM agg a
-            LEFT JOIN in_complex c
-              USING (zip_code, canonical_key, housenumber_norm)
-        """,
+            FROM keyed k
+            LEFT JOIN in_complex c USING (osm_id, kind)
+            WHERE k.canonical_key != ''
+            """,
         )
     n = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
-    print(f"  {n:,} buildings keyed in {time.time() - t0:.1f}s")
+    print(f"  {n:,} OSM addresses keyed in {time.time() - t0:.1f}s")
 
     return TableRef(catalog=GEO_CATALOG, schema=OSM_SCHEMA, table=table, version=_current_version(conn))

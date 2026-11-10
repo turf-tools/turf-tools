@@ -13,7 +13,7 @@ position_source:
   - `tiger_only`      — no OSM match → DENSE_RANK fraction along blockface
 
 This file constructs synthetic upstream tables — `persons_best_match`,
-`persons_decomposed`, `blockface_final`, `osm_building_lookup`,
+`persons_decomposed`, `blockface_final`, `osm_addresses_keyed`,
 `address_tokens` — and asserts each branch is exercised correctly.
 """
 
@@ -102,22 +102,25 @@ def _create_blockface_final(conn) -> TableRef:
     return TableRef(catalog="ducklake_geo", schema="tiger", table="blockface_final", version=0)
 
 
-def _create_osm_building_lookup(conn) -> TableRef:
+def _create_osm_addresses_keyed(conn) -> TableRef:
     conn.execute("CREATE SCHEMA IF NOT EXISTS ducklake_geo.osm")
-    conn.execute("DROP TABLE IF EXISTS ducklake_geo.osm.building_lookup")
+    conn.execute("DROP TABLE IF EXISTS ducklake_geo.osm.addresses_keyed")
     conn.execute("""
-        CREATE TABLE ducklake_geo.osm.building_lookup (
+        CREATE TABLE ducklake_geo.osm.addresses_keyed (
+            osm_id                 BIGINT,
+            kind                   VARCHAR,
             zip_code               VARCHAR,
             canonical_key          VARCHAR,
             housenumber            VARCHAR,
             housenumber_norm       VARCHAR,
             street                 VARCHAR,
-            osm_lat                DOUBLE,
-            osm_lon                DOUBLE,
-            in_residential_complex BOOLEAN
+            lat                    DOUBLE,
+            lon                    DOUBLE,
+            in_residential_complex BOOLEAN,
+            state_fips             VARCHAR
         )
     """)
-    return TableRef(catalog="ducklake_geo", schema="osm", table="building_lookup", version=0)
+    return TableRef(catalog="ducklake_geo", schema="osm", table="addresses_keyed", version=0)
 
 
 def _tokens(conn, s):
@@ -126,7 +129,7 @@ def _tokens(conn, s):
 
 def _expanded_tokens(conn, street):
     """Mirror production: tokenize → equivalency-expand. blockface_final and
-    osm_building_lookup both expand; this helper produces the same array
+    osm_addresses_keyed both expand; this helper produces the same array
     so synthetic test fixtures match what the pipeline would compute."""
     tokens_sql = tokenize_street_sql(street_rewrite_sql("s"))
     return conn.execute(
@@ -151,8 +154,8 @@ def _expanded_tokens(conn, street):
 def _canonical_key(conn, street):
     """Compute the same canonical_key that the production pipeline derives
     on the voter side (`osm_only_matches`) and the OSM side
-    (`osm_building_lookup`). Tests insert this value directly into a
-    hand-built `osm_building_lookup` row.
+    (`osm_addresses_keyed`). Tests insert this value directly into a
+    hand-built `osm_addresses_keyed` row.
     """
     tokens_sql = tokenize_street_sql(street_rewrite_sql("s"))
     return conn.execute(
@@ -185,7 +188,7 @@ def synth(dual_conn):
     pd = _create_persons_decomposed(dual_conn)
     pbm = _create_persons_best_match(dual_conn)
     bf = _create_blockface_final(dual_conn)
-    obl = _create_osm_building_lookup(dual_conn)
+    obl = _create_osm_addresses_keyed(dual_conn)
     tokens = tiger.address_tokens(conn=dual_conn)
     return dual_conn, pd, pbm, bf, obl, tokens
 
@@ -251,10 +254,12 @@ def _insert_osm_building(
     street="Broadway",
     housenumber="100",
     in_complex=False,
+    osm_id=1,
+    kind="way",
 ):
     conn.execute(
-        "INSERT INTO ducklake_geo.osm.building_lookup VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [zip_code, canonical_key, housenumber, housenumber_norm, street, lat, lon, in_complex],
+        "INSERT INTO ducklake_geo.osm.addresses_keyed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '36')",
+        [osm_id, kind, zip_code, canonical_key, housenumber, housenumber_norm, street, lat, lon, in_complex],
     )
 
 
@@ -275,7 +280,7 @@ class TestRefinedPositionsBranches:
             persons_best_match=pbm,
             persons_decomposed=pd,
             blockface_final=bf,
-            osm_building_lookup=obl,
+            osm_addresses_keyed=obl,
             schema=ORG,
             conn=conn,
         )
@@ -371,7 +376,7 @@ class TestRefinedPositionsRankPartition:
             persons_best_match=pbm,
             persons_decomposed=pd,
             blockface_final=bf,
-            osm_building_lookup=obl,
+            osm_addresses_keyed=obl,
             schema=ORG,
             conn=conn,
         )
@@ -397,13 +402,76 @@ class TestRefinedPositionsRankPartition:
             persons_best_match=pbm,
             persons_decomposed=pd,
             blockface_final=bf,
-            osm_building_lookup=obl,
+            osm_addresses_keyed=obl,
             schema=ORG,
             conn=conn,
         )
         lons = [r[0] for r in conn.execute(f"SELECT longitude FROM {ref.fqn} ORDER BY external_id").fetchall()]
         assert lons == sorted(lons, reverse=not increasing)
         assert len(set(lons)) == 3
+
+
+class TestRefinedPositionsNearbyMatch:
+    """A voter with no OSM match in their ZIP takes the address with their
+    street key and number nearest their matched blockface, within
+    `NEARBY_MATCH_M`, whatever ZIP it carries."""
+
+    BF = "LINESTRING(-74.01 40.75, -73.99 40.75)"  # ~1.7 km along 40.75 N
+
+    def _voter(self, conn):
+        _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
+        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100, bf_geom=self.BF)
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom=self.BF)
+        return _canonical_key(conn, "West 42 Street")
+
+    def _run(self, conn, pd, pbm, bf, obl):
+        ref = geocode.refined_positions(
+            persons_best_match=pbm,
+            persons_decomposed=pd,
+            blockface_final=bf,
+            osm_addresses_keyed=obl,
+            schema=ORG,
+            conn=conn,
+        )
+        return conn.execute(f"SELECT position_source, latitude, longitude FROM {ref.fqn}").fetchone()
+
+    def test_address_without_zip_near_the_blockface_matches(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._voter(conn)
+        # ~33 m north of the line.
+        _insert_osm_building(conn, key, "100", lat=40.7503, lon=-74.0, zip_code=None)
+        assert self._run(conn, pd, pbm, bf, obl)[0] == "osm_matched"
+
+    def test_address_with_another_zip_near_the_blockface_matches(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._voter(conn)
+        _insert_osm_building(conn, key, "100", lat=40.7503, lon=-74.0, zip_code="10099")
+        assert self._run(conn, pd, pbm, bf, obl)[0] == "osm_matched"
+
+    def test_address_beyond_the_limit_does_not_match(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._voter(conn)
+        # ~220 m north of the line.
+        _insert_osm_building(conn, key, "100", lat=40.752, lon=-74.0, zip_code=None)
+        assert self._run(conn, pd, pbm, bf, obl)[0] == "tiger_only"
+
+    def test_zip_match_wins_over_a_nearer_address(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._voter(conn)
+        _insert_osm_building(conn, key, "100", lat=40.7509, lon=-74.005, zip_code="10001", osm_id=1)
+        _insert_osm_building(conn, key, "100", lat=40.7501, lon=-74.0, zip_code=None, osm_id=2)
+        source, lat, lon = self._run(conn, pd, pbm, bf, obl)
+        assert source == "osm_matched"
+        # Projected onto the line at the ZIP match's position, not the nearer one's.
+        assert abs(lon - -74.005) < 0.0005
+
+    def test_nearest_address_wins(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._voter(conn)
+        _insert_osm_building(conn, key, "100", lat=40.7508, lon=-74.007, zip_code=None, osm_id=1)
+        _insert_osm_building(conn, key, "100", lat=40.7502, lon=-73.995, zip_code=None, osm_id=2)
+        _, _, lon = self._run(conn, pd, pbm, bf, obl)
+        assert abs(lon - -73.995) < 0.0005
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +482,7 @@ class TestRefinedPositionsRankPartition:
 class TestOsmOnlyMatches:
     def test_voter_without_best_match_recovered_via_osm(self, synth):
         """A voter with no `persons_best_match` row but a hit in
-        `osm_building_lookup` (same canonical_key + housenumber_norm + zip)
+        `osm_addresses_keyed` (same canonical_key + housenumber_norm + zip)
         is rescued and snapped to the nearest blockface in the same zip."""
         conn, pd, pbm, bf, obl, tokens = synth
         # Voter exists in persons_decomposed but NOT in persons_best_match.
@@ -427,7 +495,7 @@ class TestOsmOnlyMatches:
         ref = geocode.osm_only_matches(
             persons_decomposed=pd,
             persons_best_match=pbm,
-            osm_building_lookup=obl,
+            osm_addresses_keyed=obl,
             blockface_final=bf,
             address_tokens=tokens,
             schema=ORG,
@@ -454,7 +522,7 @@ class TestOsmOnlyMatches:
         ref = geocode.osm_only_matches(
             persons_decomposed=pd,
             persons_best_match=pbm,
-            osm_building_lookup=obl,
+            osm_addresses_keyed=obl,
             blockface_final=bf,
             address_tokens=tokens,
             schema=ORG,

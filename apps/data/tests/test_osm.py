@@ -1,9 +1,10 @@
 """Synthetic-data tests for the OSM DAG.
 
-Covers `osm_building_lookup` — the consumer-facing output of the OSM
-graph. We don't exercise PBF parsing or osmium-tool here (that needs a
-real PBF). Instead we hand-build `osm_addresses` + `osm_landuse_residential`
-and run `osm.osm_building_lookup` directly.
+Covers `osm_addresses_keyed` — the consumer-facing output of the OSM
+graph — and the ZIP lookup geocoding reads from it (`src/osm_lookup.py`).
+We don't exercise PBF parsing or osmium-tool here (that needs a real PBF).
+Instead we hand-build `osm_addresses` + `osm_landuse_residential` and run
+`osm.osm_addresses_keyed` directly.
 
 Behaviors locked in:
 
@@ -12,18 +13,20 @@ Behaviors locked in:
   voter-side derivation in `refined_positions` and `osm_only_matches`.
 - `housenumber_norm` matches the voter-side normalization (strip leading
   zeros after `^|-`, then strip hyphens).
-- When the same `(zip, canonical_key, housenumber_norm)` appears as both
-  a `way` and a `node`, the `way` wins (polygon centroid > doorway point).
-- When multiple `way`s collide on the same key, smallest `osm_id` wins
-  (deterministic across runs).
-- `in_residential_complex = TRUE` when the chosen building's centroid
-  falls inside a `landuse=residential` polygon.
+- Addresses without a ZIP are keyed too; the ZIP lookup skips them.
+- In the ZIP lookup, when the same `(zip, canonical_key, housenumber_norm)`
+  appears as both a `way` and a `node`, the `way` wins (polygon centroid >
+  doorway point), and when multiple `way`s collide on the same key, the
+  smallest `osm_id` wins (deterministic across runs).
+- `in_residential_complex = TRUE` when the element's point falls inside a
+  `landuse=residential` polygon.
 """
 
 import pytest
 
 from src.dags import osm, tiger
 from src.models import TableRef
+from src.osm_lookup import zip_lookup_sql
 
 
 def _create_osm_addresses(conn) -> TableRef:
@@ -96,7 +99,7 @@ def synth(dual_conn):
 
 
 def _run(conn, addr, res, tokens):
-    return osm.osm_building_lookup(
+    return osm.osm_addresses_keyed(
         osm_addresses=addr,
         osm_landuse_residential=res,
         address_tokens=tokens,
@@ -187,15 +190,35 @@ class TestHousenumberNorm:
 
     def test_surface_variants_merge_on_norm(self, synth):
         """`132-01` and `132-1` (and `1321`) tagged on different OSM records
-        for the same physical building should collapse to one keyed row,
+        for the same physical building resolve to one ZIP-lookup row,
         because they share `housenumber_norm = '1321'`."""
         conn, addr, res, tokens = synth
         _insert_addr(conn, 1, "132-01", "Broadway", lat=40.75, lon=-73.99)
         _insert_addr(conn, 2, "132-1", "Broadway", lat=40.75, lon=-73.99)
         _insert_addr(conn, 3, "1321", "Broadway", lat=40.75, lon=-73.99)
         ref = _run(conn, addr, res, tokens)
-        rows = conn.execute(f"SELECT count(*) FROM {ref.fqn} WHERE zip_code='10001'").fetchone()[0]
-        assert rows == 1, "surface-form variants should merge to one keyed row"
+        rows = conn.execute(f"SELECT count(*) FROM ({zip_lookup_sql(ref.fqn)}) WHERE zip_code='10001'").fetchone()[0]
+        assert rows == 1, "surface-form variants should resolve to one lookup row"
+
+
+class TestKeyedRows:
+    def test_addresses_without_a_zip_are_kept(self, synth):
+        conn, addr, res, tokens = synth
+        _insert_addr(conn, 1, "100", "Broadway", zip_code=None)
+        ref = _run(conn, addr, res, tokens)
+        assert conn.execute(f"SELECT zip_code, canonical_key FROM {ref.fqn}").fetchall() == [(None, "broadway")]
+        assert conn.execute(f"SELECT count(*) FROM ({zip_lookup_sql(ref.fqn)})").fetchone()[0] == 0
+
+    def test_a_node_and_a_way_sharing_an_id_are_keyed_apart(self, synth):
+        """OSM numbers nodes and ways separately, so one id can name two
+        elements; each keeps its own street's tokens."""
+        conn, addr, res, tokens = synth
+        _insert_addr(conn, 7, "100", "Broadway", kind="node")
+        _insert_addr(conn, 7, "100", "60 Lane", kind="way")
+        ref = _run(conn, addr, res, tokens)
+        keys = dict(conn.execute(f"SELECT kind, canonical_key FROM {ref.fqn}").fetchall())
+        assert keys["node"] == "broadway"
+        assert "broadway" not in keys["way"]
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +234,8 @@ class TestTiebreakers:
         _insert_addr(conn, 1, "100", "Broadway", kind="node", lat=40.7500, lon=-73.9900)
         _insert_addr(conn, 2, "100", "Broadway", kind="way", lat=40.7501, lon=-73.9901)
         ref = _run(conn, addr, res, tokens)
-        row = conn.execute(f"SELECT osm_lat, osm_lon FROM {ref.fqn} WHERE zip_code='10001'").fetchone()
+        lookup = zip_lookup_sql(ref.fqn)
+        row = conn.execute(f"SELECT osm_lat, osm_lon FROM ({lookup}) WHERE zip_code='10001'").fetchone()
         # Way coords should win, not node coords.
         assert row == (40.7501, -73.9901)
 
@@ -223,7 +247,8 @@ class TestTiebreakers:
         _insert_addr(conn, 100, "100", "Broadway", kind="way", lat=40.7501, lon=-73.9901)
         _insert_addr(conn, 300, "100", "Broadway", kind="way", lat=40.7503, lon=-73.9903)
         ref = _run(conn, addr, res, tokens)
-        row = conn.execute(f"SELECT osm_lat, osm_lon FROM {ref.fqn} WHERE zip_code='10001'").fetchone()
+        lookup = zip_lookup_sql(ref.fqn)
+        row = conn.execute(f"SELECT osm_lat, osm_lon FROM ({lookup}) WHERE zip_code='10001'").fetchone()
         # osm_id 100 wins (smallest).
         assert row == (40.7501, -73.9901)
 

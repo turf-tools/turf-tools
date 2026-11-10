@@ -1,6 +1,6 @@
 """Per-state storage for derived reference tables in `ducklake_geo`.
 
-`blockface_final`, `blockface_relationships`, and `osm.building_lookup` are
+`blockface_final`, `blockface_relationships`, and `osm.addresses_keyed` are
 derived from per-county TIGER and per-state OSM data and rebuilt by every
 import that touches a state. Each holds a `state_fips` column and an import
 replaces only its own states' rows, so a deployment's other states are never
