@@ -51,6 +51,7 @@ _TYPE_LABELS = {
     "presidential_primary": "Presidential Primary",
     "special": "Special",
     "runoff": "Runoff",
+    "other": "Other",
 }
 
 

@@ -31,7 +31,7 @@ export function Callout({
   return (
     <p
       className={cn(
-        "rounded-md border px-3 py-2 text-sm",
+        "rounded-md border px-3 py-2 text-sm wrap-anywhere",
         tinted ? "badge-tint badge-border" : "border-border bg-muted text-foreground/60",
         className,
       )}

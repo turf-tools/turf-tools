@@ -20,7 +20,7 @@ from src.importers.nys_voter_file.decode import COLUMNS, LAYOUT, REQUIRED_COLUMN
 from src.tables import table_fqn
 
 SAMPLE_DATA = Path(__file__).parent.parent / "src/importers/nys_voter_file/sample_data"
-SAMPLE = SAMPLE_DATA / "sample.txt"
+SAMPLE = SAMPLE_DATA / "file.txt"
 SCHEMA = "nys_voter_file_v1"
 RAW = table_fqn(SCHEMA, "persons_raw")
 VALIDATED = table_fqn(SCHEMA, "persons_validated")
@@ -189,7 +189,7 @@ def test_latin1_csv_with_a_header_reads_like_utf8(conn, tmp_path) -> None:
 
 
 def test_csv_header_detection(tmp_path) -> None:
-    assert csv_has_header(str(SAMPLE_DATA / "sample.csv"))  # BOM + the layout's own spelling
+    assert csv_has_header(str(SAMPLE_DATA / "file.csv"))  # BOM + the layout's own spelling
 
     lowercase = tmp_path / "lowercase.csv"
     lowercase.write_text(",".join(field.lower() for field in LAYOUT) + "\n", encoding="utf-8")

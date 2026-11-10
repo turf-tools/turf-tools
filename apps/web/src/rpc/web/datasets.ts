@@ -504,12 +504,14 @@ export const manifest = pub.input(z.object({}).optional()).handler(async ({ cont
       manifest: datasetVersions.manifest,
       versionId: datasetVersions.datasetVersionId,
       derivedMetadata: datasetVersions.derivedMetadata,
+      importer: datasets.importer,
     })
     .from(organizations)
     .innerJoin(
       datasetVersions,
       eq(datasetVersions.datasetVersionId, organizations.activeDatasetVersionId),
     )
+    .innerJoin(datasets, eq(datasets.datasetId, datasetVersions.datasetId))
     .where(eq(organizations.organizationId, context.organizationId))
     .limit(1);
   const row = rows[0];
@@ -517,6 +519,7 @@ export const manifest = pub.input(z.object({}).optional()).handler(async ({ cont
   return {
     manifest: row.manifest as Manifest,
     versionId: row.versionId,
+    importer: row.importer,
     // Rides with the manifest: same version, same lifetime.
     bounds: row.derivedMetadata?.bounds ?? null,
   };

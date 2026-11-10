@@ -34,6 +34,7 @@ import {
   type VotingHistoryDetailFilter,
 } from "~/lib/filters";
 import { electionsQuery } from "~/lib/queries/elections";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { findCyclicSegmentIds, type SegmentLike } from "~/lib/segment-refs";
 import { cn } from "~/lib/utils";
@@ -142,14 +143,25 @@ function TextFilterEditor({
   );
 }
 
-// Per-key normalizer for text-multi values. Run on each token at commit
-// time so the canonical form is what gets stored and queried. Anything
-// the normalizer doesn't recognize passes through unchanged so the user
-// can see the bad value and correct it.
-const NORMALIZERS: Record<string, (v: string) => string> = {
-  // NYC precincts canonicalize as `AA-EEE` (zero-padded AD, dash, zero-padded ED).
-  // Accept compact 5-digit input as a shortcut.
-  precinct: (v) => (/^\d{5}$/.test(v) ? `${v.slice(0, 2)}-${v.slice(2)}` : v),
+// NYC precincts canonicalize as `AA-EEE` (zero-padded AD, dash, zero-padded ED).
+// Accept compact 5-digit input as a shortcut.
+const nysPrecinct = (v: string) => (/^\d{5}$/.test(v) ? `${v.slice(0, 2)}-${v.slice(2)}` : v);
+
+// Florida precincts are stored county-prefixed (`DAD-135`, `BRO-Q043`).
+// Accept any case and separator, and drop a `.N` split suffix copied from a
+// polling-place list.
+const flPrecinct = (v: string) => {
+  const m = /^([a-z]{3})[\s-]*([a-z0-9]+?)(?:\.\d+)?$/i.exec(v);
+  return m ? `${m[1]!.toUpperCase()}-${m[2]!.toUpperCase()}` : v;
+};
+
+// Per-(dataset type, field) normalizer for text-multi values. Run on each
+// token at commit time so the canonical form is what gets stored and
+// queried. Anything the normalizer doesn't recognize passes through
+// unchanged so the user can see the bad value and correct it.
+const NORMALIZERS: Record<string, Record<string, (v: string) => string>> = {
+  nys_voter_file: { precinct: nysPrecinct },
+  fl_voter_file: { precinct: flPrecinct },
 };
 
 function TextMultiFilterEditor({
@@ -164,7 +176,8 @@ function TextMultiFilterEditor({
   // (preserve order).
   const [local, setLocal] = useState(filter.values.join(", "));
   useEffect(() => setLocal(filter.values.join(", ")), [filter.values]);
-  const normalize = NORMALIZERS[filter.key] ?? ((v: string) => v);
+  const { data: active } = useQuery(manifestQuery());
+  const normalize = NORMALIZERS[active?.importer ?? ""]?.[filter.key] ?? ((v: string) => v);
   const commit = () => {
     const tokens = local
       .split(",")

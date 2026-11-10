@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.importers.base import ImporterSpec, importer_spec
+from src.importers.fl_voter_file import FlVoterFileImporter
 from src.importers.nys_voter_file import NysVoterFileImporter
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 IMPORTERS: dict[str, type[Importer]] = {
     NysVoterFileImporter.name: NysVoterFileImporter,
+    FlVoterFileImporter.name: FlVoterFileImporter,
 }
 
 
