@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 # Index mapping template; `index_id` is swapped per dataset version.
 _INDEX_TEMPLATE = Path(__file__).resolve().parent.parent / "quickwit" / "persons.yaml"
 
-# Stored fields returned for a person hit (everything in the mapping).
+# Stored fields returned for a person hit (the mapping's Person core).
 PERSON_FIELDS = (
     "external_id",
     "external_id_type",
@@ -35,6 +35,11 @@ PERSON_FIELDS = (
     "zip5",
     "zip4",
 )
+
+
+# Indexed for matching, never returned in hits. Each is named for a filter kind
+# and filled from the manifest's field of that kind (see `dags/quickwit.py`).
+SEARCH_ONLY_FIELDS = ("phone", "email")
 
 
 def persons_index_id(schema: str) -> str:
@@ -76,10 +81,12 @@ def build_person_query(
     city: str = "",
     zip5: str = "",
     external_id: str = "",
+    phone: str = "",
+    email: str = "",
 ) -> str:
     """Build a Quickwit query from the Lookup form's filled fields, AND-ed
-    together. Name/address are prefix-matched (partial); zip and id are exact.
-    Returns "" when nothing is filled (caller should short-circuit to empty)."""
+    together. Name/address/phone/email are prefix-matched (partial); zip and id
+    are exact. Returns "" when nothing is filled (caller should short-circuit to empty)."""
     clauses: list[str] = []
     for field, value in (
         ("first_name", first_name),
@@ -94,6 +101,12 @@ def build_person_query(
         clauses.append(f"zip5:{_escape_term(zip5.strip())}")
     if external_id.strip():
         clauses.append(f"external_id:{_escape_term(external_id.strip())}")
+    # Stored as bare digits and lowercased; both match from the start.
+    digits = re.sub(r"\D", "", phone)
+    if digits:
+        clauses.append(f"phone:{digits}*")
+    if email.strip():
+        clauses.append(f"email:{_escape_term(email.strip().lower())}*")
     return " AND ".join(clauses)
 
 

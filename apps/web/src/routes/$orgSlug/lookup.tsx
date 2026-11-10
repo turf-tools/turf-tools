@@ -9,7 +9,7 @@ import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Page } from "~/components/page";
 import { Pill } from "~/components/pill";
 import { formatDate, formatPersonName } from "~/lib/format";
-import type { ManifestFieldDef } from "~/lib/manifest";
+import { fieldOfKind, type ManifestFieldDef } from "~/lib/manifest";
 import type { PersonDetail, PersonHit } from "~/rpc/web/persons";
 import {
   type PersonSearchFields,
@@ -41,6 +41,8 @@ const EMPTY_FIELDS: PersonSearchFields = {
   city: "",
   zip: "",
   externalId: "",
+  phone: "",
+  email: "",
 };
 
 // Voter-file columns already shown in the detail header (name / address block /
@@ -110,7 +112,12 @@ function Lookup() {
     <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
       <EditorHeader title="Lookup" subtitle="Find a person" />
       <div className="flex min-h-0 flex-1 gap-4">
-        <SearchForm fields={fields} onChange={setField} />
+        <SearchForm
+          fields={fields}
+          onChange={setField}
+          phoneField={fieldOfKind(manifest.manifest, "phone")}
+          emailField={fieldOfKind(manifest.manifest, "email")}
+        />
         <ResultsPanel
           hits={hits}
           total={total}
@@ -133,9 +140,14 @@ function Lookup() {
 function SearchForm({
   fields,
   onChange,
+  phoneField,
+  emailField,
 }: {
   fields: PersonSearchFields;
   onChange: (key: keyof PersonSearchFields, value: string) => void;
+  // The dataset's phone / email fields; each input shows only when its field exists.
+  phoneField: ManifestFieldDef | undefined;
+  emailField: ManifestFieldDef | undefined;
 }) {
   return (
     // `overflow-y-auto` also clips horizontally, shaving the focus ring off the
@@ -182,6 +194,29 @@ function SearchForm({
           />
         </div>
       </Section>
+
+      {phoneField || emailField ? (
+        <Section title="Contact">
+          {phoneField ? (
+            <Input
+              aria-label={phoneField.label}
+              placeholder={phoneField.label}
+              inputMode="tel"
+              value={fields.phone}
+              onChange={(e) => onChange("phone", e.target.value)}
+            />
+          ) : null}
+          {emailField ? (
+            <Input
+              aria-label={emailField.label}
+              placeholder={emailField.label}
+              inputMode="email"
+              value={fields.email}
+              onChange={(e) => onChange("email", e.target.value)}
+            />
+          ) : null}
+        </Section>
+      ) : null}
 
       <Section title="ID">
         <Input
@@ -519,9 +554,17 @@ function formatValue(fd: ManifestFieldDef, raw: unknown): string {
     }
     case "text":
       return toTitleCase(text);
+    case "phone":
+      return formatPhone(text);
     default:
       return text;
   }
+}
+
+// Stored as 10 bare digits → `(305) 555-1234`; anything else shows as stored.
+function formatPhone(digits: string): string {
+  const m = /^(\d{3})(\d{3})(\d{4})$/.exec(digits);
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : digits;
 }
 
 // Enum value → its authored label, falling back to a title-cased raw value.
