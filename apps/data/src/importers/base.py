@@ -194,6 +194,13 @@ def raw_column_name(field: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", field.strip().lstrip("\ufeff").lower()).strip("_")
 
 
+def is_readable_source(source: str) -> bool:
+    """Whether an import can read `source`: an http(s) link, or a path on the
+    data server. Other URL schemes (`s3://`, …) are refused: the server holds no
+    credentials for them, so a link carries its own access or it's public."""
+    return urlsplit(source.strip()).scheme.lower() in ("", "http", "https")
+
+
 def redact_source(source: str) -> str:
     """A source safe to put in an error message: scheme, host, and path only.
 
@@ -281,6 +288,9 @@ def check_import_inputs(
     missing = [s.label for s in importer.SOURCES if s.required and not sources.get(s.key, "").strip()]
     if missing:
         raise InvalidImportSourcesError(f"Missing {', '.join(missing)}.")
+    unreadable = [s.label for s in importer.SOURCES if not is_readable_source(sources.get(s.key, ""))]
+    if unreadable:
+        raise InvalidImportSourcesError(f"{', '.join(unreadable)} must be an http:// or https:// link.")
     if filter is not None and filter.column not in {f.column for f in importer.FILTERS}:
         raise InvalidImportFilterError(
             f"Import filter column {filter.column!r} is not available for this dataset type."

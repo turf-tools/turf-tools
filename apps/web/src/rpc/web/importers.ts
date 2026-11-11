@@ -1,7 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import type { ImportFilter } from "@turf-tools/db/schema";
 import { z } from "zod";
-import { cleanSources, findImporter, type ImporterSpec } from "~/lib/importers";
+import { cleanSources, findImporter, type ImporterSpec, isReadableSource } from "~/lib/importers";
 import { dataGetJson } from "~/lib/server/data-proxy";
 import { webPub } from "../context";
 
@@ -36,6 +36,11 @@ export async function checkImportInputs(
   if (missing.length > 0)
     throw new ORPCError("BAD_REQUEST", {
       message: `Missing ${missing.map((s) => s.label).join(", ")}.`,
+    });
+  const unreadable = importer.sources.filter((s) => !isReadableSource(cleaned[s.key] ?? ""));
+  if (unreadable.length > 0)
+    throw new ORPCError("BAD_REQUEST", {
+      message: `${unreadable.map((s) => s.label).join(", ")} must be an http:// or https:// link.`,
     });
   if (filter && !importer.filters.some((f) => f.column === filter.column))
     throw new ORPCError("BAD_REQUEST", {

@@ -48,6 +48,14 @@ export function cleanSources(sources: Record<string, string>): Record<string, st
   );
 }
 
+// An http(s) link, or a path on the data server (mirrors the data side's
+// `is_readable_source`). Other URL schemes (s3://, …) are refused: the server
+// holds no credentials for them.
+export function isReadableSource(source: string): boolean {
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(source.trim())?.[1]?.toLowerCase();
+  return scheme === undefined || scheme === "http" || scheme === "https";
+}
+
 export function sourcesComplete(importer: ImporterSpec, sources: Record<string, string>): boolean {
   return importer.sources.every((s) => !s.required || (sources[s.key] ?? "").trim().length > 0);
 }

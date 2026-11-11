@@ -34,10 +34,9 @@ def sql_str(value: str) -> str:
 
 
 def open_source(path: str) -> BinaryIO:
-    """Open a source for binary reads. A bare path is a local file; a URL
-    (`s3://`, `http(s)://`, …) goes through smart_open, so a multi-GB
-    distribution never lands on local disk. smart_open uses boto3's credential
-    chain — the same one the DuckDB S3 secret relies on. Remote handles are
+    """Open a source for binary reads: a local path, or an http(s) link (the
+    only URLs `check_import_inputs` admits) streamed through smart_open, so a
+    multi-GB distribution never lands on local disk. Remote handles are
     seekable, which `zipfile` needs to find a zip's directory."""
     if "://" in path:
         import smart_open
