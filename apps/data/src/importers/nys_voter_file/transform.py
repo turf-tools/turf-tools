@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.importers.dedupe import one_record_per_id_sql
+
 if TYPE_CHECKING:
     from src.importers.base import ImportFilter
 
@@ -109,6 +111,12 @@ def _iso_date_sql(col: str) -> str:
     )
 
 
+# A voter who changes county keeps their statewide SBOEID and gets a new county
+# registration, and an export can hold both. Keep the current one: active over
+# inactive, then the latest registration. (Purged records are dropped on read.)
+_CURRENT_RECORD_FIRST = "CASE WHEN r.status = 'I' THEN 1 ELSE 0 END, r.regdate DESC NULLS LAST, r.countycode"
+
+
 def nys_sboe_transformation_query(
     source_table: str,
     filter: ImportFilter | None = None,
@@ -117,10 +125,12 @@ def nys_sboe_transformation_query(
 
     Args:
         source_table: fully-qualified `persons_raw` table the query reads from,
-            aliased to ``raw`` so the column expressions below resolve.
+            narrowed to one record per voter and aliased to ``raw`` so the column
+            expressions below resolve.
         filter: optional row filter (`raw.<column> IN (values)`), the dataset's
-            fixed import slice. The column must already be allowlisted by the
-            importer; values are compared as the file's own text.
+            fixed import slice, applied after a voter's current record is
+            picked. The column must already be allowlisted by the importer;
+            values are compared as the file's own text.
     """
     where = ""
     if filter and filter.values:
@@ -187,6 +197,6 @@ SELECT
     -- Transient raw column; the importer's load parses it into the structured
     -- `voting_history` STRUCT[] and drops it.
     raw.voterhistory AS voter_history
-FROM {source_table} AS raw
+FROM {one_record_per_id_sql(source_table, "sboeid", _CURRENT_RECORD_FIRST)} AS raw
 {where}
 """

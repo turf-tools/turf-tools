@@ -17,6 +17,7 @@ import pytest
 from src.importers.base import SourceUnreadableError
 from src.importers.nys_voter_file import NysVoterFileImporter
 from src.importers.nys_voter_file.decode import COLUMNS, LAYOUT, REQUIRED_COLUMNS, csv_has_header, source_format
+from src.importers.validate import validated_persons
 from src.tables import table_fqn
 
 SAMPLE_DATA = Path(__file__).parent.parent / "src/importers/nys_voter_file/sample_data"
@@ -62,7 +63,8 @@ def test_raw_decode_is_faithful(conn) -> None:
     _load(conn, SAMPLE)
     raw = _rows(conn, RAW, "firstname")
 
-    assert len(raw) == 25
+    assert len(raw) == 25  # 26 in the file, the purged one dropped
+    assert "JULES" not in raw
     assert raw["JOSÉ"]["lastname"] == "MUÑOZ"  # Latin-1 → UTF-8
     assert raw["AVERY"]["rstreetname"] == "AVENUE B"  # padding inside the quotes trimmed
     assert raw["AVERY"]["prevcounty"] is None  # whitespace-only → NULL
@@ -110,7 +112,8 @@ def test_transform_canonicalizes_the_sample(conn) -> None:
     assert people["GRAY"]["registration_status"] == "inactive"
     assert people["HARPER"]["registration_status"] == "federal_only"
     assert people["IVY"]["registration_status"] == "preregistered"
-    assert people["JULES"]["registration_status"] == "unknown"
+    assert people["ROWAN"]["registration_status"] == "unknown"
+    assert "JULES" not in people  # purged, dropped on read
 
     assert people["AVERY"]["date_of_birth"] == "1980-01-15"
     assert people["KAI"]["date_of_birth"] is None
@@ -232,3 +235,46 @@ def test_missing_required_fields_are_named(conn, tmp_path) -> None:
 
     with pytest.raises(SourceUnreadableError, match="missing NYSVOTER layout fields: RZIP5, SBOEID"):
         _load(conn, partial)
+
+
+# --- one record per voter --------------------------------------------------------
+
+
+def test_repeated_voter_ids_keep_the_current_record(conn, tmp_path) -> None:
+    """An export can hold a voter's old county registration beside the current one
+    under the same SBOEID. The import keeps one: a purged record never counts, even
+    when it's newer (it's dropped on read), and among current records the latest
+    registration wins."""
+    _load(conn, SAMPLE)
+    expected = conn.sql(f"SELECT count(*) FROM {VALIDATED}").fetchone()[0]
+    purged_twin, newer_twin = (
+        r[0] for r in conn.sql(f"SELECT sboeid FROM {RAW} WHERE status = 'A' ORDER BY sboeid LIMIT 2").fetchall()
+    )
+    repeated = tmp_path / "repeated.parquet"
+    conn.execute(f"""
+        COPY (
+            SELECT {_layout_select(only=frozenset(COLUMNS))} FROM (
+                SELECT * FROM {RAW}
+                UNION ALL
+                SELECT * REPLACE ('P' AS status, '20991231' AS regdate, 'Stale' AS firstname)
+                FROM {RAW} WHERE sboeid = '{purged_twin}'
+                UNION ALL
+                SELECT * REPLACE ('20991231' AS regdate, 'Current' AS firstname)
+                FROM {RAW} WHERE sboeid = '{newer_twin}'
+            )
+        ) TO '{repeated}' (FORMAT parquet)
+    """)
+
+    _load(conn, repeated)
+    people = _rows(conn, VALIDATED, "external_id")
+    assert len(people) == expected
+    assert people[purged_twin]["first_name"] != "Stale"
+    assert people[newer_twin]["first_name"] == "Current"
+
+
+def test_validation_rejects_repeated_ids(conn) -> None:
+    _load(conn, SAMPLE)
+    conn.execute(f"INSERT INTO {VALIDATED} SELECT * FROM {VALIDATED} LIMIT 1")
+
+    with pytest.raises(ValueError, match="repeats 1 external_id values"):
+        validated_persons(SCHEMA, conn)

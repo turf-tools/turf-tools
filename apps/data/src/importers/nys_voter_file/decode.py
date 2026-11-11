@@ -11,9 +11,12 @@ record). `decode_raw_to_table` turns that layout into `persons_raw`, deliberatel
      few free-form legacy fields are dropped as garbage.
   3. Strip leading/trailing whitespace (state pads inside the quotes).
   4. Blank-after-trim → NULL.
+  5. Drop purged records (STATUS `P`): no longer registered, and an export that
+     includes them holds one per past county registration.
 
 `load_tabular_to_table` reads a CSV-with-header or parquet whose columns carry
-the layout's field names (case-insensitive) into the same `persons_raw` shape.
+the layout's field names (case-insensitive) into the same `persons_raw` shape,
+purged records dropped the same way.
 
 Nothing else is touched: codes stay codes, dates stay YYYYMMDD strings, leading
 zeros preserved, `voterhistory` kept as one raw string. Canonicalization is the
@@ -136,6 +139,9 @@ ZERO_PADDED_WIDTHS: dict[str, int] = {"countycode": 2, "rzip5": 5, "rzip4": 4}
 # CR/LF that survive a malformed export.
 TRIM_CHARS = " \t\r\n"
 
+# WHERE clause over the decoded columns that drops purged records.
+_NOT_PURGED = "WHERE status IS DISTINCT FROM 'P'"
+
 
 def _read_csv_sql(stream_path: str) -> str:
     """SQL reading the UTF-8 stream as 47 VARCHAR columns c01..c47. Fully-quoted
@@ -150,12 +156,13 @@ def _read_csv_sql(stream_path: str) -> str:
 
 
 def _select_sql(stream_path: str) -> str:
-    """SELECT trimming every field and mapping blanks to NULL, with output names."""
+    """SELECT trimming every field and mapping blanks to NULL, with output names,
+    purged records dropped."""
     trim_set = sql_str(TRIM_CHARS)
     projections = ",\n    ".join(
         f"NULLIF(trim(c{i:02d}, {trim_set}), '') AS {column}" for i, column in enumerate(COLUMNS, start=1)
     )
-    return f"SELECT\n    {projections}\nFROM {_read_csv_sql(stream_path)}"
+    return f"SELECT * FROM (SELECT\n    {projections}\nFROM {_read_csv_sql(stream_path)}) {_NOT_PURGED}"
 
 
 def decode_raw_to_table(
@@ -167,7 +174,7 @@ def decode_raw_to_table(
 ) -> None:
     """Decode the raw headerless NYSVOTER layout into `table_fqn` on `conn`,
     transcoded to UTF-8 and streamed (see `stream_text_to_table`). Result: 47
-    trimmed VARCHAR columns, blanks as NULL."""
+    trimmed VARCHAR columns, blanks as NULL, purged records dropped."""
 
     def chunks():
         with open_source(txt_path) as src:
@@ -275,4 +282,5 @@ def _load_tabular(reader: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) 
         else f"CAST(NULL AS VARCHAR) AS {column}"
         for column in COLUMNS
     )
-    conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} AS SELECT\n    {projections}\nFROM {reader}")
+    select = f"SELECT\n    {projections}\nFROM {reader}"
+    conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} AS SELECT * FROM ({select}) {_NOT_PURGED}")

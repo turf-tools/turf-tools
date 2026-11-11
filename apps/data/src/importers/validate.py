@@ -14,9 +14,9 @@ _EXPECTED_COLUMNS = set(Person.model_fields.keys())
 
 
 def validated_persons(schema: str, conn: duckdb.DuckDBPyConnection) -> TableRef:
-    """Check `<schema>.persons_validated` carries the Person-required columns and
-    that a sample of rows validates, then return its TableRef for the shared
-    pipeline."""
+    """Check `<schema>.persons_validated` carries the Person-required columns,
+    one row per `external_id`, and that a sample of rows validates, then return
+    its TableRef for the shared pipeline."""
     fqn = table_fqn(schema, "persons_validated")
     rel = conn.table(fqn)
     # Required-subset, not exact-match: `persons_validated` must contain the
@@ -25,6 +25,9 @@ def validated_persons(schema: str, conn: duckdb.DuckDBPyConnection) -> TableRef:
     missing = _EXPECTED_COLUMNS - set(rel.columns)
     if missing:
         raise ValueError(f"persons_validated missing columns required by Person: {sorted(missing)}")
+    repeated = conn.execute(f"SELECT count(*) - count(DISTINCT external_id) FROM {fqn}").fetchone()[0]
+    if repeated:
+        raise ValueError(f"persons_validated repeats {repeated:,} external_id values; each person needs one row.")
     columns = rel.columns
     for i, row in enumerate(rel.limit(100).fetchall()):
         try:

@@ -154,8 +154,10 @@ PEOPLE: list[dict[str, str]] = [
         "REGDATE": "20250410",
         "VoterHistory": "",
     },
-    # Status outside the map → unknown.
+    # Purged → dropped on read.
     {"LASTNAME": "PURGED", "FIRSTNAME": "JULES", "RADDNUMBER": "88", "RSTREETNAME": "E 4 ST", "STATUS": "P"},
+    # Status outside the map → unknown.
+    {"LASTNAME": "UNMAPPED", "FIRSTNAME": "ROWAN", "RADDNUMBER": "90", "RSTREETNAME": "E 4 ST", "STATUS": "AU"},
     # Malformed (7-digit) birth date → NULL date_of_birth.
     {"LASTNAME": "BADDATE", "FIRSTNAME": "KAI", "RADDNUMBER": "140", "RSTREETNAME": "AVENUE B", "DOB": "1980013"},
     # Suffix, blank middle.
