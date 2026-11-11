@@ -230,6 +230,9 @@ def test_registration_status_known_codes():
     assert NYS_REGISTRATION_STATUSES["A"] == "active"
     assert NYS_REGISTRATION_STATUSES["I"] == "inactive"
     assert NYS_REGISTRATION_STATUSES["AF"] == "federal_only"
+    assert NYS_REGISTRATION_STATUSES["AP"] == "presidential_only"
+    assert NYS_REGISTRATION_STATUSES["AM"] == "military"
+    assert NYS_REGISTRATION_STATUSES["AU"] == "overseas"
     assert NYS_REGISTRATION_STATUSES["17"] == "preregistered"
 
 

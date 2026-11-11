@@ -26,6 +26,9 @@ NYS_REGISTRATION_STATUSES: dict[str, str] = {
     "A": "active",
     "I": "inactive",
     "AF": "federal_only",
+    "AP": "presidential_only",
+    "AM": "military",
+    "AU": "overseas",
     "17": "preregistered",
 }
 
