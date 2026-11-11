@@ -46,6 +46,8 @@ def test_parse_entry_modern_all_method_codes():
     cases = [
         ("20221108 GE(P)", "poll_site"),
         ("20201103 GE(E)", "early_voting"),
+        ("20261103 GE(D)", "early_voting"),
+        ("20261103 GE(T)", "early_voting"),
         ("20221108 GE(A)", "absentee"),
         ("20141104 GE(F)", "affidavit"),
         ("20241105 GE(M)", "military"),
@@ -139,8 +141,7 @@ def test_parse_entry_unknown_election_code_returns_none():
 
 def test_parse_entry_unknown_method_code_buckets_to_other():
     """Method codes outside the documented set are bucketed as 'other' rather than dropped."""
-    # 'D' and 'T' are observed in 1M sample with no documented meaning.
-    result = parse_entry("20221108 GE(D)")
+    result = parse_entry("20221108 GE(Z)")
     assert result is not None
     assert result["method"] == "other"
 

@@ -17,9 +17,13 @@ NYS_ELECTION_TYPES: dict[str, str] = {
     "RO": "runoff",
 }
 
+# D (early voting by affidavit) and T (early voting by other method) are early
+# votes; the affidavit only concerns how eligibility was checked.
 NYS_VOTING_METHODS: dict[str, str] = {
     "P": "poll_site",
     "E": "early_voting",
+    "D": "early_voting",
+    "T": "early_voting",
     "A": "absentee",
     "F": "affidavit",
     "M": "military",
