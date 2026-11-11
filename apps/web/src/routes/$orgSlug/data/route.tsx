@@ -380,9 +380,6 @@ function CreateDatasetDialog({
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            {importer ? (
-              <span className="text-sm text-muted-foreground italic">{importer.description}</span>
-            ) : null}
           </div>
           {importer ? (
             <>

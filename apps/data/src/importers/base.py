@@ -164,7 +164,6 @@ class ImporterSpec(_CamelModel):
 
     name: str
     label: str
-    description: str
     sources: list[SourceSpec]
     filters: list[FilterSpec]
 
@@ -239,9 +238,8 @@ class Importer(Protocol):
     """
 
     name: str
-    # Display name and one-line explanation shown in the import form.
+    # Display name shown in the import form.
     LABEL: str
-    DESCRIPTION: str
     # The files `load` reads, keyed in its `sources` mapping.
     SOURCES: tuple[SourceSpec, ...]
     # Decoded source columns an `ImportFilter` may name.
@@ -266,7 +264,6 @@ def importer_spec(importer: type[Importer]) -> ImporterSpec:
     return ImporterSpec(
         name=importer.name,
         label=importer.LABEL,
-        description=importer.DESCRIPTION,
         sources=list(importer.SOURCES),
         filters=list(importer.FILTERS),
     )

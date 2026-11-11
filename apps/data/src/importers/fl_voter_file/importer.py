@@ -39,7 +39,6 @@ class FlVoterFileImporter:
 
     name = "fl_voter_file"
     LABEL = "Florida Voter File"
-    DESCRIPTION = "The monthly voter extract from the Florida Division of Elections."
     SOURCES = (
         SourceSpec(
             key="detail",

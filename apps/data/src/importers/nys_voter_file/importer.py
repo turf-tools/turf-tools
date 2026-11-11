@@ -68,7 +68,6 @@ class NysVoterFileImporter:
 
     name = "nys_voter_file"
     LABEL = "New York State Voter File"
-    DESCRIPTION = "The statewide voter file from the New York State Board of Elections."
     SOURCES = (
         SourceSpec(
             key="file",

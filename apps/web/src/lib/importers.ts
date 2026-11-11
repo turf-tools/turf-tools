@@ -17,7 +17,6 @@ export type ImporterFilter = { column: string; label: string };
 export type ImporterSpec = {
   name: string;
   label: string;
-  description: string;
   sources: ImporterSource[];
   filters: ImporterFilter[];
 };
