@@ -13,6 +13,7 @@ doesn't fail — it runs locally, where `pnpm dev:search` needs the binary anywa
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -30,6 +31,7 @@ from hamilton import driver
 
 from src import quickwit as qw_client
 from src.dags import quickwit
+from src.importers.base import FieldDef, Manifest
 from src.models import TableRef
 from src.settings import get_settings
 
@@ -40,13 +42,23 @@ pytestmark = [
 
 # A handful of persons with overlapping names/addresses so searches are unambiguous.
 _SAMPLE = [
-    # external_id, ext_type, first, last, addr1, addr2, city, state, zip5, zip4
-    ("id1", "test", "JANE", "DOE", "1 MAIN STREET", None, "NEW YORK", "NY", "10001", None),
-    ("id2", "test", "JOHN", "SMITH", "2 OAK AVENUE", None, "NEW YORK", "NY", "10002", None),
-    ("id3", "test", "JANE", "SMITH", "3 ELM STREET", None, "NEW YORK", "NY", "10003", None),
-    ("id4", "test", "MARIA", "GARCIA", "31-15 STEINWAY STREET", None, "ASTORIA", "NY", "11103", None),
-    ("id5", "test", "JOHN", "DOE", "5 MAIN STREET", None, "BROOKLYN", "NY", "11202", None),
+    # external_id, ext_type, first, last, addr1, addr2, city, state, zip5, zip4, phone, email
+    ("id1", "test", "JANE", "DOE", "1 MAIN STREET", None, "NEW YORK", "NY", "10001", None, "3055550101", "jane@x.org"),
+    ("id2", "test", "JOHN", "SMITH", "2 OAK AVENUE", None, "NEW YORK", "NY", "10002", None, "3055550202", None),
+    ("id3", "test", "JANE", "SMITH", "3 ELM STREET", None, "NEW YORK", "NY", "10003", None, None, None),
+    ("id4", "test", "MARIA", "GARCIA", "31-15 STEINWAY STREET", None, "ASTORIA", "NY", "11103", None, None, None),
+    ("id5", "test", "JOHN", "DOE", "5 MAIN STREET", None, "BROOKLYN", "NY", "11202", None, None, None),
 ]
+
+# The sample's contact columns, declared the way an importer's manifest would.
+_MANIFEST = Manifest(
+    fields=[
+        [
+            FieldDef(column="phone", label="Phone", filter_kind="phone"),
+            FieldDef(column="email", label="Email", filter_kind="email"),
+        ]
+    ]
+)
 
 
 def _free_port() -> int:
@@ -141,7 +153,7 @@ def _seed_table(conn) -> TableRef:
         CREATE OR REPLACE TABLE memory.main.persons_tiny AS
         SELECT * FROM (VALUES {values}) AS t(
             external_id, external_id_type, first_name, last_name,
-            address_line_1, address_line_2, city, state, zip5, zip4
+            address_line_1, address_line_2, city, state, zip5, zip4, phone, email
         )
     """)
     return TableRef(catalog="memory", schema="main", table="persons_tiny", version=0)
@@ -174,6 +186,7 @@ def test_quickwit_index_and_search(dual_conn, tmp_path):
                         "quickwit_config_path": str(config_path),
                         "quickwit_index_id": index_id,
                         "quickwit_batch_size": 2,
+                        "manifest": _MANIFEST,
                         "conn": dual_conn,
                     },
                 )["quickwit_build_manifest_stub"]
@@ -203,6 +216,18 @@ def test_quickwit_index_and_search(dual_conn, tmp_path):
             # A number before the last token is exact: `1` doesn't match the `15` in 31-15.
             one_street = qw_client.search(qw_settings, index_id, qw_client.build_person_query(address="1 street"))
             assert [h["external_id"] for h in one_street["hits"]] == ["id1"]
+
+            # The manifest's phone/email fields are searchable, never returned.
+            by_phone = qw_client.search(qw_settings, index_id, qw_client.build_person_query(phone="(305) 555-01"))
+            assert [h["external_id"] for h in by_phone["hits"]] == ["id1"]
+            raw_url = f"{endpoint}/api/v1/{index_id}/search?query=phone:3055550101"
+            raw = json.loads(qw_client._request("GET", raw_url)[1])
+            assert raw["num_hits"] == 1
+            assert "phone" not in raw["hits"][0] and "email" not in raw["hits"][0]
+            by_email = qw_client.search(qw_settings, index_id, qw_client.build_person_query(email="Jane@"))
+            assert [h["external_id"] for h in by_email["hits"]] == ["id1"]
+            both = qw_client.search(qw_settings, index_id, qw_client.build_person_query(last_name="smith", phone="305"))
+            assert [h["external_id"] for h in both["hits"]] == ["id2"]
 
             # Alphabetical (last, first) order via the packed u64 sort keys. On
             # 0.8.2 the `-` prefix ascends, so this is A→Z.

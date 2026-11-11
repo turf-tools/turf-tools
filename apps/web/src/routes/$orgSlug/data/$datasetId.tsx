@@ -76,6 +76,8 @@ const BASE_KIND_LABELS: Record<string, string> = {
   "voting-history-count": "Voting history",
   "voting-history-detail": "Voting history",
   address: "Address",
+  phone: "Phone",
+  email: "Email",
 };
 
 const FIELD_TYPE_META: Record<CustomFieldType, string> = {
@@ -618,7 +620,7 @@ function DetailsDialog({
                 : `Started ${started}.`}
           </p>
           {sources.length > 0 ? (
-            <p className="break-all">
+            <p className="wrap-anywhere">
               {sources.length === 1 ? "Source: " : "Sources: "}
               {sources.map(([key, value], i) => (
                 <span key={key}>
@@ -631,7 +633,7 @@ function DetailsDialog({
           ) : null}
         </DialogDescription>
         {version?.status === "failed" ? (
-          <Callout tone="error">
+          <Callout tone="error" className="whitespace-pre-line">
             {version.error ?? "Failed, but no error message was recorded."}
           </Callout>
         ) : version?.status === "importing" ? (

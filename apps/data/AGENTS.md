@@ -84,7 +84,7 @@ each loaded once and reused by later imports.
 | Module       | Role                                                                                     | Output catalog       |
 | ------------ | ---------------------------------------------------------------------------------------- | -------------------- |
 | `tiger`      | TIGER shapefiles → `blockface_final`                                                     | `ducklake_geo.tiger` |
-| `osm`        | OSM PBF → `osm_building_lookup` + raw OSM tables                                         | `ducklake_geo.osm`   |
+| `osm`        | OSM PBF → `osm_addresses_keyed` + raw OSM tables                                         | `ducklake_geo.osm`   |
 | `matching`   | Voter ↔ TIGER blockface (`persons_best_match`)                                           | `ducklake.{org}`     |
 | `geocode`    | Lat/lon assignment (`refined_positions`, `osm_only_matches`)                             | `ducklake.{org}`     |
 | `assembly`   | Canonical Person record (`canonical_addresses`, `persons_geocoded`, `geocoding_summary`) | `ducklake.{org}`     |
@@ -148,7 +148,7 @@ one row, picking the canonical `full_name` by its frequency in the
 line's own county (alphabetical tiebreak).
 
 Equivalency expansion uses `EQUIVALENT_TOKEN_GROUPS` from
-`src/addressing.py`. Non-incremental: the collapse needs all rows.
+`src/addressing.py`. Rebuilt per state: the collapse needs all of a state's rows.
 
 ### osm
 
@@ -158,30 +158,35 @@ osm_pbfs → osm_buildings_polygons    (osmium-derived building polygons + area 
          → osm_landuse_residential    (assembled landuse polygons)
 
 osm_addresses + osm_landuse_residential + address_tokens
-    → osm_building_lookup            (per-building keyed for fast join)
+    → osm_addresses_keyed            (per element, keyed for voter lookup)
 ```
 
 Symmetric to `tiger`: extracts OSM reference data into
 `ducklake_geo.osm`, from the Geofabrik extract of each `geo_extent` state
 not yet loaded (rows carry `state_fips`). The downstream `geocode` module consumes
-`osm_building_lookup` along with `blockface_final` for coordinate
+`osm_addresses_keyed` along with `blockface_final` for coordinate
 assignment.
 
-`osm_building_lookup` is one row per OSM-known building, keyed on
-`(zip_code, canonical_key, housenumber_norm)`, carrying:
+`osm_addresses_keyed` is one row per addressed OSM element, with or
+without a ZIP, keyed on `(canonical_key, housenumber_norm)`, carrying:
 
-- `osm_lat`, `osm_lon` — area-weighted centroid
+- `osm_id`, `kind` — the element (OSM numbers nodes and ways separately)
+- `zip_code` — the `addr:postcode` tag; NULL for the many OSM imports
+  that left it off
+- `lat`, `lon` — area-weighted centroid for ways, the node's own point
 - `street` — the OSM `addr:street` tag (used as the canonical street for
   `building_id` when this OSM record matches a voter)
 - `housenumber` — the OSM `addr:housenumber` tag (used by
   `canonical_addresses` to normalize voter-side surface-form variants)
-- `in_residential_complex` — true if the building's centroid is inside
-  a `landuse=residential` polygon
+- `in_residential_complex` — true if the element's point is inside a
+  `landuse=residential` polygon
 
-When multiple OSM records share the same `(zip_code, canonical_key,
-housenumber_norm)` (rare; same address tagged on multiple polygons),
-the chosen record is the way (over a node) with the smallest `osm_id`
-— deterministic across runs.
+Geocoding looks voters up two ways (`src/osm_lookup.py`). By ZIP: one
+record per `(zip_code, canonical_key, housenumber_norm)`, the way (over a
+node) with the smallest `osm_id` — deterministic across runs. For a voter
+the ZIP lookup misses: the record with their key and number nearest their
+matched blockface within `NEARBY_MATCH_M` (100 m), whatever ZIP it
+carries.
 
 ### matching
 
@@ -219,10 +224,10 @@ per voter; coordinate assignment is downstream in `geocode`.
 ### geocode
 
 ```
-persons_best_match + persons_decomposed + blockface_final + osm_building_lookup
+persons_best_match + persons_decomposed + blockface_final + osm_addresses_keyed
     → refined_positions              (TIGER-matched voter lat/lon)
 
-persons_decomposed + persons_best_match + osm_building_lookup
+persons_decomposed + persons_best_match + osm_addresses_keyed
                                        + blockface_final + address_tokens
     → osm_only_matches               (TIGER-miss voter lat/lon + snapped blockface)
 ```
@@ -230,13 +235,15 @@ persons_decomposed + persons_best_match + osm_building_lookup
 The actual coordinate-assignment step. Two paths, mutually exclusive
 (each voter appears in exactly one):
 
-1. **`refined_positions`** — for TIGER-matched voters: project the OSM
-   building centroid onto the matched blockface (or use the OSM centroid
-   directly when the projection clamps or the building is inside a
-   residential complex). The rank-based fallback partitions by
-   `(tiger_line_id, side)` and orders by `(prefix, house_number,
-half_code)` so voters across multiple address ranges on the same
-   physical TIGER line get distinct ranks. A 1D shove keeps distinct
+1. **`refined_positions`** — for TIGER-matched voters: find the voter's
+   OSM building by ZIP, or by location near the matched blockface when
+   the ZIP finds nothing, and project its centroid onto the blockface
+   (or use the OSM centroid directly when the projection clamps or the
+   building is inside a residential complex). The rank-based fallback
+   partitions by `(tiger_line_id, side)` and orders by `(prefix,
+house_number, half_code)` so voters across multiple address ranges on
+   the same physical TIGER line get distinct ranks, running from the end
+   where the side's TIGER range starts. A 1D shove keeps distinct
    buildings on the same blockface ≥ 4 m apart.
 2. **`osm_only_matches`** — for TIGER-miss voters: derive a
    canonical_key from the raw voter address, look them up directly in
@@ -362,7 +369,7 @@ Lookup tables backing them:
 
 The same three-step pipeline runs on every source — voter raw strings
 (`persons_decomposed`), TIGER `full_name` (`blockface_final`), and OSM
-`addr:street` (`osm_building_lookup`):
+`addr:street` (`osm_addresses_keyed`):
 
 ```
 raw → street_rewrite_sql → tokenize_street_sql → expand via address_tokens
@@ -383,7 +390,8 @@ street-type words.
 `osm_only_matches`). `canonical_key_sql(tokens)` produces the join-key
 string. Both sides — voter and OSM record — produce the same
 canonical_key for the same street, so the OSM lookup is a
-strict-equality join on `(zip5, canonical_key, housenumber_norm)`.
+strict-equality join on `(canonical_key, housenumber_norm)`, narrowed by
+ZIP or by distance from the matched blockface (`src/osm_lookup.py`).
 Every token participates: not stripping "generic" suffixes keeps
 parallel streets like `60 Place` and `60 Lane` distinct.
 
@@ -427,9 +435,9 @@ the new data.
 The exceptions (drop + recreate every run) are:
 
 - `blockface_final` — alias collapse + canonical-name pick need to see
-  all rows; non-incremental.
-- `osm_building_lookup` — depends on `STREET_REWRITES` and equivalency
-  groups, both of which can change between runs.
+  all of a state's rows (rebuilt per state).
+- `osm_addresses_keyed` — depends on `STREET_REWRITES` and equivalency
+  groups, both of which can change between runs (rebuilt per state).
 - `refined_positions` — window functions partition on
   `(tiger_line_id, side)`; new voters would change everyone else's
   rank.

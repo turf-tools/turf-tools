@@ -2,7 +2,7 @@
 
 Each transformation maps a state/source-specific raw voter-file schema onto
 the `Person` required core (see `src/models.py`) plus the dataset's filterable
-fields. State-specific raw codes are normalized to canonical cross-state labels
+fields. State-specific raw codes are normalized to canonical cross-state values
 via the maps defined in this module.
 
 Every field — the Person core and each filterable extra (enrollment, dates,
@@ -18,9 +18,9 @@ if TYPE_CHECKING:
     from src.importers.base import ImportFilter
 
 # NYS raw → canonical mappings used by the SQL CASE expressions below.
-# Keys are NYS-specific codes; values are cross-state canonical labels.
+# Keys are NYS-specific codes, mapped to their cross-state canonical values.
 
-NYS_REGISTRATION_STATUS_LABELS: dict[str, str] = {
+NYS_REGISTRATION_STATUSES: dict[str, str] = {
     "A": "active",
     "I": "inactive",
     "AF": "federal_only",
@@ -46,7 +46,7 @@ NYS_COUNTY_FIPS: dict[str, str] = {
 
 # NYS encodes party as (ENROLLMENT, OTHERPARTY); flatten the two-step
 # into a canonical label.
-NYS_ENROLLMENT_LABELS: dict[tuple[str, str | None], str] = {
+NYS_ENROLLMENTS: dict[tuple[str, str | None], str] = {
     ("DEM", None): "democratic",
     ("REP", None): "republican",
     ("CON", None): "conservative",
@@ -76,7 +76,7 @@ def _enrollment_case_sql() -> str:
     canonical party label. Unmatched `OTH` + OTHERPARTY values fall back
     to `other`."""
     pairs_by_enrollment: dict[str, list[tuple[str | None, str]]] = {}
-    for (enr, other), canonical in NYS_ENROLLMENT_LABELS.items():
+    for (enr, other), canonical in NYS_ENROLLMENTS.items():
         pairs_by_enrollment.setdefault(enr, []).append((other, canonical))
 
     parts: list[str] = []
@@ -172,7 +172,7 @@ SELECT
     raw.gender AS gender,
     {_iso_date_sql("raw.dob")} AS date_of_birth,
     {_iso_date_sql("raw.regdate")} AS registration_date,
-    {_case_from_map("raw.status", NYS_REGISTRATION_STATUS_LABELS, default="unknown")} AS registration_status,
+    {_case_from_map("raw.status", NYS_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
     {_iso_date_sql("raw.lastvoterdate")} AS last_voted_date,
     raw.countycode AS county_code,
     {_case_from_map("raw.countycode", NYS_COUNTY_FIPS)} AS county_fips,

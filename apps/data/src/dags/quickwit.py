@@ -14,7 +14,9 @@ import subprocess
 import time
 
 import duckdb  # noqa: TC001  # Hamilton resolves annotations at runtime via typing.get_type_hints
+from src.importers.base import Manifest  # noqa: TC001  # runtime annotation for Hamilton
 from src.models import QuickwitBuildManifestStub, QuickwitIngestResult, TableRef
+from src.quickwit import SEARCH_ONLY_FIELDS
 
 _REQUIRED_COLUMNS = [
     "external_id",
@@ -70,10 +72,14 @@ def quickwit_local_ingest_result(
     quickwit_binary_path: str,
     quickwit_config_path: str,
     quickwit_index_id: str,
+    manifest: Manifest,
     conn: duckdb.DuckDBPyConnection,
     quickwit_batch_size: int = 1_000_000,
 ) -> QuickwitIngestResult:
     """Stream person rows into ``quickwit tool local-ingest`` in stdin batches.
+
+    Beyond the Person core, each `SEARCH_ONLY_FIELDS` index field carries the
+    column of the manifest's field of that kind, when the dataset has one.
 
     The source table is read from DuckLake and serialized to NDJSON entirely in
     memory, one batch at a time, so the build machine never needs a full copy
@@ -99,6 +105,8 @@ def quickwit_local_ingest_result(
     indexed_doc_count = 0
     batch_count = 0
 
+    search_only_columns = {field: manifest.column_of_kind(field) for field in SEARCH_ONLY_FIELDS}
+    search_only_entries = "".join(f"{field} := {column},\n" for field, column in search_only_columns.items() if column)
     sort_key = "rpad(substr(upper(strip_accents(concat_ws(' ', last_name, first_name))), 1, 16), 16, ' ')"
     query = f"""
         WITH prepared AS (
@@ -117,6 +125,7 @@ def quickwit_local_ingest_result(
                     state := state,
                     zip5 := zip5,
                     zip4 := zip4,
+                    {search_only_entries}
                     sort_key_hi := {_packed_name_key(1)},
                     sort_key_lo := {_packed_name_key(9)}
                 )

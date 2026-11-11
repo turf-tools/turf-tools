@@ -218,6 +218,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
                 "quickwit_config_path": settings.quickwit_config_path,
                 "quickwit_index_id": index_id,
                 "quickwit_batch_size": settings.quickwit_batch_size,
+                "manifest": manifest,
                 "conn": conn,
             },
         )

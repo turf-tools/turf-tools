@@ -1,11 +1,11 @@
 """Write the NYS samples: the same invented people in each accepted format.
 
-- `sample.txt` — the raw NYSVOTER export's exact byte format: headerless, every
+- `file.txt` — the raw NYSVOTER export's exact byte format: headerless, every
   field quoted, CRLF line endings, Latin-1, street names padded inside their
   quotes, `PREVCOUNTY` sometimes two spaces.
-- `sample.csv` — a spreadsheet-style export: UTF-8 with a BOM, a header row of
+- `file.csv` — a spreadsheet-style export: UTF-8 with a BOM, a header row of
   the layout's field names as the layout spells them, minimal quoting, CRLF.
-- `sample.parquet` — lowercase layout names, text columns, blanks as NULL.
+- `file.parquet` — lowercase layout names, text columns, blanks as NULL.
 
 The tabular files hold what a converted export would: the C1 garbage the raw
 decode drops is already gone. Each person exists to exercise something the
@@ -22,7 +22,8 @@ import csv
 from pathlib import Path
 
 import duckdb
-from src.importers.nys_voter_file.decode import C1_STRIP_TABLE, LAYOUT
+from src.importers.nys_voter_file.decode import LAYOUT
+from src.importers.streams import C1_STRIP_TABLE
 
 HERE = Path(__file__).parent
 
@@ -300,11 +301,11 @@ def _records() -> list[list[str]]:
 
 def write_txt(records: list[list[str]]) -> None:
     lines = [",".join(_field(field, v) for field, v in zip(LAYOUT, r, strict=True)) for r in records]
-    (HERE / "sample.txt").write_bytes(("\r\n".join(lines) + "\r\n").encode("latin-1"))
+    (HERE / "file.txt").write_bytes(("\r\n".join(lines) + "\r\n").encode("latin-1"))
 
 
 def write_csv(records: list[list[str]]) -> None:
-    with open(HERE / "sample.csv", "w", encoding="utf-8-sig", newline="") as f:
+    with open(HERE / "file.csv", "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f, lineterminator="\r\n")
         writer.writerow(LAYOUT)
         writer.writerows([v.translate(C1_STRIP_TABLE) for v in r] for r in records)
@@ -318,7 +319,7 @@ def write_parquet(records: list[list[str]]) -> None:
         f"INSERT INTO sample VALUES ({', '.join('?' for _ in names)})",
         [[v.translate(C1_STRIP_TABLE) or None for v in r] for r in records],
     )
-    conn.execute(f"COPY sample TO '{HERE / 'sample.parquet'}' (FORMAT parquet)")
+    conn.execute(f"COPY sample TO '{HERE / 'file.parquet'}' (FORMAT parquet)")
     conn.close()
 
 
@@ -327,7 +328,7 @@ def main() -> None:
     write_txt(records)
     write_csv(records)
     write_parquet(records)
-    print(f"Wrote {len(records)} people to sample.txt, sample.csv, sample.parquet in {HERE}")
+    print(f"Wrote {len(records)} people to file.txt, file.csv, file.parquet in {HERE}")
 
 
 if __name__ == "__main__":

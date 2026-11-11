@@ -42,6 +42,8 @@ FilterKind = Literal[
     "voting-history-count",  # count of matching elections in a recency window
     "voting-history-detail",  # membership in specific named elections (multi-select)
     "address",  # the geocodable composite (canonical; also filters)
+    "phone",  # 10-digit phone number; digits-prefix match and/or exists
+    "email",  # lowercased email address; substring match and/or exists
 ]
 
 
@@ -122,6 +124,10 @@ class Manifest(_CamelModel):
     """
 
     fields: list[list[FieldDef]]
+
+    def column_of_kind(self, kind: FilterKind) -> str | None:
+        """The column of this manifest's field of `kind`, if it has one."""
+        return next((fd.column for section in self.fields for fd in section if fd.filter_kind == kind), None)
 
 
 class ImportFilter(_CamelModel):

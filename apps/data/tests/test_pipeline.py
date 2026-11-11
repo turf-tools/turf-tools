@@ -45,13 +45,13 @@ GOLDEN = {
     "matched": 5_281_714,
     "unmatched": 78_303,
     "match_pct": 98.54,
-    "matched_osm_road_projected": 3_815_423,
-    "matched_osm_complex": 710_502,
-    "matched_osm_off_segment": 110_150,
-    "matched_tiger_only": 559_593,
+    "matched_osm_road_projected": 3_923_233,
+    "matched_osm_complex": 730_197,
+    "matched_osm_off_segment": 115_717,
+    "matched_tiger_only": 426_521,
     "matched_osm_only": 86_046,
-    "buildings": 763_521,
-    "doors": 3_026_864,
+    "buildings": 763_518,
+    "doors": 3_026_863,
 }
 
 # Widened NYC envelope. The narrower commonly-cited bbox (-74.3 to -73.7)

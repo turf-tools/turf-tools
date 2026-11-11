@@ -39,3 +39,16 @@ def test_fields_are_anded_and_exact_fields_stay_whole() -> None:
     assert build_person_query(first_name="free", zip5="10009", external_id="NY000000000000000001") == (
         "(first_name:free*) AND zip5:10009 AND external_id:NY000000000000000001"
     )
+
+
+def test_phone_matches_digits_from_the_start() -> None:
+    assert build_person_query(phone="(305) 555-") == "phone:305555*"
+    assert build_person_query(phone=" - ") == ""
+
+
+def test_email_is_lowercased_and_escaped() -> None:
+    assert build_person_query(email="Jane+Doe@") == "email:jane\\+doe@*"
+
+
+def test_contact_fields_and_with_the_rest() -> None:
+    assert build_person_query(last_name="garcia", phone="305") == "(last_name:garcia*) AND phone:305*"

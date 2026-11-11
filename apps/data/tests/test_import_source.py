@@ -32,8 +32,7 @@ class _Progress:
 
 
 def test_missing_local_source_fails_before_touching_the_catalog() -> None:
-    # No connection needed: the up-front check runs before any schema work,
-    # which is what stops the fixed-width decode deadlocking on a missing file.
+    # No connection needed: the up-front check runs before any schema work.
     with pytest.raises(SourceUnreadableError, match="Import source not found"):
         NysVoterFileImporter().load({"file": "/nope/not-here.parquet"}, "irrelevant", None, _Progress())
 

@@ -1,12 +1,12 @@
 """Unit tests for the voting-history parser and canonical-label maps."""
 
 from src.importers.nys_voter_file.transform import (
-    NYS_ENROLLMENT_LABELS,
-    NYS_REGISTRATION_STATUS_LABELS,
+    NYS_ENROLLMENTS,
+    NYS_REGISTRATION_STATUSES,
 )
 from src.importers.nys_voter_file.voting_history import (
-    ELECTION_TYPE_LABELS,
-    VOTING_METHOD_LABELS,
+    NYS_ELECTION_TYPES,
+    NYS_VOTING_METHODS,
     parse_entry,
     parse_voting_history,
 )
@@ -205,7 +205,7 @@ def test_parse_voting_history_drops_unparseable_silently():
 
 def test_election_type_label_values_are_canonical_set():
     """Sanity-check the canonical labels don't drift from the documented enum."""
-    assert set(ELECTION_TYPE_LABELS.values()) == {
+    assert set(NYS_ELECTION_TYPES.values()) == {
         "general",
         "primary",
         "presidential_primary",
@@ -215,7 +215,7 @@ def test_election_type_label_values_are_canonical_set():
 
 
 def test_voting_method_label_values_are_canonical_set():
-    assert set(VOTING_METHOD_LABELS.values()) == {
+    assert set(NYS_VOTING_METHODS.values()) == {
         "poll_site",
         "early_voting",
         "absentee",
@@ -226,34 +226,34 @@ def test_voting_method_label_values_are_canonical_set():
 
 
 def test_registration_status_known_codes():
-    assert NYS_REGISTRATION_STATUS_LABELS["A"] == "active"
-    assert NYS_REGISTRATION_STATUS_LABELS["I"] == "inactive"
-    assert NYS_REGISTRATION_STATUS_LABELS["AF"] == "federal_only"
-    assert NYS_REGISTRATION_STATUS_LABELS["17"] == "preregistered"
+    assert NYS_REGISTRATION_STATUSES["A"] == "active"
+    assert NYS_REGISTRATION_STATUSES["I"] == "inactive"
+    assert NYS_REGISTRATION_STATUSES["AF"] == "federal_only"
+    assert NYS_REGISTRATION_STATUSES["17"] == "preregistered"
 
 
 def test_enrollment_top_level_codes():
     """Top-level NYS enrollment codes resolve without the OTH+OTHERPARTY two-step."""
-    assert NYS_ENROLLMENT_LABELS[("DEM", None)] == "democratic"
-    assert NYS_ENROLLMENT_LABELS[("REP", None)] == "republican"
-    assert NYS_ENROLLMENT_LABELS[("CON", None)] == "conservative"
-    assert NYS_ENROLLMENT_LABELS[("WOR", None)] == "working_families"
-    assert NYS_ENROLLMENT_LABELS[("BLK", None)] == "unaffiliated"
+    assert NYS_ENROLLMENTS[("DEM", None)] == "democratic"
+    assert NYS_ENROLLMENTS[("REP", None)] == "republican"
+    assert NYS_ENROLLMENTS[("CON", None)] == "conservative"
+    assert NYS_ENROLLMENTS[("WOR", None)] == "working_families"
+    assert NYS_ENROLLMENTS[("BLK", None)] == "unaffiliated"
 
 
 def test_enrollment_oth_resolves_to_specific_parties():
     """`OTH` + `OTHERPARTY` resolves to specific cross-state-portable labels."""
-    assert NYS_ENROLLMENT_LABELS[("OTH", "IND")] == "independence"
-    assert NYS_ENROLLMENT_LABELS[("OTH", "Ind")] == "independence"  # case variant
-    assert NYS_ENROLLMENT_LABELS[("OTH", "GRE")] == "green"
-    assert NYS_ENROLLMENT_LABELS[("OTH", "LBT")] == "libertarian"
-    assert NYS_ENROLLMENT_LABELS[("OTH", "REF")] == "reform"
+    assert NYS_ENROLLMENTS[("OTH", "IND")] == "independence"
+    assert NYS_ENROLLMENTS[("OTH", "Ind")] == "independence"  # case variant
+    assert NYS_ENROLLMENTS[("OTH", "GRE")] == "green"
+    assert NYS_ENROLLMENTS[("OTH", "LBT")] == "libertarian"
+    assert NYS_ENROLLMENTS[("OTH", "REF")] == "reform"
 
 
 def test_enrollment_defunct_ny_only_parties_bucket_to_other():
     """WEP and SAM are NY-only defunct ballot lines; bucketed to 'other'."""
-    assert NYS_ENROLLMENT_LABELS[("OTH", "WEP")] == "other"
-    assert NYS_ENROLLMENT_LABELS[("OTH", "SAM")] == "other"
+    assert NYS_ENROLLMENTS[("OTH", "WEP")] == "other"
+    assert NYS_ENROLLMENTS[("OTH", "SAM")] == "other"
 
 
 def test_udf_parses_voting_history_inside_duckdb(conn):

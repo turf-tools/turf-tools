@@ -610,15 +610,17 @@ class _PersonsSearchRequest(_WireBaseModel):
     city: str = ""
     zip: str = ""  # noqa: A003
     external_id: str = Field("", validation_alias="externalId")
+    phone: str = ""
+    email: str = ""
     limit: int = 25
     offset: int = 0
 
 
 @app.post("/persons/search")
 async def persons_search(req: _PersonsSearchRequest):
-    """Structured person search (name / address / id, AND-ed) over the org's
-    active-version Quickwit index — powers the Lookup tab. Name/address prefix-
-    match; results are paginated. Empty when no fields are filled or the version
+    """Structured person search (name / address / id / phone / email, AND-ed)
+    over the org's active-version Quickwit index — powers the Lookup tab.
+    Name/address/phone/email prefix-match; results are paginated. Empty when no fields are filled or the version
     has no index yet.
     """
     query = build_person_query(
@@ -628,6 +630,8 @@ async def persons_search(req: _PersonsSearchRequest):
         city=req.city,
         zip5=req.zip,
         external_id=req.external_id,
+        phone=req.phone,
+        email=req.email,
     )
     if not query:
         return {"numHits": 0, "hits": [], "offset": req.offset, "limit": req.limit}
@@ -658,7 +662,7 @@ class _PersonDetailRequest(_WireBaseModel):
 @app.post("/persons/detail")
 async def person_detail(req: _PersonDetailRequest):
     """The full lake record for one person (by external_id) — the Lookup detail
-    pane. The search index only holds name/address; everything else (party,
+    pane. The search index returns only name/address; everything else (party,
     districts, voting history, …) lives in `persons_geocoded`; custom-field
     values come from `person_custom_fields`. Returns ``{person: {<column>: value, …,
     votingHistory: [...], customFields: [{label, fieldType, values}]}}`` or

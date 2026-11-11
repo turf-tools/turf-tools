@@ -63,6 +63,12 @@ class GeoExtent:
     def states(self) -> tuple[str, ...]:
         return tuple(sorted({state for state, _ in self.counties}))
 
+    def states_sql(self, column: str = "state_fips") -> str:
+        """Predicate keeping this extent's states' rows of a table with a state
+        column."""
+        states = ", ".join(f"'{state}'" for state in self.states)
+        return f"{column} IN ({states})"
+
     def counties_sql(self) -> str:
         """Predicate keeping this extent's rows of a table with `state_fips` and
         `county_fips` columns."""

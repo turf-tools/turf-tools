@@ -39,9 +39,10 @@ export type PersonDetail = Record<string, unknown> & {
   customFields: PersonCustomField[];
 };
 
-// Structured person search (name / address / id, AND-ed) for the Lookup tab.
-// Name/address prefix-match; zip/id are exact. Proxies the data service, which
-// resolves the org's active version → Quickwit index.
+// Structured person search (name / address / id / phone / email, AND-ed) for
+// the Lookup tab. Name/address/phone/email prefix-match; zip/id are exact.
+// Proxies the data service, which resolves the org's active version → Quickwit
+// index.
 export const search = pub
   .input(
     z.object({
@@ -51,6 +52,8 @@ export const search = pub
       city: z.string().optional(),
       zip: z.string().optional(),
       externalId: z.string().optional(),
+      phone: z.string().optional(),
+      email: z.string().optional(),
       limit: z.number().int().positive().max(100).optional(),
       offset: z.number().int().min(0).optional(),
     }),
@@ -64,13 +67,15 @@ export const search = pub
       city: input.city ?? "",
       zip: input.zip ?? "",
       externalId: input.externalId ?? "",
+      phone: input.phone ?? "",
+      email: input.email ?? "",
       limit: input.limit ?? 25,
       offset: input.offset ?? 0,
     });
   });
 
 // The full lake record for one person, by external_id — powers the Lookup
-// detail pane. The search index only holds name/address; everything else
+// detail pane. The search index returns only name/address; everything else
 // (party, districts, voting history, …) comes from the lake.
 export const detail = pub
   .input(z.object({ externalId: z.string() }))

@@ -38,6 +38,16 @@ doc_mapping:
       type: text
       tokenizer: raw
       stored: true
+    # Filled from the manifest's phone / email fields (src/quickwit.py
+    # SEARCH_ONLY_FIELDS); searchable, not returned.
+    - name: phone
+      type: text
+      tokenizer: raw
+      stored: false
+    - name: email
+      type: text
+      tokenizer: raw
+      stored: false
     # Alphabetical sort key for the Lookup list. Quickwit 0.8.2 can't sort on a
     # text field, so the first 16 chars of "LAST FIRST" are packed into two
     # big-endian u64 fast fields (see dags/quickwit.py); u64 order then matches

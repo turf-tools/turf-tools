@@ -11,6 +11,7 @@ integer literals — user-selected election keys mapped through the
 version's registry into ints, never the user's text itself.
 """
 
+import re
 from datetime import date
 from typing import Any
 
@@ -26,6 +27,8 @@ from .criteria import (
     CustomFieldDef,
     DateRangeFieldDef,
     DateRangeFilter,
+    EmailFieldDef,
+    EmailFilter,
     EnumFieldDef,
     EnumFilter,
     FieldCatalog,
@@ -35,6 +38,8 @@ from .criteria import (
     NestedFilter,
     NumberRangeFilter,
     PersonIdSetFilter,
+    PhoneFieldDef,
+    PhoneFilter,
     TextFieldDef,
     TextFilter,
     TextMultiFieldDef,
@@ -255,6 +260,10 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
         if isinstance(def_, CustomFieldDef):
             return _custom_clause(f, def_, catalog, params)
         return _text_multi_clause(f, def_, params)
+    if isinstance(f, PhoneFilter):
+        return _phone_clause(f, _field(catalog, f.key), params)
+    if isinstance(f, EmailFilter):
+        return _email_clause(f, _field(catalog, f.key), params)
     if isinstance(f, DateRangeFilter):
         def_ = _field(catalog, f.key)
         if isinstance(def_, CustomFieldDef):
@@ -407,6 +416,34 @@ def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
     # option on the instance, not field metadata.
     params.append(f"%{f.value}%")
     return f"{f.key} ILIKE ?"
+
+
+def _phone_clause(f: PhoneFilter, def_: FieldDef | CustomFieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, PhoneFieldDef):
+        raise CriteriaError(f"Field {f.key} is not a phone field")
+    # Stored as bare digits, so typed punctuation (`(305) 555-`) is ignored.
+    digits = re.sub(r"\D", "", f.value)
+    if f.exists is False:
+        return f"{f.key} IS NULL"
+    parts = [f"{f.key} IS NOT NULL"] if f.exists else []
+    if digits:
+        parts.append(f"starts_with({f.key}, ?)")
+        params.append(digits)
+    return " AND ".join(parts)
+
+
+def _email_clause(f: EmailFilter, def_: FieldDef | CustomFieldDef, params: list[Any]) -> str:
+    if not isinstance(def_, EmailFieldDef):
+        raise CriteriaError(f"Field {f.key} is not an email field")
+    # Stored lowercased, so a lowercased needle makes this case-insensitive.
+    needle = f.value.strip().lower()
+    if f.exists is False:
+        return f"{f.key} IS NULL"
+    parts = [f"{f.key} IS NOT NULL"] if f.exists else []
+    if needle:
+        parts.append(f"contains({f.key}, ?)")
+        params.append(needle)
+    return " AND ".join(parts)
 
 
 def _text_multi_clause(f: TextMultiFilter, def_: FieldDef, params: list[Any]) -> str:

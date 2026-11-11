@@ -4,7 +4,7 @@ A single home for the SQL fragments and lookup tables used to tokenize,
 normalize, and compare street names and house numbers — so the rules
 stay in sync across the voter side (`persons_decomposed`,
 `osm_only_matches`), the TIGER side (`blockface_final`), and the OSM
-side (`osm_building_lookup`).
+side (`osm_addresses_keyed`).
 
 Each public helper is a callable that returns a SQL fragment. Callers
 embed the fragment in their own queries — no Python-side data movement.
@@ -52,8 +52,8 @@ def canonical_key_sql(tokens_col: str) -> str:
     Sorts the (already-expanded) tokens and joins them with `|`. Every
     token participates — no stripping. After `STREET_REWRITES` +
     equivalency expansion, every source side produces the same token
-    set for the same street, so the strict-equality
-    `(zip, canonical_key, housenumber_norm)` join works.
+    set for the same street, so the strict-equality joins on
+    `(canonical_key, housenumber_norm)` work (`src/osm_lookup.py`).
 
     Including every token (rather than dropping "generic" suffixes
     like `place`, `lane`, `avenue`) keeps parallel-named streets
@@ -77,7 +77,7 @@ def housenumber_norm_sql(col: str) -> str:
       2. Strip all hyphens so hyphenated and unhyphenated notations
          (`132-1` / `1321`, `6-46` / `646`) collapse to the same string.
 
-    Used on both sides of every `(zip, canonical_key, housenumber_norm)`
+    Used on both sides of every `(canonical_key, housenumber_norm)`
     join so voters and OSM records agree regardless of which surface
     form was stored.
     """

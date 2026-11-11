@@ -974,12 +974,6 @@ function noteItems(
   return notes.map((n) => ({ label: formatShortDate(n.createdAt), value: n.text }));
 }
 
-const ELECTION_TYPE_LABELS: Record<string, string> = {
-  general: "General",
-  primary: "Primary",
-  presidential_primary: "Pres. primary",
-};
-
 function votingHistoryItems(
   history: TurfDataPerson["votingHistory"],
 ): Array<{ label: string; value: string }> {
@@ -992,7 +986,7 @@ function votingHistoryItems(
   });
   return sorted.slice(0, 5).map((e) => ({
     label: e.date ? formatShortDate(e.date) : String(e.year),
-    value: `${ELECTION_TYPE_LABELS[e.type] ?? e.type} ${e.year}`,
+    value: `${toTitleCase(e.type.replace(/_/g, " "))} ${e.year}`,
   }));
 }
 

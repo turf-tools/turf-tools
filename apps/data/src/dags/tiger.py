@@ -21,6 +21,7 @@ from zipfile import ZipFile
 
 import duckdb
 from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
+from src.geo_tables import replace_state_rows, states_to_build
 from src.models import GeoExtent, TableRef
 from src.projection import utm_crs_sql
 
@@ -709,6 +710,7 @@ def blockface_final(
     tiger_addrfeat_raw: TableRef,
     address_tokens: TableRef,
     conn: duckdb.DuckDBPyConnection,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
     """Query-ready blockface table.
 
@@ -746,7 +748,9 @@ def blockface_final(
     Also carries ``utm_crs``, the UTM zone of the blockface's line
     (`projection.utm_crs_sql`), which geocoding does its metre math in.
 
-    Non-incremental: the collapse needs to see all rows at once.
+    Rebuilt per state (`geo_tables.replace_state_rows`): each of the import's
+    states is recomputed from all of that state's loaded counties, since the
+    collapse needs a state's rows together. Other states' rows are untouched.
     """
     table = "blockface_final"
     fqn = _fqn(table)
@@ -755,11 +759,28 @@ def blockface_final(
     tokens_fqn = address_tokens.fqn
 
     _ensure_schema(conn)
+    for state in states_to_build(conn, addrfeat_fqn, geo_extent):
+        replace_state_rows(conn, fqn, state, _blockface_final_sql(norm_fqn, addrfeat_fqn, tokens_fqn, state))
 
-    conn.execute(f"""
-        CREATE OR REPLACE TABLE {fqn} AS
+    version = _current_version(conn)
+    return TableRef(catalog=GEO_CATALOG, schema=TIGER_SCHEMA, table=table, version=version)
+
+
+def _blockface_final_sql(norm_fqn: str, addrfeat_fqn: str, tokens_fqn: str, state: str) -> str:
+    """One state's `blockface_final` rows, from that state's loaded lines."""
+    return f"""
         WITH line_counties AS (
             SELECT DISTINCT tiger_line_id, state_fips, county_fips FROM {addrfeat_fqn}
+            WHERE state_fips = '{state}'
+        ),
+        -- Each (line, name) in each county the line sits in. Built before the
+        -- county counts are joined, so that join keys on county and name
+        -- together and can't pair every line with every name in its county.
+        line_names AS (
+            SELECT DISTINCT n.tiger_line_id, n.full_name, lc.state_fips, lc.county_fips
+            FROM {norm_fqn} n
+            JOIN line_counties lc USING (tiger_line_id)
+            WHERE n.full_name IS NOT NULL
         ),
         county_name_freq AS (
             SELECT lc.state_fips, lc.county_fips, n.full_name, count(*) AS freq
@@ -770,12 +791,8 @@ def blockface_final(
         ),
         name_freq AS (
             SELECT ln.tiger_line_id, ln.full_name, sum(f.freq) AS freq
-            FROM (SELECT DISTINCT tiger_line_id, full_name FROM {norm_fqn} WHERE full_name IS NOT NULL) ln
-            JOIN line_counties lc USING (tiger_line_id)
-            JOIN county_name_freq f
-              ON f.state_fips = lc.state_fips
-             AND f.county_fips = lc.county_fips
-             AND f.full_name = ln.full_name
+            FROM line_names ln
+            JOIN county_name_freq f USING (state_fips, county_fips, full_name)
             GROUP BY ALL
         ),
         -- Each blockface_normalized row enriched with the frequency of its
@@ -798,6 +815,7 @@ def blockface_final(
                 )                                                       AS canonical_rank
             FROM {norm_fqn} n
             LEFT JOIN name_freq f USING (tiger_line_id, full_name)
+            WHERE n.tiger_line_id IN (SELECT tiger_line_id FROM line_counties)
         ),
         -- Collapse alias rows by (tlid, side, prefix, from, to). Each
         -- (tlid, side, prefix, range) is one logical blockface; multiple
@@ -852,11 +870,9 @@ def blockface_final(
             c.from_node_id,
             c.to_node_id,
             c.geom,
-            {utm_crs_sql("ST_X(ST_Centroid(c.geom))")}                AS utm_crs
+            {utm_crs_sql("ST_X(ST_Centroid(c.geom))")}                AS utm_crs,
+            '{state}'                                                  AS state_fips
         FROM collapsed c
         LEFT JOIN merged_extras   m  ON m.bf_row = c.bf_row
         LEFT JOIN canonical_extras ce ON ce.bf_row = c.bf_row
-    """)
-
-    version = _current_version(conn)
-    return TableRef(catalog=GEO_CATALOG, schema=TIGER_SCHEMA, table=table, version=version)
+    """

@@ -49,6 +49,28 @@ class TextFilter(BaseModel):
     value: str
 
 
+class PhoneFilter(BaseModel):
+    """Phone numbers starting with `value`'s digits (punctuation ignored).
+    `exists` True keeps only people with a phone, False only people without
+    (and ignores `value`), None either."""
+
+    kind: Literal["phone"]
+    key: str
+    value: str = ""
+    exists: bool | None = None
+
+
+class EmailFilter(BaseModel):
+    """Email addresses containing `value` (case-insensitive). `exists` True
+    keeps only people with an email, False only people without (and ignores
+    `value`), None either."""
+
+    kind: Literal["email"]
+    key: str
+    value: str = ""
+    exists: bool | None = None
+
+
 class TextMultiFilter(BaseModel):
     """OR-matches the column against any value in `values`. Compiles to
     SQL `IN (...)`. Single-value usage remains expressible as a
@@ -179,6 +201,8 @@ Filter = Annotated[
     | AgeRangeFilter
     | TextFilter
     | TextMultiFilter
+    | PhoneFilter
+    | EmailFilter
     | DateRangeFilter
     | VotingHistoryCountFilter
     | VotingHistoryDetailFilter
@@ -250,6 +274,16 @@ class TextMultiFieldDef(BaseModel):
     key: str
 
 
+class PhoneFieldDef(BaseModel):
+    kind: Literal["phone"]
+    key: str
+
+
+class EmailFieldDef(BaseModel):
+    kind: Literal["email"]
+    key: str
+
+
 class DateRangeFieldDef(BaseModel):
     kind: Literal["date-range"]
     key: str
@@ -282,6 +316,8 @@ FieldDef = (
     | AgeRangeFieldDef
     | TextFieldDef
     | TextMultiFieldDef
+    | PhoneFieldDef
+    | EmailFieldDef
     | DateRangeFieldDef
     | VotingHistoryCountFieldDef
     | VotingHistoryDetailFieldDef
@@ -367,6 +403,10 @@ def build_field_catalog(
             fields[key] = EnumFieldDef(kind="enum", key=key)
         elif fd.filter_kind == "text-multi":
             fields[key] = TextMultiFieldDef(kind="text-multi", key=key)
+        elif fd.filter_kind == "phone":
+            fields[key] = PhoneFieldDef(kind="phone", key=key)
+        elif fd.filter_kind == "email":
+            fields[key] = EmailFieldDef(kind="email", key=key)
         elif fd.filter_kind == "age-range":
             fields[key] = AgeRangeFieldDef(kind="age-range", key=key)
         elif fd.filter_kind == "date-range":
