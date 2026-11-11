@@ -1,16 +1,15 @@
-"""Voting-history parsing and canonical-label maps.
+"""Voting-history parsing and its code maps.
 
 The parser handles the NYS SBOE `VoterHistory` field's five legacy
-formats. The label maps normalize state-specific raw codes to canonical
-cross-state labels; `transform.py` consumes them to generate SQL
-CASE expressions.
+formats. The maps normalize state-specific raw codes to canonical
+cross-state values as each entry is parsed.
 """
 
 from __future__ import annotations
 
 import re
 
-ELECTION_TYPE_LABELS: dict[str, str] = {
+NYS_ELECTION_TYPES: dict[str, str] = {
     "GE": "general",
     "PR": "primary",
     "PP": "presidential_primary",
@@ -18,7 +17,7 @@ ELECTION_TYPE_LABELS: dict[str, str] = {
     "RO": "runoff",
 }
 
-VOTING_METHOD_LABELS: dict[str, str] = {
+NYS_VOTING_METHODS: dict[str, str] = {
     "P": "poll_site",
     "E": "early_voting",
     "A": "absentee",
@@ -80,26 +79,26 @@ def parse_entry(entry: str) -> dict | None:
 
     if m := _RE_MODERN.match(entry):
         date, code, method = m.groups()
-        etype = ELECTION_TYPE_LABELS.get(code)
+        etype = NYS_ELECTION_TYPES.get(code)
         if etype is None or not _plausible_year(int(date[:4])):
             return None
         return {
             "year": int(date[:4]),
             "type": etype,
             "date": _yyyymmdd_to_iso(date),
-            "method": VOTING_METHOD_LABELS.get(method, "other"),
+            "method": NYS_VOTING_METHODS.get(method, "other"),
         }
 
     if m := _RE_CODE_FIRST.match(entry):
         code, date, method = m.groups()
-        etype = ELECTION_TYPE_LABELS.get(code)
+        etype = NYS_ELECTION_TYPES.get(code)
         if etype is None or not _plausible_year(int(date[:4])):
             return None
         return {
             "year": int(date[:4]),
             "type": etype,
             "date": _yyyymmdd_to_iso(date),
-            "method": VOTING_METHOD_LABELS.get(method, "other"),
+            "method": NYS_VOTING_METHODS.get(method, "other"),
         }
 
     m = _RE_TRAILING_STATUS.match(entry)
@@ -123,7 +122,7 @@ def parse_entry(entry: str) -> dict | None:
         "year": year,
         "type": etype,
         "date": None,
-        "method": VOTING_METHOD_LABELS.get(method_raw, "other"),
+        "method": NYS_VOTING_METHODS.get(method_raw, "other"),
     }
 
 

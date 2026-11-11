@@ -2,7 +2,8 @@
 
 Takes voters from `matching.py` (`persons_best_match`) and OSM address
 data from `osm.py` (`osm_addresses_keyed`, looked up as `src/osm_lookup.py`
-describes) and produces a per-voter position. Two mutually-exclusive paths; `assembly.py` unions them.
+describes) and produces a per-voter position. Two mutually-exclusive paths;
+`assembly.py` unions them.
 
 - `refined_positions` — for TIGER-matched voters. Project the OSM
   building centroid onto the matched blockface (or use the OSM

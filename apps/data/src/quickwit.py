@@ -101,7 +101,7 @@ def build_person_query(
         clauses.append(f"zip5:{_escape_term(zip5.strip())}")
     if external_id.strip():
         clauses.append(f"external_id:{_escape_term(external_id.strip())}")
-    # Stored as bare digits and lowercased; both match from the start.
+    # Phone is indexed as bare digits and email lowercased; both match from the start.
     digits = re.sub(r"\D", "", phone)
     if digits:
         clauses.append(f"phone:{digits}*")

@@ -1,9 +1,9 @@
 """Florida raw registration + history → the `Person` schema plus filterable fields.
 
 Codes come from the Division of Elections' "Voter Extract File Layout" (May 2026).
-State-specific codes map to the canonical cross-state labels NYS uses where the
+State-specific codes map to the canonical cross-state values NYS uses where the
 meaning matches (parties, statuses, election types, voting methods), and to
-Florida's own labels otherwise.
+Florida's own values otherwise.
 """
 
 from __future__ import annotations
@@ -85,10 +85,10 @@ FL_COUNTIES: dict[str, tuple[str, str]] = {
     "WAS": ("Washington", "12133"),
 }
 
-# Party code → canonical enrollment. The six NYS also has share its labels;
+# Party code → canonical enrollment. The six NYS also has share its values;
 # IND is the Independent Party of Florida, not NYS's Independence Party. Every
 # other registered party is `other`.
-FL_ENROLLMENT_LABELS: dict[str, str] = {
+FL_ENROLLMENTS: dict[str, str] = {
     "DEM": "democratic",
     "REP": "republican",
     "NPA": "unaffiliated",
@@ -98,7 +98,7 @@ FL_ENROLLMENT_LABELS: dict[str, str] = {
     "CSV": "conservative",
 }
 
-FL_RACE_LABELS: dict[str, str] = {
+FL_RACES: dict[str, str] = {
     "1": "american_indian_alaskan_native",
     "2": "asian_pacific_islander",
     "3": "black",
@@ -109,13 +109,13 @@ FL_RACE_LABELS: dict[str, str] = {
     "9": "unknown",
 }
 
-FL_REGISTRATION_STATUS_LABELS: dict[str, str] = {"ACT": "active", "INA": "inactive"}
+FL_REGISTRATION_STATUSES: dict[str, str] = {"ACT": "active", "INA": "inactive"}
 
 # Election type code → canonical type. GEN and PRI also mark special
 # elections, so they're classified by date (`_election_type_sql`). OTH lumps
 # special, local, and municipal elections together, so it gets its own `other`
 # type rather than passing as a special.
-FL_ELECTION_TYPE_LABELS: dict[str, str] = {
+FL_ELECTION_TYPES: dict[str, str] = {
     "PPP": "presidential_primary",
     "RUN": "runoff",
     "OTH": "other",
@@ -128,7 +128,7 @@ _REGULAR_ELECTION_MONTHS: dict[str, tuple[str, int]] = {"GEN": ("general", 11), 
 
 # History code → voting method, for ballots that counted. B, L, and P are
 # ballots not counted and N is "did not vote", so they aren't votes.
-FL_VOTING_METHOD_LABELS: dict[str, str] = {"Y": "poll_site", "E": "early_voting", "A": "absentee"}
+FL_VOTING_METHODS: dict[str, str] = {"Y": "poll_site", "E": "early_voting", "A": "absentee"}
 
 # When one voter has several counted codes for one election, keep the first.
 _METHOD_PRIORITY = ("Y", "E", "A")
@@ -159,7 +159,7 @@ def _election_type_sql(code: str, date: str) -> str:
         f"THEN '{label}' ELSE 'special' END"
         for c, (label, m) in _REGULAR_ELECTION_MONTHS.items()
     )
-    others = " ".join(f"WHEN {code} = '{c}' THEN '{label}'" for c, label in FL_ELECTION_TYPE_LABELS.items())
+    others = " ".join(f"WHEN {code} = '{c}' THEN '{label}'" for c, label in FL_ELECTION_TYPES.items())
     return f"CASE {regular} {others} ELSE NULL END"
 
 
@@ -191,7 +191,7 @@ def fl_votes_query(registration_table: str, history_table: str, filter: ImportFi
     election keeps the first in `_METHOD_PRIORITY`.
     """
     method_rank = " ".join(f"WHEN '{code}' THEN {i}" for i, code in enumerate(_METHOD_PRIORITY))
-    counted = ", ".join(f"'{code}'" for code in FL_VOTING_METHOD_LABELS)
+    counted = ", ".join(f"'{code}'" for code in FL_VOTING_METHODS)
     return f"""
 SELECT voter_id, election_date, type, arg_min(history_code, rank) AS history_code
 FROM (
@@ -234,7 +234,7 @@ SELECT
         list_sort(list({{
             'date': strftime(election_date, '%Y-%m-%d'),
             'type': type,
-            'method': {_case_from_map("history_code", FL_VOTING_METHOD_LABELS)}
+            'method': {_case_from_map("history_code", FL_VOTING_METHODS)}
         }})),
         e -> {{'year': CAST(left(e.date, 4) AS INT), 'type': e.type, 'date': e.date, 'method': e.method}}
     )::{VOTING_HISTORY_TYPE} AS voting_history
@@ -286,12 +286,12 @@ SELECT
     'FL' AS state,
     left(raw.zip_digits, 5) AS zip5,
     CASE WHEN length(raw.zip_digits) = 9 THEN right(raw.zip_digits, 4) END AS zip4,
-    {_case_from_map("raw.party_affiliation", FL_ENROLLMENT_LABELS, default="other")} AS enrollment,
+    {_case_from_map("raw.party_affiliation", FL_ENROLLMENTS, default="other")} AS enrollment,
     raw.gender AS gender,
-    {_case_from_map("raw.race", FL_RACE_LABELS)} AS race,
+    {_case_from_map("raw.race", FL_RACES)} AS race,
     {_iso_date_sql("raw.birth_date")} AS date_of_birth,
     {_iso_date_sql("raw.registration_date")} AS registration_date,
-    {_case_from_map("raw.voter_status", FL_REGISTRATION_STATUS_LABELS, default="unknown")} AS registration_status,
+    {_case_from_map("raw.voter_status", FL_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
     raw.county_code AS county_code,
     {_case_from_map("raw.county_code", county_fips)} AS county_fips,
     {_county_local_sql("raw.precinct")} AS precinct,

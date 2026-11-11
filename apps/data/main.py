@@ -618,9 +618,9 @@ class _PersonsSearchRequest(_WireBaseModel):
 
 @app.post("/persons/search")
 async def persons_search(req: _PersonsSearchRequest):
-    """Structured person search (name / address / id / phone / email, AND-ed) over the org's
-    active-version Quickwit index — powers the Lookup tab. Name/address prefix-
-    match; results are paginated. Empty when no fields are filled or the version
+    """Structured person search (name / address / id / phone / email, AND-ed)
+    over the org's active-version Quickwit index — powers the Lookup tab.
+    Name/address/phone/email prefix-match; results are paginated. Empty when no fields are filled or the version
     has no index yet.
     """
     query = build_person_query(

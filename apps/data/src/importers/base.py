@@ -42,8 +42,8 @@ FilterKind = Literal[
     "voting-history-count",  # count of matching elections in a recency window
     "voting-history-detail",  # membership in specific named elections (multi-select)
     "address",  # the geocodable composite (canonical; also filters)
-    "phone",  # 10-digit phone number; digits-prefix match or has-value
-    "email",  # lowercased email address; substring match or has-value
+    "phone",  # 10-digit phone number; digits-prefix match and/or exists
+    "email",  # lowercased email address; substring match and/or exists
 ]
 
 

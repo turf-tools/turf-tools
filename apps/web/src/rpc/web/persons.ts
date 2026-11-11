@@ -40,8 +40,9 @@ export type PersonDetail = Record<string, unknown> & {
 };
 
 // Structured person search (name / address / id / phone / email, AND-ed) for
-// the Lookup tab. Name/address/phone/email prefix-match; zip/id are exact. Proxies the data service, which
-// resolves the org's active version → Quickwit index.
+// the Lookup tab. Name/address/phone/email prefix-match; zip/id are exact.
+// Proxies the data service, which resolves the org's active version → Quickwit
+// index.
 export const search = pub
   .input(
     z.object({

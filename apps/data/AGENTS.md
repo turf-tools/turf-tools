@@ -148,7 +148,7 @@ one row, picking the canonical `full_name` by its frequency in the
 line's own county (alphabetical tiebreak).
 
 Equivalency expansion uses `EQUIVALENT_TOKEN_GROUPS` from
-`src/addressing.py`. Non-incremental: the collapse needs all rows.
+`src/addressing.py`. Rebuilt per state: the collapse needs all of a state's rows.
 
 ### osm
 
@@ -435,7 +435,7 @@ the new data.
 The exceptions (drop + recreate every run) are:
 
 - `blockface_final` — alias collapse + canonical-name pick need to see
-  all rows; non-incremental.
+  all of a state's rows (rebuilt per state).
 - `osm_addresses_keyed` — depends on `STREET_REWRITES` and equivalency
   groups, both of which can change between runs (rebuilt per state).
 - `refined_positions` — window functions partition on
