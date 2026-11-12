@@ -218,8 +218,9 @@ per voter; coordinate assignment is downstream in `geocode`.
 - `persons_scored` — score each candidate by token overlap + numeric-
   token bonus.
 - `persons_best_match` — pick the highest-scoring blockface per voter
-  (`ROW_NUMBER` ordered by `match_score DESC, blockface_id, full_name`
-  for deterministic tiebreaks).
+  (`ROW_NUMBER` ordered by `match_score DESC, blockface_id, full_name`,
+  then the narrower of overlapping ranges, then the range itself, so
+  every run picks the same row).
 
 ### geocode
 

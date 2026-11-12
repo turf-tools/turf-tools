@@ -456,8 +456,10 @@ def persons_best_match(
     """Select the single highest-scoring blockface candidate per person.
 
     Uses ROW_NUMBER() partitioned by external_id ordered by match_score DESC.
-    Ties are broken arbitrarily (stable within a run via DuckDB's deterministic
-    ordering on blockface_id).
+    Ties go to the lowest blockface_id, then full_name. TIGER lists some
+    addresses under overlapping ranges of one street on one side; between
+    those, the narrower range wins, then the range itself decides, so every
+    run picks the same row.
 
     Incremental: skips external_ids already present.
     """
@@ -505,7 +507,9 @@ def persons_best_match(
                 *,
                 ROW_NUMBER() OVER (
                     PARTITION BY external_id
-                    ORDER BY match_score DESC, blockface_id, full_name
+                    ORDER BY match_score DESC, blockface_id, full_name,
+                             abs(to_house_num - from_house_num),
+                             COALESCE(house_num_prefix, ''), from_house_num, to_house_num
                 ) AS rn
             FROM {scored_fqn}
             WHERE external_id NOT IN (SELECT external_id FROM {fqn})

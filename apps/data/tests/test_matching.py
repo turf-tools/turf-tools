@@ -401,3 +401,22 @@ class TestPersonsBestMatch:
         ref2 = _run()
         chosen2 = conn.execute(f"SELECT blockface_id FROM {ref2.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert chosen1 == chosen2 == "T1:left"
+
+    @pytest.mark.parametrize("order", [("wide", "narrow"), ("narrow", "wide")])
+    def test_overlapping_ranges_of_one_street_pick_the_narrower(self, synth, order):
+        """Two ranges of one street on one side both hold the address: the
+        narrower one wins, whichever TIGER row comes first."""
+        conn, validated, bf = synth
+        _insert_validated(conn, "v1", "40-10 WEST 42 STREET")
+        ranges = {"wide": (1, 99), "narrow": (2, 16)}
+        for name in order:
+            from_hn, to_hn = ranges[name]
+            _insert_blockface(conn, "T1:left", "West 42 Street", from_hn, to_hn, prefix="40-", number_type="mixed")
+        d = matching.persons_decomposed(persons_validated=validated, schema=ORG, conn=conn)
+        c = matching.persons_candidates(persons_decomposed=d, blockface_final=bf, schema=ORG, conn=conn)
+        s = matching.persons_scored(persons_candidates=c, persons_decomposed=d, schema=ORG, conn=conn)
+        scores = conn.execute(f"SELECT match_score FROM {s.fqn} WHERE external_id = 'v1'").fetchall()
+        assert len(scores) == 2 and scores[0] == scores[1], "both ranges should tie"
+        best = matching.persons_best_match(persons_scored=s, schema=ORG, conn=conn)
+        row = conn.execute(f"SELECT from_house_num, to_house_num FROM {best.fqn} WHERE external_id = 'v1'").fetchone()
+        assert row == (2, 16)
