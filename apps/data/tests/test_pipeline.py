@@ -37,7 +37,7 @@ from src.importers.nys_voter_file import NysVoterFileImporter
 VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-03-08-nyc.parquet"
 
 
-# Golden numbers captured 2026-11-07 against the full NYC fixture.
+# Golden numbers captured 2026-11-12 against the full NYC fixture.
 # Re-baseline (with an explanation in the PR description) when an
 # intentional pipeline change shifts them.
 GOLDEN = {
@@ -50,8 +50,8 @@ GOLDEN = {
     "matched_osm_off_segment": 115_717,
     "matched_tiger_only": 426_521,
     "matched_osm_only": 86_046,
-    "buildings": 763_518,
-    "doors": 3_026_863,
+    "buildings": 763_485,
+    "doors": 3_026_676,
 }
 
 # Widened NYC envelope. The narrower commonly-cited bbox (-74.3 to -73.7)
@@ -165,17 +165,17 @@ def test_table_row_counts_match_baseline(nyc_pipeline):
 
 
 def test_no_duplicate_buildings_at_same_coords(nyc_pipeline):
-    """Two voters at the exact same `(latitude, longitude, zip5)` must
-    share a `building_id`. The native app renders one dot per building
-    and shows its residents; overlapping distinct buildings would stack
-    invisibly. This is the strictest definition of "real dupe."
+    """Two voters at the exact same `(latitude, longitude)` must share a
+    `building_id`, whatever ZIPs they wrote. The native app renders one dot
+    per building and shows its residents; overlapping distinct buildings
+    would stack invisibly.
     """
     n = nyc_pipeline.execute("""
         SELECT count(*) FROM (
-          SELECT latitude, longitude, zip5
+          SELECT latitude, longitude
           FROM ducklake."default".persons_geocoded
           WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-          GROUP BY 1, 2, 3
+          GROUP BY 1, 2
           HAVING count(DISTINCT building_id) > 1
         )
     """).fetchone()[0]
@@ -264,17 +264,17 @@ def test_address_line_1_is_well_formed(nyc_pipeline):
 
 
 def test_building_and_door_keys_match_canonical_format(nyc_pipeline):
-    """`building_id` == `address_line_1 || '|' || zip5`;
-    `door_id` == `address_line_1 || '|' || COALESCE(address_line_2, '') || '|' || zip5`.
+    """`building_id` == `address_line_1 || '|' || building_zip5`;
+    `door_id` == `address_line_1 || '|' || COALESCE(address_line_2, '') || '|' || building_zip5`.
 
     Catches assembly bugs where the derived keys drift from the canonical
     address (which would silently fragment buildings/doors in the admin UI).
     """
     bad = nyc_pipeline.execute("""
         SELECT
-          count(*) FILTER (WHERE building_id != address_line_1 || '|' || zip5) AS bad_building,
+          count(*) FILTER (WHERE building_id != address_line_1 || '|' || building_zip5) AS bad_building,
           count(*) FILTER (
-            WHERE door_id != address_line_1 || '|' || COALESCE(address_line_2, '') || '|' || zip5
+            WHERE door_id != address_line_1 || '|' || COALESCE(address_line_2, '') || '|' || building_zip5
           ) AS bad_door
         FROM ducklake."default".persons_geocoded
     """).fetchone()

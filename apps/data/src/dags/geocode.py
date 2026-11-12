@@ -71,7 +71,8 @@ def refined_positions(
     conn: duckdb.DuckDBPyConnection,
     geo_extent: GeoExtent | None = None,
 ) -> TableRef:
-    """Per-voter (latitude, longitude, position_source, osm_street).
+    """Per-voter (latitude, longitude, position_source, osm_street,
+    osm_housenumber, osm_id, osm_kind, osm_key).
 
     Position rule:
       1. Match the voter to an OSM address by exact
@@ -111,9 +112,9 @@ def refined_positions(
       - `osm_off_segment` — OSM centroid (projection clamped on matched blockface)
       - `tiger_only`      — fraction from DENSE_RANK fallback
 
-    `osm_street` is carried through so `canonical_addresses` can pick
-    OSM's per-building canonical name (more stable than TIGER's, which
-    has aliases for the same physical street).
+    The matched OSM record (`osm_id`, `osm_kind`), its street and house
+    number, and its street key (`osm_key`) are carried through for
+    `canonical_addresses`, which gives each OSM building one address.
 
     Non-incremental: drops + recreates every run. DENSE_RANK is a
     window over the full blockface, so new voters would shift everyone
@@ -191,6 +192,7 @@ def refined_positions(
         SELECT v.*, o.osm_lat, o.osm_lon,
                o.street AS osm_street,
                o.housenumber AS osm_housenumber,
+               o.osm_id, o.kind AS osm_kind,
                COALESCE(o.in_residential_complex, false) AS in_complex
         FROM _voter_keyed v
         LEFT JOIN ({zip_lookup_sql(oak)}) o
@@ -209,7 +211,7 @@ def refined_positions(
             WHERE osm_lat IS NULL AND canonical_key != ''
         ),
         candidates AS (
-            SELECT m.external_id, a.osm_id, a.lat, a.lon, a.street, a.housenumber,
+            SELECT m.external_id, a.osm_id, a.kind, a.lat, a.lon, a.street, a.housenumber,
                    a.in_residential_complex,
                    ST_Distance(m.bf_m, ST_Transform(ST_Point(a.lon, a.lat), 'OGC:CRS84', m.crs)) AS d_m
             FROM missed m
@@ -218,7 +220,8 @@ def refined_positions(
              AND a.housenumber_norm = m.housenumber_norm
         )
         SELECT external_id, lat AS osm_lat, lon AS osm_lon, street AS osm_street,
-               housenumber AS osm_housenumber, in_residential_complex AS in_complex
+               housenumber AS osm_housenumber, osm_id, kind AS osm_kind,
+               in_residential_complex AS in_complex
         FROM (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY external_id ORDER BY d_m, osm_id) AS rn
             FROM candidates
@@ -234,6 +237,8 @@ def refined_positions(
                    CASE WHEN z.osm_lat IS NULL THEN n.osm_street ELSE z.osm_street END AS osm_street,
                    CASE WHEN z.osm_lat IS NULL THEN n.osm_housenumber ELSE z.osm_housenumber END
                        AS osm_housenumber,
+                   CASE WHEN z.osm_lat IS NULL THEN n.osm_id ELSE z.osm_id END AS osm_id,
+                   CASE WHEN z.osm_lat IS NULL THEN n.osm_kind ELSE z.osm_kind END AS osm_kind,
                    CASE WHEN z.osm_lat IS NULL THEN COALESCE(n.in_complex, false) ELSE z.in_complex END
                        AS in_complex
                )
@@ -268,7 +273,8 @@ def refined_positions(
             SELECT
                 external_id, blockface_id, bf_side, tiger_line_id,
                 house_num_prefix, person_house_number, half_code, bf_descending,
-                osm_lat, osm_lon, osm_street, osm_housenumber, in_complex, crs,
+                osm_lat, osm_lon, osm_street, osm_housenumber, osm_id, osm_kind,
+                canonical_key, in_complex, crs,
                 ST_Transform(bf_geom, 'OGC:CRS84', crs) AS bf_m,
                 CASE WHEN osm_lat IS NOT NULL
                      THEN ST_Transform(ST_Point(osm_lon, osm_lat), 'OGC:CRS84', crs)
@@ -414,7 +420,10 @@ def refined_positions(
                ST_X(f.pt_4326) AS longitude,
                f.position_source,
                v.osm_street,
-               v.osm_housenumber
+               v.osm_housenumber,
+               v.osm_id,
+               v.osm_kind,
+               CASE WHEN v.osm_id IS NOT NULL THEN v.canonical_key END AS osm_key
         FROM final_geom f
         LEFT JOIN _voter_with_osm v ON v.external_id = f.external_id
         UNION ALL
@@ -427,7 +436,10 @@ def refined_positions(
                osm_lon  AS longitude,
                'osm_complex' AS position_source,
                osm_street,
-               osm_housenumber
+               osm_housenumber,
+               osm_id,
+               osm_kind,
+               canonical_key AS osm_key
         FROM _voter_with_osm
         WHERE in_complex
         UNION ALL
@@ -443,7 +455,10 @@ def refined_positions(
                vof.osm_lon AS longitude,
                'osm_off_segment' AS position_source,
                vof.osm_street,
-               vof.osm_housenumber
+               vof.osm_housenumber,
+               vof.osm_id,
+               vof.osm_kind,
+               vof.canonical_key AS osm_key
         FROM with_osm_frac vof
         WHERE NOT vof.in_complex
           AND vof.osm_lat IS NOT NULL
@@ -483,8 +498,8 @@ def osm_only_matches(
     nearest blockface in the same zip5 for downstream consumers that
     need a `blockface_id` (e.g. turf assignment).
 
-    Schema: (external_id, latitude, longitude, osm_street,
-             blockface_id, snap_distance_m).
+    Schema: (external_id, latitude, longitude, osm_street, osm_housenumber,
+             osm_id, osm_kind, osm_key, blockface_id, snap_distance_m).
 
     The snap is informational — `snap_distance_m` reports how far the
     voter is from their associated blockface. Large distances just mean
@@ -553,7 +568,9 @@ def osm_only_matches(
         SELECT v.external_id, v.zip5,
                o.osm_lat AS latitude, o.osm_lon AS longitude,
                o.street  AS osm_street,
-               o.housenumber AS osm_housenumber
+               o.housenumber AS osm_housenumber,
+               o.osm_id, o.kind AS osm_kind,
+               v.canonical_key AS osm_key
         FROM _miss_keyed v
         JOIN ({zip_lookup_sql(oak)}) o
           ON o.zip_code         = v.zip5
@@ -628,6 +645,7 @@ def osm_only_matches(
                                THEN 'left' ELSE 'right' END
         )
         SELECT v.external_id, v.latitude, v.longitude, v.osm_street, v.osm_housenumber,
+               v.osm_id, v.osm_kind, v.osm_key,
                s.blockface_id, s.snap_distance_m
         FROM _miss_with_osm v
         JOIN sided s

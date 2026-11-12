@@ -530,3 +530,64 @@ class TestOsmOnlyMatches:
         )
         count = conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0]
         assert count == 0, "TIGER-matched voter shouldn't appear in osm_only"
+
+
+# ---------------------------------------------------------------------------
+# The matched OSM record rides along for canonical_addresses
+# ---------------------------------------------------------------------------
+
+
+class TestMatchedRecordCarried:
+    BF = "LINESTRING(-74.01 40.75, -73.99 40.75)"
+
+    def _tiger_voter(self, conn):
+        _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
+        _insert_best_match(conn, "v1", "T1:left", "West 42 Street", 100, bf_geom=self.BF)
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom=self.BF)
+        return _canonical_key(conn, "West 42 Street")
+
+    def _refined(self, conn, pd, pbm, bf, obl):
+        ref = geocode.refined_positions(
+            persons_best_match=pbm,
+            persons_decomposed=pd,
+            blockface_final=bf,
+            osm_addresses_keyed=obl,
+            schema=ORG,
+            conn=conn,
+        )
+        return conn.execute(f"SELECT osm_id, osm_kind, osm_key FROM {ref.fqn}").fetchone()
+
+    @pytest.mark.parametrize("in_complex", [False, True])
+    def test_record_matched_by_zip(self, synth, in_complex):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._tiger_voter(conn)
+        _insert_osm_building(conn, key, "100", lat=40.7501, lon=-74.0, in_complex=in_complex, osm_id=11)
+        assert self._refined(conn, pd, pbm, bf, obl) == (11, "way", key)
+
+    def test_record_matched_nearby(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        key = self._tiger_voter(conn)
+        _insert_osm_building(conn, key, "100", lat=40.7503, lon=-74.0, zip_code=None, osm_id=12, kind="node")
+        assert self._refined(conn, pd, pbm, bf, obl) == (12, "node", key)
+
+    def test_no_record_without_a_match(self, synth):
+        conn, pd, pbm, bf, obl, _ = synth
+        self._tiger_voter(conn)
+        assert self._refined(conn, pd, pbm, bf, obl) == (None, None, None)
+
+    def test_osm_only_record(self, synth):
+        conn, pd, pbm, bf, obl, tokens = synth
+        _insert_decomposed(conn, "v1", 100, "WEST 42 STREET")
+        _insert_blockface(conn, "T1:left", "West 42 Street", geom=self.BF)
+        key = _canonical_key(conn, "West 42 Street")
+        _insert_osm_building(conn, key, "100", lat=40.7501, lon=-73.999, osm_id=13)
+        ref = geocode.osm_only_matches(
+            persons_decomposed=pd,
+            persons_best_match=pbm,
+            osm_addresses_keyed=obl,
+            blockface_final=bf,
+            address_tokens=tokens,
+            schema=ORG,
+            conn=conn,
+        )
+        assert conn.execute(f"SELECT osm_id, osm_kind, osm_key FROM {ref.fqn}").fetchone() == (13, "way", key)

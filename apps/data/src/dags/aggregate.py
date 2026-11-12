@@ -33,9 +33,11 @@ def buildings_geocoded(
         building_id, address_line_1, city, state, zip5, latitude, longitude,
         blockface_id, person_count, door_count
 
-    lat/lng = AVG of contained persons' coordinates (they share an address,
-    so coordinates differ only by float noise). blockface_id = the most
-    common of the persons' blockfaces; they agree for nearly every building.
+    lat/lng = AVG of contained persons' coordinates, which nearly always
+    coincide; a building whose voters were placed differently (OSM centroid
+    for some, road projection for others) sits at their average.
+    blockface_id = the most common of the persons' blockfaces; they agree for
+    nearly every building.
     """
     table = "buildings_geocoded"
     ensure_schema(conn, schema)
@@ -53,7 +55,7 @@ def buildings_geocoded(
             ANY_VALUE(address_line_1)               AS address_line_1,
             ANY_VALUE(city)                         AS city,
             ANY_VALUE(state)                        AS state,
-            zip5,
+            ANY_VALUE(building_zip5)                AS zip5,
             AVG(latitude)                           AS latitude,
             AVG(longitude)                          AS longitude,
             MODE(blockface_id)                      AS blockface_id,
@@ -61,7 +63,7 @@ def buildings_geocoded(
             COUNT(DISTINCT door_i)                  AS door_count,
             ANY_VALUE(building_i)                   AS building_i
         FROM {persons_fqn}
-        GROUP BY building_id, zip5
+        GROUP BY building_id
     """)
 
     return TableRef(

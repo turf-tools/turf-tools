@@ -174,8 +174,8 @@ without a ZIP, keyed on `(canonical_key, housenumber_norm)`, carrying:
 - `zip_code` — the `addr:postcode` tag; NULL for the many OSM imports
   that left it off
 - `lat`, `lon` — area-weighted centroid for ways, the node's own point
-- `street` — the OSM `addr:street` tag (used as the canonical street for
-  `building_id` when this OSM record matches a voter)
+- `street` — the OSM `addr:street` tag (the displayed street when TIGER
+  doesn't name that street in the building's ZIP; see "Address handling")
 - `housenumber` — the OSM `addr:housenumber` tag (used by
   `canonical_addresses` to normalize voter-side surface-form variants)
 - `in_residential_complex` — true if the element's point is inside a
@@ -268,6 +268,7 @@ house_number, half_code)` so voters across multiple address ranges on
 
 ```
 persons_best_match  + refined_positions + osm_only_matches + persons_decomposed
+                    + address_tokens
     → canonical_addresses
 
 persons_validated + canonical_addresses + refined_positions + osm_only_matches
@@ -276,17 +277,13 @@ persons_validated + canonical_addresses + refined_positions + osm_only_matches
     → geocoding_summary
 ```
 
-- `canonical_addresses` — produce the canonical `address_line_1` and
-  `matched_tokens` for each voter. Street: OSM `osm_street` when an OSM
-  match exists, else TIGER `full_name` (see "Street-name handling").
-  Housenumber: OSM `osm_housenumber` when the voter's parsed
-  housenumber and the OSM record's housenumber normalize to the same
-  string (so surface-form variants like `646` ↔ `6-46` unify), else
-  the voter's parsed form.
+- `canonical_addresses` — produce the canonical `address_line_1`,
+  `matched_tokens` and `building_zip5` for each voter, one address and
+  one ZIP per building (see "Address handling").
 - `persons_geocoded` — final canonical Person record: identity fields
   from the voter file, canonical address, lat/lon from
   `refined_positions` OR `osm_only_matches`, `building_id` + `door_id`
-  derived from the canonical address.
+  derived from the canonical address and `building_zip5`.
 - `geocoding_summary` — match-rate diagnostics, broken down by
   `position_source`.
 
@@ -297,10 +294,10 @@ persons_geocoded → buildings_geocoded
                  → doors_geocoded
 ```
 
-A **building** is one physical structure: `address_line_1 + zip5`. A **door**
-is one unit within a building: `address_line_1 + address_line_2 + zip5`.
-lat/lng is the centroid of contained voters — they share an address so
-coordinates match within float noise.
+A **building** is one physical structure: `address_line_1 + building_zip5`.
+A **door** is one unit within a building:
+`address_line_1 + address_line_2 + building_zip5`. lat/lng is the centroid
+of contained voters.
 
 ### boundaries
 
@@ -396,34 +393,45 @@ Every token participates: not stripping "generic" suffixes keeps
 parallel streets like `60 Place` and `60 Lane` distinct.
 
 **3. Display `address_line_1`** (`canonical_addresses`). The human-
-readable canonical address that drives `building_id`. The street part
-prefers OSM's `addr:street` when an OSM match exists, falling back to
-TIGER's canonical `full_name` otherwise. The housenumber part prefers
-OSM's `addr:housenumber` when it normalizes to the same string as the
-voter's parsed form (so surface-form variants like `646` ↔ `6-46`
-unify); otherwise keeps the voter's form (so OSM subunit suffixes
-like `100A` don't overwrite voter-correct forms like `100`).
+readable canonical address that drives `building_id`, settled once per
+building so everyone in it shares one. A building is the OSM record
+voters matched (`osm_kind`, `osm_id`), else a TIGER blockface side plus
+address.
 
-OSM wins when available because OSM tags one canonical street and one
-canonical housenumber per physical building — every voter at that
-building converges on the same `address_line_1` and `building_id`.
-TIGER's canonical `full_name` is itself the most-common alias for the
-matched blockface (picked in `blockface_final`), so the fallback is
-also stable across runs.
+The street is spelled as TIGER spells it, so one street reads the same
+along a block (`EAST 77TH STREET` → `E 77TH ST`). Voters with no OSM
+match show TIGER's canonical `full_name` (the most-common alias for the
+matched range, picked in `blockface_final`). An OSM building shows how
+TIGER-matched voters in the building's ZIP spell its street (the TIGER
+name with the same key as OSM's `addr:street`), or OSM's `addr:street`
+when TIGER doesn't name that street in the ZIP.
+
+The housenumber part prefers OSM's `addr:housenumber` when it
+normalizes to the same string as the voter's parsed form (so
+surface-form variants like `646` ↔ `6-46` unify); otherwise keeps the
+voter's form (so OSM subunit suffixes like `100A` don't overwrite
+voter-correct forms like `100`).
+
+`building_zip5` is the most common voter ZIP in the building (lowest
+on ties). Voters at one building sometimes write different ZIPs; each
+keeps their own `zip5` for filters and exports, and the building's ids
+use `building_zip5`.
 
 ## building_id and door_id
 
 ```
-building_id = "{address_line_1}|{zip5}"
-door_id     = "{address_line_1}|{address_line_2}|{zip5}"
+building_id = "{address_line_1}|{building_zip5}"
+door_id     = "{address_line_1}|{address_line_2}|{building_zip5}"
 ```
 
 These are derived in `persons_geocoded`. The `|` separator keeps them
 unambiguous. Single-family doors get an empty middle segment
-(`address_line_1||zip5`) so `building_id` and `door_id` never collide.
+(`address_line_1||building_zip5`) so `building_id` and `door_id` never
+collide.
 
 `aggregate.buildings_geocoded` and `aggregate.doors_geocoded` GROUP BY
-these keys to produce one row per physical structure / unit.
+these keys to produce one row per physical structure / unit; a
+building's `zip5` there is its `building_zip5`.
 
 ## Incremental vs non-incremental nodes
 

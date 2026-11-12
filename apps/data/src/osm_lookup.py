@@ -23,11 +23,11 @@ NEARBY_MATCH_M = 100.0
 
 def zip_lookup_sql(addresses_keyed: str) -> str:
     """One row per (zip_code, canonical_key, housenumber_norm) of `addresses_keyed`
-    (a table or a parenthesized subquery), as `osm_lat`/`osm_lon`/`street`/
-    `housenumber`/`in_residential_complex`."""
+    (a table or a parenthesized subquery), as `osm_id`/`kind`/`osm_lat`/`osm_lon`/
+    `street`/`housenumber`/`in_residential_complex`."""
     return f"""
         SELECT zip_code, canonical_key, housenumber_norm, housenumber, street,
-               lat AS osm_lat, lon AS osm_lon, in_residential_complex
+               osm_id, kind, lat AS osm_lat, lon AS osm_lon, in_residential_complex
         FROM (
             SELECT *,
                 ROW_NUMBER() OVER (

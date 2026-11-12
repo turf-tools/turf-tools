@@ -676,7 +676,7 @@ async def person_detail(req: _PersonDetailRequest):
         # always exist on persons_geocoded, so EXCLUDE is safe.
         sql = resolve(
             "SELECT * EXCLUDE ("
-            "voting_history, building_id, door_id, building_i, door_i, blockface_id, "
+            "voting_history, building_id, building_zip5, door_id, building_i, door_i, blockface_id, "
             "match_score, position_source, latitude, longitude"
             "), to_json(voting_history) AS voting_history "
             "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",

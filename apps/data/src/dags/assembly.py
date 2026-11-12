@@ -6,21 +6,31 @@ into the single canonical `persons_geocoded` record that downstream
 consumers query.
 
     persons_best_match ─┐
-    refined_positions ──┼─► canonical_addresses ─┐
-    osm_only_matches ───┘                        │
+    refined_positions ──┤
+    osm_only_matches ───┼─► canonical_addresses ─┐
+    address_tokens ─────┘                        │
                                                  ├─► persons_geocoded ─► geocoding_summary
                             persons_validated ───┘
 
 - `canonical_addresses` produces the human-readable `address_line_1`
-  per voter (see "Address handling" in AGENTS.md for source priority).
+  and the building's ZIP per voter (see "Address handling" in
+  AGENTS.md).
 - `persons_geocoded` is a pure assembly node: joins person fields,
   canonical address, coords, and TIGER match metadata.
 - `geocoding_summary` reports match-rate diagnostics broken down by
   `position_source`.
 """
 
+import time
+
 import duckdb
-from src.addressing import housenumber_display_sql, housenumber_norm_sql
+from src.addressing import (
+    canonical_key_sql,
+    housenumber_display_sql,
+    housenumber_norm_sql,
+    street_rewrite_sql,
+    tokenize_street_sql,
+)
 from src.dsl.criteria import person_h_sql
 from src.dsl.elections import (
     ELECTIONS_TABLE,
@@ -37,7 +47,7 @@ def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Node 1 – canonical address strings (street name resolved via OSM or TIGER)
+# Node 1 – canonical address strings and building ZIPs
 # ---------------------------------------------------------------------------
 
 
@@ -46,30 +56,33 @@ def canonical_addresses(
     persons_decomposed: TableRef,
     refined_positions: TableRef,
     osm_only_matches: TableRef,
+    address_tokens: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
-    """Per-person canonical (address_line_1, matched_tokens).
+    """Per-person canonical (address_line_1, matched_tokens, building_zip5).
 
-    Street-name source priority — for each voter:
-      1. `refined_positions.osm_street` if non-null (the voter matched
-         an OSM building). Same OSM building → same canonical → same
-         building_id, so voters at the same physical building always
-         share a building_id regardless of which TIGER alias they
-         matched on.
-      2. `osm_only_matches.osm_street` for TIGER-miss voters rescued
-         via direct OSM lookup.
-      3. `persons_best_match.full_name` (TIGER's canonical form for
-         the matched blockface) for voters where no OSM building was
-         found.
+    A building is the OSM record a voter matched (`osm_kind`, `osm_id`), else
+    the voter's TIGER blockface side and address. Each building gets one
+    address and one ZIP, so everyone in it shares a building_id.
 
-    Half-coded addresses are preserved with the "1/2" in canonical
-    address_line_1.
+    Street: TIGER's spelling. Voters with no OSM match show their matched
+    blockface's `full_name`. An OSM building shows how TIGER-matched voters
+    in the building's ZIP spell its street (the TIGER name with the OSM
+    street's key, `osm_key`, see `src/addressing.py`; most common, then
+    alphabetical), or OSM's street when TIGER doesn't name it in that ZIP.
+
+    Housenumber: OSM's surface form when it normalizes to the voter's
+    parsed form, so variants of one number (`646` ↔ `6-46`, `67-3` ↔
+    `67-03`) share a building_id; else the voter's form (voter `100` vs OSM
+    `100A`, where OSM encodes a subunit). Half-codes keep their "1/2".
+
+    building_zip5: the most common voter ZIP in the building, lowest on
+    ties. Voters at one building sometimes write different ZIPs; each keeps
+    their own `zip5`, and the building's ids use this one.
 
     matched_tokens is the tokenization of the canonical street via the
     same scheme upstream tokenizers use.
-
-    Output schema: (external_id, address_line_1, matched_tokens).
 
     Incremental: skips external_ids already present. Run
     `data:clear:all` to force a rebuild when this SQL changes.
@@ -77,69 +90,121 @@ def canonical_addresses(
     table_suffix = "canonical_addresses"
     ensure_schema(conn, schema)
     fqn = table_fqn(schema, table_suffix)
-    match_fqn = persons_best_match.fqn
-    decomposed_fqn = persons_decomposed.fqn
-    refined_fqn = refined_positions.fqn
-    osm_only_fqn = osm_only_matches.fqn
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
             external_id     VARCHAR,
             address_line_1  VARCHAR,
-            matched_tokens  VARCHAR[]
+            matched_tokens  VARCHAR[],
+            building_zip5   VARCHAR
         )
     """)
 
-    # Street: prefer OSM's surface form when an OSM match exists;
-    # fall back to TIGER's canonical full_name otherwise.
-    #
-    # Housenumber: prefer OSM's surface form when the voter's parsed
-    # housenumber and the OSM record's housenumber normalize to the
-    # same string. This unifies surface-form variants for the same
-    # physical housenumber (`646` ↔ `6-46`, `67-3` ↔ `67-03`) under
-    # the form OSM uses, so they share a building_id. When the
-    # normalized forms differ (e.g., voter `100` vs OSM `100A`, where
-    # OSM is encoding a subunit), we keep the voter's parsed form.
-    hn_display = housenumber_display_sql("house_num_prefix", "house_number", "half_code")
+    print("Settling canonical addresses…")
+    t0 = time.time()
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _ca_src AS
+        SELECT r.external_id, m.full_name AS tiger_name, m.blockface_id,
+               r.osm_street, r.osm_housenumber, r.osm_kind, r.osm_id, r.osm_key
+        FROM {refined_positions.fqn} r
+        LEFT JOIN {persons_best_match.fqn} m ON m.external_id = r.external_id
+        UNION ALL
+        SELECT external_id, NULL, NULL,
+               osm_street, osm_housenumber, osm_kind, osm_id, osm_key
+        FROM {osm_only_matches.fqn}
+    """)
+    # TIGER names keyed the way the OSM side is (`osm.osm_addresses_keyed`),
+    # once per distinct name.
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _ca_tiger_keys AS
+        WITH tokens AS (
+            SELECT name, {tokenize_street_sql(street_rewrite_sql("name"))} AS raw_tokens
+            FROM (SELECT DISTINCT tiger_name AS name FROM _ca_src WHERE tiger_name IS NOT NULL)
+        ),
+        extras AS (
+            SELECT n.name, flatten(list(t.equivalent_tokens)) AS extra
+            FROM tokens n
+            JOIN {address_tokens.fqn} t ON len(list_intersect(n.raw_tokens, t.equivalent_tokens)) > 0
+            GROUP BY n.name
+        )
+        SELECT n.name,
+               {canonical_key_sql("list_distinct(list_concat(n.raw_tokens, COALESCE(e.extra, [])))")}
+                   AS tiger_key
+        FROM tokens n LEFT JOIN extras e USING (name)
+    """)
+    hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _ca_voters AS
+        SELECT s.*, k.tiger_key, d.zip5,
+               {hn_display} AS hn_str,
+               {housenumber_norm_sql(hn_display)} AS hn_norm
+        FROM _ca_src s
+        JOIN {persons_decomposed.fqn} d ON d.external_id = s.external_id
+        LEFT JOIN _ca_tiger_keys k ON k.name = s.tiger_name
+    """)
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE _ca_zip_spelling AS
+        SELECT zip5, tiger_key, spelling
+        FROM (
+            SELECT zip5, tiger_key, UPPER(tiger_name) AS spelling,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY zip5, tiger_key
+                       ORDER BY count(*) DESC, UPPER(tiger_name)
+                   ) AS rn
+            FROM _ca_voters
+            WHERE tiger_name IS NOT NULL
+            GROUP BY zip5, tiger_key, UPPER(tiger_name)
+        )
+        WHERE rn = 1
+    """)
     conn.execute(f"""
         INSERT INTO {fqn}
-        WITH src AS (
-            SELECT r.external_id,
-                   UPPER(COALESCE(r.osm_street, m.full_name)) AS street_canonical,
-                   r.osm_housenumber
-            FROM {refined_fqn} r
-            LEFT JOIN {match_fqn} m ON m.external_id = r.external_id
-            UNION ALL
-            SELECT external_id, UPPER(osm_street) AS street_canonical, osm_housenumber
-            FROM {osm_only_fqn}
+        WITH keyed AS (
+            SELECT *,
+                CASE WHEN osm_id IS NOT NULL THEN concat_ws('|', 'osm', osm_kind, osm_id)
+                     ELSE concat_ws('|', 'tiger', blockface_id, hn_str, UPPER(tiger_name))
+                END AS building_key
+            FROM _ca_voters
         ),
-        voter_hn AS (
-            SELECT
-                external_id,
-                {hn_display} AS hn_str,
-                {housenumber_norm_sql(hn_display)} AS hn_norm
-            FROM {decomposed_fqn}
+        zipped AS (
+            SELECT *,
+                first_value(zip5) OVER (
+                    PARTITION BY building_key ORDER BY zip_n DESC, zip5
+                ) AS building_zip5
+            FROM (SELECT *, count(*) OVER (PARTITION BY building_key, zip5) AS zip_n FROM keyed)
+        ),
+        -- The spelling is looked up by the building's ZIP, not each voter's,
+        -- so one building gets one spelling.
+        addressed AS (
+            SELECT k.external_id, k.building_zip5,
+                CASE WHEN k.osm_id IS NULL THEN UPPER(k.tiger_name)
+                     ELSE COALESCE(z.spelling, UPPER(k.osm_street))
+                END AS street,
+                CASE
+                    WHEN k.osm_housenumber IS NOT NULL
+                     AND {housenumber_norm_sql("k.osm_housenumber")} = k.hn_norm
+                    THEN UPPER(k.osm_housenumber)
+                    ELSE k.hn_str
+                END AS hn
+            FROM zipped k
+            LEFT JOIN _ca_zip_spelling z ON z.zip5 = k.building_zip5 AND z.tiger_key = k.osm_key
         )
         SELECT
-            s.external_id,
-            CASE
-                WHEN s.osm_housenumber IS NOT NULL
-                 AND {housenumber_norm_sql("s.osm_housenumber")} = vh.hn_norm
-                THEN UPPER(s.osm_housenumber)
-                ELSE vh.hn_str
-            END
-              || ' ' || s.street_canonical                    AS address_line_1,
+            external_id,
+            hn || ' ' || street                               AS address_line_1,
             list_distinct(list_filter(
               list_concat(
-                regexp_split_to_array(lower(trim(s.street_canonical)), '[^a-z0-9]+'),
-                regexp_extract_all(lower(trim(s.street_canonical)), '[0-9]+')
+                regexp_split_to_array(lower(trim(street)), '[^a-z0-9]+'),
+                regexp_extract_all(lower(trim(street)), '[0-9]+')
               ),
               x -> length(x) > 0
-            ))                                                AS matched_tokens
-        FROM src s
-        INNER JOIN voter_hn vh ON vh.external_id = s.external_id
-        WHERE s.external_id NOT IN (SELECT external_id FROM {fqn})
+            ))                                                AS matched_tokens,
+            building_zip5
+        FROM addressed
+        WHERE external_id NOT IN (SELECT external_id FROM {fqn})
     """)
+    n = conn.execute(f"SELECT count(*) FROM {fqn}").fetchone()[0]
+    print(f"  {n:,} canonical addresses in {time.time() - t0:.1f}s")
 
     version = _current_version(conn)
     return TableRef(
@@ -191,9 +256,11 @@ def persons_geocoded(
 
     Address-derived stable keys (`building_id`, `door_id`) are computed
     here once both `address_line_1` (canonical) and `address_line_2`
-    (validated) are in scope. See docs/product-model.md for the keying
-    convention. Single-family doors get a double-pipe in door_id (empty
-    middle segment) so building_id and door_id never collide.
+    (validated) are in scope, keyed on the building's ZIP
+    (`building_zip5`) rather than each voter's own. See
+    docs/product-model.md for the keying convention. Single-family doors
+    get a double-pipe in door_id (empty middle segment) so building_id and
+    door_id never collide.
 
     Election participation is also materialized as fixed-width mask
     columns (`voting_history_mask_<w>`, see dsl/elections.py) so the
@@ -259,8 +326,9 @@ def persons_geocoded(
             COALESCE(m.blockface_id, p.osm_blockface_id)                    AS blockface_id,
             m.person_house_number,
             m.match_score,
-            (c.address_line_1 || '|' || np.zip5)                            AS building_id,
-            (c.address_line_1 || '|' || COALESCE(np.address_line_2, '') || '|' || np.zip5)
+            c.building_zip5,
+            (c.address_line_1 || '|' || c.building_zip5)                    AS building_id,
+            (c.address_line_1 || '|' || COALESCE(np.address_line_2, '') || '|' || c.building_zip5)
                                                                             AS door_id
         FROM normalized_persons np
         INNER JOIN {canonical_fqn} c ON c.external_id = np.external_id
