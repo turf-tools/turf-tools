@@ -6,6 +6,10 @@ The software in this repository includes three key components: (1) performant vo
 
 The project is in active development and currently undergoing early testing.
 
+## Deployment
+
+Turf Tools is decentralized by design, built for multiple deployments each having multiple organizations running on it. The native application can reference any deployment. To host your own deployment, see the guide in [deploy/README.md](deploy/README.md). The rest of this README covers the development environment.
+
 ## Prerequisites
 
 You'll need to have these installed to run the development environment.
