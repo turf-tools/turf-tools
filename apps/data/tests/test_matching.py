@@ -15,7 +15,7 @@ OSM PBF; runs in well under a second.
 import pytest
 
 from src.addressing import tokenize_street_sql
-from src.dags import matching
+from src.dags import matching, tiger
 from src.models import TableRef
 from src.tables import ensure_schema, table_fqn
 
@@ -128,6 +128,16 @@ def _insert_blockface(
            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'n1', 'n2',
             ST_GeomFromText('LINESTRING(0 0, 1 1)'))""",
         [blockface_id, side, from_hn, to_hn, prefix, number_type, zip_code, full_name, tiger_line_id, tokens, tokens],
+    )
+
+
+def _best_match(conn, scored, decomposed) -> TableRef:
+    return matching.persons_best_match(
+        persons_scored=scored,
+        persons_decomposed=decomposed,
+        address_tokens=tiger.address_tokens(conn=conn),
+        schema=ORG,
+        conn=conn,
     )
 
 
@@ -253,6 +263,30 @@ class TestPersonsCandidates:
         pairs = conn.execute(f"SELECT external_id, blockface_id FROM {ref.fqn}").fetchall()
         assert pairs == [("v1", "T1:left")]
 
+    @pytest.mark.parametrize(
+        ("street", "tokens", "matches"),
+        [
+            ("Beach 149th St", ["beach", "149th", "149", "st", "street", "saint"], False),
+            ("Beach 98th St", ["beach", "98th", "98", "st", "street", "saint"], True),
+        ],
+    )
+    def test_street_numbers_must_agree(self, synth, street, tokens, matches):
+        """ "BEACH 98 STREET" shares "beach" and "street" with every Beach
+        street; only the one numbered 98 is a candidate."""
+        conn, validated, bf = synth
+        _insert_validated(conn, "v1", "319 BEACH 98 STREET", zip5="11694")
+        _insert_blockface(conn, "T1:left", street, 301, 399, zip_code="11694", match_tokens=tokens)
+        ref = self._run(conn, validated, bf)
+        assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == (1 if matches else 0)
+
+    def test_voter_street_without_number_is_not_number_checked(self, synth):
+        """ "FIRST AVENUE" carries no number, so "1st Ave" is a candidate."""
+        conn, validated, bf = synth
+        _insert_validated(conn, "v1", "100 FIRST AVENUE", zip5="10001")
+        _insert_blockface(conn, "T1:left", "1st Ave", 2, 198, match_tokens=["1st", "1", "first", "ave", "avenue", "av"])
+        ref = self._run(conn, validated, bf)
+        assert conn.execute(f"SELECT count(*) FROM {ref.fqn}").fetchone()[0] == 1
+
     def test_zip_mismatch_rejected(self, synth):
         conn, validated, bf = synth
         _insert_validated(conn, "v1", "100 WEST 42 STREET", zip5="10001")
@@ -352,6 +386,8 @@ class TestPersonsBestMatch:
         )
         best = matching.persons_best_match(
             persons_scored=scored,
+            persons_decomposed=decomposed,
+            address_tokens=tiger.address_tokens(conn=conn),
             schema=ORG,
             conn=conn,
         )
@@ -387,6 +423,8 @@ class TestPersonsBestMatch:
             )
             return matching.persons_best_match(
                 persons_scored=s,
+                persons_decomposed=d,
+                address_tokens=tiger.address_tokens(conn=conn),
                 schema=ORG,
                 conn=conn,
             )
@@ -401,6 +439,41 @@ class TestPersonsBestMatch:
         ref2 = _run()
         chosen2 = conn.execute(f"SELECT blockface_id FROM {ref2.fqn} WHERE external_id = 'v1'").fetchone()[0]
         assert chosen1 == chosen2 == "T1:left"
+
+    def test_tie_prefers_the_name_without_extra_words(self, synth):
+        """ "WEST STREET" ties "West St" and "Little West St" on shared words;
+        "Little" is a word the voter didn't write, so "West St" wins even
+        though "Little West St" has the lower blockface_id."""
+        conn, validated, bf = synth
+        _insert_validated(conn, "v1", "30 WEST STREET")
+        _insert_blockface(
+            conn, "T1:left", "Little West St", 2, 98, match_tokens=["little", "west", "w", "st", "street", "saint"]
+        )
+        _insert_blockface(conn, "T2:left", "West St", 2, 98, match_tokens=["west", "w", "st", "street", "saint"])
+        d = matching.persons_decomposed(persons_validated=validated, schema=ORG, conn=conn)
+        c = matching.persons_candidates(persons_decomposed=d, blockface_final=bf, schema=ORG, conn=conn)
+        s = matching.persons_scored(persons_candidates=c, persons_decomposed=d, schema=ORG, conn=conn)
+        scores = {r[0] for r in conn.execute(f"SELECT match_score FROM {s.fqn} WHERE external_id = 'v1'").fetchall()}
+        assert len(scores) == 1, "both streets should tie"
+        best = _best_match(conn, s, d)
+        assert conn.execute(f"SELECT full_name FROM {best.fqn}").fetchone()[0] == "West St"
+
+    def test_tie_reads_the_candidate_name_not_its_aliases(self, synth):
+        """ "Park Dr" ties "NE 4th Ave" only through an alias on its range; its
+        own name holds none of the voter's words, so "NE 4th Ave" wins even
+        though "Park Dr" has the lower blockface_id and fewer words."""
+        conn, validated, bf = synth
+        _insert_validated(conn, "v1", "100 NE 4 AVENUE")
+        ave = ["ne", "northeast", "4th", "4", "ave", "avenue", "av"]
+        _insert_blockface(conn, "T1:left", "Park Dr", 2, 198, match_tokens=["park", "dr", "drive", *ave])
+        _insert_blockface(conn, "T2:left", "NE 4th Ave", 2, 198, match_tokens=ave)
+        d = matching.persons_decomposed(persons_validated=validated, schema=ORG, conn=conn)
+        c = matching.persons_candidates(persons_decomposed=d, blockface_final=bf, schema=ORG, conn=conn)
+        s = matching.persons_scored(persons_candidates=c, persons_decomposed=d, schema=ORG, conn=conn)
+        scores = {r[0] for r in conn.execute(f"SELECT match_score FROM {s.fqn} WHERE external_id = 'v1'").fetchall()}
+        assert len(scores) == 1, "both streets should tie"
+        best = _best_match(conn, s, d)
+        assert conn.execute(f"SELECT full_name FROM {best.fqn}").fetchone()[0] == "NE 4th Ave"
 
     @pytest.mark.parametrize("order", [("wide", "narrow"), ("narrow", "wide")])
     def test_overlapping_ranges_of_one_street_pick_the_narrower(self, synth, order):
@@ -417,6 +490,6 @@ class TestPersonsBestMatch:
         s = matching.persons_scored(persons_candidates=c, persons_decomposed=d, schema=ORG, conn=conn)
         scores = conn.execute(f"SELECT match_score FROM {s.fqn} WHERE external_id = 'v1'").fetchall()
         assert len(scores) == 2 and scores[0] == scores[1], "both ranges should tie"
-        best = matching.persons_best_match(persons_scored=s, schema=ORG, conn=conn)
+        best = _best_match(conn, s, d)
         row = conn.execute(f"SELECT from_house_num, to_house_num FROM {best.fqn} WHERE external_id = 'v1'").fetchone()
         assert row == (2, 16)

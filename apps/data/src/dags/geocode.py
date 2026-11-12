@@ -30,6 +30,7 @@ from src.addressing import (
     canonical_key_sql,
     housenumber_display_sql,
     housenumber_norm_sql,
+    ordinal_tokens_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
@@ -494,7 +495,9 @@ def osm_only_matches(
     For each voter without a `persons_best_match` row, derive a
     canonical_key from their raw address (same STREET_REWRITES +
     equivalency expansion as the OSM side), look it up in
-    `osm_addresses_keyed` by ZIP to find their building, then snap to the
+    `osm_addresses_keyed` by ZIP to find their building (and, when that
+    finds nothing, again with bare street numbers read as ordinals:
+    "WEST 127 STREET" as "West 127th Street"), then snap to the
     nearest blockface in the same zip5 for downstream consumers that
     need a `blockface_id` (e.g. turf assignment).
 
@@ -524,7 +527,9 @@ def osm_only_matches(
     print("Rescuing TIGER-miss voters via OSM lookup…")
     t0 = time.time()
 
-    # Step 1: keyed TIGER-miss voters
+    # Step 1: keyed TIGER-miss voters. Each gets a second key that also reads
+    # bare street numbers as ordinals, for streets the voter file writes
+    # without them ("WEST 127 STREET" vs OSM's "West 127th Street").
     hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_raw AS
@@ -538,9 +543,13 @@ def osm_only_matches(
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_keyed AS
         WITH tokens AS (
-            SELECT external_id, zip5, housenumber_norm,
-                {tokenize_street_sql("street_norm")} AS raw_tokens
-            FROM _miss_raw
+            SELECT external_id, zip5, housenumber_norm, raw_tokens,
+                list_distinct(list_concat(raw_tokens, {ordinal_tokens_sql("raw_tokens")})) AS ordinal_tokens
+            FROM (
+                SELECT external_id, zip5, housenumber_norm,
+                    {tokenize_street_sql("street_norm")} AS raw_tokens
+                FROM _miss_raw
+            )
         ),
         extras AS (
             SELECT b.external_id, flatten(list(t.equivalent_tokens)) AS extra
@@ -548,38 +557,65 @@ def osm_only_matches(
             JOIN {tok} t ON len(list_intersect(b.raw_tokens, t.equivalent_tokens)) > 0
             GROUP BY b.external_id
         ),
+        ordinal_extras AS (
+            SELECT b.external_id, flatten(list(t.equivalent_tokens)) AS extra
+            FROM tokens b
+            JOIN {tok} t ON len(list_intersect(b.ordinal_tokens, t.equivalent_tokens)) > 0
+            GROUP BY b.external_id
+        ),
         combined AS (
             SELECT b.external_id, b.zip5, b.housenumber_norm,
-                list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, []))) AS expanded
-            FROM tokens b LEFT JOIN extras e USING (external_id)
+                list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, []))) AS expanded,
+                list_distinct(list_concat(b.ordinal_tokens, COALESCE(oe.extra, []))) AS ordinal_expanded
+            FROM tokens b
+            LEFT JOIN extras e USING (external_id)
+            LEFT JOIN ordinal_extras oe USING (external_id)
         )
         SELECT external_id, zip5, housenumber_norm,
-            {canonical_key_sql("expanded")} AS canonical_key
+            {canonical_key_sql("expanded")} AS canonical_key,
+            {canonical_key_sql("ordinal_expanded")} AS ordinal_key
         FROM combined
     """)
     n_miss = conn.execute("SELECT count(*) FROM _miss_keyed").fetchone()[0]
     print(f"  {n_miss:,} TIGER-miss voters keyed in {time.time() - t0:.1f}s")
 
-    # Step 2: lookup each in OSM
+    # Step 2: lookup each in OSM, by the voter's key first and the ordinal
+    # key only for voters the first finds nothing for.
     print("  joining to osm_addresses_keyed…")
     t0 = time.time()
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_with_osm AS
-        SELECT v.external_id, v.zip5,
-               o.osm_lat AS latitude, o.osm_lon AS longitude,
-               o.street  AS osm_street,
-               o.housenumber AS osm_housenumber,
-               o.osm_id, o.kind AS osm_kind,
-               v.canonical_key AS osm_key
-        FROM _miss_keyed v
-        JOIN ({zip_lookup_sql(oak)}) o
-          ON o.zip_code         = v.zip5
-         AND o.canonical_key    = v.canonical_key
-         AND o.housenumber_norm = v.housenumber_norm
-        WHERE v.canonical_key != ''
+        WITH lookup AS ({zip_lookup_sql(oak)}),
+        found AS (
+            SELECT v.external_id, v.zip5, o.*, 1 AS attempt
+            FROM _miss_keyed v
+            JOIN lookup o
+              ON o.zip_code         = v.zip5
+             AND o.canonical_key    = v.canonical_key
+             AND o.housenumber_norm = v.housenumber_norm
+            WHERE v.canonical_key != ''
+            UNION ALL
+            SELECT v.external_id, v.zip5, o.*, 2 AS attempt
+            FROM _miss_keyed v
+            JOIN lookup o
+              ON o.zip_code         = v.zip5
+             AND o.canonical_key    = v.ordinal_key
+             AND o.housenumber_norm = v.housenumber_norm
+            WHERE v.ordinal_key != v.canonical_key
+        )
+        SELECT external_id, zip5, attempt,
+               osm_lat AS latitude, osm_lon AS longitude,
+               street  AS osm_street,
+               housenumber AS osm_housenumber,
+               osm_id, kind AS osm_kind,
+               canonical_key AS osm_key
+        FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY external_id ORDER BY attempt) AS rn FROM found)
+        WHERE rn = 1
     """)
-    n_osm = conn.execute("SELECT count(*) FROM _miss_with_osm").fetchone()[0]
-    print(f"  {n_osm:,} matched to OSM in {time.time() - t0:.1f}s")
+    n_osm, n_ordinal = conn.execute(
+        "SELECT count(*), count(*) FILTER (WHERE attempt = 2) FROM _miss_with_osm"
+    ).fetchone()
+    print(f"  {n_osm:,} matched to OSM ({n_ordinal:,} reading street numbers as ordinals) in {time.time() - t0:.1f}s")
 
     # Step 3: snap each matched voter to nearest blockface in same zip.
     # Many osm_only voters live in the same building (same osm_lat,

@@ -42,16 +42,16 @@ VOTER_FILE = Path(__file__).resolve().parents[1] / "fixtures" / "ny-voters-2026-
 # intentional pipeline change shifts them.
 GOLDEN = {
     "total_persons": 5_360_017,
-    "matched": 5_281_714,
-    "unmatched": 78_303,
-    "match_pct": 98.54,
-    "matched_osm_road_projected": 3_923_233,
-    "matched_osm_complex": 730_197,
-    "matched_osm_off_segment": 115_717,
-    "matched_tiger_only": 426_521,
-    "matched_osm_only": 86_046,
-    "buildings": 763_485,
-    "doors": 3_026_676,
+    "matched": 5_294_510,
+    "unmatched": 65_507,
+    "match_pct": 98.78,
+    "matched_osm_road_projected": 3_924_906,
+    "matched_osm_complex": 730_919,
+    "matched_osm_off_segment": 115_497,
+    "matched_tiger_only": 418_930,
+    "matched_osm_only": 104_258,
+    "buildings": 764_781,
+    "doors": 3_035_128,
 }
 
 # Widened NYC envelope. The narrower commonly-cited bbox (-74.3 to -73.7)

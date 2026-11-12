@@ -17,6 +17,7 @@ Contents:
 - `housenumber_norm_sql(col)`         — normalize a house-number string for join keys
 - `housenumber_display_sql(prefix, num, half)`
                                       — assemble a human-readable house-number string
+- `ordinal_tokens_sql(tokens_col)`    — the ordinal form of each bare-number token
 - `GENERIC_STREET_TOKENS`             — tokens treated as non-distinctive by
                                          the candidate-matching predicate
 - `EQUIVALENT_TOKEN_GROUPS`           — synonym groups loaded into the
@@ -99,6 +100,20 @@ def housenumber_display_sql(prefix_col: str, number_col: str, half_col: str) -> 
         f"COALESCE({prefix_col}, '') || CAST({number_col} AS VARCHAR)"
         f" || CASE WHEN {half_col} IS NOT NULL AND {half_col} != ''"
         f"         THEN ' ' || {half_col} ELSE '' END"
+    )
+
+
+def ordinal_tokens_sql(tokens_col: str) -> str:
+    """SQL fragment: the ordinal form of each bare-number token in a token
+    array (`98` → `98th`, `1` → `1st`, `112` → `112th`), for street names
+    written without the ordinal ("WEST 127 STREET" vs OSM's "West 127th
+    Street")."""
+    # The suffix reads the last digits as text, so a number of any length works.
+    return (
+        f"list_transform(list_filter({tokens_col}, t -> regexp_matches(t, '^[0-9]+$')),"
+        f" t -> t || CASE WHEN regexp_matches(t, '1[123]$') THEN 'th'"
+        f" WHEN right(t, 1) = '1' THEN 'st' WHEN right(t, 1) = '2' THEN 'nd'"
+        f" WHEN right(t, 1) = '3' THEN 'rd' ELSE 'th' END)"
     )
 
 

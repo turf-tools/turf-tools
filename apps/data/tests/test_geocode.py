@@ -510,6 +510,28 @@ class TestOsmOnlyMatches:
         # Snapped to a real blockface in the same zip.
         assert bf_id == "T1:left"
 
+    def test_street_number_read_as_ordinal(self, synth):
+        """ "WEST 127 STREET" finds OSM's "West 127th Street" on the second
+        try, which reads the bare number as an ordinal."""
+        conn, pd, pbm, bf, obl, tokens = synth
+        _insert_decomposed(conn, "v1", 100, "WEST 127 STREET", zip5="10027")
+        _insert_blockface(
+            conn, "T1:left", "West 127th Street", geom="LINESTRING(-74.01 40.75, -73.99 40.75)", zip_code="10027"
+        )
+        key = _canonical_key(conn, "West 127th Street")
+        assert key != _canonical_key(conn, "WEST 127 STREET")
+        _insert_osm_building(conn, key, "100", lat=40.7501, lon=-73.999, zip_code="10027", street="West 127th Street")
+        ref = geocode.osm_only_matches(
+            persons_decomposed=pd,
+            persons_best_match=pbm,
+            osm_addresses_keyed=obl,
+            blockface_final=bf,
+            address_tokens=tokens,
+            schema=ORG,
+            conn=conn,
+        )
+        assert conn.execute(f"SELECT osm_street, osm_key FROM {ref.fqn}").fetchone() == ("West 127th Street", key)
+
     def test_voter_with_best_match_not_rescued_twice(self, synth):
         """Voters who already have a TIGER blockface match should NOT
         appear in osm_only_matches — they go through refined_positions."""

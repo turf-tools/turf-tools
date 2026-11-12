@@ -13,6 +13,7 @@ runs downstream in `geocode.py`; canonical address derivation in
 import duckdb
 from src.addressing import (
     GENERIC_STREET_TOKENS,
+    ordinal_tokens_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
@@ -162,6 +163,9 @@ def persons_candidates(
        distinctive to disambiguate against.
     6. Directional tokens compatible: opposing cardinals (N/S or E/W)
        on the two sides are rejected.
+    7. Street numbers agree: when both names carry a number, they share
+       one. The words around a number can be distinctive ("beach"), so
+       check 5 alone would accept Beach 149th St for "Beach 98 Street".
 
     Implementation: inverted-index join.
       - Each voter is exploded into one row per distinctive street token
@@ -228,6 +232,8 @@ def persons_candidates(
             list_filter(street_name_tokens,
                         t -> NOT list_contains({_GENERIC_SQL}, t))
                 AS distinctive_tokens,
+            list_filter(street_name_tokens, t -> regexp_matches(t, '^[0-9]+$'))
+                AS street_numbers,
             (list_contains(street_name_tokens, 'n')
              OR list_contains(street_name_tokens, 'north'))   AS has_n,
             (list_contains(street_name_tokens, 's')
@@ -249,6 +255,8 @@ def persons_candidates(
             list_filter(street_tokens_match,
                         t -> NOT list_contains({_GENERIC_SQL}, t))
                 AS distinctive_tokens,
+            list_filter(street_tokens_match, t -> regexp_matches(t, '^[0-9]+$'))
+                AS street_numbers,
             list_contains(street_tokens_match, 'n')          AS has_n,
             list_contains(street_tokens_match, 's')          AS has_s,
             list_contains(street_tokens_match, 'e')          AS has_e,
@@ -334,6 +342,10 @@ def persons_candidates(
           AND NOT (
               (p.has_n AND b.has_s) OR (p.has_s AND b.has_n)
               OR (p.has_e AND b.has_w) OR (p.has_w AND b.has_e)
+          )
+          AND NOT (
+              len(p.street_numbers) > 0 AND len(b.street_numbers) > 0
+              AND NOT list_has_any(p.street_numbers, b.street_numbers)
           )
           AND COALESCE(b.house_num_prefix, '') = COALESCE(p.house_num_prefix, '')
           AND (
@@ -450,16 +462,26 @@ def persons_scored(
 
 def persons_best_match(
     persons_scored: TableRef,
+    persons_decomposed: TableRef,
+    address_tokens: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Select the single highest-scoring blockface candidate per person.
 
     Uses ROW_NUMBER() partitioned by external_id ordered by match_score DESC.
-    Ties go to the lowest blockface_id, then full_name. TIGER lists some
-    addresses under overlapping ranges of one street on one side; between
-    those, the narrower range wins, then the range itself decides, so every
-    run picks the same row.
+    A tie between different street names goes to the name that best matches
+    what the voter wrote: the voter's words it contains, minus its words the
+    voter didn't write ("West St" over "Little West St" for "WEST STREET").
+    The score reads the candidate's own name, not the aliases its range also
+    carries, so "NE 4TH AVENUE" goes to "NE 4th Ave" rather than a "Park Dr"
+    that lists it as an alias. Abbreviations count as the voter's words, and so
+    does a bare number's ordinal ("229" for "229th").
+
+    Then the lowest blockface_id, then full_name. TIGER lists some addresses
+    under overlapping ranges of one street on one side; between those, the
+    narrower range wins, then the range itself decides, so every run picks the
+    same row.
 
     Incremental: skips external_ids already present.
     """
@@ -467,6 +489,7 @@ def persons_best_match(
     ensure_schema(conn, schema)
     fqn = table_fqn(schema, table_suffix)
     scored_fqn = persons_scored.fqn
+    tok = address_tokens.fqn
 
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {fqn} (
@@ -486,6 +509,60 @@ def persons_best_match(
         )
     """)
 
+    # Name scores, only for voters whose top score ties different street names.
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _tied_names AS
+        WITH best AS (
+            SELECT external_id, max(match_score) AS best
+            FROM {scored_fqn}
+            WHERE external_id NOT IN (SELECT external_id FROM {fqn})
+            GROUP BY external_id
+        ),
+        top AS (
+            SELECT DISTINCT s.external_id, s.full_name
+            FROM {scored_fqn} s
+            JOIN best b ON b.external_id = s.external_id AND s.match_score = b.best
+        ),
+        tied AS (
+            SELECT external_id FROM top GROUP BY external_id HAVING count(full_name) > 1
+        )
+        SELECT t.external_id, t.full_name
+        FROM top t JOIN tied USING (external_id)
+    """)
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _tied_name_scores AS
+        WITH voters AS (
+            SELECT d.external_id, d.street_name_tokens AS words,
+                   list_distinct(list_concat(d.street_name_tokens,
+                                             {ordinal_tokens_sql("d.street_name_tokens")})) AS raw
+            FROM {persons_decomposed.fqn} d
+            WHERE d.external_id IN (SELECT external_id FROM _tied_names)
+        ),
+        voter_extras AS (
+            SELECT v.external_id, flatten(list(t.equivalent_tokens)) AS extra
+            FROM voters v JOIN {tok} t ON len(list_intersect(v.raw, t.equivalent_tokens)) > 0
+            GROUP BY v.external_id
+        ),
+        names AS (
+            SELECT name, {tokenize_street_sql(street_rewrite_sql("name"))} AS raw
+            FROM (SELECT DISTINCT full_name AS name FROM _tied_names)
+        ),
+        name_extras AS (
+            SELECT n.name, flatten(list(t.equivalent_tokens)) AS extra
+            FROM names n JOIN {tok} t ON len(list_intersect(n.raw, t.equivalent_tokens)) > 0
+            GROUP BY n.name
+        )
+        SELECT tn.external_id, tn.full_name,
+               len(list_filter(v.words, w -> list_contains(
+                   list_concat(n.raw, COALESCE(ne.extra, [])), w)))
+             - len(list_filter(n.raw, w -> NOT list_contains(
+                   list_concat(v.raw, COALESCE(ve.extra, [])), w))) AS name_score
+        FROM _tied_names tn
+        JOIN voters v USING (external_id)
+        LEFT JOIN voter_extras ve USING (external_id)
+        JOIN names n ON n.name = tn.full_name
+        LEFT JOIN name_extras ne ON ne.name = tn.full_name
+    """)
     conn.execute(f"""
         INSERT INTO {fqn}
         SELECT
@@ -504,15 +581,19 @@ def persons_best_match(
             match_score
         FROM (
             SELECT
-                *,
+                s.*,
                 ROW_NUMBER() OVER (
-                    PARTITION BY external_id
-                    ORDER BY match_score DESC, blockface_id, full_name,
-                             abs(to_house_num - from_house_num),
-                             COALESCE(house_num_prefix, ''), from_house_num, to_house_num
+                    PARTITION BY s.external_id
+                    ORDER BY s.match_score DESC,
+                             COALESCE(ns.name_score, 0) DESC,
+                             s.blockface_id, s.full_name,
+                             abs(s.to_house_num - s.from_house_num),
+                             COALESCE(s.house_num_prefix, ''), s.from_house_num, s.to_house_num
                 ) AS rn
-            FROM {scored_fqn}
-            WHERE external_id NOT IN (SELECT external_id FROM {fqn})
+            FROM {scored_fqn} s
+            LEFT JOIN _tied_name_scores ns
+              ON ns.external_id = s.external_id AND ns.full_name = s.full_name
+            WHERE s.external_id NOT IN (SELECT external_id FROM {fqn})
         ) ranked
         WHERE rn = 1
     """)

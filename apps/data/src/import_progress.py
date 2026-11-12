@@ -11,6 +11,7 @@ large file is a single long step), so this is honest step-progress, not an ETA.
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any
 
 from hamilton.lifecycle import NodeExecutionHook
@@ -76,15 +77,21 @@ class NullProgress:
 
 
 class ProgressNodeHook(NodeExecutionHook):
-    """Advances progress once per successful DAG node. Input/config nodes are
-    skipped so the running count matches the precomputed `total`."""
+    """Advances progress once per successful DAG node and prints how long the
+    node took to the server log. Input/config nodes are skipped so the running
+    count matches the precomputed `total`."""
 
     def __init__(self, progress: ImportProgress | NullProgress, input_keys: set[str]) -> None:
         self._progress = progress
         self._input_keys = input_keys
+        self._started: dict[str, float] = {}
 
-    def run_before_node_execution(self, **kwargs: Any) -> None: ...
+    def run_before_node_execution(self, *, node_name: str, **kwargs: Any) -> None:
+        self._started[node_name] = time.perf_counter()
 
     def run_after_node_execution(self, *, node_name: str, success: bool, **kwargs: Any) -> None:
+        started = self._started.pop(node_name, None)
         if success and node_name not in self._input_keys:
             self._progress.advance()
+            if started is not None:
+                print(f"Step {node_name} finished in {time.perf_counter() - started:.1f}s", flush=True)

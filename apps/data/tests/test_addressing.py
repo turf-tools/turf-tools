@@ -21,6 +21,7 @@ from src.addressing import (
     canonical_key_sql,
     housenumber_display_sql,
     housenumber_norm_sql,
+    ordinal_tokens_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
@@ -158,6 +159,32 @@ class TestHousenumberNormSql:
 # ---------------------------------------------------------------------------
 # housenumber_display_sql
 # ---------------------------------------------------------------------------
+
+
+class TestOrdinalTokensSql:
+    @pytest.mark.parametrize(
+        ("number", "ordinal"),
+        [
+            ("1", "1st"),
+            ("2", "2nd"),
+            ("3", "3rd"),
+            ("4", "4th"),
+            ("11", "11th"),
+            ("12", "12th"),
+            ("13", "13th"),
+            ("21", "21st"),
+            ("98", "98th"),
+            ("101", "101st"),
+            ("111", "111th"),
+            ("112", "112th"),
+        ],
+    )
+    def test_suffix(self, conn, number, ordinal):
+        assert _eval(conn, ordinal_tokens_sql("s"), [number, "street"]) == [ordinal]
+
+    def test_number_too_long_for_an_integer(self, conn):
+        """A garbage 20+ digit "street number" gets a suffix like any other."""
+        assert _eval(conn, ordinal_tokens_sql("s"), ["123456789012345678901"]) == ["123456789012345678901st"]
 
 
 class TestHousenumberDisplaySql:

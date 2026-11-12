@@ -207,8 +207,10 @@ per voter; coordinate assignment is downstream in `geocode`.
   prefix, half_code, street tokens. Tokens have `STREET_REWRITES`
   applied before tokenization (see "Street-name handling").
 - `persons_candidates` — for each voter, find every TIGER blockface
-  where the zip/parity/prefix/range matches and the token overlap
-  clears the "≥ 2 total + ≥ 1 distinctive" bar. Implemented as an
+  where the zip/parity/prefix/range matches, the token overlap
+  clears the "≥ 2 total + ≥ 1 distinctive" bar, and the street numbers
+  agree when both names carry one ("Beach 98 Street" never matches
+  "Beach 149th St"). Implemented as an
   inverted-index join (unnest each side to one row per distinctive
   token, equi-join on token, then DISTINCT to dedupe by pair) — the
   list-overlap predicate becomes a hash-join key. The hydration step
@@ -217,10 +219,12 @@ per voter; coordinate assignment is downstream in `geocode`.
   deterministically.
 - `persons_scored` — score each candidate by token overlap + numeric-
   token bonus.
-- `persons_best_match` — pick the highest-scoring blockface per voter
-  (`ROW_NUMBER` ordered by `match_score DESC, blockface_id, full_name`,
-  then the narrower of overlapping ranges, then the range itself, so
-  every run picks the same row).
+- `persons_best_match` — pick the highest-scoring blockface per voter.
+  A tie between different street names goes to the name that best
+  matches what the voter wrote: the voter's words it contains, minus its
+  words the voter didn't write ("West St" over "Little West St"). Then
+  `blockface_id, full_name`, then the narrower of overlapping ranges,
+  then the range itself, so every run picks the same row.
 
 ### geocode
 
@@ -248,8 +252,9 @@ house_number, half_code)` so voters across multiple address ranges on
    buildings on the same blockface ≥ 4 m apart.
 2. **`osm_only_matches`** — for TIGER-miss voters: derive a
    canonical_key from the raw voter address, look them up directly in
-   OSM, and snap to the nearest blockface in their zip for downstream
-   grouping.
+   OSM (again with bare street numbers read as ordinals when that finds
+   nothing: "WEST 127 STREET" as "West 127th Street"), and snap to the
+   nearest blockface in their zip for downstream grouping.
 
 `position_source` values:
 
