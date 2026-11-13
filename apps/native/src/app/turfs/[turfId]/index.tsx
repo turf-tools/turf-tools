@@ -14,7 +14,7 @@ import {
 import type { TurfDataBuilding } from "@turf-tools/db/schema";
 import { Check, DoorClosed, UserRound } from "lucide-react-native";
 import { TurfMap } from "@/components/map/turf-map";
-import { toTitleCase } from "@/lib/format";
+import { addressCase } from "@/lib/display-case";
 import { Pill } from "@/components/pill";
 import { useScreenNav } from "@/lib/nav-context";
 import {
@@ -270,7 +270,7 @@ function BuildingRow({
     >
       <View className="flex-1">
         <Text className="font-sans-bold text-xl text-foreground dark:text-foreground-dark mb-1">
-          {toTitleCase(address)}
+          {addressCase(address)}
         </Text>
         <View className="flex-row items-center gap-1.5 mt-1 mb-1">
           <Pill icon={<DoorClosed size={16} color={iconColor} strokeWidth={2.5} />}>

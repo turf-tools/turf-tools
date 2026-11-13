@@ -11,6 +11,9 @@ export type PersonHit = {
   external_id_type: string;
   first_name: string | null;
   last_name: string | null;
+  // Empty from a search index that doesn't store them.
+  middle_name?: string | null;
+  name_suffix?: string | null;
   address_line_1: string | null;
   address_line_2: string | null;
   city: string | null;

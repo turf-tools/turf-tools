@@ -34,7 +34,9 @@ import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { AddStepMenu, FilterValueEditor } from "~/components/filter-editors";
 import { useFilterCatalog } from "~/lib/manifest";
 import type { CascadeStep } from "~/rpc/web/segments";
-import { cn, toTitleCase } from "~/lib/utils";
+import { addressCase, unitCase } from "~/lib/display-case";
+import { formatPersonName } from "~/lib/format";
+import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 
 export const Route = createFileRoute("/$orgSlug/segments/$segmentId")({
@@ -385,7 +387,7 @@ function SamplePanel({
           <TableRow>
             <TableHead>Name</TableHead>
             <TableHead>Address</TableHead>
-            <TableHead>City</TableHead>
+            <TableHead className="w-36">City</TableHead>
             <TableHead className="w-16">State</TableHead>
             <TableHead className="w-20">Zip</TableHead>
           </TableRow>
@@ -401,16 +403,14 @@ function SamplePanel({
             persons.map((p, idx) => (
               <TableRow key={idx}>
                 <TableCell className="truncate px-2">
-                  {toTitleCase(
-                    [p.firstName, p.middleName, p.lastName, p.nameSuffix]
-                      .filter(Boolean)
-                      .join(" ") || "—",
-                  )}
+                  {formatPersonName(p.firstName, p.middleName, p.lastName, p.nameSuffix) || "—"}
                 </TableCell>
                 <TableCell className="truncate px-2">
-                  {[toTitleCase(p.addressLine1), p.addressLine2].filter(Boolean).join(", ") || "—"}
+                  {[addressCase(p.addressLine1), unitCase(p.addressLine2)]
+                    .filter(Boolean)
+                    .join(", ") || "—"}
                 </TableCell>
-                <TableCell className="truncate px-2">{toTitleCase(p.city) ?? "—"}</TableCell>
+                <TableCell className="truncate px-2">{addressCase(p.city) || "—"}</TableCell>
                 <TableCell className="truncate px-2">{p.state ?? "—"}</TableCell>
                 <TableCell className="truncate px-2">{p.zip5 ?? "—"}</TableCell>
               </TableRow>

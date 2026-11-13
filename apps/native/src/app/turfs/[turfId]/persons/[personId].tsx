@@ -27,14 +27,8 @@ import {
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { toTitleCase } from "@/lib/format";
-import {
-  formatAge,
-  formatEnrollment,
-  formatGender,
-  formatPersonName,
-  formatUnitShort,
-} from "@/lib/format";
+import { addressCase, titleCase, unitCase } from "@/lib/display-case";
+import { formatAge, formatEnrollment, formatGender, formatPersonName } from "@/lib/format";
 import { findNextBuilding, useTurf } from "@/lib/turf-data";
 import { useAlignedTurfStack } from "@/lib/turf-nav";
 import { client } from "@/rpc/client";
@@ -428,8 +422,8 @@ export default function PersonScreen() {
     Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   };
 
-  const buildingAddress = building ? toTitleCase((building.address.street ?? "").trim()) : "";
-  const titleUnit = formatUnitShort(door?.unit);
+  const buildingAddress = building ? addressCase(building.address.street) : "";
+  const titleUnit = unitCase(door?.unit) || null;
 
   useScreenNav({
     title: buildingAddress || "Person",
@@ -488,7 +482,7 @@ export default function PersonScreen() {
           {/* Person header */}
           <View className="px-5 pt-5 pb-3">
             <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
-              {toTitleCase(fullName)}
+              {fullName}
             </Text>
             <View className="flex-row items-center gap-2">
               {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
@@ -986,7 +980,7 @@ function votingHistoryItems(
   });
   return sorted.slice(0, 5).map((e) => ({
     label: e.date ? formatShortDate(e.date) : String(e.year),
-    value: `${toTitleCase(e.type.replace(/_/g, " "))} ${e.year}`,
+    value: `${titleCase(e.type.replace(/_/g, " "))} ${e.year}`,
   }));
 }
 

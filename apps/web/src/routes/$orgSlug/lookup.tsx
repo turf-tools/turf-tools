@@ -20,7 +20,8 @@ import { manifestQuery } from "~/lib/queries/manifest";
 import { hasPermission } from "~/lib/permissions";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
-import { cn, toTitleCase } from "~/lib/utils";
+import { addressCase, nameCase, surnameCase, titleCase, unitCase } from "~/lib/display-case";
+import { cn } from "~/lib/utils";
 
 export const Route = createFileRoute("/$orgSlug/lookup")({
   loader: ({ context: { queryClient } }) => queryClient.fetchQuery(manifestQuery()),
@@ -32,7 +33,7 @@ const TZ = DEFAULT_DISPLAY_TIMEZONE;
 
 // Shared column template for the results header + rows so they stay aligned.
 const RESULT_COLS =
-  "grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,0.8fr)_4rem_5rem] items-center gap-2 text-sm";
+  "grid grid-cols-[minmax(0,1.25fr)_minmax(0,1.25fr)_minmax(0,0.8fr)_4rem_5rem] items-center gap-2 text-sm";
 
 const EMPTY_FIELDS: PersonSearchFields = {
   firstName: "",
@@ -305,14 +306,19 @@ function ResultsPanel({
                   )}
                 >
                   <span className="truncate">
-                    {formatPersonName(hit.first_name, null, hit.last_name) || "—"}
+                    {formatPersonName(
+                      hit.first_name,
+                      hit.middle_name,
+                      hit.last_name,
+                      hit.name_suffix,
+                    ) || "—"}
                   </span>
                   <span className="truncate">
-                    {[toTitleCase(hit.address_line_1), hit.address_line_2]
+                    {[addressCase(hit.address_line_1), unitCase(hit.address_line_2)]
                       .filter(Boolean)
                       .join(", ") || "—"}
                   </span>
-                  <span className="truncate">{toTitleCase(hit.city) || "—"}</span>
+                  <span className="truncate">{addressCase(hit.city) || "—"}</span>
                   <span className="truncate">{hit.state ?? "—"}</span>
                   <span className="truncate">{hit.zip5 ?? "—"}</span>
                 </div>
@@ -401,7 +407,7 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
     // field decodes to a place name, so it reads oddly alone up in the header).
     const countyDef = defByColumn.get("county_code");
     const location: DetailRow[] = [
-      { label: "City", value: toTitleCase(toText(person.city)) },
+      { label: "City", value: addressCase(toText(person.city)) },
       {
         label: countyDef?.label ?? "County",
         value: enumLabel(countyDef, person.county_code) ?? "",
@@ -440,7 +446,7 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
       out.push({
         heading: "Voting history",
         rows: voting.map((e) => ({
-          label: `${toTitleCase(e.type.replace(/_/g, " "))} ${e.year}`,
+          label: `${titleCase(e.type.replace(/_/g, " "))} ${e.year}`,
           value: e.date ? formatDate(e.date, TZ) : "—",
         })),
       });
@@ -510,9 +516,12 @@ function DetailHeader({
       toText(person.last_name),
       toText(person.name_suffix),
     ) || "Unknown";
-  // Street only — city / county / ZIP live in the location block below. Only
-  // line 1 gets title-cased; line 2 (apartment, e.g. "4R") is left verbatim.
-  const addressLine = [toTitleCase(toText(person.address_line_1)), toText(person.address_line_2)]
+  // Street only — city / county / ZIP live in the location block below. The
+  // unit reads as a label ("4R" → "Apt 4R"; see `unitCase`).
+  const addressLine = [
+    addressCase(toText(person.address_line_1)),
+    unitCase(toText(person.address_line_2)),
+  ]
     .filter(Boolean)
     .join(", ");
 
@@ -553,7 +562,7 @@ function formatValue(fd: ManifestFieldDef, raw: unknown): string {
       return age != null ? String(age) : "—";
     }
     case "text":
-      return toTitleCase(text);
+      return fd.column === "last_name" ? surnameCase(text) : nameCase(text);
     case "phone":
       return formatPhone(text);
     default:
@@ -572,7 +581,7 @@ function enumLabel(fd: ManifestFieldDef | undefined, raw: unknown): string | nul
   const value = toText(raw);
   if (value === "") return null;
   const opt = fd?.values?.find((v) => v.value === value);
-  return opt?.label ?? toTitleCase(value);
+  return opt?.label ?? titleCase(value);
 }
 
 // Birth date as MM/DD/YYYY straight off the ISO string. A full year is clearer

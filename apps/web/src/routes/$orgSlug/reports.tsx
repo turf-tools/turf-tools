@@ -27,7 +27,8 @@ import { CONTACT_RATE_MAX, progressColor, rateColor } from "~/lib/palette";
 import { REPORT_KINDS, type ReportKind, type ReportSummary } from "~/lib/reports";
 import { DEFAULT_DISPLAY_TIMEZONE, formatCanvassDay } from "~/lib/timezones";
 import { useFadeOnce } from "~/lib/use-fade-once";
-import { cn, toTitleCase } from "~/lib/utils";
+import { addressCase, unitCase } from "~/lib/display-case";
+import { cn } from "~/lib/utils";
 
 type ReportsSearch = {
   // Campaign id, "all", or null = default (newest active campaign).
@@ -543,10 +544,13 @@ function personName(r: ReportRecord): string {
 
 // Full mailing line minus zip4: "123 Main St, Apt 2, Brooklyn, NY 11215".
 function personAddress(r: ReportRecord): string {
-  const street = [toTitleCase(String(r.address_line_1 ?? "")), r.address_line_2]
+  const street = [
+    addressCase(String(r.address_line_1 ?? "")),
+    unitCase(String(r.address_line_2 ?? "")),
+  ]
     .filter(Boolean)
     .join(", ");
-  const place = [toTitleCase(String(r.city ?? "")), [r.state, r.zip5].filter(Boolean).join(" ")]
+  const place = [addressCase(String(r.city ?? "")), [r.state, r.zip5].filter(Boolean).join(" ")]
     .filter(Boolean)
     .join(", ");
   return [street, place].filter(Boolean).join(", ") || "—";

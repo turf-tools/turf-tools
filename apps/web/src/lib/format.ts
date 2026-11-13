@@ -1,4 +1,4 @@
-import { toTitleCase } from "./utils";
+import { nameCase, surnameCase } from "./display-case";
 
 // Display name: "First M Last Suffix" — a middle name collapses to its
 // bare initial when present, nothing otherwise. Shared by lookup (list +
@@ -12,9 +12,7 @@ export function formatPersonName(
 ): string {
   const trimmed = middle?.trim();
   const initial = trimmed ? trimmed[0]?.toUpperCase() : null;
-  return [toTitleCase(first), initial, toTitleCase(last), toTitleCase(suffix)]
-    .filter(Boolean)
-    .join(" ");
+  return [nameCase(first), initial, surnameCase(last), nameCase(suffix)].filter(Boolean).join(" ");
 }
 
 // Formatters shared across the admin UI. Keep date output compact so it
