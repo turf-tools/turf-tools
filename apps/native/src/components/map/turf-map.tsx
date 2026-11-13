@@ -211,6 +211,11 @@ export function TurfMap({
     <View style={styles.map}>
       <Map
         style={styles.map}
+        // v11 renders into a GLSurfaceView on Android by default, which draws
+        // over sibling React Native views. This screen puts the bottom sheet,
+        // the controls and the attribution badge on top of the map, so keep the
+        // TextureView the previous major used.
+        androidView="texture"
         mapStyle={getMaptilerStyleUrl(isDark)}
         attribution={false}
         logo={false}

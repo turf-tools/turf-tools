@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import MapGL, { Layer, Source, type MapRef } from "react-map-gl/maplibre";
-import type { LayerSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import type { TurfData } from "@turf-tools/db/schema";
@@ -132,7 +132,7 @@ export function TurfMap({
     );
   }
 
-  const clusterColor: unknown = [
+  const clusterColor: ExpressionSpecification = [
     "case",
     ["==", ["get", "minRole"], 0],
     isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
@@ -175,7 +175,7 @@ export function TurfMap({
       filter: ["has", "point_count"],
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["get", "point_count"], 2, 20, 10, 24, 50, 30],
-        "circle-color": clusterColor as never,
+        "circle-color": clusterColor,
         "circle-stroke-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
         "circle-stroke-width": isDark ? 1 : 1.5,
       },
@@ -207,7 +207,7 @@ export function TurfMap({
           ["==", ["get", "role"], 1],
           colors.unavailable.background,
           isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
-        ] as never,
+        ] as ExpressionSpecification,
         "circle-stroke-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
         "circle-stroke-width": isDark ? 1 : 1.5,
       },
@@ -242,6 +242,7 @@ export function TurfMap({
             padding: { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 },
           },
         }}
+        attributionControl={false}
         mapStyle={getMaptilerStyleUrl(isDark)}
         style={styles.mapCanvas}
       >
@@ -257,7 +258,6 @@ export function TurfMap({
             personCount: ["+", ["accumulated"], ["get", "personCount"]],
             role: ["max", ["accumulated"], ["get", "role"]],
             minRole: ["min", ["accumulated"], ["get", "role"]],
-            recordedCount: ["+", ["accumulated"], ["case", [">", ["get", "role"], 0], 1, 0]],
           }}
         >
           {layers.map((layer) => (
