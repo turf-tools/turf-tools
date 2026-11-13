@@ -86,14 +86,23 @@ def compute_election_registry(
     """The version's election registry: above-floor (year, type) elections as
     (key, year, type) tuples, newest first. A key's position in this list is its
     bit index — the ordering is the bit assignment, so it must stay
-    deterministic (year desc, then type)."""
+    deterministic (year desc, then type).
+
+    `src_fqn` holds one row per voter (persons_validated is checked for it), so
+    each row's elections are de-duplicated and then counted as plain rows: the
+    count is distinct voters without a distinct aggregate."""
     rows = conn.execute(
         f"""
-        SELECT {election_key_sql("e")} AS key, e.year AS year, e.type AS type
-        FROM {src_fqn}, UNNEST({column}) AS t(e)
-        WHERE e.year IS NOT NULL
-        GROUP BY 1, 2, 3
-        HAVING count(DISTINCT external_id) >= ?
+        SELECT e.key, e.year, e.type
+        FROM (
+            SELECT unnest(list_distinct(list_transform(
+                       list_filter({column}, x -> x.year IS NOT NULL),
+                       x -> {{'key': {election_key_sql("x")}, 'year': x.year, 'type': x.type}}
+                   ))) AS e
+            FROM {src_fqn}
+        )
+        GROUP BY ALL
+        HAVING count(*) >= ?
         """,
         [ELECTION_MIN_VOTERS],
     ).fetchall()
@@ -103,19 +112,19 @@ def compute_election_registry(
 
 def mask_select_exprs(keys: list[str], column: str = VOTING_HISTORY_COLUMN) -> list[str]:
     """SELECT expressions materializing the mask columns from a voting-history
-    STRUCT[] column, one per word. `keys` is the registry in bit order. OR-fold
+    STRUCT[] column, one per word. `keys` is the registry in bit order. Each
+    entry's bit within a word is its key's position in that word's keys. OR-fold
     rather than sum: duplicate history entries for one election must set its
-    bit once, never carry into a neighbor."""
+    bit once, never carry into a neighbor. The shift amount is UBIGINT so the
+    columns stay UBIGINT: a signed shift amount widens them to HUGEINT, which
+    the lake stores lossily."""
     exprs: list[str] = []
     for word in range(mask_words(len(keys))):
-        cases = " ".join(
-            f"WHEN '{key.replace("'", "''")}' THEN {1 << (bit - 64 * word)}::UBIGINT"
-            for bit, key in enumerate(keys)
-            if bit // 64 == word
-        )
+        word_keys = "[" + ", ".join(f"'{key.replace("'", "''")}'" for key in keys[64 * word : 64 * word + 64]) + "]"
+        positions = f"list_transform({column}, e -> list_position({word_keys}, {election_key_sql('e')}))"
         exprs.append(
             f"coalesce(list_reduce(list_prepend(0::UBIGINT, "
-            f"list_transform({column}, e -> CASE {election_key_sql('e')} {cases} ELSE 0::UBIGINT END)), "
+            f"list_transform(list_filter({positions}, p -> p > 0), p -> 1::UBIGINT << (p - 1)::UBIGINT)), "
             f"(a, b) -> a | b), 0::UBIGINT) AS {mask_column(column, word)}"
         )
     return exprs
