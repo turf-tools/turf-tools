@@ -109,8 +109,8 @@ importers:
         specifier: ~55.0.22
         version: 55.0.22(expo@55.0.24)(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       jotai:
-        specifier: ^2.19.1
-        version: 2.20.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.0)
+        specifier: ^3.0.2
+        version: 3.0.2(@types/react@19.2.14)(react@19.2.0)
       lucide-react-native:
         specifier: ^1.7.0
         version: 1.14.0(react-native-svg@15.15.5(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0))(react-native@0.83.4(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
@@ -266,8 +266,8 @@ importers:
         specifier: ^1.26.2
         version: 1.26.2
       jotai:
-        specifier: ^2.19.1
-        version: 2.20.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.0)
+        specifier: ^3.0.2
+        version: 3.0.2(@types/react@19.2.14)(react@19.2.0)
       maplibre-gl:
         specifier: ^5.24.0
         version: 5.24.0
@@ -5327,19 +5327,13 @@ packages:
   jose@6.2.3:
     resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
 
-  jotai@2.20.0:
-    resolution: {integrity: sha512-b5GAqgmXmXzB4WPaTH26ppk9Sl7AA9WSQX7yfdM+gJ1rFROiWcVbi97gFuN/yVCojOcbcvop2sfLL+fjxW0JVg==}
-    engines: {node: '>=12.20.0'}
+  jotai@3.0.2:
+    resolution: {integrity: sha512-1h+H6BQN+D048zv8hRGVeNxghxRLFZCB+l2WhFe7RhRiF0JlC8516G2BtRUXhPvMQTGB9OHst2N/BW9aNpp5aA==}
+    engines: {node: '>=22.12.0'}
     peerDependencies:
-      '@babel/core': '>=7.0.0'
-      '@babel/template': '>=7.0.0'
-      '@types/react': '>=17.0.0'
-      react: '>=17.0.0'
+      '@types/react': '>=18.0.0'
+      react: '>=18.0.0'
     peerDependenciesMeta:
-      '@babel/core':
-        optional: true
-      '@babel/template':
-        optional: true
       '@types/react':
         optional: true
       react:
@@ -6308,6 +6302,10 @@ packages:
 
   postcss@8.5.32:
     resolution: {integrity: sha512-LJlKCCAUFKOuZxipUdYw1NzIITEsPcgyOG9LkvRJvuKj/bRzbuRY0ARXvL0pWGpsZvn8jku+LMep2eU0seHp8g==}
+    engines: {node: ^10 || ^12 || >=14}
+
+  postcss@8.5.33:
+    resolution: {integrity: sha512-RVHEU9/Pp1Fnjr/MpAJsZoADukCKhfIi15OunEYiGktIkYLkPVvC1sioWolGDS7XByMTx9m/IGbro0Js13zhnQ==}
     engines: {node: ^10 || ^12 || >=14}
 
   postgres@3.4.9:
@@ -12765,10 +12763,8 @@ snapshots:
 
   jose@6.2.3: {}
 
-  jotai@2.20.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.0):
+  jotai@3.0.2(@types/react@19.2.14)(react@19.2.0):
     optionalDependencies:
-      '@babel/core': 7.29.0
-      '@babel/template': 7.28.6
       '@types/react': 19.2.14
       react: 19.2.0
 
@@ -13762,6 +13758,12 @@ snapshots:
       source-map-js: 1.2.1
 
   postcss@8.5.32:
+    dependencies:
+      nanoid: 3.3.20
+      picocolors: 1.1.1
+      source-map-js: 1.2.2
+
+  postcss@8.5.33:
     dependencies:
       nanoid: 3.3.20
       picocolors: 1.1.1
@@ -14979,7 +14981,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
-      postcss: 8.5.32
+      postcss: 8.5.33
       rolldown: 1.0.0
       tinyglobby: 0.2.17
     optionalDependencies:

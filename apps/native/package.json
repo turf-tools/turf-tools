@@ -38,7 +38,7 @@
     "expo-router": "~55.0.11",
     "expo-status-bar": "~55.0.5",
     "expo-updates": "~55.0.22",
-    "jotai": "^2.19.1",
+    "jotai": "^3.0.2",
     "lucide-react-native": "^1.7.0",
     "maplibre-gl": "^5.24.0",
     "nativewind": "4.2.3",
