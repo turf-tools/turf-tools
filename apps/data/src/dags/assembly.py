@@ -243,11 +243,13 @@ def persons_geocoded(
     `osm_only_matches`. `position_source` is `'osm_only'` for the
     osm-only voters.
 
-    address_line_2 normalization (UPPER + TRIM) happens here because it
-    comes straight from `persons_validated` with no TIGER/OSM-derived
-    equivalent — SBOE has a small number of mixed-case "Num 1"-style
-    apartment-type rows. SBOE source data is otherwise already UPPER, so
-    line_1/city/state/etc. pass through.
+    Capitalization: address fields are stored in capitals and person fields
+    keep the voter file's case (see "Capitalization" in AGENTS.md).
+    address_line_1 comes from `canonical_addresses` already in capitals;
+    address_line_2, city and state are normalized here (UPPER + TRIM), since
+    voter files differ ("Num 1"-style unit rows in SBOE; Florida writes most
+    cities "Miami" and some "MIAMI"). Names pass through: Florida's "McDonald"
+    is information an all-capitals file doesn't have.
 
     Persons that didn't end up in either `refined_positions` or
     `osm_only_matches` are excluded entirely — they live in
@@ -289,10 +291,11 @@ def persons_geocoded(
           -- Excluded: the address columns assembly rewrites and re-derives —
           -- address_line_1 (canonical), address_line_2 (normalized), half_code
           -- (consumed into the canonical address) — and county_fips, which only
-          -- the import's geo extent reads. All are Person-core, so EXCLUDE
-          -- always finds them.
+          -- the import's geo extent reads. city and state are normalized in
+          -- place. All are Person-core, so EXCLUDE and REPLACE always find them.
           SELECT
-              p.* EXCLUDE (address_line_1, address_line_2, half_code, county_fips),
+              p.* EXCLUDE (address_line_1, address_line_2, half_code, county_fips)
+                  REPLACE (TRIM(UPPER(p.city)) AS city, TRIM(UPPER(p.state)) AS state),
               TRIM(UPPER(p.address_line_2)) AS address_line_2
           FROM {persons_fqn} p
         ),

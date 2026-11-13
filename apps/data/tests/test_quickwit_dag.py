@@ -42,12 +42,87 @@ pytestmark = [
 
 # A handful of persons with overlapping names/addresses so searches are unambiguous.
 _SAMPLE = [
-    # external_id, ext_type, first, last, addr1, addr2, city, state, zip5, zip4, phone, email
-    ("id1", "test", "JANE", "DOE", "1 MAIN STREET", None, "NEW YORK", "NY", "10001", None, "3055550101", "jane@x.org"),
-    ("id2", "test", "JOHN", "SMITH", "2 OAK AVENUE", None, "NEW YORK", "NY", "10002", None, "3055550202", None),
-    ("id3", "test", "JANE", "SMITH", "3 ELM STREET", None, "NEW YORK", "NY", "10003", None, None, None),
-    ("id4", "test", "MARIA", "GARCIA", "31-15 STEINWAY STREET", None, "ASTORIA", "NY", "11103", None, None, None),
-    ("id5", "test", "JOHN", "DOE", "5 MAIN STREET", None, "BROOKLYN", "NY", "11202", None, None, None),
+    # external_id, ext_type, first, last, middle, suffix, addr1, addr2, city, state, zip5, zip4, phone, email
+    (
+        "id1",
+        "test",
+        "JANE",
+        "DOE",
+        "LINCOLN",
+        "III",
+        "1 MAIN STREET",
+        None,
+        "NEW YORK",
+        "NY",
+        "10001",
+        None,
+        "3055550101",
+        "jane@x.org",
+    ),
+    (
+        "id2",
+        "test",
+        "JOHN",
+        "SMITH",
+        None,
+        None,
+        "2 OAK AVENUE",
+        None,
+        "NEW YORK",
+        "NY",
+        "10002",
+        None,
+        "3055550202",
+        None,
+    ),
+    (
+        "id3",
+        "test",
+        "JANE",
+        "SMITH",
+        None,
+        None,
+        "3 ELM STREET",
+        None,
+        "NEW YORK",
+        "NY",
+        "10003",
+        None,
+        None,
+        None,
+    ),
+    (
+        "id4",
+        "test",
+        "MARIA",
+        "GARCIA",
+        None,
+        None,
+        "31-15 STEINWAY STREET",
+        None,
+        "ASTORIA",
+        "NY",
+        "11103",
+        None,
+        None,
+        None,
+    ),
+    (
+        "id5",
+        "test",
+        "JOHN",
+        "DOE",
+        None,
+        None,
+        "5 MAIN STREET",
+        None,
+        "BROOKLYN",
+        "NY",
+        "11202",
+        None,
+        None,
+        None,
+    ),
 ]
 
 # The sample's contact columns, declared the way an importer's manifest would.
@@ -152,7 +227,7 @@ def _seed_table(conn) -> TableRef:
     conn.execute(f"""
         CREATE OR REPLACE TABLE memory.main.persons_tiny AS
         SELECT * FROM (VALUES {values}) AS t(
-            external_id, external_id_type, first_name, last_name,
+            external_id, external_id_type, first_name, last_name, middle_name, name_suffix,
             address_line_1, address_line_2, city, state, zip5, zip4, phone, email
         )
     """)
@@ -208,6 +283,11 @@ def test_quickwit_index_and_search(dual_conn, tmp_path):
             main_st = qw_client.search(qw_settings, index_id, "address_line_1:MAIN")
             assert main_st["numHits"] == 2
             assert {h["first_name"] for h in main_st["hits"]} == {"JANE", "JOHN"}
+
+            # Middle name and suffix come back with a hit for display but aren't searched.
+            jane = qw_client.search(qw_settings, index_id, "first_name:JANE AND last_name:DOE")["hits"]
+            assert [(h["middle_name"], h["name_suffix"]) for h in jane] == [("LINCOLN", "III")]
+            assert qw_client.search(qw_settings, index_id, "LINCOLN")["numHits"] == 0
 
             # Lookup input splits like the index's tokenizer, so a hyphenated
             # house number finds its address.

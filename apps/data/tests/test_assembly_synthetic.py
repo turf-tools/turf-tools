@@ -423,6 +423,24 @@ class TestPersonsGeocoded:
         rows = conn.execute(f"SELECT external_id, position_source, blockface_id FROM {ref.fqn}").fetchall()
         assert ("v2", "osm_only", "bf42") in rows, f"osm_only voter missing or mis-tagged: {rows}"
 
+    def test_address_fields_are_capitals_and_names_keep_their_case(self, synth):
+        """Address fields get one form across voter files; names keep the file's."""
+        conn, refs = synth
+        self._seed_validated(conn, refs, [("v2", " Apt 3b ", "10024")])
+        conn.execute(
+            f"UPDATE {refs['validated'].fqn} SET city = ' Miami ', state = 'fl', first_name = 'McDonald' "
+            "WHERE external_id = 'v2'"
+        )
+        _voter(conn, refs, "v2", 200, zip5="10024")
+        _osm_only(conn, refs, "v2", "Amsterdam Avenue", "200", osm_id=3)
+        ref = self._geocoded(conn, refs)
+        assert conn.execute(f"SELECT city, state, address_line_2, first_name FROM {ref.fqn}").fetchone() == (
+            "MIAMI",
+            "FL",
+            "APT 3B",
+            "McDonald",
+        )
+
     def test_unmatched_voter_excluded(self, synth):
         """A voter in neither refined_positions nor osm_only_matches is
         excluded from persons_geocoded."""

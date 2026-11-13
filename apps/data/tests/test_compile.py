@@ -116,6 +116,10 @@ def test_text_multi_filter_on_top_level_column() -> None:
     assert params == ["10001", "10002"]
 
 
+# How a text filter on last_name compiles (punctuation and spaces ignored).
+LAST_NAME_MATCH = "regexp_replace(last_name, '[^\\p{L}\\p{N}]', '', 'g') ILIKE ?"
+
+
 def test_text_filter_contains_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
@@ -124,8 +128,17 @@ def test_text_filter_contains_on_top_level_column() -> None:
         None,
         params,
     )
-    assert where == "WHERE last_name ILIKE ?"
+    assert where == f"WHERE {LAST_NAME_MATCH}"
     assert params == ["%smith%"]
+
+
+def test_text_filter_ignores_punctuation_and_spaces() -> None:
+    for typed in ("O'Brien", "O Brien", "OBrien"):
+        params: list = []
+        criteria_to_where(CATALOG, _narrow(TextFilter(kind="text", key="last_name", value=typed)), None, params)
+        assert params == ["%OBrien%"]
+    blank = _narrow(TextFilter(kind="text", key="last_name", value=" - "))
+    assert criteria_to_where(CATALOG, blank, None, []) == ""
 
 
 FL_CATALOG = build_field_catalog(FL_MANIFEST)
@@ -546,7 +559,7 @@ def test_narrow_chain_ands_filters() -> None:
     )
     assert " AND " in where
     assert "enrollment IN (?)" in where
-    assert "last_name ILIKE ?" in where
+    assert LAST_NAME_MATCH in where
     assert params == ["democratic", "%smith%"]
 
 
@@ -596,7 +609,7 @@ def test_remove_as_first_step_negates() -> None:
         None,
         params,
     )
-    assert where == "WHERE NOT (last_name ILIKE ?)"
+    assert where == f"WHERE NOT ({LAST_NAME_MATCH})"
     assert params == ["%smith%"]
 
 
@@ -1154,7 +1167,7 @@ def test_nested_filter_narrow_composes_as_and() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) AND ((enrollment IN (?)))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) AND ((enrollment IN (?)))"
     assert params == ["%smith%", "democratic"]
 
 
@@ -1171,7 +1184,7 @@ def test_nested_filter_add_composes_as_or() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) OR ((enrollment IN (?)))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) OR ((enrollment IN (?)))"
     assert params == ["%smith%", "democratic"]
 
 
@@ -1188,7 +1201,7 @@ def test_nested_filter_remove_composes_as_and_not() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) AND NOT ((enrollment IN (?)))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) AND NOT ((enrollment IN (?)))"
     assert params == ["%smith%", "democratic"]
 
 
@@ -1233,7 +1246,7 @@ def test_nested_filter_with_internal_verbs_preserves_composition() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
     assert params == ["%smith%", "democratic", "working_families"]
 
 

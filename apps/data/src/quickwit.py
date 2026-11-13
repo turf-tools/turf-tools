@@ -28,6 +28,8 @@ PERSON_FIELDS = (
     "external_id_type",
     "first_name",
     "last_name",
+    "middle_name",
+    "name_suffix",
     "address_line_1",
     "address_line_2",
     "city",
@@ -73,6 +75,17 @@ def _prefix_clause(field: str, value: str) -> str | None:
     )
 
 
+def _name_clause(field: str, value: str) -> str | None:
+    """`_prefix_clause`, or the name run together: voter files store one name as
+    "O'Brien", "O BRIEN" or "OBRIEN", indexed as `o` + `brien` or as `obrien`, so a
+    name typed in parts also searches its parts joined."""
+    clause = _prefix_clause(field, value)
+    tokens = re.findall(r"[^\W_]+", value)
+    if clause is None or len(tokens) < 2:
+        return clause
+    return f"({clause}) OR {field}:{_escape_term(''.join(tokens))}*"
+
+
 def build_person_query(
     *,
     first_name: str = "",
@@ -88,13 +101,13 @@ def build_person_query(
     together. Name/address/phone/email are prefix-matched (partial); zip and id
     are exact. Returns "" when nothing is filled (caller should short-circuit to empty)."""
     clauses: list[str] = []
-    for field, value in (
-        ("first_name", first_name),
-        ("last_name", last_name),
-        ("address_line_1", address),
-        ("city", city),
+    for field, value, clause_of in (
+        ("first_name", first_name, _name_clause),
+        ("last_name", last_name, _name_clause),
+        ("address_line_1", address, _prefix_clause),
+        ("city", city, _prefix_clause),
     ):
-        clause = _prefix_clause(field, value)
+        clause = clause_of(field, value)
         if clause:
             clauses.append(f"({clause})")
     if zip5.strip():

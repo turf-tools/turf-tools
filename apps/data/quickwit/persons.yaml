@@ -16,6 +16,15 @@ doc_mapping:
     - name: last_name
       type: text
       stored: true
+    # Returned with each hit so the Lookup list can show the full name; not searched.
+    - name: middle_name
+      type: text
+      indexed: false
+      stored: true
+    - name: name_suffix
+      type: text
+      indexed: false
+      stored: true
     - name: address_line_1
       type: text
       stored: true

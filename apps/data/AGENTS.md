@@ -423,6 +423,17 @@ on ties). Voters at one building sometimes write different ZIPs; each
 keeps their own `zip5` for filters and exports, and the building's ids
 use `building_zip5`.
 
+### Capitalization
+
+Address fields are stored in capitals; person fields keep the voter
+file's case. `address_line_1` is built in capitals from TIGER/OSM names
+(`canonical_addresses`); `address_line_2`, `city` and `state` are
+normalized in `persons_geocoded`. Addresses get grouped and compared
+(building ids, a building's city), so one form keeps them consistent
+across voter files. Names are only displayed, and the voter file's case
+is the best information there is (Florida writes "McDonald"; New York
+writes "MCDONALD"). Importers pass case through; they don't normalize it.
+
 ## building_id and door_id
 
 ```

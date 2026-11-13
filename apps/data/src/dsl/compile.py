@@ -410,12 +410,14 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
 def _text_clause(f: TextFilter, def_: FieldDef, params: list[Any]) -> str:
     if not isinstance(def_, TextFieldDef):
         raise CriteriaError(f"Field {f.key} is not a text field")
-    if not f.value.strip():
+    # Substring match with punctuation and spaces ignored on both sides: voter
+    # files store one name as "O'Brien", "O BRIEN" or "OBRIEN". Exact-match would
+    # be a per-filter option on the instance, not field metadata.
+    letters = re.sub(r"[\W_]+", "", f.value)
+    if not letters:
         return ""
-    # Text filters are substring matches; exact-match would be a per-filter
-    # option on the instance, not field metadata.
-    params.append(f"%{f.value}%")
-    return f"{f.key} ILIKE ?"
+    params.append(f"%{letters}%")
+    return f"regexp_replace({f.key}, '[^\\p{{L}}\\p{{N}}]', '', 'g') ILIKE ?"
 
 
 def _phone_clause(f: PhoneFilter, def_: FieldDef | CustomFieldDef, params: list[Any]) -> str:

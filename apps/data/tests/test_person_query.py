@@ -22,9 +22,17 @@ def test_numbers_are_exact_except_the_last_token() -> None:
     assert build_person_query(address="37-1") == "(address_line_1:37 AND address_line_1:1*)"
 
 
-def test_apostrophes_and_hyphens_in_names_split() -> None:
-    assert build_person_query(last_name="O'Brien") == "(last_name:O* AND last_name:Brien*)"
-    assert build_person_query(last_name="Smith-Jones") == "(last_name:Smith* AND last_name:Jones*)"
+def test_names_in_parts_also_search_their_parts_joined() -> None:
+    # "O'Brien" finds names indexed as `o` + `brien` and as `obrien`.
+    assert build_person_query(last_name="O'Brien") == ("((last_name:O* AND last_name:Brien*) OR last_name:OBrien*)")
+    assert build_person_query(last_name="Smith-Jones") == (
+        "((last_name:Smith* AND last_name:Jones*) OR last_name:SmithJones*)"
+    )
+    assert build_person_query(first_name="Mary") == "(first_name:Mary*)"
+
+
+def test_addresses_are_not_joined() -> None:
+    assert "3214" not in build_person_query(address="32-14 Broadway")
 
 
 def test_accented_letters_stay_in_one_token() -> None:

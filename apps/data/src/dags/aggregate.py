@@ -35,9 +35,10 @@ def buildings_geocoded(
 
     lat/lng = AVG of contained persons' coordinates, which nearly always
     coincide; a building whose voters were placed differently (OSM centroid
-    for some, road projection for others) sits at their average.
-    blockface_id = the most common of the persons' blockfaces; they agree for
-    nearly every building.
+    for some, road projection for others) sits at their average. city = the
+    persons' most common city (residents sometimes write different ones),
+    alphabetical on ties; blockface_id = their most common blockface, lowest
+    on ties — so the same persons always give the same building row.
     """
     table = "buildings_geocoded"
     ensure_schema(conn, schema)
@@ -47,23 +48,37 @@ def buildings_geocoded(
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
     conn.execute(f"""
         CREATE TABLE {fqn} AS
+        WITH cities AS (
+            SELECT building_id, city
+            FROM (SELECT building_id, city, count(*) AS n FROM {persons_fqn} WHERE city IS NOT NULL GROUP BY ALL)
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY building_id ORDER BY n DESC, city) = 1
+        ),
+        blockfaces AS (
+            SELECT building_id, blockface_id
+            FROM (
+                SELECT building_id, blockface_id, count(*) AS n
+                FROM {persons_fqn} WHERE blockface_id IS NOT NULL GROUP BY ALL
+            )
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY building_id ORDER BY n DESC, blockface_id) = 1
+        )
         SELECT
-            building_id,
-            -- Address fields are stable across rows that share a
-            -- building_id (since the id is derived from them); ANY_VALUE
-            -- avoids a needless GROUP BY on each one.
-            ANY_VALUE(address_line_1)               AS address_line_1,
-            ANY_VALUE(city)                         AS city,
-            ANY_VALUE(state)                        AS state,
-            ANY_VALUE(building_zip5)                AS zip5,
-            AVG(latitude)                           AS latitude,
-            AVG(longitude)                          AS longitude,
-            MODE(blockface_id)                      AS blockface_id,
+            p.building_id,
+            -- address_line_1, building_zip5 and building_i come from the
+            -- building_id itself, so every row in the group agrees.
+            ANY_VALUE(p.address_line_1)             AS address_line_1,
+            ANY_VALUE(c.city)                       AS city,
+            min(p.state)                            AS state,
+            ANY_VALUE(p.building_zip5)              AS zip5,
+            AVG(p.latitude)                         AS latitude,
+            AVG(p.longitude)                        AS longitude,
+            ANY_VALUE(bf.blockface_id)              AS blockface_id,
             COUNT(*)                                AS person_count,
-            COUNT(DISTINCT door_i)                  AS door_count,
-            ANY_VALUE(building_i)                   AS building_i
-        FROM {persons_fqn}
-        GROUP BY building_id
+            COUNT(DISTINCT p.door_i)                AS door_count,
+            ANY_VALUE(p.building_i)                 AS building_i
+        FROM {persons_fqn} p
+        LEFT JOIN cities c USING (building_id)
+        LEFT JOIN blockfaces bf USING (building_id)
+        GROUP BY p.building_id
     """)
 
     return TableRef(
