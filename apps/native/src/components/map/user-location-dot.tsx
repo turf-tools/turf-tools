@@ -1,4 +1,4 @@
-import { PointAnnotation } from "@maplibre/maplibre-react-native";
+import { ViewAnnotation } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
 import { AppState, Image, View } from "react-native";
@@ -22,12 +22,10 @@ import Animated, {
 // compass — resolves to "no dot" / "no cone": never an alert or
 // placeholder.
 //
-// The rotating cone depends on our patch to @maplibre/maplibre-react-native
-// (see patches/): React re-asserts this annotation's layout frame whenever
-// its subtree updates, clobbering the map-managed position — without the
-// patch the marker ghosts near the map's top-left whenever its coordinate
-// is off-screen. Verify against that repro (open a turf far from the
-// device) before touching the MLRNPointAnnotation patch hunks.
+// Rendered as a ViewAnnotation, which owns the view's position on the map
+// rather than letting React's layout drive it. The marker is non-interactive
+// (pointerEvents="none" below) so taps fall through to the building layer
+// underneath it.
 
 // The three size knobs. Everything else derives from these: the halo starts
 // at the dot's outer edge and expands to HALO_SCALE× it, and the container
@@ -111,7 +109,7 @@ export function UserLocationDot({
     // trails `target` mid-animation); `target` is the last accepted fix,
     // which the jitter gate compares against. Plain rAF interpolation,
     // not RN Animated — see the reanimated note below for why Animated
-    // loops are avoided in this file, and a PointAnnotation coordinate
+    // loops are avoided in this file, and a ViewAnnotation coordinate
     // needs a re-render per frame either way.
     let drawn: [number, number] | null = null;
     let target: [number, number] | null = null;
@@ -322,14 +320,9 @@ export function UserLocationDot({
     </View>
   );
 
-  // PointAnnotation with `enabled: false` — the map's annotation hit-test
-  // skips disabled views, so a tap on the dot falls through to whatever
-  // map layer is underneath (e.g. the building being stood at). The prop
-  // is exposed by our patch to @maplibre/maplibre-react-native (see
-  // patches/); MapLibre itself honors it in annotationTagAtPoint.
   return (
-    <PointAnnotation id="user-location-dot" coordinate={coord} enabled={false}>
+    <ViewAnnotation id="user-location-dot" lngLat={coord}>
       {marker}
-    </PointAnnotation>
+    </ViewAnnotation>
   );
 }

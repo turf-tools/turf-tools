@@ -64,8 +64,7 @@
       "fsevents"
     ],
     "patchedDependencies": {
-      "react-native-css-interop@0.2.3": "patches/react-native-css-interop@0.2.3.patch",
-      "@maplibre/maplibre-react-native": "patches/@maplibre__maplibre-react-native.patch"
+      "react-native-css-interop@0.2.3": "patches/react-native-css-interop@0.2.3.patch"
     }
   }
 }

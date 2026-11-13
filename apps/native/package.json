@@ -14,7 +14,7 @@
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.1",
     "@gorhom/bottom-sheet": "^5.2.9",
-    "@maplibre/maplibre-react-native": "^10.4.2",
+    "@maplibre/maplibre-react-native": "^11.5.1",
     "@orpc/client": "^1.13.13",
     "@orpc/server": "^1.13.13",
     "@react-native-async-storage/async-storage": "2.2.0",
