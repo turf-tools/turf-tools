@@ -4,9 +4,11 @@
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? "";
 
-// Custom styles from Maptiler account.
-const STYLE_ID_LIGHT = "01968205-0dc7-71df-87a7-8b67f7828379";
-const STYLE_ID_DARK = "019d7ad6-3be3-7b78-86e3-853060587c76";
+// Style IDs are deployment configuration. "streets-v4" is MapTiler's
+// public style and works with any key; set the env vars to use a custom
+// style instead.
+const STYLE_ID_LIGHT = process.env.EXPO_PUBLIC_MAPTILER_STYLE_ID_LIGHT || "streets-v4";
+const STYLE_ID_DARK = process.env.EXPO_PUBLIC_MAPTILER_STYLE_ID_DARK || STYLE_ID_LIGHT;
 
 export function getMaptilerStyleUrl(isDark: boolean): string {
   const styleId = isDark ? STYLE_ID_DARK : STYLE_ID_LIGHT;
