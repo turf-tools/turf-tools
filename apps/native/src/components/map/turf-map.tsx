@@ -6,27 +6,27 @@ import {
   type GeoJSONSourceRef,
   Layer,
   Map,
+  NativeUserLocation,
   type ViewStateChangeEvent,
 } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { type NativeSyntheticEvent, Platform, StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Alert,
+  Linking,
+  type NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import type { TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { MapControls } from "./controls";
-import { AttributionBadge, MissingKeyNotice } from "./map-chrome";
-import { getMapPadding } from "./map-padding";
 import { boundsForBuildings, buildFeatureCollection } from "./turf-data";
-import {
-  buildTurfLayers,
-  CLUSTER_MAX_ZOOM,
-  CLUSTER_RADIUS,
-  TILE_MAX_ZOOM,
-  TURF_CLUSTER_PROPERTIES,
-  TURF_SOURCE_ID,
-} from "./turf-layers";
 import { LabelLayers } from "./labels";
 import { UserLocationDot } from "./user-location-dot";
 
@@ -36,16 +36,25 @@ type Props = {
   onBuildingPress?: (buildingId: string) => void;
   isDark?: boolean;
   bottomInset?: number;
-  paused?: boolean;
 };
 
+const BUILDINGS_SOURCE_ID = "turf-buildings";
+const BUILDINGS_PINS_LAYER_ID = "turf-building-pins";
+const BUILDINGS_LABEL_LAYER_ID = "turf-building-labels";
+const CLUSTERS_LAYER_ID = "turf-building-clusters";
+const CLUSTERS_LABEL_LAYER_ID = "turf-building-clusters-label";
+
+const CLUSTER_RADIUS = 20;
+const CLUSTER_MAX_ZOOM = 18;
+const TILE_MAX_ZOOM = 19;
+
+// Map for the Turf List screen. Uses native MapLibre for GPU-level clustering.
 export function TurfMap({
   turf,
   buildingRoles,
   onBuildingPress,
   isDark = false,
   bottomInset = 0,
-  paused = false,
 }: Props) {
   const colors = useColors();
   // Android flashes black between the map view mounting and its first
@@ -53,88 +62,101 @@ export function TurfMap({
   // Cover it with a theme-colored pane until the map reports ready; iOS
   // starts ready.
   const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
+  // Android only (the iOS dot asks for permission itself). The native
+  // Android puck checks permission once at style load and never retries,
+  // so request it and mount the puck only after the grant. Wait for the
+  // map's first full frame: the dialog over the initializing GL surface
+  // leaves the map mis-sized with offset taps. Denied → no dot.
+  const [locationGranted, setLocationGranted] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "android" || !mapFullyRendered) return;
+    let cancelled = false;
+    Location.requestForegroundPermissionsAsync()
+      .then(({ status }) => {
+        if (!cancelled && status === "granted") setLocationGranted(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [mapFullyRendered]);
   const featureCollection = useMemo(
     () => buildFeatureCollection(turf.buildings, buildingRoles),
     [turf.buildings, buildingRoles],
   );
+
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
-  const mapPadding = useMemo(() => getMapPadding(bottomInset), [bottomInset]);
-  const layers = useMemo(() => buildTurfLayers({ isDark, colors }), [colors, isDark]);
-
+  const mapPadding = { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 };
   const cameraRef = useRef<CameraRef>(null);
-  const buildingsSourceRef = useRef<GeoJSONSourceRef>(null);
-  const userPositionRef = useRef<[number, number] | null>(null);
+  const shapeSourceRef = useRef<GeoJSONSourceRef>(null);
 
-  const handleUserPosition = useCallback((position: [number, number]) => {
-    userPositionRef.current = position;
-  }, []);
-
-  // The compass needle reads bearing on the UI thread; the ref is for the
-  // tap and locate math, which runs in JS.
+  // Track the actual camera zoom for tap zoom math, and the bearing for
+  // the compass needle (shared value — per-frame, no re-render) plus its
+  // visibility (state — changes only at the show/hide thresholds). The
+  // camera centre, zoom and viewport drive the iOS user-dot overlay.
   const actualZoomRef = useRef(0);
   const mapBearing = useSharedValue(0);
+  const mapCenter = useSharedValue<[number, number]>([0, 0]);
+  const mapZoom = useSharedValue(0);
+  const mapViewport = useSharedValue({ width: 0, height: 0 });
+  const cameraReady = useSharedValue(false);
   const [rotated, setRotated] = useState(false);
-
   // Both region streams feed this: IsChanging for live tracking, and
   // DidChange for the settle frame, the only carrier of an animation's
   // final bearing. Without it a reset-north stops a hair short of 0 and
   // the compass never hides.
   const handleRegionEvent = useCallback(
     (event: NativeSyntheticEvent<ViewStateChangeEvent>) => {
-      const { zoom, bearing } = event.nativeEvent;
-      if (typeof zoom === "number") actualZoomRef.current = zoom;
-      if (typeof bearing !== "number") return;
-
-      mapBearing.value = bearing;
-      // Visibility is purely bearing-derived: appear once clearly
-      // rotated, disappear once essentially at north. The gap between
-      // the thresholds absorbs settle jitter.
-      const norm = ((bearing % 360) + 360) % 360;
-      const deviation = Math.min(norm, 360 - norm);
-      setRotated((prev) => (prev ? deviation > 0.5 : deviation >= 2));
+      const { center, zoom: z, bearing: h } = event.nativeEvent;
+      if (center) {
+        mapCenter.value = center;
+        cameraReady.value = true;
+      }
+      if (typeof z === "number") {
+        actualZoomRef.current = z;
+        mapZoom.value = z;
+        cameraReady.value = true;
+      }
+      if (typeof h === "number") {
+        mapBearing.value = h;
+        // Visibility is purely bearing-derived: appear once clearly
+        // rotated, disappear once essentially at north — anything that
+        // lands the camera on 0 (the reset animation, iOS's release-snap
+        // to north) hides it through the same rule. The gap between the
+        // thresholds absorbs settle jitter.
+        const norm = ((h % 360) + 360) % 360;
+        const deviation = Math.min(norm, 360 - norm);
+        setRotated((prev) => (prev ? deviation > 0.5 : deviation >= 2));
+      }
     },
-    [mapBearing],
+    [mapBearing, mapCenter, mapZoom, cameraReady],
   );
-
-  // Default the padding so locate and cluster stops keep the camera centre
-  // the initial fit used. `setStop` is imperative, so identical stops are
-  // not diffed; every call runs.
-  const setCameraStop = useCallback(
-    (stop: CameraStop) => {
-      void cameraRef.current?.setStop({
-        padding: mapPadding,
-        ...stop,
-      });
-    },
-    [mapPadding],
-  );
+  // Camera stops are diffed against the previous one, so an identical
+  // stop (locate twice from the same fix, tap the compass twice) is
+  // elided and the camera stays put. Flip the duration by a millisecond
+  // so each stop is unique. Pass an easing for anything that should
+  // animate: without one the camera jumps regardless of duration.
+  const stopNonceRef = useRef(0);
+  const setCameraStop = useCallback((stop: CameraStop) => {
+    stopNonceRef.current = 1 - stopNonceRef.current;
+    cameraRef.current?.setStop({
+      ...stop,
+      duration: (stop.duration ?? 0) + stopNonceRef.current,
+    });
+  }, []);
 
   const handleResetNorth = useCallback(() => {
     setCameraStop({ bearing: 0, duration: 250, easing: "ease" });
   }, [setCameraStop]);
 
-  // Center on the user at a working zoom. The dot already owns the live
-  // fix, so use that first; the cached and fresh lookups are only for the
-  // case where the watch has not produced a position yet.
+  // Center on the user at a working zoom. Cached fix first so the common
+  // case is instant; a fresh fix only when there's none. Any failure —
+  // permission denied, services off — moves nothing: never an alert.
   const handleLocate = useCallback(async () => {
     try {
-      const live = userPositionRef.current;
-      if (live) {
-        setCameraStop({
-          center: live,
-          zoom: Math.max(actualZoomRef.current, 16),
-          duration: 400,
-          easing: "ease",
-        });
-        return;
-      }
-
-      const last = await Location.getLastKnownPositionAsync({
-        maxAge: 30_000,
-        requiredAccuracy: 100,
-      });
+      const last = await Location.getLastKnownPositionAsync();
       const pos =
-        last ?? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }));
+        last ?? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
       if (!pos) return;
       setCameraStop({
         center: [pos.coords.longitude, pos.coords.latitude],
@@ -143,7 +165,7 @@ export function TurfMap({
         easing: "ease",
       });
     } catch {
-      // No location, no movement.
+      // No location, no movement — silent by design.
     }
   }, [setCameraStop]);
 
@@ -152,13 +174,12 @@ export function TurfMap({
       const feature = event.nativeEvent.features?.[0];
       if (!feature) return;
 
+      // Cluster tap — use native getClusterExpansionZoom.
       if (feature.properties?.cluster) {
         if (feature.geometry.type !== "Point") return;
         try {
-          const clusterId = feature.properties.cluster_id;
-          if (typeof clusterId !== "number") return;
-          const expansionZoom =
-            await buildingsSourceRef.current?.getClusterExpansionZoom(clusterId);
+          const clusterId = feature.properties?.cluster_id as number;
+          const expansionZoom = await shapeSourceRef.current?.getClusterExpansionZoom(clusterId);
           const targetZoom = Math.max(
             (expansionZoom ?? actualZoomRef.current) + 0.5,
             actualZoomRef.current + 1,
@@ -166,10 +187,12 @@ export function TurfMap({
           setCameraStop({
             center: feature.geometry.coordinates as [number, number],
             zoom: targetZoom,
+            padding: mapPadding,
             duration: 350,
             easing: "ease",
           });
         } catch {
+          // Fallback: just zoom in
           setCameraStop({
             center: feature.geometry.coordinates as [number, number],
             zoom: actualZoomRef.current + 2,
@@ -183,15 +206,29 @@ export function TurfMap({
       const id = feature.properties?.buildingId;
       if (typeof id === "string") onBuildingPress?.(id);
     },
-    [onBuildingPress, setCameraStop],
+    [onBuildingPress, bottomInset, setCameraStop],
   );
 
   if (!isMaptilerKeyConfigured()) {
-    return <MissingKeyNotice isDark={isDark} />;
+    return (
+      <View style={styles.missingKey}>
+        <Text style={styles.missingKeyText}>
+          Set EXPO_PUBLIC_MAPTILER_KEY in apps/native/.env to enable the map.
+        </Text>
+      </View>
+    );
   }
 
   return (
-    <View style={styles.map}>
+    <View
+      style={styles.map}
+      onLayout={(event) => {
+        mapViewport.value = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        };
+      }}
+    >
       <Map
         style={styles.map}
         // GLSurfaceView (the Android default) draws over sibling React
@@ -203,6 +240,8 @@ export function TurfMap({
         logo={false}
         compass={false}
         touchPitch={false}
+        // Tints the Android puck.
+        tintColor={isDark ? "#ffffff" : "#000000"}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
         onRegionDidChange={handleRegionEvent}
@@ -223,29 +262,171 @@ export function TurfMap({
         <LabelLayers isDark={isDark} />
 
         <GeoJSONSource
-          ref={buildingsSourceRef}
-          id={TURF_SOURCE_ID}
+          ref={shapeSourceRef}
+          id={BUILDINGS_SOURCE_ID}
           data={featureCollection}
           cluster
           clusterRadius={CLUSTER_RADIUS}
           clusterMaxZoom={CLUSTER_MAX_ZOOM}
           maxzoom={TILE_MAX_ZOOM}
-          clusterProperties={TURF_CLUSTER_PROPERTIES}
+          clusterProperties={{
+            doorCount: [
+              ["+", ["accumulated"], ["get", "doorCount"]],
+              ["get", "doorCount"],
+            ],
+            personCount: [
+              ["+", ["accumulated"], ["get", "personCount"]],
+              ["get", "personCount"],
+            ],
+            // Aggregate min + max role so the cluster can stay neutral when any
+            // member is unrecorded (min = 0), and otherwise color by the
+            // strongest signal (max). Mirrors the per-building rule that only
+            // colors a building once *every* person is recorded.
+            role: [
+              ["max", ["accumulated"], ["get", "role"]],
+              ["get", "role"],
+            ],
+            minRole: [
+              ["min", ["accumulated"], ["get", "role"]],
+              ["get", "role"],
+            ],
+            recordedCount: [
+              ["+", ["accumulated"], ["get", "recordedCount"]],
+              ["case", [">", ["get", "role"], 0], 1, 0],
+            ],
+          }}
           onPress={handlePress}
           hitbox={{ top: 2, right: 2, bottom: 2, left: 2 }}
         >
-          {layers.map((layer) => (
-            <Layer key={layer.id} {...layer} />
-          ))}
+          {/* Shadow layers */}
+          <Layer
+            type="circle"
+            id={`${CLUSTERS_LAYER_ID}-shadow`}
+            filter={["has", "point_count"]}
+            style={{
+              circleRadius: [
+                "interpolate",
+                ["linear"],
+                ["get", "point_count"],
+                2,
+                32,
+                10,
+                36,
+                50,
+                42,
+              ],
+              circleColor: "hsl(0, 0%, 0%)",
+              circleOpacity: 0.35,
+              circleBlur: 1,
+            }}
+          />
+          <Layer
+            type="circle"
+            id={`${BUILDINGS_PINS_LAYER_ID}-shadow`}
+            filter={["!", ["has", "point_count"]]}
+            style={{
+              circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 19, 18, 27],
+              circleColor: "hsl(0, 0%, 0%)",
+              circleOpacity: 0.35,
+              circleBlur: 1,
+            }}
+          />
+
+          {/* Cluster bubbles */}
+          <Layer
+            type="circle"
+            id={CLUSTERS_LAYER_ID}
+            filter={["has", "point_count"]}
+            style={{
+              circleRadius: [
+                "interpolate",
+                ["linear"],
+                ["get", "point_count"],
+                2,
+                20,
+                10,
+                24,
+                50,
+                30,
+              ],
+              circleColor: [
+                "case",
+                ["==", ["get", "minRole"], 0],
+                isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
+                ["==", ["get", "role"], 2],
+                colors.contacted.background,
+                ["==", ["get", "role"], 1],
+                colors.unavailable.background,
+                isDark ? "#0a0a0a" : "hsl(0, 0%, 88%)",
+              ],
+              circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+              circleStrokeWidth: isDark ? 1 : 1.5,
+            }}
+          />
+          <Layer
+            type="symbol"
+            id={CLUSTERS_LABEL_LAYER_ID}
+            filter={["has", "point_count"]}
+            style={{
+              textField: ["get", "doorCount"],
+              textSize: ["interpolate", ["linear"], ["zoom"], 12, 12, 18, 16],
+              textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+            }}
+          />
+
+          {/* Individual building pins */}
+          <Layer
+            type="circle"
+            id={BUILDINGS_PINS_LAYER_ID}
+            filter={["!", ["has", "point_count"]]}
+            style={{
+              circleRadius: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 16],
+              circleColor: [
+                "case",
+                ["==", ["get", "role"], 2],
+                colors.contacted.background,
+                ["==", ["get", "role"], 1],
+                colors.unavailable.background,
+                isDark ? "#1b1b1b" : "hsl(0, 0%, 100%)",
+              ],
+              circleStrokeColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 20%)",
+              circleStrokeWidth: isDark ? 1 : 1.5,
+            }}
+          />
+          <Layer
+            type="symbol"
+            id={BUILDINGS_LABEL_LAYER_ID}
+            filter={["!", ["has", "point_count"]]}
+            style={{
+              textField: ["get", "doorCount"],
+              textSize: ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 14],
+              textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+            }}
+          />
         </GeoJSONSource>
 
+        {/* Android: native puck, GL-rendered so taps pass through. iOS
+          renders its custom dot above the map as a pointerEvents="none"
+          overlay, so it never blocks building taps. */}
+        {Platform.OS === "android" && locationGranted && (
+          <NativeUserLocation mode="heading" androidPreferredFramesPerSecond={30} />
+        )}
+      </Map>
+      {Platform.OS === "ios" && (
         <UserLocationDot
           isDark={isDark}
-          enabled={mapFullyRendered && !paused}
-          onPosition={handleUserPosition}
+          mapBearing={mapBearing}
+          mapCenter={mapCenter}
+          mapZoom={mapZoom}
+          mapViewport={mapViewport}
+          cameraReady={cameraReady}
+          padding={mapPadding}
         />
-      </Map>
-
+      )}
       {!mapFullyRendered && (
         <View
           pointerEvents="none"
@@ -267,6 +448,62 @@ export function TurfMap({
   );
 }
 
+// MapTiler's terms require visible text attribution (only the logo is
+// waivable), and OSM's ODbL wants it visible by default. The built-in ⓘ
+// is buried under the bottom sheet, so this sits just above the sheet's
+// collapsed peek. Tap opens the license pages.
+function AttributionBadge({ isDark }: { isDark: boolean }) {
+  return (
+    <Pressable
+      onPress={() =>
+        Alert.alert("Map data", "© MapTiler © OpenStreetMap contributors", [
+          {
+            text: "MapTiler",
+            onPress: () => void Linking.openURL("https://www.maptiler.com/copyright/"),
+          },
+          {
+            text: "OpenStreetMap",
+            onPress: () => void Linking.openURL("https://www.openstreetmap.org/copyright"),
+          },
+          { text: "Close", style: "cancel" },
+        ])
+      }
+      style={{
+        position: "absolute",
+        left: 6,
+        // Sheet's collapsed snap is 40 — stay above it.
+        bottom: 46,
+        borderRadius: 4,
+        paddingHorizontal: 5,
+        paddingVertical: 2,
+        backgroundColor: isDark ? "rgba(10,10,10,0.55)" : "rgba(255,255,255,0.55)",
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 10,
+          fontFamily: "Geist_400Regular",
+          color: isDark ? "#999" : "#555",
+        }}
+      >
+        © MapTiler © OpenStreetMap contributors
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   map: { flex: 1 },
+  missingKey: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    backgroundColor: "#f5f5f5",
+  },
+  missingKeyText: {
+    fontFamily: "Geist_400Regular",
+    color: "#444",
+    textAlign: "center",
+  },
 });

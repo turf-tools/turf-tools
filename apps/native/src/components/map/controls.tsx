@@ -7,11 +7,18 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import { CONTROL_GAP, TRAY_PEEK } from "./map-layout";
-
 const SHADOW = {
-  boxShadow: "0 2px 6px rgba(0, 0, 0, 0.15)",
+  shadowColor: "#000",
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.15,
+  shadowRadius: 6,
 };
+
+// One spacing everywhere: from the right edge, from the tray below, and
+// between the two buttons.
+const GAP = 10;
+// The building list's collapsed snap point — the row sits GAP above it.
+const TRAY_PEEK = 40;
 
 // Rounded squares (radius matching the tray corners), distinct from the
 // circular chrome buttons — these act on the map, not the app.
@@ -62,37 +69,15 @@ export function MapControls({
   );
 
   return (
-    <View
-      className="absolute flex-row"
-      style={{ right: CONTROL_GAP, bottom: TRAY_PEEK + CONTROL_GAP, gap: CONTROL_GAP }}
-    >
-      <Animated.View
-        style={compassStyle}
-        pointerEvents={rotated ? "auto" : "none"}
-        accessibilityElementsHidden={!rotated}
-        importantForAccessibility={rotated ? "auto" : "no-hide-descendants"}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Reset map north"
-          onPress={onResetNorth}
-          hitSlop={4}
-          className={BUTTON_CLASS}
-          style={buttonStyle}
-        >
+    <View className="absolute flex-row" style={{ right: GAP, bottom: TRAY_PEEK + GAP, gap: GAP }}>
+      <Animated.View style={compassStyle} pointerEvents={rotated ? "auto" : "none"}>
+        <Pressable onPress={onResetNorth} hitSlop={4} className={BUTTON_CLASS} style={buttonStyle}>
           <Animated.View style={needleStyle}>
             <Navigation2 size={20} color={iconColor} strokeWidth={2} />
           </Animated.View>
         </Pressable>
       </Animated.View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Center map on my location"
-        onPress={onLocate}
-        hitSlop={4}
-        className={BUTTON_CLASS}
-        style={buttonStyle}
-      >
+      <Pressable onPress={onLocate} hitSlop={4} className={BUTTON_CLASS} style={buttonStyle}>
         <LocateFixed size={20} color={iconColor} strokeWidth={2} />
       </Pressable>
     </View>
