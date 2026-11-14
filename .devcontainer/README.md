@@ -137,10 +137,15 @@ QW_METASTORE_URI=postgres://postgres:postgres@postgres:5432/quickwit
 and the Postgres service drops its host port publish with `ports: !reset []`,
 so an existing database on 5432 is left alone.
 
-`scripts/ensure-postgres.mjs` probes `DB_HOST` first. Inside the container the
-database is already up, so it skips starting another one; on a host with no
-`DB_HOST`, it still starts the compose database and fails loudly if something
-else owns the port.
+Postgres joins the **app container's network namespace**, so it answers on
+`127.0.0.1:5432` exactly like a host-local database. That is why the repo's
+`wait-on tcp:127.0.0.1:5432` calls and the default connection strings work
+unchanged in here.
+
+The only container-aware part is a marker. Compose sets `IN_DEVCONTAINER=1`,
+and `db:up` / `dev:db` exit immediately when it is set instead of calling
+`docker compose`. On a host the marker is absent, so those scripts start the
+compose database as before and fail loudly if something else owns port 5432.
 
 Requires Compose with `!reset` support (2.24+, or a recent `podman-compose`).
 
