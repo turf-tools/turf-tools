@@ -10,11 +10,9 @@ import { MapControls } from "./controls";
 import { boundsForBuildings, buildFeatureCollection } from "./turf-data";
 
 // Web implementation of the canvassing map. MapLibre React Native is
-// native-only, so web renders through MapLibre GL JS via react-map-gl
-// instead. The geometry comes from the same helpers the native map uses;
-// only the renderer differs. Layers are written in style-spec form
-// (kebab-case paint/layout), which is what lets them be shared with the
-// native map later.
+// native-only, so this renders through MapLibre GL JS via react-map-gl
+// and shares the GeoJSON helpers in turf-data. Layers are written in
+// style-spec form (kebab-case paint/layout).
 type Props = {
   turf: TurfData;
   buildingRoles: Map<string, "contacted" | "unavailable">;

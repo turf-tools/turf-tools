@@ -13,19 +13,16 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-// iOS-only "you are here" marker: a dot with a contrasting outline, a
-// subtle expanding halo, and a heading cone (the Google Maps idiom).
-// Android renders the SDK-native puck instead (see turf-map): this
-// component would need MarkerView there, which fritzes the status bar
-// and can crash. Location and heading are watched only while the map is
-// mounted, and every failure mode — permission denied, services off, no
-// compass — resolves to "no dot" / "no cone": never an alert or
-// placeholder.
+// iOS-only "you are here" marker: an outlined dot, an expanding halo, and
+// a heading cone. Android uses the SDK-native puck instead (see
+// turf-map); this component would need MarkerView there, which breaks the
+// status bar and can crash. Location and heading are watched only while
+// the map is mounted; permission denied, services off and a missing
+// compass all resolve to no dot / no cone rather than an alert.
 //
-// Rendered as a ViewAnnotation, which owns the view's position on the map
-// rather than letting React's layout drive it. The marker is non-interactive
-// (pointerEvents="none" below) so taps fall through to the building layer
-// underneath it.
+// Rendered as a ViewAnnotation so the map owns the marker's position
+// instead of React layout. The marker content is non-interactive
+// (pointerEvents="none" below).
 
 // The three size knobs. Everything else derives from these: the halo starts
 // at the dot's outer edge and expands to HALO_SCALE× it, and the container
@@ -105,12 +102,11 @@ export function UserLocationDot({
     // earlier watchers.
     let generation = 0;
 
-    // Glide state. `drawn` is where the dot visually is right now (it
-    // trails `target` mid-animation); `target` is the last accepted fix,
-    // which the jitter gate compares against. Plain rAF interpolation,
-    // not RN Animated — see the reanimated note below for why Animated
-    // loops are avoided in this file, and a ViewAnnotation coordinate
-    // needs a re-render per frame either way.
+    // `drawn` is where the dot visually is (it trails `target`
+    // mid-animation); `target` is the last accepted fix, which the jitter
+    // gate compares against. Plain rAF interpolation rather than RN
+    // Animated (see the halo note below); a ViewAnnotation coordinate
+    // needs a re-render per frame anyway.
     let drawn: [number, number] | null = null;
     let target: [number, number] | null = null;
     let raf = 0;

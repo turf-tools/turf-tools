@@ -57,17 +57,16 @@ export function TurfMap({
   bottomInset = 0,
 }: Props) {
   const colors = useColors();
-  // Android shows a black frame between the map view mounting and its
-  // first fully-rendered frame (maplibre-react-native #367 — no upstream
-  // fix). Cover with a theme-colored pane until the map reports ready;
-  // iOS doesn't flash, so it keeps its untouched path.
+  // Android flashes black between the map view mounting and its first
+  // fully-rendered frame (maplibre-react-native #367, no upstream fix).
+  // Cover it with a theme-colored pane until the map reports ready; iOS
+  // starts ready.
   const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
-  // Android only (iOS's custom dot requests permission itself). The
-  // native Android puck never prompts — it checks permission once at
-  // style load, silently bails, and never retries — so request via the
-  // OS dialog and mount only after the grant. Deferred until the map's
-  // first full frame: the dialog over the initializing GL surface leaves
-  // it mis-sized (stretched map, offset taps). Denied → no dot, silently.
+  // Android only (the iOS dot asks for permission itself). The native
+  // Android puck checks permission once at style load and never retries,
+  // so request it and mount the puck only after the grant. Wait for the
+  // map's first full frame: the dialog over the initializing GL surface
+  // leaves the map mis-sized with offset taps. Denied → no dot.
   const [locationGranted, setLocationGranted] = useState(false);
   useEffect(() => {
     if (Platform.OS !== "android" || !mapFullyRendered) return;
@@ -96,11 +95,10 @@ export function TurfMap({
   const actualZoomRef = useRef(0);
   const mapBearing = useSharedValue(0);
   const [rotated, setRotated] = useState(false);
-  // Both region events feed this handler: the IsChanging stream for live
-  // tracking, and the DidChange for
-  // the settle frame, which is the only carrier of an animation's final
-  // heading — without it a reset-north stops a hair short of 0 and the
-  // compass never hides.
+  // Both region streams feed this: IsChanging for live tracking, and
+  // DidChange for the settle frame, the only carrier of an animation's
+  // final bearing. Without it a reset-north stops a hair short of 0 and
+  // the compass never hides.
   const handleRegionEvent = useCallback(
     (event: NativeSyntheticEvent<ViewStateChangeEvent>) => {
       const { zoom: z, bearing: h } = event.nativeEvent;
@@ -119,12 +117,11 @@ export function TurfMap({
     },
     [mapBearing],
   );
-  // Camera stops ride a diffed native prop, and gestures never touch
-  // it — so a stop identical to the previous one (tap locate twice from
-  // the same fix, tap the compass twice) is elided and the camera stays
-  // put. Flip-flop a millisecond of duration so every stop is unique.
-  // Callers that want motion must pass an easing: a stop without one
-  // jumps regardless of duration.
+  // Camera stops are diffed against the previous one, so an identical
+  // stop (locate twice from the same fix, tap the compass twice) is
+  // elided and the camera stays put. Flip the duration by a millisecond
+  // so each stop is unique. Pass an easing for anything that should
+  // animate: without one the camera jumps regardless of duration.
   const stopNonceRef = useRef(0);
   const setCameraStop = useCallback((stop: CameraStop) => {
     stopNonceRef.current = 1 - stopNonceRef.current;
@@ -190,7 +187,6 @@ export function TurfMap({
         return;
       }
 
-      // Individual building tap.
       const id = feature.properties?.buildingId;
       if (typeof id === "string") onBuildingPress?.(id);
     },
@@ -211,20 +207,18 @@ export function TurfMap({
     <View style={styles.map}>
       <Map
         style={styles.map}
-        // v11 renders into a GLSurfaceView on Android by default, which draws
-        // over sibling React Native views. This screen puts the bottom sheet,
-        // the controls and the attribution badge on top of the map, so keep the
-        // TextureView the previous major used.
+        // GLSurfaceView (the Android default) draws over sibling React
+        // Native views, and the bottom sheet, controls and attribution
+        // badge sit on top of this map. TextureView keeps them visible.
         androidView="texture"
         mapStyle={getMaptilerStyleUrl(isDark)}
         attribution={false}
         logo={false}
         compass={false}
         touchPitch={false}
-        // Tints the Android native user-location puck. On iOS it's the
-        // inherited fallback for the heading cone's template image — the
-        // image's own tintColor is dropped when the screen re-attaches
-        // after a push, and UIKit's default fallback is system blue.
+        // Tints the Android puck. On iOS it's the fallback tint for the
+        // heading cone's template image, whose own tintColor is dropped
+        // when the screen re-attaches after a push (UIKit defaults to blue).
         tintColor={isDark ? "#ffffff" : "#000000"}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
@@ -333,8 +327,6 @@ export function TurfMap({
                 50,
                 30,
               ],
-              // Neutral when any member is unrecorded; otherwise color by the
-              // strongest role across the cluster.
               circleColor: [
                 "case",
                 ["==", ["get", "minRole"], 0],
@@ -395,12 +387,10 @@ export function TurfMap({
           />
         </GeoJSONSource>
 
-        {/* Forked per platform. iOS: the custom dot + heading cone — the
-          SDK-native iOS puck is a view that swallows taps on whatever is
-          under it (no pass-through), and can only show a tiny heading
-          arrow outside camera-follow mode. Android: the SDK-native puck,
-          GL-rendered so taps pass through — the custom dot would need
-          MarkerView there, which fritzes the status bar and can crash. */}
+        {/* iOS: custom dot + heading cone; the native iOS puck swallows
+          taps and only shows a small heading arrow outside camera-follow.
+          Android: native puck, GL-rendered so taps pass through (the
+          custom dot would need MarkerView, which breaks the status bar). */}
         {Platform.OS === "ios" ? (
           <UserLocationDot isDark={isDark} mapBearing={mapBearing} />
         ) : (
@@ -430,11 +420,10 @@ export function TurfMap({
   );
 }
 
-// Required by MapTiler's terms on every plan (text form; only the logo is
-// waivable) and by OSM's ODbL guidelines, which want it visible by default
-// — the built-in ⓘ was buried under the bottom sheet and reads as app UI
-// anyway. Sits just above the sheet's collapsed peek. Tap opens the
-// license pages.
+// MapTiler's terms require visible text attribution (only the logo is
+// waivable), and OSM's ODbL wants it visible by default. The built-in ⓘ
+// is buried under the bottom sheet, so this sits just above the sheet's
+// collapsed peek. Tap opens the license pages.
 function AttributionBadge({ isDark }: { isDark: boolean }) {
   return (
     <Pressable
