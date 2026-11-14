@@ -175,6 +175,7 @@ export function TurfMap({
             zoom: targetZoom,
             padding: { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 },
             duration: 350,
+            easing: "ease",
           });
         } catch {
           // Fallback: just zoom in
@@ -182,6 +183,7 @@ export function TurfMap({
             center: feature.geometry.coordinates as [number, number],
             zoom: actualZoomRef.current + 2,
             duration: 350,
+            easing: "ease",
           });
         }
         return;

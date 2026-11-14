@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import MapGL, { Layer, Source, type MapRef } from "react-map-gl/maplibre";
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
-import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import type { TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
@@ -88,9 +88,10 @@ export function TurfMap({
     const map = mapRef.current?.getMap();
     if (!map) return;
     map.on("click", (event) => {
-      const features = map.queryRenderedFeatures(event.point, {
-        layers: [CLUSTERS_LAYER_ID, BUILDINGS_PINS_LAYER_ID],
-      });
+      // Layers are reapplied on style swaps, so only query ones present.
+      const layers = [CLUSTERS_LAYER_ID, BUILDINGS_PINS_LAYER_ID].filter((id) => map.getLayer(id));
+      if (layers.length === 0) return;
+      const features = map.queryRenderedFeatures(event.point, { layers });
       const feature = features[0];
       if (!feature) return;
 
@@ -288,41 +289,38 @@ export function TurfMap({
 }
 
 function AttributionBadge({ isDark }: { isDark: boolean }) {
+  const textStyle = {
+    fontSize: 10,
+    fontFamily: "Geist_400Regular",
+    color: isDark ? "#999" : "#555",
+  };
   return (
-    <Pressable
-      onPress={() =>
-        Alert.alert("Map data", "© MapTiler © OpenStreetMap contributors", [
-          {
-            text: "MapTiler",
-            onPress: () => void Linking.openURL("https://www.maptiler.com/copyright/"),
-          },
-          {
-            text: "OpenStreetMap",
-            onPress: () => void Linking.openURL("https://www.openstreetmap.org/copyright"),
-          },
-          { text: "Close", style: "cancel" },
-        ])
-      }
+    <View
       style={{
         position: "absolute",
         left: 6,
         bottom: 46,
+        flexDirection: "row",
         borderRadius: 4,
         paddingHorizontal: 5,
         paddingVertical: 2,
         backgroundColor: isDark ? "rgba(10,10,10,0.55)" : "rgba(255,255,255,0.55)",
       }}
     >
-      <Text
-        style={{
-          fontSize: 10,
-          fontFamily: "Geist_400Regular",
-          color: isDark ? "#999" : "#555",
-        }}
+      <Pressable
+        accessibilityRole="link"
+        onPress={() => void Linking.openURL("https://www.maptiler.com/copyright/")}
       >
-        © MapTiler © OpenStreetMap contributors
-      </Text>
-    </Pressable>
+        <Text style={textStyle}>© MapTiler</Text>
+      </Pressable>
+      <Text style={textStyle}> · </Text>
+      <Pressable
+        accessibilityRole="link"
+        onPress={() => void Linking.openURL("https://www.openstreetmap.org/copyright")}
+      >
+        <Text style={textStyle}>© OpenStreetMap contributors</Text>
+      </Pressable>
+    </View>
   );
 }
 
