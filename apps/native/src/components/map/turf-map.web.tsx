@@ -252,10 +252,22 @@ export function TurfMap({
           clusterRadius={CLUSTER_RADIUS}
           clusterMaxZoom={CLUSTER_MAX_ZOOM}
           clusterProperties={{
-            doorCount: ["+", ["accumulated"], ["get", "doorCount"]],
-            personCount: ["+", ["accumulated"], ["get", "personCount"]],
-            role: ["max", ["accumulated"], ["get", "role"]],
-            minRole: ["min", ["accumulated"], ["get", "role"]],
+            doorCount: [
+              ["+", ["accumulated"], ["get", "doorCount"]],
+              ["get", "doorCount"],
+            ],
+            personCount: [
+              ["+", ["accumulated"], ["get", "personCount"]],
+              ["get", "personCount"],
+            ],
+            role: [
+              ["max", ["accumulated"], ["get", "role"]],
+              ["get", "role"],
+            ],
+            minRole: [
+              ["min", ["accumulated"], ["get", "role"]],
+              ["get", "role"],
+            ],
           }}
         >
           {layers.map((layer) => (
