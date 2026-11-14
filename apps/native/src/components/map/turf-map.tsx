@@ -139,7 +139,7 @@ export function TurfMap({
   const stopNonceRef = useRef(0);
   const setCameraStop = useCallback((stop: CameraStop) => {
     stopNonceRef.current = 1 - stopNonceRef.current;
-    cameraRef.current?.setStop({
+    void cameraRef.current?.setStop({
       ...stop,
       duration: (stop.duration ?? 0) + stopNonceRef.current,
     });
