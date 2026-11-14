@@ -1,4 +1,3 @@
-import { ViewAnnotation } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
 import { AppState, Image, View } from "react-native";
@@ -15,14 +14,14 @@ import Animated, {
 
 // iOS-only "you are here" marker: an outlined dot, an expanding halo, and
 // a heading cone. Android uses the SDK-native puck instead (see
-// turf-map); this component would need MarkerView there, which breaks the
-// status bar and can crash. Location and heading are watched only while
-// the map is mounted; permission denied, services off and a missing
-// compass all resolve to no dot / no cone rather than an alert.
+// turf-map). Location and heading are watched only while the map is
+// mounted; permission denied, services off and a missing compass all
+// resolve to no dot / no cone rather than an alert.
 //
-// Rendered as a ViewAnnotation so the map owns the marker's position
-// instead of React layout. The marker content is non-interactive
-// (pointerEvents="none" below).
+// Rendered as an overlay above the map, not as a MapLibre annotation.
+// The map camera is projected to screen coordinates here, and the overlay
+// is pointerEvents="none", so taps fall through to the map and building
+// pins underneath.
 
 // The three size knobs. Everything else derives from these: the halo starts
 // at the dot's outer edge and expands to HALO_SCALE× it, and the container
@@ -85,11 +84,22 @@ function metersBetween(a: [number, number], b: [number, number]) {
 export function UserLocationDot({
   isDark = false,
   mapBearing,
+  mapCenter,
+  mapZoom,
+  mapViewport,
+  cameraReady,
+  padding,
 }: {
   isDark?: boolean;
   mapBearing: SharedValue<number>;
+  mapCenter: SharedValue<[number, number]>;
+  mapZoom: SharedValue<number>;
+  mapViewport: SharedValue<{ width: number; height: number }>;
+  cameraReady: SharedValue<boolean>;
+  padding: { top: number; right: number; bottom: number; left: number };
 }) {
-  const [coord, setCoord] = useState<[number, number] | null>(null);
+  const [hasCoord, setHasCoord] = useState(false);
+  const dotCoord = useSharedValue<[number, number] | null>(null);
   const [coneAngle, setConeAngle] = useState<number | null>(null);
   const headingDeg = useSharedValue(0);
 
@@ -105,8 +115,8 @@ export function UserLocationDot({
     // `drawn` is where the dot visually is (it trails `target`
     // mid-animation); `target` is the last accepted fix, which the jitter
     // gate compares against. Plain rAF interpolation rather than RN
-    // Animated (see the halo note below); a ViewAnnotation coordinate
-    // needs a re-render per frame anyway.
+    // Animated (see the halo note below); the overlay reads the position
+    // from a shared value, so this does not re-render per frame.
     let drawn: [number, number] | null = null;
     let target: [number, number] | null = null;
     let raf = 0;
@@ -116,7 +126,8 @@ export function UserLocationDot({
       const from = drawn;
       if (!from || metersBetween(from, fix) > SNAP_METERS) {
         drawn = fix;
-        setCoord(fix);
+        dotCoord.value = fix;
+        setHasCoord(true);
         return;
       }
       let start: number | null = null;
@@ -125,7 +136,8 @@ export function UserLocationDot({
         const t = Math.min(1, (now - start) / GLIDE_MS);
         const e = 1 - (1 - t) ** 3; // ease-out cubic
         drawn = [from[0] + (fix[0] - from[0]) * e, from[1] + (fix[1] - from[1]) * e];
-        setCoord(drawn);
+        dotCoord.value = drawn;
+        setHasCoord(true);
         if (t < 1) raf = requestAnimationFrame(step);
       };
       raf = requestAnimationFrame(step);
@@ -231,10 +243,8 @@ export function UserLocationDot({
   // the view (react-native#14219) — the halo froze on every hot reload.
   // Reanimated's UI-thread worklets re-bind per render, so the pulse
   // survives edits. Gated on hasCoord so the repeat only runs while the
-  // marker exists; keyed off hasCoord (not coord) so position updates don't
-  // restart it.
+  // marker exists; keyed off hasCoord so position updates don't restart it.
   const progress = useSharedValue(0);
-  const hasCoord = coord != null;
   useEffect(() => {
     if (!hasCoord) return;
     progress.value = 0;
@@ -266,17 +276,68 @@ export function UserLocationDot({
     transform: [{ rotate: `${headingDeg.value - mapBearing.value}deg` }],
   }));
 
-  if (coord == null) return null;
+  const containerSize = Math.max(Math.ceil(DOT_SIZE * HALO_SCALE), CONE_RADIUS * 2);
+
+  // The camera is projected to screen space here. MapLibre's transform at
+  // pitch 0 is Mercator world coordinates, rotated by -bearing around the
+  // viewport centre; 512 is the tile size the transform uses.
+  const positionStyle = useAnimatedStyle(() => {
+    const dot = dotCoord.value;
+    const viewport = mapViewport.value;
+    if (!dot || !cameraReady.value || viewport.width === 0 || viewport.height === 0) {
+      return { opacity: 0 };
+    }
+
+    const [lng, lat] = dot;
+    const [centerLng, centerLat] = mapCenter.value;
+    const worldSize = 512 * 2 ** mapZoom.value;
+
+    const dotX = ((lng + 180) / 360) * worldSize;
+    const dotSin = Math.sin((lat * Math.PI) / 180);
+    const dotY = (0.5 - Math.log((1 + dotSin) / (1 - dotSin)) / (4 * Math.PI)) * worldSize;
+
+    const centerX = ((centerLng + 180) / 360) * worldSize;
+    const centerSin = Math.sin((centerLat * Math.PI) / 180);
+    const centerY = (0.5 - Math.log((1 + centerSin) / (1 - centerSin)) / (4 * Math.PI)) * worldSize;
+
+    const dx = dotX - centerX;
+    const dy = dotY - centerY;
+    const angle = (-mapBearing.value * Math.PI) / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    // The camera centre sits at the centre of the padded viewport, so the
+    // overlay has to apply the same inset the camera fit used.
+    const padX = (padding.left - padding.right) / 2;
+    const padY = (padding.top - padding.bottom) / 2;
+
+    return {
+      opacity: 1,
+      transform: [
+        { translateX: viewport.width / 2 + padX + dx * cos - dy * sin - containerSize / 2 },
+        { translateY: viewport.height / 2 + padY + dx * sin + dy * cos - containerSize / 2 },
+      ],
+    };
+  });
+
+  if (!hasCoord) return null;
 
   const dotColor = isDark ? "#ffffff" : "#000000";
   const ringColor = isDark ? "#000000" : "#ffffff";
-  const containerSize = Math.max(Math.ceil(DOT_SIZE * HALO_SCALE), CONE_RADIUS * 2);
 
-  const marker = (
-    <View
+  return (
+    <Animated.View
       pointerEvents="none"
       className="items-center justify-center"
-      style={{ width: containerSize, height: containerSize }}
+      style={[
+        {
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: containerSize,
+          height: containerSize,
+        },
+        positionStyle,
+      ]}
     >
       {coneAngle != null && (
         <Animated.View
@@ -313,12 +374,6 @@ export function UserLocationDot({
           borderColor: ringColor,
         }}
       />
-    </View>
-  );
-
-  return (
-    <ViewAnnotation id="user-location-dot" lngLat={coord}>
-      {marker}
-    </ViewAnnotation>
+    </Animated.View>
   );
 }

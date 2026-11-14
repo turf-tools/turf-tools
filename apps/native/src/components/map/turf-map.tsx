@@ -86,14 +86,20 @@ export function TurfMap({
   );
 
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
+  const mapPadding = { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 };
   const cameraRef = useRef<CameraRef>(null);
   const shapeSourceRef = useRef<GeoJSONSourceRef>(null);
 
   // Track the actual camera zoom for tap zoom math, and the bearing for
   // the compass needle (shared value — per-frame, no re-render) plus its
-  // visibility (state — changes only at the show/hide thresholds).
+  // visibility (state — changes only at the show/hide thresholds). The
+  // camera centre, zoom and viewport drive the iOS user-dot overlay.
   const actualZoomRef = useRef(0);
   const mapBearing = useSharedValue(0);
+  const mapCenter = useSharedValue<[number, number]>([0, 0]);
+  const mapZoom = useSharedValue(0);
+  const mapViewport = useSharedValue({ width: 0, height: 0 });
+  const cameraReady = useSharedValue(false);
   const [rotated, setRotated] = useState(false);
   // Both region streams feed this: IsChanging for live tracking, and
   // DidChange for the settle frame, the only carrier of an animation's
@@ -101,8 +107,16 @@ export function TurfMap({
   // the compass never hides.
   const handleRegionEvent = useCallback(
     (event: NativeSyntheticEvent<ViewStateChangeEvent>) => {
-      const { zoom: z, bearing: h } = event.nativeEvent;
-      if (typeof z === "number") actualZoomRef.current = z;
+      const { center, zoom: z, bearing: h } = event.nativeEvent;
+      if (center) {
+        mapCenter.value = center;
+        cameraReady.value = true;
+      }
+      if (typeof z === "number") {
+        actualZoomRef.current = z;
+        mapZoom.value = z;
+        cameraReady.value = true;
+      }
       if (typeof h === "number") {
         mapBearing.value = h;
         // Visibility is purely bearing-derived: appear once clearly
@@ -115,7 +129,7 @@ export function TurfMap({
         setRotated((prev) => (prev ? deviation > 0.5 : deviation >= 2));
       }
     },
-    [mapBearing],
+    [mapBearing, mapCenter, mapZoom, cameraReady],
   );
   // Camera stops are diffed against the previous one, so an identical
   // stop (locate twice from the same fix, tap the compass twice) is
@@ -173,7 +187,7 @@ export function TurfMap({
           setCameraStop({
             center: feature.geometry.coordinates as [number, number],
             zoom: targetZoom,
-            padding: { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 },
+            padding: mapPadding,
             duration: 350,
             easing: "ease",
           });
@@ -206,7 +220,15 @@ export function TurfMap({
   }
 
   return (
-    <View style={styles.map}>
+    <View
+      style={styles.map}
+      onLayout={(event) => {
+        mapViewport.value = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        };
+      }}
+    >
       <Map
         style={styles.map}
         // GLSurfaceView (the Android default) draws over sibling React
@@ -218,9 +240,7 @@ export function TurfMap({
         logo={false}
         compass={false}
         touchPitch={false}
-        // Tints the Android puck. On iOS it's the fallback tint for the
-        // heading cone's template image, whose own tintColor is dropped
-        // when the screen re-attaches after a push (UIKit defaults to blue).
+        // Tints the Android puck.
         tintColor={isDark ? "#ffffff" : "#000000"}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
@@ -235,7 +255,7 @@ export function TurfMap({
               initialBounds.ne[0],
               initialBounds.ne[1],
             ],
-            padding: { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 },
+            padding: mapPadding,
           }}
         />
 
@@ -389,18 +409,24 @@ export function TurfMap({
           />
         </GeoJSONSource>
 
-        {/* iOS: custom dot + heading cone; the native iOS puck swallows
-          taps and only shows a small heading arrow outside camera-follow.
-          Android: native puck, GL-rendered so taps pass through (the
-          custom dot would need MarkerView, which breaks the status bar). */}
-        {Platform.OS === "ios" ? (
-          <UserLocationDot isDark={isDark} mapBearing={mapBearing} />
-        ) : (
-          locationGranted && (
-            <NativeUserLocation mode="heading" androidPreferredFramesPerSecond={30} />
-          )
+        {/* Android: native puck, GL-rendered so taps pass through. iOS
+          renders its custom dot above the map as a pointerEvents="none"
+          overlay, so it never blocks building taps. */}
+        {Platform.OS === "android" && locationGranted && (
+          <NativeUserLocation mode="heading" androidPreferredFramesPerSecond={30} />
         )}
       </Map>
+      {Platform.OS === "ios" && (
+        <UserLocationDot
+          isDark={isDark}
+          mapBearing={mapBearing}
+          mapCenter={mapCenter}
+          mapZoom={mapZoom}
+          mapViewport={mapViewport}
+          cameraReady={cameraReady}
+          padding={mapPadding}
+        />
+      )}
       {!mapFullyRendered && (
         <View
           pointerEvents="none"
