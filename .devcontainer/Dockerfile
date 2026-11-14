@@ -38,5 +38,32 @@ RUN arch="$(dpkg --print-architecture)" \
     && rm /tmp/quickwit.tar.gz \
     && quickwit --version
 
+# Android build toolchain. The emulator itself runs on the host (it needs
+# /dev/kvm), but the APK is built here: JDK 17 for Gradle, plus the SDK
+# platform and build tools Expo compiles against. Gradle downloads the NDK and
+# CMake on first build, which is fine because the licences are pre-accepted.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-17-jdk-headless unzip \
+    && rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk
+ARG ANDROID_CMDLINE_TOOLS=13114758
+ARG ANDROID_PLATFORM=android-36
+ARG ANDROID_BUILD_TOOLS=36.0.0
+RUN mkdir -p "$ANDROID_HOME/cmdline-tools" \
+    && curl -sSL -o /tmp/cmdline-tools.zip \
+        "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS}_latest.zip" \
+    && unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools \
+    && mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest" \
+    && rm -rf /tmp/cmdline-tools /tmp/cmdline-tools.zip \
+    && yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses > /dev/null \
+    && "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+        "platform-tools" \
+        "platforms;${ANDROID_PLATFORM}" \
+        "build-tools;${ANDROID_BUILD_TOOLS}" \
+    && chown -R node:node "$ANDROID_HOME"
+ENV PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+
 # pnpm is pinned in package.json; corepack fetches that version on first use.
 RUN corepack enable

@@ -94,3 +94,26 @@ With it unset the map uses MapTiler's public `streets-v4` style.
   `docker compose -f docker-compose.dev.yml down -v`. Inside the container
   `pnpm db:clear` has no runtime to do it with.
 - `dev:ios` is unavailable in the container, since it needs Xcode.
+
+## Building an Android APK
+
+The image includes JDK 17 and the Android SDK (platform 36, build-tools 36), so
+the APK builds here. The emulator itself has to run on the host, because it
+needs `/dev/kvm`.
+
+```bash
+pnpm --filter native exec expo prebuild --platform android --no-install
+cd apps/native/android && ./gradlew assembleDebug
+```
+
+The first build downloads the NDK and CMake, so it takes around 12 minutes; the
+APK lands at `apps/native/android/app/build/outputs/apk/debug/app-debug.apk`.
+
+Install it on a running emulator from the host:
+
+```bash
+adb install -r apps/native/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+For the JS bundle, a dev build connects to Metro on the host, which from inside
+the emulator is `http://10.0.2.2:8081`.
