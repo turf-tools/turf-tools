@@ -2,21 +2,31 @@ import {
   Camera,
   type CameraRef,
   type CameraStop,
-  CircleLayer,
-  MapView,
-  ShapeSource,
-  type ShapeSourceRef,
-  SymbolLayer,
-  UserLocation,
+  GeoJSONSource,
+  type GeoJSONSourceRef,
+  Layer,
+  Map,
+  NativeUserLocation,
+  type ViewStateChangeEvent,
 } from "@maplibre/maplibre-react-native";
 import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Linking, Pressable, StyleSheet, Text, View, Platform } from "react-native";
+import {
+  Alert,
+  Linking,
+  type NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useSharedValue } from "react-native-reanimated";
-import type { TurfDataBuilding, TurfData } from "@turf-tools/db/schema";
+import type { TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { MapControls } from "./controls";
+import { boundsForBuildings, buildFeatureCollection } from "./turf-data";
 import { LabelLayers } from "./labels";
 import { UserLocationDot } from "./user-location-dot";
 
@@ -38,16 +48,6 @@ const CLUSTER_RADIUS = 20;
 const CLUSTER_MAX_ZOOM = 18;
 const TILE_MAX_ZOOM = 19;
 
-type BuildingProps = {
-  buildingId: string;
-  doorCount: number;
-  personCount: number;
-  // 0 = no result, 1 = unavailable (any recorded), 2 = contacted (any response).
-  // Encoded as a number so the cluster aggregation can take the max — response
-  // dominates unavailable, unavailable dominates none.
-  role: 0 | 1 | 2;
-};
-
 // Map for the Turf List screen. Uses native MapLibre for GPU-level clustering.
 export function TurfMap({
   turf,
@@ -57,17 +57,16 @@ export function TurfMap({
   bottomInset = 0,
 }: Props) {
   const colors = useColors();
-  // Android shows a black frame between the map view mounting and its
-  // first fully-rendered frame (maplibre-react-native #367 — no upstream
-  // fix). Cover with a theme-colored pane until the map reports ready;
-  // iOS doesn't flash, so it keeps its untouched path.
+  // Android flashes black between the map view mounting and its first
+  // fully-rendered frame (maplibre-react-native #367, no upstream fix).
+  // Cover it with a theme-colored pane until the map reports ready; iOS
+  // starts ready.
   const [mapFullyRendered, setMapFullyRendered] = useState(Platform.OS === "ios");
-  // Android only (iOS's custom dot requests permission itself). The
-  // native Android puck never prompts — it checks permission once at
-  // style load, silently bails, and never retries — so request via the
-  // OS dialog and mount only after the grant. Deferred until the map's
-  // first full frame: the dialog over the initializing GL surface leaves
-  // it mis-sized (stretched map, offset taps). Denied → no dot, silently.
+  // Android only (the iOS dot asks for permission itself). The native
+  // Android puck checks permission once at style load and never retries,
+  // so request it and mount the puck only after the grant. Wait for the
+  // map's first full frame: the dialog over the initializing GL surface
+  // leaves the map mis-sized with offset taps. Denied → no dot.
   const [locationGranted, setLocationGranted] = useState(false);
   useEffect(() => {
     if (Platform.OS !== "android" || !mapFullyRendered) return;
@@ -87,25 +86,37 @@ export function TurfMap({
   );
 
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
+  const mapPadding = { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 };
   const cameraRef = useRef<CameraRef>(null);
-  const shapeSourceRef = useRef<ShapeSourceRef>(null);
+  const shapeSourceRef = useRef<GeoJSONSourceRef>(null);
 
   // Track the actual camera zoom for tap zoom math, and the bearing for
   // the compass needle (shared value — per-frame, no re-render) plus its
-  // visibility (state — changes only at the show/hide thresholds).
+  // visibility (state — changes only at the show/hide thresholds). The
+  // camera centre, zoom and viewport drive the iOS user-dot overlay.
   const actualZoomRef = useRef(0);
   const mapBearing = useSharedValue(0);
+  const mapCenter = useSharedValue<[number, number]>([0, 0]);
+  const mapZoom = useSharedValue(0);
+  const mapViewport = useSharedValue({ width: 0, height: 0 });
+  const cameraReady = useSharedValue(false);
   const [rotated, setRotated] = useState(false);
-  // Both region events feed this handler: the IsChanging stream for live
-  // tracking, and the (undebounced — see the MapView prop) DidChange for
-  // the settle frame, which is the only carrier of an animation's final
-  // heading — without it a reset-north stops a hair short of 0 and the
-  // compass never hides.
+  // Both region streams feed this: IsChanging for live tracking, and
+  // DidChange for the settle frame, the only carrier of an animation's
+  // final bearing. Without it a reset-north stops a hair short of 0 and
+  // the compass never hides.
   const handleRegionEvent = useCallback(
-    (event: { properties?: { zoomLevel?: number; heading?: number } }) => {
-      const z = event?.properties?.zoomLevel;
-      if (typeof z === "number") actualZoomRef.current = z;
-      const h = event?.properties?.heading;
+    (event: NativeSyntheticEvent<ViewStateChangeEvent>) => {
+      const { center, zoom: z, bearing: h } = event.nativeEvent;
+      if (center) {
+        mapCenter.value = center;
+        cameraReady.value = true;
+      }
+      if (typeof z === "number") {
+        actualZoomRef.current = z;
+        mapZoom.value = z;
+        cameraReady.value = true;
+      }
       if (typeof h === "number") {
         mapBearing.value = h;
         // Visibility is purely bearing-derived: appear once clearly
@@ -118,25 +129,24 @@ export function TurfMap({
         setRotated((prev) => (prev ? deviation > 0.5 : deviation >= 2));
       }
     },
-    [mapBearing],
+    [mapBearing, mapCenter, mapZoom, cameraReady],
   );
-  // setCamera stops ride a diffed native prop, and gestures never touch
-  // it — so a stop identical to the previous one (tap locate twice from
-  // the same fix, tap the compass twice) is elided and the camera stays
-  // put. Flip-flop a millisecond of duration so every stop is unique.
-  // Callers that want motion must pass animationMode: a stop without one
-  // maps to CameraModes.None, which jumps regardless of duration.
+  // Camera stops are diffed against the previous one, so an identical
+  // stop (locate twice from the same fix, tap the compass twice) is
+  // elided and the camera stays put. Flip the duration by a millisecond
+  // so each stop is unique. Pass an easing for anything that should
+  // animate: without one the camera jumps regardless of duration.
   const stopNonceRef = useRef(0);
   const setCameraStop = useCallback((stop: CameraStop) => {
     stopNonceRef.current = 1 - stopNonceRef.current;
-    cameraRef.current?.setCamera({
+    void cameraRef.current?.setStop({
       ...stop,
-      animationDuration: (stop.animationDuration ?? 0) + stopNonceRef.current,
+      duration: (stop.duration ?? 0) + stopNonceRef.current,
     });
   }, []);
 
   const handleResetNorth = useCallback(() => {
-    setCameraStop({ heading: 0, animationDuration: 250, animationMode: "easeTo" });
+    setCameraStop({ bearing: 0, duration: 250, easing: "ease" });
   }, [setCameraStop]);
 
   // Center on the user at a working zoom. Cached fix first so the common
@@ -149,10 +159,10 @@ export function TurfMap({
         last ?? (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
       if (!pos) return;
       setCameraStop({
-        centerCoordinate: [pos.coords.longitude, pos.coords.latitude],
-        zoomLevel: Math.max(actualZoomRef.current, 16),
-        animationDuration: 400,
-        animationMode: "easeTo",
+        center: [pos.coords.longitude, pos.coords.latitude],
+        zoom: Math.max(actualZoomRef.current, 16),
+        duration: 400,
+        easing: "ease",
       });
     } catch {
       // No location, no movement — silent by design.
@@ -160,42 +170,39 @@ export function TurfMap({
   }, [setCameraStop]);
 
   const handlePress = useCallback(
-    async (e: { features: GeoJSON.Feature[] }) => {
-      const feature = e.features?.[0];
+    async (event: NativeSyntheticEvent<{ features: GeoJSON.Feature[] }>) => {
+      const feature = event.nativeEvent.features?.[0];
       if (!feature) return;
 
       // Cluster tap — use native getClusterExpansionZoom.
       if (feature.properties?.cluster) {
         if (feature.geometry.type !== "Point") return;
         try {
-          const expansionZoom = await shapeSourceRef.current?.getClusterExpansionZoom(feature);
+          const clusterId = feature.properties?.cluster_id as number;
+          const expansionZoom = await shapeSourceRef.current?.getClusterExpansionZoom(clusterId);
           const targetZoom = Math.max(
             (expansionZoom ?? actualZoomRef.current) + 0.5,
             actualZoomRef.current + 1,
           );
           setCameraStop({
-            centerCoordinate: feature.geometry.coordinates as [number, number],
-            zoomLevel: targetZoom,
-            padding: {
-              paddingTop: 60,
-              paddingBottom: 60 + bottomInset,
-              paddingLeft: 40,
-              paddingRight: 40,
-            },
-            animationDuration: 350,
+            center: feature.geometry.coordinates as [number, number],
+            zoom: targetZoom,
+            padding: mapPadding,
+            duration: 350,
+            easing: "ease",
           });
         } catch {
           // Fallback: just zoom in
           setCameraStop({
-            centerCoordinate: feature.geometry.coordinates as [number, number],
-            zoomLevel: actualZoomRef.current + 2,
-            animationDuration: 350,
+            center: feature.geometry.coordinates as [number, number],
+            zoom: actualZoomRef.current + 2,
+            duration: 350,
+            easing: "ease",
           });
         }
         return;
       }
 
-      // Individual building tap.
       const id = feature.properties?.buildingId;
       if (typeof id === "string") onBuildingPress?.(id);
     },
@@ -213,54 +220,55 @@ export function TurfMap({
   }
 
   return (
-    <View style={styles.map}>
-      <MapView
+    <View
+      style={styles.map}
+      onLayout={(event) => {
+        mapViewport.value = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height,
+        };
+      }}
+    >
+      <Map
         style={styles.map}
+        // GLSurfaceView (the Android default) draws over sibling React
+        // Native views, and the bottom sheet, controls and attribution
+        // badge sit on top of this map. TextureView keeps them visible.
+        androidView="texture"
         mapStyle={getMaptilerStyleUrl(isDark)}
-        attributionEnabled={false}
-        logoEnabled={false}
-        compassEnabled={false}
-        rotateEnabled
-        pitchEnabled={false}
-        // Tints the Android native user-location puck. On iOS it's the
-        // inherited fallback for the heading cone's template image — the
-        // image's own tintColor is dropped when the screen re-attaches
-        // after a push, and UIKit's default fallback is system blue.
+        attribution={false}
+        logo={false}
+        compass={false}
+        touchPitch={false}
+        // Tints the Android puck.
         tintColor={isDark ? "#ffffff" : "#000000"}
         onDidFinishRenderingMapFully={() => setMapFullyRendered(true)}
         onRegionIsChanging={handleRegionEvent}
-        // Undebounced: the default 500ms debounce delivers payloads
-        // captured up to half a second earlier — stale headings corrupt
-        // the compass state. At 0 the settle event is a direct
-        // passthrough: fresh, and the only source of an animation's
-        // exact final heading.
-        regionDidChangeDebounceTime={0}
         onRegionDidChange={handleRegionEvent}
       >
         <Camera
           ref={cameraRef}
-          defaultSettings={{
-            bounds: {
-              ne: initialBounds.ne,
-              sw: initialBounds.sw,
-              paddingTop: 60,
-              paddingBottom: 60 + bottomInset,
-              paddingLeft: 40,
-              paddingRight: 40,
-            },
+          initialViewState={{
+            bounds: [
+              initialBounds.sw[0],
+              initialBounds.sw[1],
+              initialBounds.ne[0],
+              initialBounds.ne[1],
+            ],
+            padding: mapPadding,
           }}
         />
 
         <LabelLayers isDark={isDark} />
 
-        <ShapeSource
+        <GeoJSONSource
           ref={shapeSourceRef}
           id={BUILDINGS_SOURCE_ID}
-          shape={featureCollection}
+          data={featureCollection}
           cluster
           clusterRadius={CLUSTER_RADIUS}
-          clusterMaxZoomLevel={CLUSTER_MAX_ZOOM}
-          maxZoomLevel={TILE_MAX_ZOOM}
+          clusterMaxZoom={CLUSTER_MAX_ZOOM}
+          maxzoom={TILE_MAX_ZOOM}
           clusterProperties={{
             doorCount: [
               ["+", ["accumulated"], ["get", "doorCount"]],
@@ -288,10 +296,11 @@ export function TurfMap({
             ],
           }}
           onPress={handlePress}
-          hitbox={{ width: 4, height: 4 }}
+          hitbox={{ top: 2, right: 2, bottom: 2, left: 2 }}
         >
           {/* Shadow layers */}
-          <CircleLayer
+          <Layer
+            type="circle"
             id={`${CLUSTERS_LAYER_ID}-shadow`}
             filter={["has", "point_count"]}
             style={{
@@ -311,7 +320,8 @@ export function TurfMap({
               circleBlur: 1,
             }}
           />
-          <CircleLayer
+          <Layer
+            type="circle"
             id={`${BUILDINGS_PINS_LAYER_ID}-shadow`}
             filter={["!", ["has", "point_count"]]}
             style={{
@@ -323,7 +333,8 @@ export function TurfMap({
           />
 
           {/* Cluster bubbles */}
-          <CircleLayer
+          <Layer
+            type="circle"
             id={CLUSTERS_LAYER_ID}
             filter={["has", "point_count"]}
             style={{
@@ -338,8 +349,6 @@ export function TurfMap({
                 50,
                 30,
               ],
-              // Neutral when any member is unrecorded; otherwise color by the
-              // strongest role across the cluster.
               circleColor: [
                 "case",
                 ["==", ["get", "minRole"], 0],
@@ -354,7 +363,8 @@ export function TurfMap({
               circleStrokeWidth: isDark ? 1 : 1.5,
             }}
           />
-          <SymbolLayer
+          <Layer
+            type="symbol"
             id={CLUSTERS_LABEL_LAYER_ID}
             filter={["has", "point_count"]}
             style={{
@@ -367,7 +377,8 @@ export function TurfMap({
           />
 
           {/* Individual building pins */}
-          <CircleLayer
+          <Layer
+            type="circle"
             id={BUILDINGS_PINS_LAYER_ID}
             filter={["!", ["has", "point_count"]]}
             style={{
@@ -384,7 +395,8 @@ export function TurfMap({
               circleStrokeWidth: isDark ? 1 : 1.5,
             }}
           />
-          <SymbolLayer
+          <Layer
+            type="symbol"
             id={BUILDINGS_LABEL_LAYER_ID}
             filter={["!", ["has", "point_count"]]}
             style={{
@@ -395,26 +407,26 @@ export function TurfMap({
               textIgnorePlacement: true,
             }}
           />
-        </ShapeSource>
+        </GeoJSONSource>
 
-        {/* Forked per platform. iOS: the custom dot + heading cone — the
-          SDK-native iOS puck is a view that swallows taps on whatever is
-          under it (no pass-through), and can only show a tiny heading
-          arrow outside camera-follow mode. Android: the SDK-native puck,
-          GL-rendered so taps pass through — the custom dot would need
-          MarkerView there, which fritzes the status bar and can crash. */}
-        {Platform.OS === "ios" ? (
-          <UserLocationDot isDark={isDark} mapBearing={mapBearing} />
-        ) : (
-          locationGranted && (
-            <UserLocation
-              renderMode="native"
-              androidRenderMode="compass"
-              androidPreferredFramesPerSecond={30}
-            />
-          )
+        {/* Android: native puck, GL-rendered so taps pass through. iOS
+          renders its custom dot above the map as a pointerEvents="none"
+          overlay, so it never blocks building taps. */}
+        {Platform.OS === "android" && locationGranted && (
+          <NativeUserLocation mode="heading" androidPreferredFramesPerSecond={30} />
         )}
-      </MapView>
+      </Map>
+      {Platform.OS === "ios" && (
+        <UserLocationDot
+          isDark={isDark}
+          mapBearing={mapBearing}
+          mapCenter={mapCenter}
+          mapZoom={mapZoom}
+          mapViewport={mapViewport}
+          cameraReady={cameraReady}
+          padding={mapPadding}
+        />
+      )}
       {!mapFullyRendered && (
         <View
           pointerEvents="none"
@@ -436,11 +448,10 @@ export function TurfMap({
   );
 }
 
-// Required by MapTiler's terms on every plan (text form; only the logo is
-// waivable) and by OSM's ODbL guidelines, which want it visible by default
-// — the built-in ⓘ was buried under the bottom sheet and reads as app UI
-// anyway. Sits just above the sheet's collapsed peek. Tap opens the
-// license pages.
+// MapTiler's terms require visible text attribution (only the logo is
+// waivable), and OSM's ODbL wants it visible by default. The built-in ⓘ
+// is buried under the bottom sheet, so this sits just above the sheet's
+// collapsed peek. Tap opens the license pages.
 function AttributionBadge({ isDark }: { isDark: boolean }) {
   return (
     <Pressable
@@ -479,55 +490,6 @@ function AttributionBadge({ isDark }: { isDark: boolean }) {
       </Text>
     </Pressable>
   );
-}
-
-function buildFeatureCollection(
-  buildings: TurfDataBuilding[],
-  buildingRoles: Map<string, "contacted" | "unavailable">,
-): GeoJSON.FeatureCollection<GeoJSON.Point, BuildingProps> {
-  return {
-    type: "FeatureCollection",
-    features: buildings
-      .filter((b) => b.latitude != null && b.longitude != null)
-      .map((b) => {
-        const r = buildingRoles.get(b.buildingId);
-        const role: 0 | 1 | 2 = r === "contacted" ? 2 : r === "unavailable" ? 1 : 0;
-        return {
-          type: "Feature" as const,
-          geometry: {
-            type: "Point" as const,
-            coordinates: [b.longitude as number, b.latitude as number],
-          },
-          properties: {
-            buildingId: b.buildingId,
-            doorCount: b.doors.length,
-            personCount: b.doors.reduce((sum, d) => sum + d.persons.length, 0),
-            role,
-          },
-        };
-      }),
-  };
-}
-
-function boundsForBuildings(buildings: TurfDataBuilding[]): {
-  ne: [number, number];
-  sw: [number, number];
-} {
-  let minLat = Number.POSITIVE_INFINITY;
-  let maxLat = Number.NEGATIVE_INFINITY;
-  let minLng = Number.POSITIVE_INFINITY;
-  let maxLng = Number.NEGATIVE_INFINITY;
-  for (const b of buildings) {
-    if (b.latitude == null || b.longitude == null) continue;
-    if (b.latitude < minLat) minLat = b.latitude;
-    if (b.latitude > maxLat) maxLat = b.latitude;
-    if (b.longitude < minLng) minLng = b.longitude;
-    if (b.longitude > maxLng) maxLng = b.longitude;
-  }
-  if (!Number.isFinite(minLat)) {
-    return { ne: [-73.96, 40.78], sw: [-73.98, 40.76] };
-  }
-  return { ne: [maxLng, maxLat], sw: [minLng, minLat] };
 }
 
 const styles = StyleSheet.create({
