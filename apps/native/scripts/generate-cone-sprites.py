@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Generate the heading-cone sprites for user-location-dot.tsx.
+"""Generate the heading-cone sprites for the user-location layers.
 
-White-on-alpha wedges tinted at runtime via Image tintColor. Geometry and
-knobs mirror the component's constants — keep them in sync:
+MapLibre symbol images cannot be tinted, so each accuracy has a white
+variant for the dark theme and a black variant for the light theme.
+Geometry and knobs mirror user-dot-layers.ts — keep them in sync:
   CONE_RADIUS 62pt, DOT_SIZE 19pt, CONE_OPACITY 0.45 at the apex fading
   linearly to 0 at the rim, base chord spanning the dot's width, sides
   spreading to the accuracy angle, arc cap at CONE_RADIUS.
 
-Output: assets/map/cone-{55,75,100}.png at 3x (372px for a 124pt box).
+Output: assets/map/cone-{55,75,100}.png (white) and
+cone-{55,75,100}-black.png at 3x (372px for a 124pt box).
 """
 
 import math
@@ -25,13 +27,19 @@ SUPERSAMPLE = 2
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "map")
 
 
-def write_png(path, size, rows):
+def write_png(path, size, rows, rgb):
     def chunk(tag, data):
         raw = tag + data
         return struct.pack(">I", len(data)) + raw + struct.pack(">I", zlib.crc32(raw))
 
     ihdr = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)  # 8-bit RGBA
-    idat = zlib.compress(b"".join(b"\x00" + row for row in rows), 9)
+    idat = zlib.compress(
+        b"".join(
+            b"\x00" + b"".join(bytes((*rgb, alpha)) for alpha in row)
+            for row in rows
+        ),
+        9,
+    )
     with open(path, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n")
         f.write(chunk(b"IHDR", ihdr))
@@ -75,12 +83,13 @@ def generate(angle):
                     dx = x + (sx + 0.5) * step - radius
                     dy = y + (sy + 0.5) * step - radius
                     acc += coverage(dx, dy, radius, dot_radius, half_rad)
-            alpha = round(255 * acc / (SUPERSAMPLE * SUPERSAMPLE))
-            row += bytes((255, 255, 255, alpha))
+            row.append(round(255 * acc / (SUPERSAMPLE * SUPERSAMPLE)))
         rows.append(bytes(row))
-    out = os.path.join(OUT_DIR, f"cone-{angle}.png")
-    write_png(out, size, rows)
-    print(f"wrote {out} ({size}x{size})")
+
+    for suffix, rgb in (("", (255, 255, 255)), ("-black", (0, 0, 0))):
+        out = os.path.join(OUT_DIR, f"cone-{angle}{suffix}.png")
+        write_png(out, size, rows, rgb)
+        print(f"wrote {out} ({size}x{size})")
 
 
 if __name__ == "__main__":

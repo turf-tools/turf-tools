@@ -19,39 +19,41 @@ const LABELS_SOURCE_ID = "labels-omt";
 
 export function LabelLayers({ isDark = false }: { isDark?: boolean }) {
   return (
-    <>
-      <VectorSource id={LABELS_SOURCE_ID} url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
-        <Layer
-          id="labels-road"
-          type="symbol"
-          source-layer="transportation_name"
-          minzoom={11}
-          maxzoom={22}
-          filter={["!=", ["get", "class"], "ferry"]}
-          style={{
-            symbolPlacement: "line",
-            textField: ["coalesce", ["get", "name:en"], ["get", "name"]],
-            textSize: ["interpolate", ["linear"], ["zoom"], 14, 9, 18, 13],
-            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
-            textHaloColor: isDark ? "hsla(0, 0%, 0%, 0.8)" : "hsla(0, 0%, 100%, 0.97)",
-            textHaloWidth: 1,
-          }}
-        />
-        <Layer
-          id="labels-housenumber"
-          type="symbol"
-          source-layer="housenumber"
-          minzoom={17}
-          maxzoom={22}
-          style={{
-            textField: ["get", "housenumber"],
-            textSize: ["interpolate", ["linear"], ["zoom"], 17, 9, 22, 11],
-            textColor: isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
-            textHaloColor: isDark ? "hsla(0, 0%, 0%, 0.8)" : "hsla(0, 0%, 100%, 0.97)",
-            textHaloWidth: 1,
-          }}
-        />
-      </VectorSource>
-    </>
+    <VectorSource id={LABELS_SOURCE_ID} url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
+      <Layer
+        id="labels-road"
+        type="symbol"
+        source-layer="transportation_name"
+        minzoom={11}
+        maxzoom={22}
+        filter={["!=", ["get", "class"], "ferry"]}
+        layout={{
+          "symbol-placement": "line",
+          "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 14, 9, 18, 13],
+        }}
+        paint={{
+          "text-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+          "text-halo-color": isDark ? "hsla(0, 0%, 0%, 0.8)" : "hsla(0, 0%, 100%, 0.97)",
+          "text-halo-width": 1,
+        }}
+      />
+      <Layer
+        id="labels-housenumber"
+        type="symbol"
+        source-layer="housenumber"
+        minzoom={17}
+        maxzoom={22}
+        layout={{
+          "text-field": ["get", "housenumber"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 17, 9, 22, 11],
+        }}
+        paint={{
+          "text-color": isDark ? "hsl(0, 0%, 80%)" : "hsl(0, 0%, 10%)",
+          "text-halo-color": isDark ? "hsla(0, 0%, 0%, 0.8)" : "hsla(0, 0%, 100%, 0.97)",
+          "text-halo-width": 1,
+        }}
+      />
+    </VectorSource>
   );
 }

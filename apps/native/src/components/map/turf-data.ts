@@ -3,12 +3,13 @@ import type { TurfDataBuilding } from "@turf-tools/db/schema";
 export type BuildingProps = {
   buildingId: string;
   doorCount: number;
-  personCount: number;
   // 0 = no result, 1 = unavailable (any recorded), 2 = contacted (any
   // response). Numeric so cluster aggregation can take the max: response
   // dominates unavailable, which dominates none.
   role: 0 | 1 | 2;
 };
+
+const ROLE_BY_RESULT = { contacted: 2, unavailable: 1 } as const;
 
 // Shared by the native map and the web map: the building features are the same
 // GeoJSON either way, only the renderer differs.
@@ -16,27 +17,28 @@ export function buildFeatureCollection(
   buildings: TurfDataBuilding[],
   buildingRoles: Map<string, "contacted" | "unavailable">,
 ): GeoJSON.FeatureCollection<GeoJSON.Point, BuildingProps> {
+  const located = buildings.filter(
+    (b): b is TurfDataBuilding & { latitude: number; longitude: number } =>
+      b.latitude != null && b.longitude != null,
+  );
+
   return {
     type: "FeatureCollection",
-    features: buildings
-      .filter((b) => b.latitude != null && b.longitude != null)
-      .map((b) => {
-        const r = buildingRoles.get(b.buildingId);
-        const role: 0 | 1 | 2 = r === "contacted" ? 2 : r === "unavailable" ? 1 : 0;
-        return {
-          type: "Feature" as const,
-          geometry: {
-            type: "Point" as const,
-            coordinates: [b.longitude as number, b.latitude as number],
-          },
-          properties: {
-            buildingId: b.buildingId,
-            doorCount: b.doors.length,
-            personCount: b.doors.reduce((sum, d) => sum + d.persons.length, 0),
-            role,
-          },
-        };
-      }),
+    features: located.map((b) => {
+      const result = buildingRoles.get(b.buildingId);
+      return {
+        type: "Feature" as const,
+        geometry: {
+          type: "Point" as const,
+          coordinates: [b.longitude, b.latitude],
+        },
+        properties: {
+          buildingId: b.buildingId,
+          doorCount: b.doors.length,
+          role: result ? ROLE_BY_RESULT[result] : 0,
+        },
+      };
+    }),
   };
 }
 

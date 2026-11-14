@@ -10,6 +10,7 @@
 //                sizes against the surface color.
 
 import { useAtomValue } from "jotai";
+import { useMemo } from "react";
 import { themeAtom } from "@/lib/atoms/theme";
 
 type Role = "contacted" | "unavailable";
@@ -51,9 +52,11 @@ export const colors: Record<Role, Themed> = {
 //   <View style={{ backgroundColor: colors.unavailable.background }} />
 export function useColors(): Record<Role, Variant> {
   const isDark = useAtomValue(themeAtom) === "dark";
-  const theme = isDark ? "dark" : "light";
-  return {
-    contacted: colors.contacted[theme],
-    unavailable: colors.unavailable[theme],
-  };
+  return useMemo(() => {
+    const theme = isDark ? "dark" : "light";
+    return {
+      contacted: colors.contacted[theme],
+      unavailable: colors.unavailable[theme],
+    };
+  }, [isDark]);
 }

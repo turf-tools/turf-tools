@@ -8,10 +8,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 const SHADOW = {
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.15,
-  shadowRadius: 6,
+  boxShadow: "0 2px 6px rgba(0, 0, 0, 0.15)",
 };
 
 // One spacing everywhere: from the right edge, from the tray below, and
@@ -70,14 +67,33 @@ export function MapControls({
 
   return (
     <View className="absolute flex-row" style={{ right: GAP, bottom: TRAY_PEEK + GAP, gap: GAP }}>
-      <Animated.View style={compassStyle} pointerEvents={rotated ? "auto" : "none"}>
-        <Pressable onPress={onResetNorth} hitSlop={4} className={BUTTON_CLASS} style={buttonStyle}>
+      <Animated.View
+        style={compassStyle}
+        pointerEvents={rotated ? "auto" : "none"}
+        accessibilityElementsHidden={!rotated}
+        importantForAccessibility={rotated ? "auto" : "no-hide-descendants"}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Reset map north"
+          onPress={onResetNorth}
+          hitSlop={4}
+          className={BUTTON_CLASS}
+          style={buttonStyle}
+        >
           <Animated.View style={needleStyle}>
             <Navigation2 size={20} color={iconColor} strokeWidth={2} />
           </Animated.View>
         </Pressable>
       </Animated.View>
-      <Pressable onPress={onLocate} hitSlop={4} className={BUTTON_CLASS} style={buttonStyle}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Center map on my location"
+        onPress={onLocate}
+        hitSlop={4}
+        className={BUTTON_CLASS}
+        style={buttonStyle}
+      >
         <LocateFixed size={20} color={iconColor} strokeWidth={2} />
       </Pressable>
     </View>
