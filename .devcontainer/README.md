@@ -1,7 +1,25 @@
-# Dev container
+# Dev container (optional)
 
-A self-contained environment for the web app, the mobile app, and the data
-pipeline. The only host requirement is Docker or Podman.
+An optional, self-contained environment for the web app, the mobile app, and
+the data pipeline. **Development on the host, as described in the top-level
+README, stays fully supported and unchanged.** This container is a second path
+for people who would rather not install the whole toolchain locally.
+
+Reasons to use it:
+
+- you do not want to install Node, Python, `uv`, `osmium-tool`, and Quickwit on
+  your machine
+- you are building for Android, where the SDK and JDK are the painful part
+- you want the same environment a CI job would have
+
+Reasons to stay on the host:
+
+- iOS work, since Xcode only runs on macOS
+- you already have the toolchain and prefer the shortest path
+
+The two can be mixed. A common setup is Metro and the services in the container
+with the iOS dev client built on a Mac, described below. What you cannot do is
+run both stacks at once: they publish the same ports.
 
 Included:
 
@@ -9,6 +27,7 @@ Included:
 - Python 3.13 and `uv`, for `apps/data`
 - `osmium-tool` (OSM geocoding), Quickwit 0.9.3 (search), Graphviz (DAG
   visualizations), `psql`, `jq`
+- JDK 17 and the Android SDK (platform 36, build-tools 36)
 - Postgres, defined once in `../docker-compose.dev.yml` and reused here
 
 ## Start
@@ -28,21 +47,86 @@ On create, `.devcontainer/post-create.sh` copies the `.env.example` files to
 `.env`, generates a `BETTER_AUTH_SECRET` when one is missing, and runs
 `pnpm bootstrap`.
 
-Then, inside the container:
+## Dependency trees stay in the container
+
+`node_modules` (at the workspace root and in `apps/web`, `apps/native`,
+`packages/db`, `scripts`) and `apps/data/.venv` are named volumes. The host's
+trees are not mounted here at all, so a host `pnpm install` and the container's
+install can never fight over the same files. Nothing about host development
+changes.
+
+If you add a workspace package that gets its own `node_modules`, add a volume
+for it in `docker-compose.yml` and a `chown` line in `post-create.sh`; the
+volumes start root-owned and are handed to the `node` user on create.
+
+To wipe the container's dependency trees and database, stop the stack and drop
+its volumes:
 
 ```bash
-pnpm dev
+docker compose -f docker-compose.dev.yml -f .devcontainer/docker-compose.yml down -v
 ```
 
-The first `dev` pushes the Drizzle schema, seeds reference data, creates the mock
-organizations, and provisions the Quickwit metastore, then starts web, native,
-data, and search. Ports 3000, 7280, 8000, and 8081 are forwarded automatically.
+## Run
 
-## How the database is wired
+```bash
+pnpm dev          # db, web, native, data, search
+pnpm dev:web      # or one service at a time
+pnpm dev:data
+pnpm dev:search
+pnpm dev:native
+pnpm test
+pnpm check
+```
+
+Ports 3000 (web), 7280 (search), 8000 (data), and 8081 (native web preview /
+Metro) are published on the host's loopback.
+
+## Android
+
+The APK builds in the container. The emulator has to run on the host, because
+it needs `/dev/kvm`.
+
+```bash
+pnpm --filter native exec expo prebuild --platform android --no-install
+cd apps/native/android && ./gradlew assembleDebug
+```
+
+The first build downloads the NDK and CMake, so it takes around 12 minutes. The
+APK lands at `apps/native/android/app/build/outputs/apk/debug/app-debug.apk`.
+
+From the host, with an emulator running:
+
+```bash
+adb install -r apps/native/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+A dev build loads its bundle from Metro, which from inside the emulator is
+`http://10.0.2.2:8081`.
+
+## iOS
+
+Xcode runs only on macOS, so the native build happens on the host while the
+container keeps doing the JavaScript work.
+
+1. On the Mac, in the same checkout: `pnpm --filter native run ios`. That
+   prebuilds, installs pods, and builds the dev client into the simulator,
+   using the host's own `node_modules`.
+2. Metro runs in the container and is published on the host's loopback, so the
+   simulator loads the bundle from `http://localhost:8081` with no extra
+   configuration.
+3. Source edits are shared through the bind mount, so fast refresh works
+   whichever side you edit on.
+
+Without a Mac, `npx eas build --profile development --platform ios` builds in
+the cloud; install the artifact on a device and point it at Metro.
+
+The generated `apps/native/ios` directory lives on the host and is gitignored.
+
+## Database wiring
 
 `devcontainer.json` layers this directory's compose file on top of the repo's
-`../docker-compose.dev.yml`, so the database definition has one source of truth.
-The app service sets:
+`../docker-compose.dev.yml`, so the database definition keeps one source of
+truth. The app service sets:
 
 ```
 DB_HOST=postgres
@@ -50,34 +134,21 @@ DATABASE_URL=postgres://postgres:postgres@postgres:5432/postgres
 QW_METASTORE_URI=postgres://postgres:postgres@postgres:5432/quickwit
 ```
 
-and the Postgres service drops its host port publish with `ports: !reset []`.
-That keeps host port 5432 free for an existing database, and the container's
-database is only reachable on the compose network.
+and the Postgres service drops its host port publish with `ports: !reset []`,
+so an existing database on 5432 is left alone.
 
-`scripts/ensure-postgres.mjs` is what makes the same commands work in both
-modes. It probes `DB_HOST:5432` first: on the host it starts the dev container
-if needed, inside the dev container it finds the database already up and skips
-straight to the app services.
+`scripts/ensure-postgres.mjs` probes `DB_HOST` first. Inside the container the
+database is already up, so it skips starting another one; on a host with no
+`DB_HOST`, it still starts the compose database and fails loudly if something
+else owns the port.
 
 Requires Compose with `!reset` support (2.24+, or a recent `podman-compose`).
 
 ## Authentication
 
-`AUTH_DISABLED=1` is **not** set for you. The upstream README suggests it for
-local development; uncomment it in `apps/web/.env` if you want to skip the
-magic-link flow. Without it, the login link is written to the web server's
-console.
-
-## Environment variables
-
-The compose service environment overrides whatever is in `apps/*/.env` (the
-process environment always wins over the files), so a `DATABASE_URL` left in
-`apps/web/.env` for host-native runs does not affect the container.
-
-## Map tiles
-
-`VITE_MAPTILER_KEY` in `apps/web/.env` is only needed for custom basemap styles.
-With it unset the map uses MapTiler's public `streets-v4` style.
+`AUTH_DISABLED=1` is not set for you. Uncomment it in `apps/web/.env` if you
+want to skip the magic-link flow; otherwise the login link is written to the
+web server's console.
 
 ## Notes
 
@@ -90,30 +161,5 @@ With it unset the map uses MapTiler's public `streets-v4` style.
   loopback by default, which forwarded ports cannot reach.
 - `security_opt: label=disable` lets the bind mount work on SELinux hosts
   (Fedora, RHEL) without relabeling your workspace.
-- Wiping the database is a host-side operation:
-  `docker compose -f docker-compose.dev.yml down -v`. Inside the container
-  `pnpm db:clear` has no runtime to do it with.
-- `dev:ios` is unavailable in the container, since it needs Xcode.
-
-## Building an Android APK
-
-The image includes JDK 17 and the Android SDK (platform 36, build-tools 36), so
-the APK builds here. The emulator itself has to run on the host, because it
-needs `/dev/kvm`.
-
-```bash
-pnpm --filter native exec expo prebuild --platform android --no-install
-cd apps/native/android && ./gradlew assembleDebug
-```
-
-The first build downloads the NDK and CMake, so it takes around 12 minutes; the
-APK lands at `apps/native/android/app/build/outputs/apk/debug/app-debug.apk`.
-
-Install it on a running emulator from the host:
-
-```bash
-adb install -r apps/native/android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-For the JS bundle, a dev build connects to Metro on the host, which from inside
-the emulator is `http://10.0.2.2:8081`.
+- `pnpm db:clear` is host-only; inside the container, use the `down -v`
+  command above.

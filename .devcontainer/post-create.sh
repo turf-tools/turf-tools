@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Runs once when the container is created: local env files and dependencies.
-# The database is set up by `pnpm dev` (through db:setup), not here, so a
-# create never blocks on a drizzle prompt and never writes to a database the
-# caller has not chosen yet.
+# Runs once when the container is created: local env files, dependency trees,
+# and the dev database is left to `pnpm dev` (through db:setup), so a create
+# never blocks on a drizzle prompt and never writes to a database the caller
+# has not chosen yet.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,6 +18,16 @@ if grep -q '^BETTER_AUTH_SECRET=$' apps/web/.env; then
     sed -i "s|^BETTER_AUTH_SECRET=$|BETTER_AUTH_SECRET=${secret}|" apps/web/.env
 fi
 
-# CI=1 lets pnpm purge a node_modules built outside the container (the bind
-# mount may already hold one) without prompting, and there is no TTY here.
+# Dependencies are mounted as fresh volumes, so they start root-owned. Hand
+# them to the dev user once; the host's own trees are never touched because
+# they are not mounted into this container.
+sudo chown -R node:node \
+    node_modules \
+    apps/web/node_modules \
+    apps/native/node_modules \
+    packages/db/node_modules \
+    scripts/node_modules \
+    apps/data/.venv
+
+# CI=1 keeps pnpm and uv non-interactive; there is no TTY during a create.
 CI=1 pnpm bootstrap

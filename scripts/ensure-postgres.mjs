@@ -19,6 +19,12 @@ const mode = process.argv.includes("--foreground")
     ? "ensure"
     : "wait";
 const host = process.env.DB_HOST ?? "127.0.0.1";
+// An explicit DB_HOST means something outside this script owns the database
+// (inside the dev container it is the compose service). Without one, the
+// repo's default of 127.0.0.1 applies, and a listener there is not
+// necessarily the compose database, so the compose path still has to run and
+// fail loudly if something else owns the port.
+const hostIsExplicit = process.env.DB_HOST !== undefined;
 const port = Number(process.env.DB_PORT ?? 5432);
 const target = `${host}:${port}`;
 

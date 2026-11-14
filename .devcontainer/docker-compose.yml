@@ -31,6 +31,17 @@ services:
       # `.` is the repo root here: the compose project directory is the repo,
       # since devcontainer.json lists ../docker-compose.dev.yml first.
       - .:/workspaces/turf-tools
+      # Dependencies live in the container, not on the host. A shared
+      # node_modules means the container and a host `pnpm install` fight over
+      # the same tree (different stores, different platforms), and the host
+      # setup must keep working untouched. Python's venv gets the same
+      # treatment for the same reason.
+      - node-modules:/workspaces/turf-tools/node_modules
+      - node-modules-web:/workspaces/turf-tools/apps/web/node_modules
+      - node-modules-native:/workspaces/turf-tools/apps/native/node_modules
+      - node-modules-db:/workspaces/turf-tools/packages/db/node_modules
+      - node-modules-scripts:/workspaces/turf-tools/scripts/node_modules
+      - python-venv:/workspaces/turf-tools/apps/data/.venv
     # Loopback only. VS Code forwards these anyway; publishing them also makes
     # the CLI workflow usable from a browser. They collide with a host-native
     # `pnpm dev`, so run one or the other.
@@ -52,3 +63,12 @@ services:
     # The dev container reaches the database over the compose network instead,
     # so the publish is dropped rather than colliding with the host.
     ports: !reset []
+
+volumes:
+  # Container-only dependency trees; see the app service above.
+  node-modules:
+  node-modules-web:
+  node-modules-native:
+  node-modules-db:
+  node-modules-scripts:
+  python-venv:
