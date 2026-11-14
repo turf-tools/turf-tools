@@ -52,6 +52,11 @@ export type UserLocation = {
   headingAccuracy: number | null;
 };
 
+type UseUserLocationOptions = {
+  enabled: boolean;
+  onPosition?: (position: [number, number]) => void;
+};
+
 // StrictMode and the foreground restart can both run start() while the
 // first permission request is in flight. Cache the request so the OS
 // dialog is not opened twice over the map.
@@ -74,12 +79,17 @@ function ensureForegroundPermission(): Promise<boolean> {
 // Watches the user's position and heading while `enabled` is true. The
 // native path uses expo-location; the web path uses the browser's
 // geolocation API because Expo's web heading implementation is a no-op.
-export function useUserLocation({ enabled }: { enabled: boolean }): UserLocation {
+export function useUserLocation({ enabled, onPosition }: UseUserLocationOptions): UserLocation {
   const [position, setPosition] = useState<[number, number] | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
   const [headingAccuracy, setHeadingAccuracy] = useState<number | null>(null);
 
   const appStateRef = useRef(AppState.currentState);
+  const onPositionRef = useRef(onPosition);
+
+  useEffect(() => {
+    onPositionRef.current = onPosition;
+  }, [onPosition]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -103,6 +113,7 @@ export function useUserLocation({ enabled }: { enabled: boolean }): UserLocation
       const now = Date.now();
       if (!force && now - lastEmit < POSITION_EMIT_MS) return;
       lastEmit = now;
+      onPositionRef.current?.(next);
       setPosition(next);
     };
 
@@ -224,8 +235,23 @@ export function useUserLocation({ enabled }: { enabled: boolean }): UserLocation
       }
     };
 
+    const stopWatches = () => {
+      // Invalidate any start that is still awaiting permission or a watch
+      // subscription, then drop what is already live.
+      generation += 1;
+      positionSub?.remove();
+      positionSub = null;
+      headingSub?.remove();
+      headingSub = null;
+      cancelAnimationFrame(raf);
+      raf = 0;
+    };
+
     const startWeb = () => {
+      // Browsers do not expose a reliable compass heading here, so the web
+      // dot renders without the cone.
       if (typeof navigator === "undefined" || !navigator.geolocation) return;
+      if (webWatchId != null) navigator.geolocation.clearWatch(webWatchId);
       try {
         webWatchId = navigator.geolocation.watchPosition(
           (fix) => onFix([fix.coords.longitude, fix.coords.latitude]),
@@ -243,23 +269,45 @@ export function useUserLocation({ enabled }: { enabled: boolean }): UserLocation
       void startNative();
     }
 
-    // Restart on foreground: iOS pauses watches it deems stationary
-    // (pausesLocationUpdatesAutomatically defaults true and is not
-    // exposed by expo's foreground watch API), and a pause straddling a
-    // background/lock cycle is not reliably resumed.
+    // Stop watches while the app is not visible. iOS pauses location
+    // watches it deems stationary, and Android can keep the sensors alive
+    // behind another app. Restart on foreground so a paused watch does not
+    // survive the trip.
     const appState =
       Platform.OS === "web"
         ? null
         : AppState.addEventListener("change", (state) => {
             const previous = appStateRef.current;
             appStateRef.current = state;
-            if (state === "active" && previous !== "active") void startNative();
+            if (state === "active") {
+              if (previous !== "active") void startNative();
+            } else {
+              stopWatches();
+            }
           });
+
+    const visibility =
+      Platform.OS === "web" && typeof document !== "undefined"
+        ? () => {
+            if (document.visibilityState === "hidden") {
+              if (webWatchId != null && typeof navigator !== "undefined") {
+                navigator.geolocation.clearWatch(webWatchId);
+                webWatchId = null;
+              }
+              cancelAnimationFrame(raf);
+              raf = 0;
+            } else {
+              startWeb();
+            }
+          }
+        : null;
+    if (visibility) document.addEventListener("visibilitychange", visibility);
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
       appState?.remove();
+      if (visibility) document.removeEventListener("visibilitychange", visibility);
       positionSub?.remove();
       headingSub?.remove();
       if (webWatchId != null && typeof navigator !== "undefined") {

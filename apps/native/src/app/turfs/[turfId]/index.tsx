@@ -1,5 +1,5 @@
 import BottomSheet, { BottomSheetFlatList } from "@gorhom/bottom-sheet";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -35,6 +35,7 @@ import { useTurf } from "@/lib/turf-data";
 export default function TurfListScreen() {
   const { turfId } = useLocalSearchParams<{ turfId: string }>();
   const { height: windowHeight } = useWindowDimensions();
+  const isFocused = useIsFocused();
   const theme = useAtomValue(themeAtom);
   const isDark = theme === "dark";
 
@@ -208,6 +209,7 @@ export default function TurfListScreen() {
           onBuildingPress={openBuilding}
           isDark={isDark}
           bottomInset={bottomInset}
+          paused={sheetOpen || !isFocused}
         />
       </View>
 

@@ -3,10 +3,12 @@
 
 MapLibre symbol images cannot be tinted, so each accuracy has a white
 variant for the dark theme and a black variant for the light theme.
-Geometry and knobs mirror user-dot-layers.ts — keep them in sync:
+This script is the source of truth for the sprite geometry:
   CONE_RADIUS 62pt, DOT_SIZE 19pt, CONE_OPACITY 0.45 at the apex fading
   linearly to 0 at the rim, base chord spanning the dot's width, sides
   spreading to the accuracy angle, arc cap at CONE_RADIUS.
+The layers only set CONE_ICON_SIZE 1/3 to render the 3x sprite at that
+size.
 
 Output: assets/map/cone-{55,75,100}.png (white) and
 cone-{55,75,100}-black.png at 3x (372px for a 124pt box).

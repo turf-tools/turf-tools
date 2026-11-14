@@ -11,11 +11,16 @@ import { StyleSheet, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import type { TurfData } from "@turf-tools/db/schema";
 import { useColors } from "@/lib/colors";
-import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
+import {
+  getMaptilerStyleUrl,
+  isMaptilerKeyConfigured,
+  MAPTILER_OPENMAPTILES_TILEJSON_URL,
+} from "@/lib/maptiler";
 import { MapControls } from "./controls";
 import { AttributionBadge, MissingKeyNotice } from "./map-chrome";
-import { mapPadding as getMapPadding } from "./map-padding";
+import { getMapPadding } from "./map-padding";
 import { boundsForBuildings, buildFeatureCollection } from "./turf-data";
+import { buildLabelLayers, LABELS_SOURCE_ID } from "./label-layers";
 import {
   buildTurfLayers,
   CLUSTER_MAX_ZOOM,
@@ -39,6 +44,7 @@ type Props = {
   onBuildingPress?: (buildingId: string) => void;
   isDark?: boolean;
   bottomInset?: number;
+  paused?: boolean;
 };
 
 export function TurfMap({
@@ -47,12 +53,18 @@ export function TurfMap({
   onBuildingPress,
   isDark = false,
   bottomInset = 0,
+  paused = false,
 }: Props) {
   const colors = useColors();
   const mapRef = useRef<MapRef>(null);
   const mapBearing = useSharedValue(0);
   const [rotated, setRotated] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const userPositionRef = useRef<[number, number] | null>(null);
+
+  const handleUserPosition = useCallback((position: [number, number]) => {
+    userPositionRef.current = position;
+  }, []);
 
   const featureCollection = useMemo(
     () => buildFeatureCollection(turf.buildings, buildingRoles),
@@ -61,6 +73,7 @@ export function TurfMap({
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
   const padding = useMemo(() => getMapPadding(bottomInset), [bottomInset]);
   const layers = useMemo(() => buildTurfLayers({ isDark, colors }), [colors, isDark]);
+  const labelLayers = useMemo(() => buildLabelLayers({ isDark }), [isDark]);
 
   const handleMove = useCallback(
     (event: ViewStateChangeEvent) => {
@@ -78,21 +91,33 @@ export function TurfMap({
   }, []);
 
   const handleLocate = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const centerOn = (center: [number, number]) => {
+      map.flyTo({
+        center,
+        zoom: Math.max(map.getZoom(), 16),
+        duration: 400,
+        padding,
+      });
+    };
+
+    const live = userPositionRef.current;
+    if (live) {
+      centerOn(live);
+      return;
+    }
+
     if (typeof navigator === "undefined" || !navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const map = mapRef.current;
-        if (!map) return;
-        map.flyTo({
-          center: [position.coords.longitude, position.coords.latitude],
-          zoom: Math.max(map.getZoom(), 16),
-          duration: 400,
-        });
+        centerOn([position.coords.longitude, position.coords.latitude]);
       },
       () => {},
-      { enableHighAccuracy: false, timeout: 10_000 },
+      { enableHighAccuracy: true, timeout: 10_000 },
     );
-  }, []);
+  }, [padding]);
 
   const handleClick = useCallback(
     (event: MapLayerMouseEvent) => {
@@ -114,10 +139,11 @@ export function TurfMap({
               center,
               zoom: Math.max(zoom + 0.5, map.getZoom() + 1),
               duration: 350,
+              padding,
             });
           })
           .catch(() => {
-            map.easeTo({ center, zoom: map.getZoom() + 2, duration: 350 });
+            map.easeTo({ center, zoom: map.getZoom() + 2, duration: 350, padding });
           });
         return;
       }
@@ -125,7 +151,7 @@ export function TurfMap({
       const id = feature.properties?.buildingId;
       if (typeof id === "string") onBuildingPress?.(id);
     },
-    [onBuildingPress],
+    [onBuildingPress, padding],
   );
 
   if (!isMaptilerKeyConfigured()) {
@@ -155,7 +181,14 @@ export function TurfMap({
         attributionControl={false}
         mapStyle={getMaptilerStyleUrl(isDark)}
         style={styles.mapCanvas}
+        touchPitch={false}
+        maxPitch={0}
       >
+        <Source id={LABELS_SOURCE_ID} type="vector" url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
+          {labelLayers.map((layer) => (
+            <Layer key={layer.id} {...layer} />
+          ))}
+        </Source>
         <Source
           id={TURF_SOURCE_ID}
           type="geojson"
@@ -170,7 +203,11 @@ export function TurfMap({
             <Layer key={layer.id} {...layer} />
           ))}
         </Source>
-        <UserLocationDot isDark={isDark} enabled={mapReady} />
+        <UserLocationDot
+          isDark={isDark}
+          enabled={mapReady && !paused}
+          onPosition={handleUserPosition}
+        />
       </MapGL>
       <AttributionBadge isDark={isDark} />
       <MapControls

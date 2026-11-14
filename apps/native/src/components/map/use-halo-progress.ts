@@ -1,35 +1,77 @@
 import { useEffect, useState } from "react";
+import { AppState, Platform } from "react-native";
 
 const HALO_MS = 1800;
-// A GeoJSON layer cannot be driven by a Reanimated worklet, so the pulse
-// is a small timer. 20fps is enough for a soft halo and avoids
-// re-rendering the map at 60fps.
-const HALO_FRAME_MS = 50;
+// The reset needs its own committed frame before the next run starts.
+// Fabric coalesces the two updates when they land in the same tick, which
+// leaves the halo at opacity 0 for every cycle after the first.
+const HALO_RESET_MS = 100;
 
-export function useHaloProgress(active: boolean): number {
-  const [progress, setProgress] = useState(0);
+export type HaloFrame = {
+  progress: number;
+  transitionMs: number;
+};
+
+const IDLE: HaloFrame = { progress: 0, transitionMs: 0 };
+
+// The halo is a map layer, so the pulse runs on MapLibre's paint transition
+// clock instead of a React timer per frame. Two renders per cycle are enough:
+// one to start the transition, one to snap back before the next cycle.
+export function useHaloProgress(active: boolean): HaloFrame {
+  const [frame, setFrame] = useState<HaloFrame>(IDLE);
+  const [appActive, setAppActive] = useState(AppState.currentState === "active");
 
   useEffect(() => {
-    if (!active) {
-      setProgress(0);
+    const subscription = AppState.addEventListener("change", (state) => {
+      setAppActive(
+        state === "active" &&
+          (Platform.OS !== "web" ||
+            typeof document === "undefined" ||
+            document.visibilityState === "visible"),
+      );
+    });
+
+    let removeVisibility: (() => void) | undefined;
+    if (Platform.OS === "web" && typeof document !== "undefined") {
+      const onVisibility = () => {
+        setAppActive(document.visibilityState === "visible");
+      };
+      document.addEventListener("visibilitychange", onVisibility);
+      onVisibility();
+      removeVisibility = () => document.removeEventListener("visibilitychange", onVisibility);
+    }
+
+    return () => {
+      subscription.remove();
+      removeVisibility?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!active || !appActive) {
+      setFrame(IDLE);
       return;
     }
 
     let cancelled = false;
-    const start = Date.now();
-    const tick = () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const cycle = () => {
       if (cancelled) return;
-      const t = ((Date.now() - start) % HALO_MS) / HALO_MS;
-      setProgress(1 - (1 - t) ** 2);
+      setFrame({ progress: 1, transitionMs: HALO_MS });
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        setFrame(IDLE);
+        timer = setTimeout(cycle, HALO_RESET_MS);
+      }, HALO_MS);
     };
 
-    tick();
-    const timer = setInterval(tick, HALO_FRAME_MS);
+    cycle();
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
     };
-  }, [active]);
+  }, [active, appActive]);
 
-  return progress;
+  return frame;
 }

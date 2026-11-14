@@ -17,7 +17,7 @@ import { useColors } from "@/lib/colors";
 import { getMaptilerStyleUrl, isMaptilerKeyConfigured } from "@/lib/maptiler";
 import { MapControls } from "./controls";
 import { AttributionBadge, MissingKeyNotice } from "./map-chrome";
-import { mapPadding as getMapPadding } from "./map-padding";
+import { getMapPadding } from "./map-padding";
 import { boundsForBuildings, buildFeatureCollection } from "./turf-data";
 import {
   buildTurfLayers,
@@ -36,6 +36,7 @@ type Props = {
   onBuildingPress?: (buildingId: string) => void;
   isDark?: boolean;
   bottomInset?: number;
+  paused?: boolean;
 };
 
 export function TurfMap({
@@ -44,6 +45,7 @@ export function TurfMap({
   onBuildingPress,
   isDark = false,
   bottomInset = 0,
+  paused = false,
 }: Props) {
   const colors = useColors();
   // Android flashes black between the map view mounting and its first
@@ -61,6 +63,11 @@ export function TurfMap({
 
   const cameraRef = useRef<CameraRef>(null);
   const buildingsSourceRef = useRef<GeoJSONSourceRef>(null);
+  const userPositionRef = useRef<[number, number] | null>(null);
+
+  const handleUserPosition = useCallback((position: [number, number]) => {
+    userPositionRef.current = position;
+  }, []);
 
   // The compass needle reads bearing on the UI thread; the ref is for the
   // tap and locate math, which runs in JS.
@@ -106,11 +113,22 @@ export function TurfMap({
     setCameraStop({ bearing: 0, duration: 250, easing: "ease" });
   }, [setCameraStop]);
 
-  // Center on the user at a working zoom. A recent cached fix keeps the
-  // common case instant; otherwise ask for a live GPS fix. A cache with no
-  // age limit can be from another neighbourhood, so it does not qualify.
+  // Center on the user at a working zoom. The dot already owns the live
+  // fix, so use that first; the cached and fresh lookups are only for the
+  // case where the watch has not produced a position yet.
   const handleLocate = useCallback(async () => {
     try {
+      const live = userPositionRef.current;
+      if (live) {
+        setCameraStop({
+          center: live,
+          zoom: Math.max(actualZoomRef.current, 16),
+          duration: 400,
+          easing: "ease",
+        });
+        return;
+      }
+
       const last = await Location.getLastKnownPositionAsync({
         maxAge: 30_000,
         requiredAccuracy: 100,
@@ -221,7 +239,11 @@ export function TurfMap({
           ))}
         </GeoJSONSource>
 
-        <UserLocationDot isDark={isDark} enabled={mapFullyRendered} />
+        <UserLocationDot
+          isDark={isDark}
+          enabled={mapFullyRendered && !paused}
+          onPosition={handleUserPosition}
+        />
       </Map>
 
       {!mapFullyRendered && (

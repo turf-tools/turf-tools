@@ -15,11 +15,9 @@ export function getMaptilerStyleUrl(isDark: boolean): string {
   return `https://api.maptiler.com/maps/${styleId}/style.json?key=${MAPTILER_KEY}`;
 }
 
-// Keep the default export for backwards compat until all callers switch.
-export const MAPTILER_STYLE_URL = getMaptilerStyleUrl(false);
-
-// OpenMapTiles vector tile source. Used for label layers (roads, places,
-// house numbers) overlaid on top of the basemap.
+// OpenMapTiles v3 source for the house-number overlay. The basemap already
+// draws road names and building numbers; this only pulls house numbers in
+// one zoom level earlier.
 export const MAPTILER_OPENMAPTILES_TILEJSON_URL = `https://api.maptiler.com/tiles/v3-openmaptiles/tiles.json?key=${MAPTILER_KEY}`;
 
 export function isMaptilerKeyConfigured(): boolean {

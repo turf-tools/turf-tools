@@ -1,4 +1,5 @@
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { ATTRIBUTION_BOTTOM } from "./map-layout";
 
 export function MissingKeyNotice({ isDark }: { isDark: boolean }) {
   return (
@@ -44,8 +45,7 @@ const styles = StyleSheet.create({
   badge: {
     position: "absolute",
     left: 6,
-    // The sheet's collapsed snap is 40; stay above it.
-    bottom: 46,
+    bottom: ATTRIBUTION_BOTTOM,
     flexDirection: "row",
     borderRadius: 4,
     paddingHorizontal: 5,

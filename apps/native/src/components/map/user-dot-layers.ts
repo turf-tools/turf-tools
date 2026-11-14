@@ -1,4 +1,5 @@
 import type { LayerSpecification } from "maplibre-gl";
+import type { HaloFrame } from "./use-halo-progress";
 
 export const USER_DOT_SOURCE_ID = "user-location-dot";
 
@@ -13,6 +14,15 @@ const HALO_OPACITY = 0.35;
 
 // The sprites are 372px (3x of the 124pt cone box).
 const CONE_ICON_SIZE = 1 / 3;
+
+type Transition = { duration: number; delay: number };
+
+type UserDotLayer = LayerSpecification & {
+  paint?: {
+    "circle-radius-transition"?: Transition;
+    "circle-opacity-transition"?: Transition;
+  };
+};
 
 export type UserDotFeatureProps = {
   heading?: number;
@@ -52,15 +62,16 @@ export function buildUserDotData({
 
 export function buildUserDotLayers({
   isDark,
-  haloProgress,
+  halo,
 }: {
   isDark: boolean;
-  haloProgress: number;
-}): LayerSpecification[] {
+  halo: HaloFrame;
+}): UserDotLayer[] {
   const dotColor = isDark ? "#ffffff" : "#000000";
   const ringColor = isDark ? "#000000" : "#ffffff";
-  const haloRadius = DOT_OUTER_RADIUS * (1 + (HALO_SCALE - 1) * haloProgress);
-  const haloOpacity = HALO_OPACITY * (1 - haloProgress);
+  const haloRadius = DOT_OUTER_RADIUS * (1 + (HALO_SCALE - 1) * halo.progress);
+  const haloOpacity = HALO_OPACITY * (1 - halo.progress);
+  const transition = { duration: halo.transitionMs, delay: 0 };
 
   return [
     {
@@ -84,8 +95,10 @@ export function buildUserDotLayers({
       source: USER_DOT_SOURCE_ID,
       paint: {
         "circle-radius": haloRadius,
+        "circle-radius-transition": transition,
         "circle-color": dotColor,
         "circle-opacity": haloOpacity,
+        "circle-opacity-transition": transition,
       },
     },
     {

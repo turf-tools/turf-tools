@@ -11,23 +11,22 @@ import { buildUserDotData, buildUserDotLayers, USER_DOT_SOURCE_ID } from "./user
 export function UserLocationDot({
   isDark = false,
   enabled = true,
+  onPosition,
 }: {
   isDark?: boolean;
   enabled?: boolean;
+  onPosition?: (position: [number, number]) => void;
 }) {
   const { current: mapRef } = useMap();
-  const { position, heading, headingAccuracy } = useUserLocation({ enabled });
-  const haloProgress = useHaloProgress(enabled && position != null);
+  const { position, heading, headingAccuracy } = useUserLocation({ enabled, onPosition });
+  const halo = useHaloProgress(enabled && position != null);
   const coneImage = coneImageFor(headingAccuracy, isDark);
 
   const data = useMemo(
     () => buildUserDotData({ position, heading, coneImage }),
     [position, heading, coneImage],
   );
-  const layers = useMemo(
-    () => buildUserDotLayers({ isDark, haloProgress }),
-    [isDark, haloProgress],
-  );
+  const layers = useMemo(() => buildUserDotLayers({ isDark, halo }), [isDark, halo]);
 
   // The cone sprites are symbol images. Re-add them after style swaps,
   // since changing the basemap clears the style's image registry.
