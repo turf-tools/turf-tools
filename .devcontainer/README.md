@@ -108,13 +108,16 @@ A dev build loads its bundle from Metro, which from inside the emulator is
 Xcode runs only on macOS, so the native build happens on the host while the
 container keeps doing the JavaScript work.
 
-1. On the Mac, in the same checkout: `pnpm --filter native run ios`. That
-   prebuilds, installs pods, and builds the dev client into the simulator,
-   using the host's own `node_modules`.
-2. Metro runs in the container and is published on the host's loopback, so the
-   simulator loads the bundle from `http://localhost:8081` with no extra
-   configuration.
-3. Source edits are shared through the bind mount, so fast refresh works
+1. On the Mac, in the same checkout, install dependencies once: `pnpm install`.
+   The container's `node_modules` are volumes and are not visible here.
+2. Build without starting a second bundler:
+   `pnpm --filter native exec expo run:ios --no-bundler`. Plain `expo run:ios`
+   starts its own Metro on 8081, which collides with the one the container
+   already publishes. Prebuild, pods, and the simulator install all happen in
+   this step.
+3. Metro runs in the container and is published on the host's loopback, so the
+   simulator loads the bundle from `http://localhost:8081`.
+4. Source edits are shared through the bind mount, so fast refresh works
    whichever side you edit on.
 
 Without a Mac, `npx eas build --profile development --platform ios` builds in
@@ -137,15 +140,19 @@ QW_METASTORE_URI=postgres://postgres:postgres@postgres:5432/quickwit
 and the Postgres service drops its host port publish with `ports: !reset []`,
 so an existing database on 5432 is left alone.
 
-Postgres joins the **app container's network namespace**, so it answers on
-`127.0.0.1:5432` exactly like a host-local database. That is why the repo's
-`wait-on tcp:127.0.0.1:5432` calls and the default connection strings work
-unchanged in here.
+Compose sets `DB_HOST=postgres`, so the readiness checks and connection strings
+target the compose service, while `DATABASE_URL` and `QW_METASTORE_URI` are
+overridden to the same host. On a host `DB_HOST` is unset and the scripts fall
+back to the repo default of `127.0.0.1`.
 
-The only container-aware part is a marker. Compose sets `IN_DEVCONTAINER=1`,
-and `db:up` / `dev:db` exit immediately when it is set instead of calling
-`docker compose`. On a host the marker is absent, so those scripts start the
-compose database as before and fail loudly if something else owns port 5432.
+That reads as `${DB_HOST:-127.0.0.1}`, which is POSIX shell syntax. macOS and
+Linux are the supported development platforms, since iOS needs macOS; a Windows
+contributor would need `cross-env` or a similar shim.
+
+`db:up` and `dev:db` also check `IN_DEVCONTAINER`, which compose sets, and exit
+immediately instead of calling `docker compose`. On a host the marker is absent,
+so they start the compose database as before and fail loudly if something else
+owns port 5432.
 
 Requires Compose with `!reset` support (2.24+, or a recent `podman-compose`).
 

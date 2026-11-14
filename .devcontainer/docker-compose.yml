@@ -17,11 +17,12 @@ services:
     security_opt:
       - label=disable
     environment:
-      # Postgres joins this container's network namespace (see below), so the
-      # repo's default 127.0.0.1:5432 is correct here and the wait-on calls in
-      # package.json need no special case.
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
-      QW_METASTORE_URI: postgres://postgres:postgres@127.0.0.1:5432/quickwit
+      # On the compose network the database is `postgres`, so readiness
+      # checks and connection strings point there. Host development keeps the
+      # repo default of 127.0.0.1.
+      DB_HOST: postgres
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+      QW_METASTORE_URI: postgres://postgres:postgres@postgres:5432/quickwit
       # Tells db:up / dev:db to skip starting a compose database of their own.
       IN_DEVCONTAINER: "1"
       # node.yaml binds loopback by default, which forwarded ports cannot reach.
@@ -44,6 +45,9 @@ services:
       - node-modules-db:/workspaces/turf-tools/packages/db/node_modules
       - node-modules-scripts:/workspaces/turf-tools/scripts/node_modules
       - python-venv:/workspaces/turf-tools/apps/data/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
     # Loopback only. VS Code forwards these anyway; publishing them also makes
     # the CLI workflow usable from a browser. They collide with a host-native
     # `pnpm dev`, so run one or the other.
@@ -54,13 +58,6 @@ services:
       - "127.0.0.1:7280:7280"
 
   postgres:
-    # Share the app container's network namespace so the database answers on
-    # 127.0.0.1:5432 exactly as it does on a host, which is what lets the repo's
-    # scripts and defaults stay untouched. The app starts first, then this joins
-    # its namespace.
-    network_mode: "service:app"
-    depends_on:
-      - app
     # Rootless Podman with `userns = "keep-id"` otherwise starts the image as
     # uid 1000, and initdb fails to take ownership of its volume. Container root
     # maps to the invoking user there; this is the image default under Docker.
