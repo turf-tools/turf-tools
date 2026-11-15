@@ -4,11 +4,14 @@
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? "";
 
-// Style IDs are deployment configuration. "streets-v4" is MapTiler's
-// public style and works with any key; set the env vars to use a custom
-// style instead.
-const STYLE_ID_LIGHT = process.env.EXPO_PUBLIC_MAPTILER_STYLE_ID_LIGHT || "streets-v4";
-const STYLE_ID_DARK = process.env.EXPO_PUBLIC_MAPTILER_STYLE_ID_DARK || STYLE_ID_LIGHT;
+// Turf Tools' custom styles. They require a MapTiler key from the account
+// that owns them. Set the env vars to override them, for example with
+// "streets-v4" to use the public style.
+const PROJECT_STYLE_ID_LIGHT = "01968205-0dc7-71df-87a7-8b67f7828379";
+const PROJECT_STYLE_ID_DARK = "019d7ad6-3be3-7b78-86e3-853060587c76";
+
+const STYLE_ID_LIGHT = process.env.EXPO_PUBLIC_MAPTILER_STYLE_ID_LIGHT || PROJECT_STYLE_ID_LIGHT;
+const STYLE_ID_DARK = process.env.EXPO_PUBLIC_MAPTILER_STYLE_ID_DARK || PROJECT_STYLE_ID_DARK;
 
 export function getMaptilerStyleUrl(isDark: boolean): string {
   const styleId = isDark ? STYLE_ID_DARK : STYLE_ID_LIGHT;
