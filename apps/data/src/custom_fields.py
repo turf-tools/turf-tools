@@ -374,9 +374,10 @@ def parse_upload(
     if field_type not in _FIELD_TYPES:
         raise ValueError(f"Unknown field type {field_type!r}.")
     cols = load_upload_table(conn, source)
-    # Two-column files: the field name IS the value column's header.
+    # Two-column files: the field name is the dialog's override, else the
+    # value column's header.
     if len(cols) == 2:
-        label = cols[1].strip()
+        label = (label_arg or "").strip() or cols[1].strip()
         if not label:
             raise ValueError("The value column needs a header name.")
     else:

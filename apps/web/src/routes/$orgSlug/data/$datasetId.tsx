@@ -89,6 +89,18 @@ const FIELD_TYPE_META: Record<CustomFieldType, string> = {
   text_multi: "Code",
 };
 
+// Help line under the Append dialog's type picker.
+const FIELD_TYPE_HELP: Record<CustomFieldType, string> = {
+  enum: "Text from a small set of options (up to 100) that can be filtered by picking. Examples: Member; Lapsed; Prospect.",
+  enum_multi:
+    "Similar to Category but a person can have multiple values, comma-separated. Examples: Housing; Housing, Transit.",
+  number: "Continuous-valued numbers that can be filtered by range. Examples: 12; 83; 79.",
+  date: "Dates in YYYY-MM-DD format that can be filtered by range. Examples: 2026-03-14; 2026-01-10.",
+  text: "Free text that can be filtered by searching for any part of it. Examples: 'Prefers evening visits'; 'Needs recontact'.",
+  text_multi:
+    "Identifiers that can be filtered by matching to one or more typed values. Examples: 74-013; 12-016.",
+};
+
 // Types whose full option set lives on the registry row.
 const isPickerType = (t: CustomFieldType) => t === "enum" || t === "enum_multi";
 
@@ -1197,10 +1209,8 @@ function AppendDialog({
     mutationFn: async () => {
       if (!file || !fileInfo) return;
       const params = new URLSearchParams({ datasetId, fieldType, filename: file.name });
-      if (fileInfo.columns === 1) {
-        params.set("label", label.trim());
-        params.set("value", value.trim());
-      }
+      if (label.trim()) params.set("label", label.trim());
+      if (fileInfo.columns === 1) params.set("value", value.trim());
       const res = await fetch(`/api/web/${orgSlug}/custom-field-append?${params.toString()}`, {
         method: "POST",
         body: file,
@@ -1336,16 +1346,32 @@ function AppendDialog({
                   );
                 })}
               </div>
+              <span className="text-sm text-muted-foreground italic">
+                {FIELD_TYPE_HELP[fieldType]}
+              </span>
             </div>
 
             {fileInfo?.columns === 2 ? (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium">Field name</label>
-                <Input value={fileInfo.valueHeader ?? ""} disabled readOnly />
-                <span className="text-sm text-muted-foreground italic">
-                  Fixed from the file's value column, you can rename later
-                </span>
-              </div>
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium">Source name</label>
+                  <span className="w-fit max-w-full truncate rounded-md bg-muted px-2.5 py-1 text-sm">
+                    {fileInfo.valueHeader}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium">Field name</label>
+                  <Input
+                    value={label}
+                    onChange={(e) => {
+                      resetFeedback();
+                      setLabel(e.target.value);
+                    }}
+                    placeholder={fileInfo.valueHeader ?? ""}
+                    disabled={pending}
+                  />
+                </div>
+              </>
             ) : null}
             {fileInfo?.columns === 1 ? (
               <>

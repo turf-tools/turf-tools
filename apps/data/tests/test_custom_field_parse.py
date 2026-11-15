@@ -32,6 +32,12 @@ def test_two_column_derives_label_from_header(conn, tmp_path):
     assert _values(conn) == {"1": "0.5", "2": "0.9"}
 
 
+def test_two_column_label_override(conn, tmp_path):
+    src = _csv(tmp_path, "id,support_score\n1,0.5\n")
+    label, _, _ = parse_upload(conn, src, "number", " Support ", None)
+    assert label == "Support"
+
+
 def test_one_column_uses_dialog_label_and_value(conn, tmp_path):
     src = _csv(tmp_path, "id\n1\n2\n2\n")
     label, rows, skipped = parse_upload(conn, src, "enum", "employer", "amazon")

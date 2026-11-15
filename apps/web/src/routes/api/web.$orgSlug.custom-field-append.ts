@@ -55,7 +55,8 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-append")({
 
         const datasetId = url.searchParams.get("datasetId");
         const fieldType = url.searchParams.get("fieldType") as CustomFieldType | null;
-        // Sent only for one-column files (name + constant value).
+        // Label: required for one-column files, an optional rename for
+        // two-column ones. Value: one-column files only (the constant).
         const label = url.searchParams.get("label")?.trim() || null;
         const value = url.searchParams.get("value")?.trim() || null;
         const filename = url.searchParams.get("filename") || null;
