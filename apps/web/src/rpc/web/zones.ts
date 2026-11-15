@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, desc, eq, type Db } from "@turf-tools/db";
+import { and, asc, desc, eq, ne, type Db } from "@turf-tools/db";
 import { zoneGroups, zones } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webMut, webPub } from "../context";
@@ -14,6 +14,27 @@ async function touchZoneGroup(db: Db, zoneGroupId: string) {
     .update(zoneGroups)
     .set({ updatedAt: new Date() })
     .where(eq(zoneGroups.zoneGroupId, zoneGroupId));
+}
+
+// Keys are exclusive within a group: strip `keys` from every zone but
+// `zoneId`. The group touch runs first so its row lock serializes
+// concurrent key writes to the same group.
+async function claimKeys(db: Db, zoneGroupId: string, zoneId: string, keys: string[]) {
+  await touchZoneGroup(db, zoneGroupId);
+  if (keys.length === 0) return;
+  const claimed = new Set(keys);
+  const siblings = await db
+    .select({ zoneId: zones.zoneId, keys: zones.keys })
+    .from(zones)
+    .where(and(eq(zones.zoneGroupId, zoneGroupId), ne(zones.zoneId, zoneId)));
+  for (const s of siblings) {
+    const kept = s.keys.filter((k) => !claimed.has(k));
+    if (kept.length === s.keys.length) continue;
+    await db
+      .update(zones)
+      .set({ keys: kept, updatedAt: new Date() })
+      .where(eq(zones.zoneId, s.zoneId));
+  }
 }
 
 const zoneSelect = {
@@ -61,8 +82,9 @@ export const getById = pub
   });
 
 // Replace a zone's keys array. Used by the zone editor when the user
-// clicks polygons on the map. Validates org scope through the parent
-// group; throws if the zone doesn't belong to the user's org.
+// clicks polygons on the map; keys it claims leave their sibling zones.
+// Validates org scope through the parent group; throws if the zone
+// doesn't belong to the user's org.
 export const updateKeys = mut
   .input(
     z.object({
@@ -82,11 +104,13 @@ export const updateKeys = mut
     if (owned.length === 0) {
       throw new ORPCError("NOT_FOUND", { message: "Zone not found" });
     }
-    await context.db
-      .update(zones)
-      .set({ keys: input.keys, updatedAt: new Date() })
-      .where(eq(zones.zoneId, input.zoneId));
-    await touchZoneGroup(context.db, owned[0]!.zoneGroupId);
+    await context.db.transaction(async (tx) => {
+      await claimKeys(tx, owned[0]!.zoneGroupId, input.zoneId, input.keys);
+      await tx
+        .update(zones)
+        .set({ keys: input.keys, updatedAt: new Date() })
+        .where(eq(zones.zoneId, input.zoneId));
+    });
     return { ok: true as const };
   });
 
@@ -136,25 +160,28 @@ export const create = mut
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Zone group not found" });
 
-    // New zones append: one past the group's current max order.
-    const last = await context.db
-      .select({ order: zones.order })
-      .from(zones)
-      .where(eq(zones.zoneGroupId, input.zoneGroupId))
-      .orderBy(desc(zones.order))
-      .limit(1);
-    const rows = await context.db
-      .insert(zones)
-      .values({
-        zoneGroupId: input.zoneGroupId,
-        name: input.name,
-        keys: input.keys ?? [],
-        order: (last[0]?.order ?? -1) + 1,
-        createdBy: context.user.id,
-      })
-      .returning();
-    await touchZoneGroup(context.db, input.zoneGroupId);
-    return rows[0]!;
+    return context.db.transaction(async (tx) => {
+      // New zones append: one past the group's current max order.
+      const last = await tx
+        .select({ order: zones.order })
+        .from(zones)
+        .where(eq(zones.zoneGroupId, input.zoneGroupId))
+        .orderBy(desc(zones.order))
+        .limit(1);
+      const rows = await tx
+        .insert(zones)
+        .values({
+          zoneGroupId: input.zoneGroupId,
+          name: input.name,
+          keys: input.keys ?? [],
+          order: (last[0]?.order ?? -1) + 1,
+          createdBy: context.user.id,
+        })
+        .returning();
+      const created = rows[0]!;
+      await claimKeys(tx, input.zoneGroupId, created.zoneId, created.keys);
+      return created;
+    });
   });
 
 // Persist a full ordering for a group's zones: each zone's `order` becomes

@@ -123,8 +123,16 @@ function ZoneGroupEditor() {
     onMutate: async ({ zoneId, keys }) => {
       await queryClient.cancelQueries({ queryKey: ["zones", zoneGroupId] });
       const previous = queryClient.getQueryData<typeof zones>(["zones", zoneGroupId]);
+      // Mirrors the server: claimed keys leave their sibling zones.
+      const claimed = new Set(keys);
       queryClient.setQueryData<typeof zones>(["zones", zoneGroupId], (old) =>
-        old?.map((z) => (z.zoneId === zoneId ? { ...z, keys } : z)),
+        old?.map((z) =>
+          z.zoneId === zoneId
+            ? { ...z, keys }
+            : z.keys.some((k) => claimed.has(k))
+              ? { ...z, keys: z.keys.filter((k) => !claimed.has(k)) }
+              : z,
+        ),
       );
       return { previous };
     },
@@ -374,10 +382,17 @@ function ZoneGroupEditor() {
   const handlePolygonClick = (key: string, opts: { shiftKey: boolean }) => {
     if (!zones) return;
     const owner = zones.find((z) => z.keys.includes(key));
-    // Shift-click is a click from the unselected state: a new zone from an
-    // empty key, focus from a filled one.
-    const active =
-      activeZoneId && !opts.shiftKey ? zones.find((z) => z.zoneId === activeZoneId) : undefined;
+    const selected = activeZoneId ? zones.find((z) => z.zoneId === activeZoneId) : undefined;
+
+    // Shift-click on another zone's key moves it into the selected zone.
+    if (opts.shiftKey && owner && selected && owner.zoneId !== selected.zoneId) {
+      updateKeysMutation.mutate({ zoneId: selected.zoneId, keys: [...selected.keys, key] });
+      return;
+    }
+
+    // Otherwise shift-click is a click from the unselected state: a new
+    // zone from an empty key, focus from a filled one.
+    const active = opts.shiftKey ? undefined : selected;
 
     // A key in the active zone toggles out.
     if (owner && active && owner.zoneId === active.zoneId) {
