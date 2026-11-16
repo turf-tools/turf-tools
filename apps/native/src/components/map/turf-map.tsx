@@ -87,6 +87,11 @@ export function TurfMap({
 
   const initialBounds = useMemo(() => boundsForBuildings(turf.buildings), [turf.buildings]);
   const mapPadding = { top: 60, bottom: 60 + bottomInset, left: 40, right: 40 };
+  // The padding the camera is currently using. The iOS dot projects through
+  // the camera, so it needs the padding in force there, not the padding the
+  // current layout would fit: the sheet changes the layout without moving
+  // the camera.
+  const [appliedPadding, setAppliedPadding] = useState(mapPadding);
   const cameraRef = useRef<CameraRef>(null);
   const shapeSourceRef = useRef<GeoJSONSourceRef>(null);
 
@@ -138,6 +143,14 @@ export function TurfMap({
   // animate: without one the camera jumps regardless of duration.
   const stopNonceRef = useRef(0);
   const setCameraStop = useCallback((stop: CameraStop) => {
+    if (stop.padding) {
+      setAppliedPadding({
+        top: stop.padding.top ?? 0,
+        right: stop.padding.right ?? 0,
+        bottom: stop.padding.bottom ?? 0,
+        left: stop.padding.left ?? 0,
+      });
+    }
     stopNonceRef.current = 1 - stopNonceRef.current;
     void cameraRef.current?.setStop({
       ...stop,
@@ -145,9 +158,12 @@ export function TurfMap({
     });
   }, []);
 
+  // Both stops repeat the padding in force so the camera keeps it: a stop
+  // without padding resets the map's edge insets, which would leave the iOS
+  // dot projecting through stale padding.
   const handleResetNorth = useCallback(() => {
-    setCameraStop({ bearing: 0, duration: 250, easing: "ease" });
-  }, [setCameraStop]);
+    setCameraStop({ bearing: 0, padding: appliedPadding, duration: 250, easing: "ease" });
+  }, [appliedPadding, setCameraStop]);
 
   // Center on the user at a working zoom. Cached fix first so the common
   // case is instant; a fresh fix only when there's none. Any failure —
@@ -161,13 +177,14 @@ export function TurfMap({
       setCameraStop({
         center: [pos.coords.longitude, pos.coords.latitude],
         zoom: Math.max(actualZoomRef.current, 16),
+        padding: appliedPadding,
         duration: 400,
         easing: "ease",
       });
     } catch {
       // No location, no movement — silent by design.
     }
-  }, [setCameraStop]);
+  }, [appliedPadding, setCameraStop]);
 
   const handlePress = useCallback(
     async (event: NativeSyntheticEvent<{ features: GeoJSON.Feature[] }>) => {
@@ -424,7 +441,7 @@ export function TurfMap({
           mapZoom={mapZoom}
           mapViewport={mapViewport}
           cameraReady={cameraReady}
-          padding={mapPadding}
+          padding={appliedPadding}
         />
       )}
       {!mapFullyRendered && (
