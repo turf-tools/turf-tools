@@ -1,6 +1,6 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useCallback, useMemo, useRef, useState } from "react";
-import MapGL, { Layer, Source, type MapRef } from "react-map-gl/maplibre";
+import MapGL, { Layer, Source, type MapLayerMouseEvent, type MapRef } from "react-map-gl/maplibre";
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
@@ -85,41 +85,37 @@ export function TurfMap({
     );
   }, []);
 
-  const handleLoad = useCallback(() => {
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-    map.on("click", (event) => {
-      // Layers are reapplied on style swaps, so only query ones present.
-      const layers = [CLUSTERS_LAYER_ID, BUILDINGS_PINS_LAYER_ID].filter((id) => map.getLayer(id));
-      if (layers.length === 0) return;
-      const features = map.queryRenderedFeatures(event.point, { layers });
-      const feature = features[0];
-      if (!feature) return;
+  const handleClick = useCallback((event: MapLayerMouseEvent) => {
+    const map = event.target;
+    // Layers are reapplied on style swaps, so only query ones present.
+    const layers = [CLUSTERS_LAYER_ID, BUILDINGS_PINS_LAYER_ID].filter((id) => map.getLayer(id));
+    if (layers.length === 0) return;
+    const feature = map.queryRenderedFeatures(event.point, { layers })[0];
+    if (!feature) return;
 
-      if (feature.properties?.cluster) {
-        const source = map.getSource(BUILDINGS_SOURCE_ID) as
-          | { getClusterExpansionZoom?: (id: number) => Promise<number> }
-          | undefined;
-        const clusterId = feature.properties.cluster_id as number;
-        const center = (feature.geometry as GeoJSON.Point).coordinates as [number, number];
-        void source
-          ?.getClusterExpansionZoom?.(clusterId)
-          .then((zoom) => {
-            map.easeTo({
-              center,
-              zoom: Math.max(zoom + 0.5, map.getZoom() + 1),
-              duration: 350,
-            });
-          })
-          .catch(() => {
-            map.easeTo({ center, zoom: map.getZoom() + 2, duration: 350 });
+    if (feature.properties?.cluster) {
+      const source = map.getSource(BUILDINGS_SOURCE_ID) as
+        | { getClusterExpansionZoom?: (id: number) => Promise<number> }
+        | undefined;
+      const clusterId = feature.properties.cluster_id as number;
+      const center = (feature.geometry as GeoJSON.Point).coordinates as [number, number];
+      void source
+        ?.getClusterExpansionZoom?.(clusterId)
+        .then((zoom) => {
+          map.easeTo({
+            center,
+            zoom: Math.max(zoom + 0.5, map.getZoom() + 1),
+            duration: 350,
           });
-        return;
-      }
+        })
+        .catch(() => {
+          map.easeTo({ center, zoom: map.getZoom() + 2, duration: 350 });
+        });
+      return;
+    }
 
-      const id = feature.properties?.buildingId;
-      if (typeof id === "string") pressRef.current?.(id);
-    });
+    const id = feature.properties?.buildingId;
+    if (typeof id === "string") pressRef.current?.(id);
   }, []);
 
   if (!isMaptilerKeyConfigured()) {
@@ -231,7 +227,7 @@ export function TurfMap({
     <View style={styles.map}>
       <MapGL
         ref={mapRef}
-        onLoad={handleLoad}
+        onClick={handleClick}
         onMove={handleMove}
         initialViewState={{
           bounds: [
