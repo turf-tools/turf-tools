@@ -30,6 +30,7 @@ const CLUSTERS_LABEL_LAYER_ID = "turf-building-clusters-label";
 
 const CLUSTER_RADIUS = 20;
 const CLUSTER_MAX_ZOOM = 18;
+const TILE_MAX_ZOOM = 19;
 
 export function TurfMap({
   turf,
@@ -249,6 +250,7 @@ export function TurfMap({
           cluster
           clusterRadius={CLUSTER_RADIUS}
           clusterMaxZoom={CLUSTER_MAX_ZOOM}
+          maxzoom={TILE_MAX_ZOOM}
           clusterProperties={{
             doorCount: [
               ["+", ["accumulated"], ["get", "doorCount"]],
