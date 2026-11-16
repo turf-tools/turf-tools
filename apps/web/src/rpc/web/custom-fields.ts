@@ -80,7 +80,7 @@ export const rename = mut
   });
 
 // Soft-hide a field from the card / picker — display only, values untouched.
-// Re-appending the label revives it.
+// A merge or replace into it revives it.
 export const archive = mut
   .input(z.object({ customFieldId: z.string().uuid() }))
   .handler(async ({ context, input }) => {

@@ -368,7 +368,8 @@ async def custom_fields_append(
     field_type: str = Query(alias="fieldType"),
     upload_id: str = Query(alias="uploadId"),
     label: str | None = Query(default=None),
-    value: str | None = Query(default=None),
+    custom_field_id: str | None = Query(default=None, alias="customFieldId"),
+    replace: bool = Query(default=False),
 ):
     """Synchronous append: raw file body + config in query params → parse →
     registry upsert → lake write → coverage/enum sync → stats out, or 400
@@ -390,7 +391,8 @@ async def custom_fields_append(
                 source=source,
                 field_type=field_type,
                 label=label,
-                value=value,
+                custom_field_id=custom_field_id,
+                replace=replace,
             )
         finally:
             conn.close()

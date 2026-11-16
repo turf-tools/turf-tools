@@ -28,6 +28,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
@@ -56,6 +58,7 @@ import {
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { importersQuery } from "~/lib/queries/importers";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
 import { RenameDatasetDialog, SourceInputs, useDatasetRename } from "./route";
@@ -342,6 +345,7 @@ function DatasetEditor({
         onOpenChange={setAppendOpen}
         orgSlug={orgSlug}
         datasetId={dataset.datasetId}
+        fields={fields}
         onAppended={invalidateFields}
       />
       <FieldDialog
@@ -814,7 +818,7 @@ const EXAMPLE_LIMIT = 10;
 
 // Rename / archive / clear a custom field. Rename is
 // safe by construction (criteria and lake values are id-keyed); archive is
-// display-only and re-appending the label revives it; clear deletes values
+// display-only and a merge or replace into it revives it; clear deletes values
 // for everyone (the field stays, at zero coverage).
 function FieldDialog({
   open,
@@ -909,7 +913,7 @@ function FieldDialog({
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium">Type</label>
               {/* Static — retyping a field would invalidate already-typed
-                  values; the honest path is clear + re-append. */}
+                  values; a different type needs a new field. */}
               <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm">
                 {field ? FIELD_TYPE_META[field.fieldType] : ""}
               </span>
@@ -1126,10 +1130,9 @@ async function inspectFile(orgSlug: string, file: File): Promise<string[]> {
       slice: (start: number, end?: number) => file.slice(start, end).arrayBuffer(),
     });
     const columns = parquetSchema(metadata).children.map((c) => c.element.name);
-    if (columns.length === 0) throw new Error("Uploaded file has no columns.");
-    if (columns.length > 2)
+    if (columns.length !== 2)
       throw new Error(
-        `File has ${columns.length} columns, must have one (IDs only) or two (IDs and values).`,
+        `File has ${columns.length} column${columns.length === 1 ? "" : "s"}, must have two (IDs and values).`,
       );
     return columns;
   }
@@ -1154,7 +1157,64 @@ type AppendStats = {
   matchedCount: number | null;
 };
 
-// Append a file of (id, value) rows as a custom field. Ingest is synchronous —
+// Pill-button single choice, shared by the Append dialog's rows.
+function ChoiceButtons<T extends string>({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: ReadonlyArray<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          type="button"
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          disabled={disabled}
+          className={cn(
+            "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed enabled:active:translate-y-px",
+            value === o.value ? "bg-foreground/10" : "bg-background enabled:hover:bg-muted",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const FIELD_TYPE_OPTIONS = (Object.keys(FIELD_TYPE_META) as CustomFieldType[]).map((t) => ({
+  value: t,
+  label: FIELD_TYPE_META[t],
+}));
+
+type AppendMode = "new" | "merge" | "replace";
+
+const APPEND_MODE_OPTIONS = [
+  { value: "new", label: "New" },
+  { value: "merge", label: "Merge" },
+  { value: "replace", label: "Replace" },
+] as const;
+
+const APPEND_MODE_ACTION: Record<AppendMode, string> = {
+  new: "Append",
+  merge: "Merge",
+  replace: "Replace",
+};
+
+const APPEND_MODE_HELP: Record<Exclude<AppendMode, "new">, string> = {
+  merge: "Updated values assigned for people in the uploaded file but existing values are kept.",
+  replace: "All values set by the ones in the uploaded file and other existing values are removed.",
+};
+
+// Append a file of (id, value) rows as a custom field — a new one, or merged
+// into / replacing an existing field's values. Ingest is synchronous —
 // the submit request parses, writes, and returns match stats (or the parse
 // error) directly; there is no job or polling.
 function AppendDialog({
@@ -1162,55 +1222,83 @@ function AppendDialog({
   onOpenChange,
   orgSlug,
   datasetId,
+  fields,
   onAppended,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orgSlug: string;
   datasetId: string;
+  fields: FieldRow[];
   onAppended: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   // From pick-time inspection (parquet footer client-side, CSV head via the
-  // server) — the file drives which inputs render.
-  const [fileInfo, setFileInfo] = useState<{
-    columns: number;
-    valueHeader: string | null;
-  } | null>(null);
+  // server); the rest of the form renders once it lands.
+  const [fileInfo, setFileInfo] = useState<{ valueHeader: string } | null>(null);
   // Gates submit while pick-time inspection is in flight; deliberately no
   // loading UI — inspection is near-instant (parquet footer / 64KB CSV
   // head), and every indicator tried here (label swap, button spinner)
   // read as flicker in the common fast case.
   const [inspecting, setInspecting] = useState(false);
+  // Latest pick wins: a slower inspection of an earlier pick is dropped.
+  const pickRef = useRef(0);
+  const [mode, setMode] = useState<AppendMode>("new");
+  const [targetId, setTargetId] = useState<string | null>(null);
   const [fieldType, setFieldType] = useState<CustomFieldType>("enum");
   const [label, setLabel] = useState("");
-  const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [showDuplicate, setShowDuplicate] = useState(false);
   const [stats, setStats] = useState<AppendStats | null>(null);
+  const targetDropdown = useDeferredRadioDropdown({ onCommit: (v) => setTargetId(v || null) });
 
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
+      pickRef.current++;
       setFile(null);
       setFileInfo(null);
+      setInspecting(false);
+      setMode("new");
+      setTargetId(null);
       setFieldType("enum");
       setLabel("");
-      setValue("");
       setError(null);
+      setShowDuplicate(false);
       setStats(null);
     }
   }
 
-  const resetFeedback = () => setError(null);
+  const resetFeedback = () => {
+    setError(null);
+    setShowDuplicate(false);
+  };
+
+  const target = mode === "new" ? undefined : fields.find((f) => f.customFieldId === targetId);
+  // An existing field keeps its type; the picker only chooses for new fields.
+  const effectiveType = mode === "new" ? fieldType : (target?.fieldType ?? null);
+  const newName = label.trim() || (fileInfo?.valueHeader ?? "");
+  // Mirrors the server's case-insensitive taken-name check, which stays
+  // authoritative. Surfaced on submit, like the dataset import dialog.
+  const duplicate =
+    mode === "new" &&
+    newName.length > 0 &&
+    fields.some((f) => f.label.trim().toLowerCase() === newName.toLowerCase());
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!file || !fileInfo) return;
-      const params = new URLSearchParams({ datasetId, fieldType, filename: file.name });
-      if (label.trim()) params.set("label", label.trim());
-      if (fileInfo.columns === 1) params.set("value", value.trim());
+      if (!file || !fileInfo || !effectiveType) return;
+      const params = new URLSearchParams({
+        datasetId,
+        fieldType: effectiveType,
+        filename: file.name,
+      });
+      if (target) {
+        params.set("customFieldId", target.customFieldId);
+        if (mode === "replace") params.set("replace", "true");
+      } else if (label.trim()) params.set("label", label.trim());
       const res = await fetch(`/api/web/${orgSlug}/custom-field-append?${params.toString()}`, {
         method: "POST",
         body: file,
@@ -1228,24 +1316,24 @@ function AppendDialog({
 
   const pending = submit.isPending;
   const valid =
-    !inspecting &&
-    file != null &&
-    fileInfo != null &&
-    (fileInfo.columns === 2 || (label.trim().length > 0 && value.trim().length > 0));
+    !inspecting && file != null && fileInfo != null && (mode === "new" || target != null);
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending && !next ? null : onOpenChange(next))}>
       <DialogContent>
         <DialogTitle>Append</DialogTitle>
-        <DialogDescription>
-          Add a column to this dataset from a file. Format should be one column (IDs) or two columns
-          (IDs and values) and a header is required. Appended columns will apply to all dataset
-          versions with matching IDs.
-        </DialogDescription>
+        {stats ? null : (
+          <DialogDescription>
+            Add a column to this dataset from a file. Format should be two columns (IDs and values)
+            and a header is required. Appended columns will apply to all dataset versions with
+            matching IDs.
+          </DialogDescription>
+        )}
         {stats ? (
           <div className="flex flex-col gap-4">
             <Callout tone="success">
-              Appended column "<span className="font-medium">{stats.fields.join(", ")}</span>" with{" "}
+              {mode === "merge" ? "Merged" : mode === "replace" ? "Replaced" : "Appended"} column "
+              <span className="font-medium">{stats.fields.join(", ")}</span>" with{" "}
               <span className="font-medium">{stats.rowCount.toLocaleString()}</span> rows
               {stats.matchedCount != null ? (
                 <>
@@ -1276,6 +1364,10 @@ function AppendDialog({
             onSubmit={(e) => {
               e.preventDefault();
               if (!valid || pending) return;
+              if (duplicate) {
+                setShowDuplicate(true);
+                return;
+              }
               setError(null);
               submit.mutate();
             }}
@@ -1291,22 +1383,30 @@ function AppendDialog({
                 onChange={(e) => {
                   resetFeedback();
                   const next = e.target.files?.[0] ?? null;
-                  setFile(next);
-                  setFileInfo(null);
-                  if (!next) return;
+                  const pick = ++pickRef.current;
+                  if (!next) {
+                    setFile(null);
+                    setFileInfo(null);
+                    return;
+                  }
+                  // File and its inspection land in one render, so the name
+                  // and the fields it drives appear together.
                   setInspecting(true);
                   inspectFile(orgSlug, next)
-                    .then((columns) =>
-                      setFileInfo({
-                        columns: columns.length,
-                        valueHeader: columns[1]?.trim() ?? null,
-                      }),
-                    )
+                    .then((columns) => {
+                      if (pick !== pickRef.current) return;
+                      setFile(next);
+                      setFileInfo({ valueHeader: columns[1]!.trim() });
+                    })
                     .catch((err: Error) => {
+                      if (pick !== pickRef.current) return;
                       setError(err.message);
                       setFile(null);
+                      setFileInfo(null);
                     })
-                    .finally(() => setInspecting(false));
+                    .finally(() => {
+                      if (pick === pickRef.current) setInspecting(false);
+                    });
                 }}
               />
               <Button
@@ -1322,36 +1422,7 @@ function AppendDialog({
               </Button>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Type</label>
-              <div className="flex flex-wrap gap-1.5">
-                {(Object.keys(FIELD_TYPE_META) as CustomFieldType[]).map((t) => {
-                  const sel = fieldType === t;
-                  return (
-                    <button
-                      type="button"
-                      key={t}
-                      onClick={() => {
-                        resetFeedback();
-                        setFieldType(t);
-                      }}
-                      disabled={pending}
-                      className={cn(
-                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                        sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                      )}
-                    >
-                      {FIELD_TYPE_META[t]}
-                    </button>
-                  );
-                })}
-              </div>
-              <span className="text-sm text-muted-foreground italic">
-                {FIELD_TYPE_HELP[fieldType]}
-              </span>
-            </div>
-
-            {fileInfo?.columns === 2 ? (
+            {fileInfo ? (
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium">Source name</label>
@@ -1361,56 +1432,100 @@ function AppendDialog({
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium">Field name</label>
-                  <Input
-                    value={label}
-                    onChange={(e) => {
+                  <ChoiceButtons
+                    options={APPEND_MODE_OPTIONS}
+                    value={mode}
+                    onChange={(m) => {
                       resetFeedback();
-                      setLabel(e.target.value);
+                      setMode(m);
                     }}
-                    placeholder={fileInfo.valueHeader ?? ""}
                     disabled={pending}
                   />
+                  {mode === "new" ? (
+                    <Input
+                      value={label}
+                      onChange={(e) => {
+                        resetFeedback();
+                        setLabel(e.target.value);
+                      }}
+                      placeholder={fileInfo.valueHeader}
+                      disabled={pending}
+                    />
+                  ) : (
+                    <DropdownMenu {...targetDropdown.menu}>
+                      <DropdownMenuTrigger
+                        disabled={pending}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
+                          "enabled:hover:bg-muted disabled:cursor-not-allowed",
+                        )}
+                      >
+                        <span className="truncate">
+                          {target
+                            ? `${target.label}${target.isArchived ? " (Archived)" : ""}`
+                            : "Choose a field..."}
+                        </span>
+                        <Icon name="chevron-down" className="size-3.5 shrink-0" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="min-w-[var(--anchor-width)]">
+                        <DropdownMenuRadioGroup {...targetDropdown.radio} value={targetId ?? ""}>
+                          {fields.map((f) => (
+                            <DropdownMenuRadioItem key={f.customFieldId} value={f.customFieldId}>
+                              {f.label}
+                              {f.isArchived ? " (Archived)" : null}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  {mode !== "new" ? (
+                    <span className="text-sm text-muted-foreground italic">
+                      {target ? (
+                        <>
+                          Existing type is{" "}
+                          <span className="font-bold">{FIELD_TYPE_META[target.fieldType]}</span>
+                          .{" "}
+                        </>
+                      ) : null}
+                      {APPEND_MODE_HELP[mode]}
+                    </span>
+                  ) : null}
+                  {showDuplicate ? (
+                    <Callout tone="pending">
+                      You already have a field named “{newName}”. You can “Merge” or “Replace” to
+                      update the existing field.
+                    </Callout>
+                  ) : null}
                 </div>
               </>
             ) : null}
-            {fileInfo?.columns === 1 ? (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Field name</label>
-                  <Input
-                    value={label}
-                    onChange={(e) => {
-                      resetFeedback();
-                      setLabel(e.target.value);
-                    }}
-                    placeholder="Required"
-                    disabled={pending}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Value</label>
-                  <Input
-                    value={value}
-                    onChange={(e) => {
-                      resetFeedback();
-                      setValue(e.target.value);
-                    }}
-                    placeholder="Required"
-                    disabled={pending}
-                  />
-                  <span className="text-sm text-muted-foreground italic">
-                    Everyone in the list gets this value
-                  </span>
-                </div>
-              </>
+
+            {fileInfo && mode === "new" ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">Type</label>
+                <ChoiceButtons
+                  options={FIELD_TYPE_OPTIONS}
+                  value={fieldType}
+                  onChange={(t) => {
+                    resetFeedback();
+                    setFieldType(t);
+                  }}
+                  disabled={pending}
+                />
+                <span className="text-sm text-muted-foreground italic">
+                  {FIELD_TYPE_HELP[fieldType]}
+                </span>
+              </div>
             ) : null}
+
             {error ? <DialogError error={error} /> : null}
             <div className="mt-2 flex justify-end gap-2">
               <DialogClose render={<Button variant="outline" type="button" disabled={pending} />}>
                 Cancel
               </DialogClose>
               <Button type="submit" disabled={!valid} loading={pending}>
-                Append
+                {APPEND_MODE_ACTION[mode]}
               </Button>
             </div>
           </form>
