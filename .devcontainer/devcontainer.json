@@ -1,0 +1,26 @@
+{
+  "name": "Turf Tools",
+  "dockerComposeFile": ["../docker-compose.dev.yml", "docker-compose.yml"],
+  "service": "app",
+  "workspaceFolder": "/workspaces/turf-tools",
+  "shutdownAction": "stopCompose",
+  "remoteUser": "node",
+  "forwardPorts": [3000, 7280, 8000, 8081],
+  "portsAttributes": {
+    "3000": { "label": "web" },
+    "7280": { "label": "quickwit" },
+    "8000": { "label": "data" },
+    "8081": { "label": "native (expo web)" }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "charliermarsh.ruff",
+        "ms-python.python"
+      ]
+    }
+  }
+}
