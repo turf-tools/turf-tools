@@ -27,8 +27,8 @@ function normalizeEmail(input: string): string {
 const cli = meow(
   `
   Usage
-    $ pnpm prod:add-user [<slug> <name> <email>] [--role <role>]
-    $ pnpm prod:add-user --slug <slug> --name <name> --email <email> [--role <role>]
+    $ pnpm org:add-user [<slug> <name> <email>] [--role <role>]
+    $ pnpm org:add-user --slug <slug> --name <name> --email <email> [--role <role>]
 
   Options
     --slug    Org slug to add the user to
@@ -37,8 +37,8 @@ const cli = meow(
     --role    One of ${ROLE_NAMES.join(", ")} (default: owner)
 
   Examples
-    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com
-    $ pnpm prod:add-user myorg 'Jane Doe' jane@example.com --role turf_viewer
+    $ pnpm org:add-user myorg 'Jane Doe' jane@example.com
+    $ pnpm org:add-user myorg 'Jane Doe' jane@example.com --role turf_viewer
 `,
   {
     importMeta: import.meta,
