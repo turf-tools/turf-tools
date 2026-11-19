@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.dsl.elections import ELECTIONS_TABLE
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, heal_stale_attach
 from src.importers.base import Manifest
 from src.models import quote_ident
@@ -84,6 +85,46 @@ def drop_schema(conn: "duckdb.DuckDBPyConnection", schema: str) -> None:
     """Drop `schema` and every table in it. Use after a pipeline schema
     change forces a rebuild from scratch."""
     conn.execute(f"DROP SCHEMA IF EXISTS {schema_fqn(schema)} CASCADE")
+
+
+def retained_tables(manifest: Manifest) -> frozenset[str]:
+    """The tables a version keeps once imported: the queryable tables, one
+    boundary table per key group (zone perimeters and boundary tiles read them),
+    and two small per-version records, the election registry and the geocoding
+    summary."""
+    key_groups = {fd.key_group for section in manifest.fields for fd in section if fd.key_group is not None}
+    return QUERYABLE_TABLES | key_groups | {ELECTIONS_TABLE, "geocoding_summary"}
+
+
+def drop_intermediates(conn: "duckdb.DuckDBPyConnection", schema: str, keep: frozenset[str]) -> list[str]:
+    """Drop every table in `schema` outside `keep`, in one transaction. Returns
+    the dropped names."""
+    names = conn.execute(
+        "SELECT table_name FROM duckdb_tables() WHERE database_name = ? AND schema_name = ?",
+        [PERSON_CATALOG, schema],
+    ).fetchall()
+    dropped = sorted(name for (name,) in names if name not in keep)
+    if not dropped:
+        return []
+    conn.execute("BEGIN")
+    try:
+        for name in dropped:
+            conn.execute(f"DROP TABLE {table_fqn(schema, name)}")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return dropped
+
+
+def reclaim_dropped_files(conn: "duckdb.DuckDBPyConnection") -> None:
+    """Delete the data files of dropped and replaced tables, which DuckLake keeps
+    until the snapshots referencing them expire. Nothing reads past snapshots,
+    so all of them expire; files are deleted an hour after they're scheduled, so
+    a query still scanning one finishes first. Files this call schedules are
+    deleted by the next call."""
+    conn.execute(f"CALL ducklake_expire_snapshots('{PERSON_CATALOG}', older_than => now())")
+    conn.execute(f"CALL ducklake_cleanup_old_files('{PERSON_CATALOG}', older_than => now() - INTERVAL 1 HOUR)")
 
 
 def resolve(sql: str, schema: str) -> str:

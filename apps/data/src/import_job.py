@@ -12,6 +12,7 @@ user promotes it via "Make active".
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 
 from hamilton import driver
@@ -28,11 +29,22 @@ from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContex
 from src.quickwit import persons_index_id, recreate_index
 from src.redact import redact_secrets
 from src.settings import get_settings
-from src.tables import dataset_version_schema, drop_schema, ensure_schema, finalize_version
+from src.tables import (
+    dataset_version_schema,
+    drop_intermediates,
+    drop_schema,
+    ensure_schema,
+    finalize_version,
+    reclaim_dropped_files,
+    retained_tables,
+)
 
 if TYPE_CHECKING:
     import duckdb
+    from src.importers.base import Manifest
     from src.settings import Settings
+
+logger = logging.getLogger("uvicorn")
 
 
 class ImportDatasetVersionPayload(BaseModel):
@@ -236,9 +248,25 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
             derived,
             activate_for_organization_id=payload.organization_id,
         )
+        if not settings.keep_import_intermediates:
+            _prune_intermediates(conn, schema, manifest, log)
         return {"row_count": derived["rowCount"], "schema": schema}
     finally:
         conn.close()
+
+
+def _prune_intermediates(conn: duckdb.DuckDBPyConnection, schema: str, manifest: Manifest, log: JobLog) -> None:
+    """Drop the version's pipeline tables and reclaim disk. The version is already
+    ready, so an error here only leaves extra tables behind: log it and keep the
+    import successful."""
+    try:
+        dropped = drop_intermediates(conn, schema, retained_tables(manifest))
+        reclaim_dropped_files(conn)
+    except Exception:
+        logger.exception("Pruning intermediates in %s failed", schema)
+        log.write("Couldn't remove the import's intermediate tables", level="warning")
+        return
+    log.write(f"Removed {len(dropped)} intermediate tables")
 
 
 def _resolve_version(

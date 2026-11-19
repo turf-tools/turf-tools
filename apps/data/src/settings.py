@@ -20,6 +20,12 @@ def _default_ducklake_metadata_url() -> str | None:
     return _default_database_url()
 
 
+def _default_keep_import_intermediates() -> bool:
+    """Dev keeps every pipeline table for debugging; deployments keep only what
+    the app reads after import."""
+    return os.environ.get("NODE_ENV") != "production"
+
+
 class StorageConfig(BaseSettings):
     """S3-compatible object storage for the deployment.
 
@@ -68,6 +74,10 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     ducklake_prefix: str = Field(default="ducklake", description="Key prefix for the person lake.")
     ducklake_geo_prefix: str = Field(default="ducklake-geo", description="Key prefix for the geo lake.")
+    keep_import_intermediates: bool = Field(
+        default_factory=_default_keep_import_intermediates,
+        description="Keep a version's pipeline tables after import instead of dropping them.",
+    )
 
     # Reference-data vintages. Each import fetches the counties and states its
     # own addresses need (`tiger.geo_extent`).
