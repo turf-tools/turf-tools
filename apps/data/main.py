@@ -54,7 +54,7 @@ from src.duckdb import (
 from src.import_job import fail_interrupted_versions, import_dataset_version
 from src.importers.registry import importer_specs
 from src.job_runner import JobManager
-from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL
+from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL, export_select_list
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
 from src.quickwit import search as quickwit_search
@@ -1136,7 +1136,8 @@ async def segments_export(req: _SegmentExportRequest):
         persons_columns = {row[0] for row in conn.execute(describe_sql).fetchall()}
         # Skip only optional-and-absent; a missing required column stays in the
         # SELECT and fails loudly at bind time.
-        select_cols = ", ".join(c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL)
+        columns = [c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL]
+        select_cols = export_select_list(columns)
         select_sql = resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
 
         fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")

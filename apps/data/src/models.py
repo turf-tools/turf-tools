@@ -140,13 +140,13 @@ class Person(BaseModel):
 
 
 # The exported columns, in order, under their own names — the Person contract
-# above as it survives assembly. No half_code or county_fips: assembly consumes
-# half_code into canonical address_line_1 ("123 1/2 MAIN ST"), and county_fips
-# is read only by the import's geo extent. Required-contract columns are
-# always selected, so genuine pipeline drift fails loudly; the contract-optional
-# four are included only when the version's table has them. Dataset-specific
-# columns are not exported. Shared by /segments/export and the /reports/*
-# exports.
+# above as it survives assembly, plus the geocoded position. No half_code or
+# county_fips: assembly consumes half_code into canonical address_line_1
+# ("123 1/2 MAIN ST"), and county_fips is read only by the import's geo extent.
+# Required-contract columns are always selected, so genuine pipeline drift fails
+# loudly; the contract-optional four are included only when the version's table
+# has them. Dataset-specific columns are not exported. Shared by
+# /segments/export and the /reports/* exports.
 EXPORT_COLUMNS = [
     "external_id",
     "external_id_type",
@@ -160,6 +160,16 @@ EXPORT_COLUMNS = [
     "state",
     "zip5",
     "zip4",
+    "latitude",
+    "longitude",
 ]
 # `| None = None` on Person — an importer may omit these columns entirely.
 EXPORT_OPTIONAL = {"middle_name", "name_suffix", "address_line_2", "zip4"}
+# Positions export at 6 decimals (~10 cm), finer than any geocode we produce.
+EXPORT_ROUNDED = {"latitude": 6, "longitude": 6}
+
+
+def export_select_list(columns: list[str]) -> str:
+    """SELECT list for exported `columns`, each under its own name, positions
+    rounded."""
+    return ", ".join(f"round({c}, {EXPORT_ROUNDED[c]}) AS {c}" if c in EXPORT_ROUNDED else c for c in columns)

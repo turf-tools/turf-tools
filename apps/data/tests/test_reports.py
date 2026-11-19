@@ -11,7 +11,7 @@ from contextlib import suppress
 
 import pytest
 
-from src.models import EXPORT_COLUMNS
+from src.models import EXPORT_COLUMNS, EXPORT_ROUNDED
 from src.reports import SPECS, build_ctx, export_copy, preview
 from tests.test_canvass_events import (
     APP,
@@ -69,13 +69,15 @@ def _seed_reports(conn) -> None:
             ("b", "q2", "B", 2),
         ],
     )
-    cols = ", ".join(f"{c} VARCHAR" for c in EXPORT_COLUMNS)
+    cols = ", ".join(f"{c} {'DOUBLE' if c in EXPORT_ROUNDED else 'VARCHAR'}" for c in EXPORT_COLUMNS)
     conn.execute(f"CREATE TABLE persons_full ({cols})")
     fill = ", ".join("?" for _ in EXPORT_COLUMNS)
     for pid in ["p1", "p2", "p3", "p4", "p5", "p7", "p8"]:
         row = {c: None for c in EXPORT_COLUMNS}
         row["external_id"] = pid
         row["last_name"] = f"Voter {pid}"
+        row["latitude"] = 40.750114698809426
+        row["longitude"] = -73.97003851208231
         conn.execute(
             f"INSERT INTO persons_full VALUES ({fill})",
             [row[c] for c in EXPORT_COLUMNS],
@@ -198,3 +200,9 @@ def test_export_copies_the_full_table(conn) -> None:
     finally:
         with suppress(OSError):
             os.remove(tmp_path)
+
+
+def test_positions_round_to_six_decimals(conn) -> None:
+    row = _by_col(_preview(conn, "people"))[0]
+    assert row["latitude"] == 40.750115
+    assert row["longitude"] == -73.970039

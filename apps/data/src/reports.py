@@ -23,7 +23,7 @@ from src.canvass_events import (
     walk_stats_sql,
 )
 from src.duckdb import OPERATIONAL_PG_ALIAS, materialize
-from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL
+from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL, export_select_list
 from src.timing import timed
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ class ReportSpec:
 
 
 def _pop_cols_sql(ctx: ReportCtx) -> str:
-    return f"pop_cols AS (SELECT {', '.join(ctx.voter_cols)} FROM {ctx.persons})"
+    return f"pop_cols AS (SELECT {export_select_list(ctx.voter_cols)} FROM {ctx.persons})"
 
 
 def _shared_cols(ctx: ReportCtx) -> str:
