@@ -98,9 +98,9 @@ async function SegmentsLayout() {
     // than navigate, so the SPA stays put.
     window.location.href =
       `/api/web/${orgSlug}/segment-export?segmentId=${activeSegmentId}&format=${exportRequest.format}&layout=${exportRequest.layout}` +
-      (exportRequest.householding !== undefined)
-        ? `&housholding=${exportRequest.householding}`
-        : "";
+      (exportRequest.householding !== undefined
+        ? `&householding=${exportRequest.householding}`
+        : "");
   };
 
   // Split open-boolean from the value so the confirm body keeps its count
