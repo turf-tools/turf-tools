@@ -91,6 +91,8 @@ def _build_connection(settings: Settings, *, read_only: bool) -> duckdb.DuckDBPy
     conn = duckdb.connect()
     conn.install_extension("ducklake")
     conn.load_extension("ducklake")
+    conn.install_extension("excel")
+    conn.load_extension("excel")
     conn.install_extension("spatial")
     conn.load_extension("spatial")
 
