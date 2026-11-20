@@ -742,6 +742,8 @@ class _SegmentExportRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
     org_slug: str = Field(validation_alias="orgSlug")
     format: str = "csv"
+    layout: str = "default"
+    householding: bool | None = False
 
 
 class _ZonePerimetersRequest(_WireBaseModel):
@@ -1112,12 +1114,90 @@ async def segments_export(req: _SegmentExportRequest):
     if req.format not in ("csv", "excel", "parquet"):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'excel' or 'parquet'.")
 
+
     if req.format == "excel":
         suffix = ".xlsx"
     elif req.format == "parquet":
         suffix = ".parquet"
     else:
         suffix = ".csv"
+    def default_sql(schema: str, persons_columns: set[str], where: str) -> str:
+        # Skip only optional-and-absent; a missing required column stays in the
+        # SELECT and fails loudly at bind time.
+        select_cols = ", ".join(c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL)
+        return resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
+
+    def direct_mail_sql(schema: str, persons_columns: set[str], where: str, householded: bool = True) -> str:
+        cte_sql = f"""
+            SELECT
+                first_name,
+                {"middle_name" if "middle_name" in persons_columns else "NULL AS middle_name"},
+                last_name,
+                {"name_suffix" if "name_suffix" in persons_columns else "NULL AS name_suffix"},
+                city,
+                state,
+                zip5,
+                {"zip4" if "zip4" in persons_columns else "'' AS zip4"},
+                address_line_1 {" || ' ' || address_line_2" if "address_line_2" in persons_columns else ""} AS address
+            FROM {{persons_geocoded}}
+            {where}
+        """
+
+        if householded:
+            return resolve(
+                f"""
+                WITH targets AS ({cte_sql}),
+                household_stats AS (
+                    SELECT
+                        address,
+                        city,
+                        state,
+                        COUNT(DISTINCT last_name) AS num_families,
+                        COUNT(*) AS num_persons
+                    FROM targets
+                    GROUP BY address, city, state
+                )
+                SELECT
+                    CASE
+                        WHEN MAX(num_families) = 1 THEN
+                            CASE WHEN MAX(num_persons) = 1 THEN CONCAT_WS(' ', MAX(first_name), MAX(middle_name), MAX(last_name), MAX(name_suffix))
+                            WHEN MAX(num_persons) = 2 THEN STRING_AGG(first_name, ' & ') || ' ' || MAX(last_name)
+                            ELSE 'The ' || MAX(last_name) || ' Family'
+                            END
+                        ELSE
+                            CASE WHEN MAX(num_persons) = 2 THEN STRING_AGG(CONCAT_WS(' ', first_name, middle_name, last_name, name_suffix), ' & ')
+                            ELSE 'Our Friends At' END
+                    END AS EnvName,
+                    t.city AS City,
+                    t.state AS State,
+                    MAX(zip5) AS Zip5,
+                    MAX(zip4) AS Zip4,
+                    t.address AS Address
+                FROM targets t
+                JOIN household_stats hs ON (
+                    hs.address = t.address AND
+                    hs.city = t.city AND
+                    hs.state = t.state
+                )
+                GROUP BY t.address, t.city, t.state
+            """,
+                schema,
+            )
+        else:
+            return resolve(
+                f"""
+                WITH targets AS ({cte_sql})
+                SELECT
+                    CONCAT_WS(' ', first_name, middle_name, last_name, name_suffix) AS EnvName,
+                    city AS City,
+                    state AS State,
+                    zip5 AS Zip5,
+                    zip4 AS Zip4,
+                    address AS Address
+                FROM targets
+            """,
+                schema,
+            )
 
     def work(conn: duckdb.DuckDBPyConnection) -> tuple[str, int]:
         version, catalog = query_context(conn, req.org_slug)
@@ -1127,10 +1207,11 @@ async def segments_export(req: _SegmentExportRequest):
         where = criteria_to_where(catalog, criteria, None, params)
         describe_sql = f"DESCRIBE {resolve('{persons_geocoded}', schema)}"
         persons_columns = {row[0] for row in conn.execute(describe_sql).fetchall()}
-        # Skip only optional-and-absent; a missing required column stays in the
-        # SELECT and fails loudly at bind time.
-        select_cols = ", ".join(c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL)
-        select_sql = resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
+
+        if req.layout == "directMail":
+            select_sql = direct_mail_sql(schema, persons_columns, where, householded=True)
+        elif req.layout == "default":
+            select_sql = default_sql(schema, persons_columns, where)
 
         fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
         os.close(fd)
