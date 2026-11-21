@@ -22,6 +22,7 @@ from zipfile import ZipFile
 import duckdb
 from src.addressing import EQUIVALENT_TOKEN_GROUPS, tokenize_street_sql
 from src.geo_tables import replace_state_rows, states_to_build
+from src.importers.streams import is_zip_payload_member
 from src.models import GeoExtent, TableRef
 from src.projection import utm_crs_sql
 
@@ -81,7 +82,7 @@ def _download_and_extract(url: str, zip_path: Path, extract_dir: Path) -> None:
     extract_dir.mkdir(parents=True, exist_ok=True)
     _download(url, zip_path)
     with ZipFile(zip_path) as zf:
-        zf.extractall(extract_dir)
+        zf.extractall(extract_dir, members=[i for i in zf.infolist() if is_zip_payload_member(i)])
 
 
 def _shp_files(directory: Path, pattern: str) -> list[Path]:

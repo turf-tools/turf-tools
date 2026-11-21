@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 
 import duckdb
 from src.importers.base import SourceUnreadableError, raw_column_name, redact_source
-from src.importers.streams import open_source, sql_str
+from src.importers.streams import is_zip_payload_member, open_source, sql_str
 from src.models import quote_ident
 
 SourceFormat = Literal["csv", "parquet"]
@@ -227,17 +227,8 @@ def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.D
 
 def _is_history_csv_member(info: zipfile.ZipInfo) -> bool:
     """Whether a zip member is a real history CSV (not macOS metadata)."""
-    if info.is_dir():
-        return False
-    # Finder "Compress" adds __MACOSX/._*.csv AppleDouble forks that end in
-    # .csv but aren't text — DuckDB's read_csv fails on them.
-    parts = info.filename.replace("\\", "/").split("/")
-    base = parts[-1]
-    if any(p == "__MACOSX" or p.startswith("._") for p in parts):
-        return False
-    if base.startswith("._") or base.startswith("."):
-        return False
-    return base.lower().endswith(".csv")
+    base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
+    return is_zip_payload_member(info) and base.lower().endswith(".csv")
 
 
 def _append_history_csv(path: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
