@@ -1,7 +1,7 @@
-"""Write the Georgia sample: invented voters in the SOS voter-list CSV layout.
+"""Write the Georgia sample: invented voters + optional history.
 
-`file.csv` — quoted CSV with the SOS header. Each person exercises something
-the import handles; the comment beside it says what.
+`file.csv` — quoted CSV with the SOS voter-list header.
+`history.csv` — mvp.sos.ga.gov-style history for a subset of those voters.
 
 Run from apps/data/ after editing the rows:
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from src.importers.ga_voter_file.decode import LAYOUT
+from src.importers.ga_voter_file.decode import HISTORY_LAYOUT, LAYOUT
 
 HERE = Path(__file__).parent
 
@@ -167,18 +167,153 @@ PEOPLE: list[dict[str, str]] = [
 ]
 
 
+def voter_registration_number(index: int) -> str:
+    """1-based sample person → registration number as the voter list spells it."""
+    return f"{10_000_000 + index}"
+
+
+# History rows exercise type/method mapping, zero-padded IDs, dedupe, and drops.
+HISTORY_ROWS: list[dict[str, str]] = [
+    # Avery: municipal/other, presidential primary (absentee), primary (early), general (poll).
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000001",
+        "Election Date": "11/07/2023",
+        "Election Type": "MUNICIPAL",
+        "Party": "",
+        "Ballot Style": "ELECTION DAY (BMD)",
+        "Absentee": "N",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000001",
+        "Election Date": "03/19/2024",
+        "Election Type": "GENERAL PRIMARY",
+        "Party": "DEMOCRAT",
+        "Ballot Style": "ABSENTEE BY MAIL",
+        "Absentee": "Y",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000001",
+        "Election Date": "05/21/2024",
+        "Election Type": "GENERAL PRIMARY",
+        "Party": "DEMOCRAT",
+        "Ballot Style": "EARLY IN-PERSON",
+        "Absentee": "Y",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000001",
+        "Election Date": "11/05/2024",
+        "Election Type": "GENERAL",
+        "Party": "",
+        "Ballot Style": "ELECTION DAY (BMD)",
+        "Absentee": "N",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    # Blake: zero-padded registration number must still join.
+    {
+        "County Name": "DEKALB",
+        "Voter Registration Number": "010000002",
+        "Election Date": "11/08/2022",
+        "Election Type": "GENERAL",
+        "Party": "",
+        "Ballot Style": "REGULAR",
+        "Absentee": "N",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    # Drew: two methods same election → poll_site wins; plus a runoff.
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000004",
+        "Election Date": "11/05/2024",
+        "Election Type": "GENERAL",
+        "Party": "",
+        "Ballot Style": "EARLY IN-PERSON",
+        "Absentee": "Y",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000004",
+        "Election Date": "11/05/2024",
+        "Election Type": "GENERAL",
+        "Party": "",
+        "Ballot Style": "ELECTION DAY (BMD)",
+        "Absentee": "N",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000004",
+        "Election Date": "12/03/2024",
+        "Election Type": "GENERAL ELECTION RUNOFF",
+        "Party": "",
+        "Ballot Style": "ELECTION DAY (BMD)",
+        "Absentee": "N",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    # Ellis: unmapped election type is dropped.
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000005",
+        "Election Date": "06/01/2024",
+        "Election Type": "SCHOOL BOARD WEIRD",
+        "Party": "",
+        "Ballot Style": "ELECTION DAY (BMD)",
+        "Absentee": "N",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+    # Finn: special election.
+    {
+        "County Name": "FULTON",
+        "Voter Registration Number": "10000006",
+        "Election Date": "03/24/2026",
+        "Election Type": "SPECIAL ELECTION",
+        "Party": "",
+        "Ballot Style": "EARLY IN-PERSON",
+        "Absentee": "Y",
+        "Provisional": "N",
+        "Supplemental": "N",
+    },
+]
+
+
 def write_csv(path: Path, people: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(out, fieldnames=LAYOUT, quoting=csv.QUOTE_ALL)
         writer.writeheader()
         for i, overrides in enumerate(people, start=1):
-            row = {**DEFAULTS, **overrides, "Voter Registration Number": f"{10_000_000 + i}"}
+            row = {**DEFAULTS, **overrides, "Voter Registration Number": voter_registration_number(i)}
             writer.writerow({field: row.get(field, "") for field in LAYOUT})
+
+
+def write_history(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as out:
+        writer = csv.DictWriter(out, fieldnames=HISTORY_LAYOUT, quoting=csv.QUOTE_MINIMAL)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in HISTORY_LAYOUT})
 
 
 def main() -> None:
     write_csv(HERE / "file.csv", PEOPLE)
+    write_history(HERE / "history.csv", HISTORY_ROWS)
     print(f"wrote {HERE / 'file.csv'} ({len(PEOPLE)} people)")
+    print(f"wrote {HERE / 'history.csv'} ({len(HISTORY_ROWS)} history rows)")
 
 
 if __name__ == "__main__":

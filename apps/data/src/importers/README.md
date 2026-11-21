@@ -31,10 +31,10 @@ Members are found by name inside each zip, so the zips' own filenames don't matt
 
 The Secretary of State's ordered voter list (county extracts and the statewide file), laid out as a quoted CSV with a header row. The 53 fields match recent SOS deliveries; the field list is in `ga_voter_file/decode.py`. Accepted formats are:
 
-- **`.csv`** — the SOS delivery: UTF-8 (or Latin-1), quoted fields, header required.
-- **`.parquet`** — columns named after the layout's fields (case-insensitive).
+- **Voter file** (required) — `.csv` (SOS delivery: UTF-8 or Latin-1, quoted fields, header required) or `.parquet` (columns named after the layout's fields, case-insensitive).
+- **Voter history** (optional) — free per-election CSVs from [mvp.sos.ga.gov](https://mvp.sos.ga.gov/s/voter-history-files): a single `.csv`, or a `.zip` of several. Columns are matched by name (`Voter Registration Number`, `Election Date`, `Election Type`, `Ballot Style`, …); order varies by year. History joins on registration number alone.
 
-Georgia does not register party; `Last Party Voted` is the last primary ballot style, not enrollment. Age is birth year only (stored as `YYYY-01-01` for age-range filters). There is no per-election history in this file — only `Last Vote Date`. Precincts are county-prefixed (`FULTON-01A`).
+Georgia does not register party; `Last Party Voted` is the last primary ballot style, not enrollment. Age is birth year only (stored as `YYYY-01-01` for age-range filters). Without a history source only `Last Vote Date` is available; with history, per-election `voting_history` is filled. Precincts are county-prefixed (`FULTON-01A`).
 
 ## Adding an importer
 

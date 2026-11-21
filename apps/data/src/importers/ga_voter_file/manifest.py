@@ -104,6 +104,18 @@ GA_MANIFEST = Manifest(
                     _enum("non_partisan", "Non-Partisan"),
                 ],
             ),
+            FieldDef(
+                column="voting_history",
+                key="voting_history_count",
+                label="Voting History Count",
+                filter_kind="voting-history-count",
+            ),
+            FieldDef(
+                column="voting_history",
+                key="voting_history_detail",
+                label="Voting History Detail",
+                filter_kind="voting-history-detail",
+            ),
         ],
     ]
 )
