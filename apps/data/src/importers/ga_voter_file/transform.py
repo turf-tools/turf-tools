@@ -218,6 +218,8 @@ GA_ELECTION_TYPES: dict[str, str] = {
     "GENERAL RUN OFF": "runoff",
     "GENERAL RUNOFF": "runoff",
     "SPECIAL ELECTION": "special",
+    "SPECIAL ELECTION RUN OFF": "runoff",
+    "SPECIAL ELECTION RUNOFF": "runoff",
     "SPECIAL RUN OFF": "runoff",
     "SPECIAL RUNOFF": "runoff",
     "SPECIAL PRIMARY": "special",
