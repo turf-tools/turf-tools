@@ -210,9 +210,7 @@ def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.D
         return
     try:
         with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
-            members = [
-                i for i in zf.infolist() if not i.is_dir() and i.filename.rsplit("/", 1)[-1].lower().endswith(".csv")
-            ]
+            members = [i for i in zf.infolist() if _is_history_csv_member(i)]
             if not members:
                 raise SourceUnreadableError(f"{redact_source(source)!r} has no .csv voter-history files in it.")
             with tempfile.TemporaryDirectory() as tmp:
@@ -225,6 +223,21 @@ def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.D
         raise SourceUnreadableError(
             f"Could not read {redact_source(source)!r} as a zip. Check that it exists and is reachable."
         ) from exc
+
+
+def _is_history_csv_member(info: zipfile.ZipInfo) -> bool:
+    """Whether a zip member is a real history CSV (not macOS metadata)."""
+    if info.is_dir():
+        return False
+    # Finder "Compress" adds __MACOSX/._*.csv AppleDouble forks that end in
+    # .csv but aren't text — DuckDB's read_csv fails on them.
+    parts = info.filename.replace("\\", "/").split("/")
+    base = parts[-1]
+    if any(p == "__MACOSX" or p.startswith("._") for p in parts):
+        return False
+    if base.startswith("._") or base.startswith("."):
+        return False
+    return base.lower().endswith(".csv")
 
 
 def _append_history_csv(path: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
