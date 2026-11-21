@@ -27,6 +27,15 @@ The Division of Elections' monthly voter extract, laid out per its "Voter Extrac
 
 Members are found by name inside each zip, so the zips' own filenames don't matter. Quoting is off (stray `"` appear in names and addresses). Voters who requested a public-records exemption are dropped on read: their protected fields are all `*`. History joins on voter ID alone, because a history row records the county the voter lived in at the time. Only counted ballots become history (codes A, E, Y); `OTH` elections (local, municipal, special) get the `other` type. Precincts are only unique within a county, so they're stored county-prefixed (`DAD-135`).
 
+### Georgia Voter File (`ga_voter_file`)
+
+The Secretary of State's ordered voter list (county extracts and the statewide file), laid out as a quoted CSV with a header row. The 53 fields match recent SOS deliveries; the field list is in `ga_voter_file/decode.py`. Accepted formats are:
+
+- **`.csv`** — the SOS delivery: UTF-8 (or Latin-1), quoted fields, header required.
+- **`.parquet`** — columns named after the layout's fields (case-insensitive).
+
+Georgia does not register party; `Last Party Voted` is the last primary ballot style, not enrollment. Age is birth year only (stored as `YYYY-01-01` for age-range filters). There is no per-election history in this file — only `Last Vote Date`. Precincts are county-prefixed (`FULTON-01A`).
+
 ## Adding an importer
 
 Each importer is a package here: `importer.py` defines the class (the `Importer` protocol in `base.py`), supporting stages sit beside it, and the class is registered in `registry.py`. The class declares its `LABEL`, the files it reads (`SOURCES`, each a key, label, description, and whether it's required), and the columns a dataset may be filtered on (`FILTERS`). The web reads all of this from the data server's `GET /importers`, so the import form, its checks, and the dataset page's labels need no web changes. `load` receives the files as a mapping keyed by `SOURCES` and calls `check_import_inputs` before reading anything.
