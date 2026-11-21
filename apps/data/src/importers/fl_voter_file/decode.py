@@ -24,7 +24,13 @@ import zipfile
 from typing import TYPE_CHECKING
 
 from src.importers.base import SourceUnreadableError, raw_column_name, redact_source
-from src.importers.streams import open_source, read_chunks, sql_str, stream_text_to_table
+from src.importers.streams import (
+    is_zip_payload_member,
+    open_source,
+    read_chunks,
+    sql_str,
+    stream_text_to_table,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -91,7 +97,7 @@ TRIM_CHARS = " \t\r\n"
 
 def _members(zf: zipfile.ZipFile, pattern: re.Pattern[str]) -> list[zipfile.ZipInfo]:
     """The zip's county files, by base name, in name order."""
-    found = [i for i in zf.infolist() if not i.is_dir() and pattern.match(i.filename.rsplit("/", 1)[-1])]
+    found = [i for i in zf.infolist() if is_zip_payload_member(i) and pattern.match(i.filename.rsplit("/", 1)[-1])]
     return sorted(found, key=lambda i: i.filename)
 
 

@@ -16,6 +16,7 @@ import threading
 from typing import TYPE_CHECKING, BinaryIO
 
 if TYPE_CHECKING:
+    import zipfile
     from collections.abc import Callable, Iterator
 
     import duckdb
@@ -43,6 +44,21 @@ def open_source(path: str) -> BinaryIO:
 
         return smart_open.open(path, "rb")
     return open(path, "rb")  # noqa: SIM115 — the caller owns the handle
+
+
+def is_zip_payload_member(info: zipfile.ZipInfo) -> bool:
+    """True for real file members — skips directories and macOS Finder junk.
+
+    Finder "Compress" adds `__MACOSX/._*` AppleDouble forks that often share
+    the payload's extension but aren't text/shapefile data readers can use.
+    """
+    if info.is_dir():
+        return False
+    parts = info.filename.replace("\\", "/").split("/")
+    base = parts[-1]
+    if any(p == "__MACOSX" or p.startswith("._") for p in parts):
+        return False
+    return not base.startswith(".")
 
 
 def read_chunks(src: BinaryIO) -> Iterator[bytes]:

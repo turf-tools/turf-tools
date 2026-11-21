@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from src.importers.base import ImportFilter, SourceUnreadableError
 from src.importers.fl_voter_file import FlVoterFileImporter
+from src.importers.fl_voter_file.decode import _HISTORY_MEMBER, _members
 from src.importers.fl_voter_file.sample_data.make_sample import PEOPLE, voter_id
 from src.tables import table_fqn
 
@@ -171,6 +173,17 @@ def test_a_non_zip_is_rejected(conn, tmp_path) -> None:
     not_zip.write_text("not a zip", encoding="utf-8")
     with pytest.raises(SourceUnreadableError, match="as a zip"):
         _load(conn, {"detail": str(not_zip)})
+
+
+def test_macos_sidecar_members_are_ignored(tmp_path) -> None:
+    path = tmp_path / "history.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("DAD_H_20260101.txt", "ok\n")
+        zf.writestr("__MACOSX/._DAD_H_20260101.txt", "junk")
+        zf.writestr("._DAD_H_20260101.txt", "junk")
+    with zipfile.ZipFile(path) as zf:
+        names = [i.filename for i in _members(zf, _HISTORY_MEMBER)]
+    assert names == ["DAD_H_20260101.txt"]
 
 
 def test_history_grouped_in_batches_matches_one_pass(conn, monkeypatch) -> None:
