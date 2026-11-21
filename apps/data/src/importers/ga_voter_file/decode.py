@@ -1,8 +1,9 @@
-"""Read a Georgia SOS voter-list CSV (or parquet) into `persons_raw`.
+"""Read Georgia SOS voter-list and voter-history files into raw tables.
 
-The Secretary of State ships ordered voter lists as a quoted CSV with a header
-row (county extracts and the statewide file share the same columns). Field
-names match the header observed on recent SOS deliveries. Values are read
+Registration: ordered voter-list CSV (or parquet) with a header row — county
+extracts and the statewide file share the same columns. History: free
+per-election CSVs from mvp.sos.ga.gov (or a zip of them), also headered;
+column order varies by year, so history is matched by name. Values are read
 faithfully: trimmed, blanks as NULL. Canonicalization is the transform's job.
 """
 
@@ -10,6 +11,10 @@ from __future__ import annotations
 
 import codecs
 import csv
+import os
+import shutil
+import tempfile
+import zipfile
 from pathlib import PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
@@ -20,6 +25,7 @@ from src.importers.streams import open_source, sql_str
 from src.models import quote_ident
 
 SourceFormat = Literal["csv", "parquet"]
+HistoryFormat = Literal["csv", "zip"]
 
 # Header spelling as delivered by the SOS voter-list CSV. Order matches the
 # file; decode accepts any order when reading by name.
@@ -113,11 +119,37 @@ REQUIRED_COLUMNS: frozenset[str] = frozenset(
 
 TRIM_CHARS = " \t\r\n"
 
+# mvp.sos.ga.gov voter-history CSV header (recent deliveries). Order varies by
+# year; decode matches by `raw_column_name`. "County" is accepted as an alias
+# for "County Name".
+HISTORY_LAYOUT: list[str] = [
+    "County Name",
+    "Voter Registration Number",
+    "Election Date",
+    "Election Type",
+    "Party",
+    "Ballot Style",
+    "Absentee",
+    "Provisional",
+    "Supplemental",
+]
+
+HISTORY_COLUMNS: list[str] = [raw_column_name(field) for field in HISTORY_LAYOUT]
+_HISTORY_REQUIRED: frozenset[str] = frozenset({"voter_registration_number", "election_date", "election_type"})
+# Alternate header spellings → layout column.
+_HISTORY_ALIASES: dict[str, str] = {"county": "county_name"}
+
 
 def source_format(source: str) -> SourceFormat | None:
-    """The source's format by extension. None for anything unsupported."""
+    """The registration source's format by extension. None if unsupported."""
     suffix = PurePosixPath(urlsplit(source).path).suffix.lower()
     return {".csv": "csv", ".parquet": "parquet"}.get(suffix)
+
+
+def history_source_format(source: str) -> HistoryFormat | None:
+    """The history source's format by extension. None if unsupported."""
+    suffix = PurePosixPath(urlsplit(source).path).suffix.lower()
+    return {".csv": "csv", ".zip": "zip"}.get(suffix)
 
 
 def csv_has_header(source: str) -> bool:
@@ -138,11 +170,8 @@ def load_tabular_to_table(
     """Read a CSV-with-header or parquet into `table_fqn`, matching columns to
     the layout by `raw_column_name`. Layout fields the source leaves out load
     as NULL; columns outside the layout are ignored."""
-    if "://" not in source:
-        import os
-
-        if not os.path.exists(source):
-            raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
+    if "://" not in source and not os.path.exists(source):
+        raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
     if fmt == "parquet":
         _load_tabular(f"read_parquet({sql_str(source)})", table_fqn, conn)
         return
@@ -158,6 +187,82 @@ def load_tabular_to_table(
         except duckdb.InvalidInputException as exc:
             if encoding != "utf-8" or "not utf-8 encoded" not in str(exc):
                 raise
+
+
+def create_empty_history(table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
+    """An empty history table, for an import without the history source."""
+    columns = ", ".join(f"{c} VARCHAR" for c in HISTORY_COLUMNS)
+    conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} ({columns})")
+
+
+def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
+    """Load one or more mvp.sos.ga.gov history CSVs into `table_fqn`.
+
+    A bare `.csv` is one election (or a multi-election export). A `.zip` may
+    hold several election CSVs; each is projected onto `HISTORY_LAYOUT` and
+    appended so one import can cover many elections.
+    """
+    if "://" not in source and not os.path.exists(source):
+        raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
+    create_empty_history(table_fqn, conn)
+    if fmt == "csv":
+        _append_history_csv(source, table_fqn, conn)
+        return
+    try:
+        with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
+            members = [
+                i for i in zf.infolist() if not i.is_dir() and i.filename.rsplit("/", 1)[-1].lower().endswith(".csv")
+            ]
+            if not members:
+                raise SourceUnreadableError(f"{redact_source(source)!r} has no .csv voter-history files in it.")
+            with tempfile.TemporaryDirectory() as tmp:
+                for info in sorted(members, key=lambda m: m.filename):
+                    dest = os.path.join(tmp, os.path.basename(info.filename))
+                    with zf.open(info) as src, open(dest, "wb") as out:
+                        shutil.copyfileobj(src, out)
+                    _append_history_csv(dest, table_fqn, conn)
+    except zipfile.BadZipFile as exc:
+        raise SourceUnreadableError(
+            f"Could not read {redact_source(source)!r} as a zip. Check that it exists and is reachable."
+        ) from exc
+
+
+def _append_history_csv(path: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
+    """Append one headered history CSV onto `table_fqn`."""
+    last_error: Exception | None = None
+    for encoding in ("utf-8", "latin-1"):
+        reader = (
+            f"read_csv({sql_str(path)}, header=true, all_varchar=true, encoding={sql_str(encoding)}, sample_size=-1)"
+        )
+        try:
+            describe = conn.execute(f"DESCRIBE SELECT * FROM {reader}").fetchall()
+            by_name: dict[str, tuple[str, str]] = {}
+            for name, typ, *_ in describe:
+                key = raw_column_name(name)
+                by_name[key] = (name, typ)
+                alias = _HISTORY_ALIASES.get(key)
+                if alias and alias not in by_name:
+                    by_name[alias] = (name, typ)
+            missing = sorted(_HISTORY_REQUIRED - set(by_name))
+            if missing:
+                raise SourceUnreadableError(f"Voter history is missing required columns: {', '.join(missing)}.")
+            trim_set = sql_str(TRIM_CHARS)
+            projections = []
+            for column in HISTORY_COLUMNS:
+                if column in by_name:
+                    source_column, source_type = by_name[column]
+                    text = _text_sql(column, source_column, source_type)
+                    projections.append(f"NULLIF(trim({text}, {trim_set}), '') AS {column}")
+                else:
+                    projections.append(f"CAST(NULL AS VARCHAR) AS {column}")
+            conn.execute(f"INSERT INTO {table_fqn} SELECT\n    " + ",\n    ".join(projections) + f"\nFROM {reader}")
+            return
+        except duckdb.InvalidInputException as exc:
+            last_error = exc
+            if encoding != "utf-8" or "not utf-8 encoded" not in str(exc):
+                raise
+    if last_error is not None:
+        raise last_error
 
 
 _NUMERIC_TYPES = (
