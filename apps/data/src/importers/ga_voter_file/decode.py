@@ -210,7 +210,7 @@ def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.D
         return
     try:
         with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
-            members = [i for i in zf.infolist() if _is_history_csv_member(i)]
+            members = [i for i in zf.infolist() if is_zip_payload_member(i) and pattern.match(i.filename.rsplit("/", 1)[-1])]
             if not members:
                 raise SourceUnreadableError(f"{redact_source(source)!r} has no .csv voter-history files in it.")
             with tempfile.TemporaryDirectory() as tmp:
@@ -223,12 +223,6 @@ def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.D
         raise SourceUnreadableError(
             f"Could not read {redact_source(source)!r} as a zip. Check that it exists and is reachable."
         ) from exc
-
-
-def _is_history_csv_member(info: zipfile.ZipInfo) -> bool:
-    """Whether a zip member is a real history CSV (not macOS metadata)."""
-    base = info.filename.replace("\\", "/").rsplit("/", 1)[-1]
-    return is_zip_payload_member(info) and base.lower().endswith(".csv")
 
 
 def _append_history_csv(path: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
