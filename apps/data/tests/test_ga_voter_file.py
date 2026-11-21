@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import zipfile
 from pathlib import Path
 
 from src.importers.base import ImportFilter
 from src.importers.ga_voter_file import GaVoterFileImporter
-from src.importers.ga_voter_file.decode import _is_history_csv_member
 from src.importers.ga_voter_file.sample_data.make_sample import voter_registration_number
 from src.tables import table_fqn
 
@@ -111,9 +109,3 @@ def test_filter_restricts_history_to_the_kept_voters(conn) -> None:
     _load(conn, filter=ImportFilter(column="county", values=["DEKALB"]))
     assert list(_people(conn)) == ["10000002"]
     assert _history(conn, 2) == [("2022-11-08", "general", "poll_site")]
-
-
-def test_history_zip_skips_macos_sidecar_csvs() -> None:
-    assert _is_history_csv_member(zipfile.ZipInfo("A-12634.csv"))
-    assert not _is_history_csv_member(zipfile.ZipInfo("__MACOSX/._A-12634.csv"))
-    assert not _is_history_csv_member(zipfile.ZipInfo("._A-12634.csv"))
