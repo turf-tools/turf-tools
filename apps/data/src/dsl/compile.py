@@ -34,6 +34,7 @@ from .criteria import (
     FieldCatalog,
     FieldDef,
     Filter,
+    HouseholdFilter,
     KeyFilter,
     NestedFilter,
     NumberRangeFilter,
@@ -44,6 +45,7 @@ from .criteria import (
     TextFilter,
     TextMultiFieldDef,
     TextMultiFilter,
+    Verb,
     VotingHistoryCountFieldDef,
     VotingHistoryCountFilter,
     VotingHistoryDetailFieldDef,
@@ -51,6 +53,10 @@ from .criteria import (
     wide_column,
 )
 from .elections import election_type, election_year, mask_column, word_masks
+
+# Placeholder substituted by `resolve()` at execution — household subqueries
+# need the same persons table the outer WHERE runs against.
+_PERSONS = "{persons_geocoded}"
 
 
 class CriteriaError(ValueError):
@@ -62,6 +68,8 @@ def criteria_to_where(
     criteria: Criteria,
     key_filter: KeyFilter | None,
     params: list[Any],
+    *,
+    persons_table: str = _PERSONS,
 ) -> str:
     """Compile a ``Criteria`` to a WHERE fragment using Boolean algebra.
 
@@ -71,15 +79,16 @@ def criteria_to_where(
     - ``add``    → OR  (union)
     - ``remove`` → AND NOT (difference)
 
-    This produces a single flat predicate — no subqueries, no CTEs, no extra
-    column reads. The resulting WHERE clause is semantically equivalent to the
-    sequential set operations and lets DuckDB apply its normal predicate
-    pushdown and column-pruning optimisations.
+    Householding steps are prefix-dependent and emit subqueries against
+    ``persons_table`` (default ``{persons_geocoded}``). Callers that wrap
+    the full statement in ``tables.resolve`` are fine; callers that
+    interpolate an already-FQN persons table must either pass
+    ``persons_table=…`` or ``resolve`` the returned WHERE fragment.
 
     Params are appended in-place. Returns ``""`` (no WHERE) for empty
     criteria with no key_filter.
     """
-    expr = _criteria_bool_expr(catalog, criteria, params)
+    expr = _criteria_bool_expr(catalog, criteria, params, persons_table=persons_table)
     clauses = [c for c in [expr, _key_filter_clause(catalog, key_filter, params) if key_filter else ""] if c]
     if not clauses:
         return ""
@@ -105,7 +114,15 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     moves to a scalar subquery, which DuckDB answers from table stats.
     Params bind in textual order: the projection's clauses in step order,
     then the pushdown's copies in the same order.
+
+    Householding steps are prefix-dependent (they read the running set as a
+    set of keys), so criteria that include one — including inside a nested
+    segment — fall back to one subquery per prefix instead of the
+    single-scan column algebra.
     """
+    if _criteria_has_household(criteria):
+        return _cascade_sql_household(catalog, criteria, persons_table, params)
+
     # Universe-count prefixes (step_0, and any step before the first active
     # filter) come from a scalar subquery, which DuckDB answers from table
     # stats — and which stays correct when pushdown filters the source.
@@ -119,7 +136,7 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     push: list[tuple[str, list[Any]]] = []
     for i, step in enumerate(criteria.steps, start=1):
         step_params: list[Any] = []
-        clause = _filter_clause(catalog, step.filter, step_params)
+        clause = _filter_clause(catalog, step.filter, step_params, persons_table=persons_table)
         if clause:
             cols.append(f"({clause}) AS c_{i}")
             params.extend(step_params)
@@ -151,6 +168,41 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     )
 
 
+def _criteria_has_household(criteria: Criteria) -> bool:
+    """True if any step (including nested segment bodies) householding."""
+    for step in criteria.steps:
+        f = step.filter
+        if isinstance(f, HouseholdFilter):
+            return True
+        if isinstance(f, NestedFilter) and _criteria_has_household(f.criteria):
+            return True
+    return False
+
+
+def _cascade_sql_household(
+    catalog: FieldCatalog,
+    criteria: Criteria,
+    persons_table: str,
+    params: list[Any],
+) -> str:
+    """Waterfall counts when householding steps force prefix restatement."""
+    parts = [f"(SELECT count(*) FROM {persons_table}) AS step_0"]
+    for i in range(1, len(criteria.steps) + 1):
+        prefix_params: list[Any] = []
+        expr = _criteria_bool_expr(
+            catalog,
+            Criteria(steps=criteria.steps[:i]),
+            prefix_params,
+            persons_table=persons_table,
+        )
+        params.extend(prefix_params)
+        if expr:
+            parts.append(f"(SELECT count(*) FROM {persons_table} WHERE {expr}) AS step_{i}")
+        else:
+            parts.append(f"(SELECT count(*) FROM {persons_table}) AS step_{i}")
+    return f"SELECT {', '.join(parts)}"
+
+
 def column_expr_for(catalog: FieldCatalog, field_key: str) -> str:
     """SQL expression for a field — every field is a bare top-level column."""
     if field_key not in catalog.fields:
@@ -173,7 +225,13 @@ def boundary_key_expr_for(catalog: FieldCatalog, key_group: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[Any]) -> str:
+def _criteria_bool_expr(
+    catalog: FieldCatalog,
+    criteria: Criteria,
+    params: list[Any],
+    *,
+    persons_table: str = _PERSONS,
+) -> str:
     """Reduce criteria to a Boolean SQL expression string.
 
     Custom-field filters in a run of ``narrow`` steps fold into a single
@@ -184,27 +242,70 @@ def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[
     Folded predicates buffer their params locally so bind order still matches
     textual order when non-custom narrows interleave.
 
+    Householding is prefix-dependent; the step verb selects the shape:
+    ``narrow`` rebuilds as one per key, ``add`` fills (seed ∪ key-sharers),
+    ``remove`` subtracts keys of another criteria.
+
     Returns ``""`` for empty / fully-inactive criteria (match all).
     """
     current: str | None = None  # None = True (full universe)
+    # Params that bind to placeholders inside `current` (needed so household
+    # subqueries can re-bind when they embed a copy of the prefix text).
+    current_params: list[Any] = []
     pending: list[str] = []
     pending_params: list[Any] = []
 
     def flush() -> None:
-        nonlocal current
+        nonlocal current, current_params
         if not pending:
             return
         if catalog.custom_table is None:
             clause = "1=0"
+            clause_params: list[Any] = []
         else:
             clause = f"person_h IN (SELECT person_h FROM {catalog.custom_table} WHERE {' AND '.join(pending)})"
+            clause_params = list(pending_params)
             params.extend(pending_params)
         pending.clear()
         pending_params.clear()
-        current = clause if current is None else f"({current}) AND ({clause})"
+        if current is None:
+            current = clause
+            current_params = clause_params
+        else:
+            current = f"({current}) AND ({clause})"
+            current_params = current_params + clause_params
 
     for step in criteria.steps:
         f = step.filter
+        if isinstance(f, HouseholdFilter):
+            flush()
+            start = len(params)
+            hh = _household_clause(catalog, f, step.verb, current, current_params, params, persons_table)
+            if not hh:
+                continue
+            hh_params = params[start:]
+            if step.verb == "narrow":
+                # One-per-key inside the prior set — replaces the running
+                # expression. Prefix binds already in `params` now serve the
+                # embedded copy; nothing new was appended for them.
+                current = hh
+            elif step.verb == "add":
+                # Seed set ∪ everyone sharing a household key with the seed
+                # (keeps prior rows that have no key, e.g. null door_id).
+                if current is None:
+                    current = hh
+                    current_params = hh_params
+                else:
+                    current = f"({current}) OR ({hh})"
+                    current_params = current_params + hh_params
+            elif current is None:
+                current = f"NOT ({hh})"
+                current_params = hh_params
+            else:
+                current = f"({current}) AND NOT ({hh})"
+                current_params = current_params + hh_params
+            continue
+
         def_ = catalog.fields.get(f.key) if hasattr(f, "key") else None
         if step.verb == "narrow" and isinstance(def_, CustomFieldDef):
             pred = _custom_pred(f, def_, pending_params)
@@ -213,14 +314,17 @@ def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[
             continue
         if step.verb != "narrow":
             flush()
-        fc = _filter_clause(catalog, f, params)
+        start = len(params)
+        fc = _filter_clause(catalog, f, params, persons_table=persons_table)
         if not fc:
             # Inactive filter (empty enum values, unbounded age range, etc.)
             # has no effect on the set regardless of verb.
             continue
+        fc_params = params[start:]
 
         if current is None:
             current = fc if step.verb in ("narrow", "add") else f"NOT ({fc})"
+            current_params = fc_params
         else:
             if step.verb == "narrow":
                 current = f"({current}) AND ({fc})"
@@ -228,9 +332,93 @@ def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[
                 current = f"({current}) OR ({fc})"
             else:  # remove
                 current = f"({current}) AND NOT ({fc})"
+            current_params = current_params + fc_params
 
     flush()
     return current or ""
+
+
+def _household_key_sql(catalog: FieldCatalog, f: HouseholdFilter, verb: Verb) -> tuple[str, str, str] | None:
+    """Return ``(key_expr, partition_by, nonempty)`` for a household key, or
+    None when the filter is inactive (phoneless dataset, incomplete remove).
+    """
+    if verb == "remove" and f.other_criteria is None:
+        return None
+    if f.group_by == "phone":
+        if not any(isinstance(d, PhoneFieldDef) for d in catalog.fields.values()):
+            return None
+        key_expr = "NULLIF(TRIM(phone), '')"
+        nonempty = f"{key_expr} IS NOT NULL"
+    elif f.group_by == "building_id":
+        key_expr = "building_id"
+        nonempty = "building_id IS NOT NULL"
+    else:
+        key_expr = "door_id"
+        nonempty = "door_id IS NOT NULL"
+    partition_by = f"{key_expr}, last_name" if f.match_last_name else key_expr
+    return key_expr, partition_by, nonempty
+
+
+def _household_clause(
+    catalog: FieldCatalog,
+    f: HouseholdFilter,
+    verb: Verb,
+    prefix_expr: str | None,
+    prefix_params: list[Any],
+    params: list[Any],
+    persons_table: str,
+) -> str:
+    """Compile one householding step against the running-set prefix (or other).
+
+    - ``narrow``: one person per key inside the prefix (``row_number``).
+    - ``add``: key-sharing expansion (caller ORs with the prior seed).
+    - ``remove``: keys drawn from ``other_criteria`` (caller applies ``AND NOT``).
+
+    When the prefix text is embedded in a subquery, ``prefix_params`` are
+    appended again so bind order matches the duplicated ``?`` placeholders.
+    """
+    parts = _household_key_sql(catalog, f, verb)
+    if parts is None:
+        return ""
+    key_expr, partition_by, nonempty = parts
+
+    if verb == "remove":
+        assert f.other_criteria is not None
+        other_expr = _criteria_bool_expr(catalog, f.other_criteria, params, persons_table=persons_table)
+        other_where = f"({other_expr}) AND {nonempty}" if other_expr else nonempty
+        if f.match_last_name:
+            return (
+                f"({key_expr}, last_name) IN ("
+                f"SELECT DISTINCT {key_expr}, last_name FROM {persons_table} "
+                f"WHERE {other_where})"
+            )
+        return f"({key_expr}) IN (SELECT DISTINCT {key_expr} FROM {persons_table} WHERE {other_where})"
+
+    # narrow / add(fill) — keys from the running set (universe when prefix empty).
+    if prefix_expr is None:
+        src_where = nonempty
+    else:
+        src_where = f"({prefix_expr}) AND {nonempty}"
+        # Fill keeps the prior predicate in the final expression (seed ∪ …),
+        # so the embedded copy needs its own binds. Narrow replaces the
+        # prior text; the binds already appended for it still match.
+        if verb == "add":
+            params.extend(prefix_params)
+    if verb == "narrow":
+        return (
+            f"external_id IN ("
+            f"SELECT external_id FROM ("
+            f"SELECT external_id, "
+            f"row_number() OVER (PARTITION BY {partition_by} ORDER BY external_id) AS rn "
+            f"FROM {persons_table} WHERE {src_where}"
+            f") WHERE rn = 1)"
+        )
+    # add → fill
+    if f.match_last_name:
+        return (
+            f"({key_expr}, last_name) IN (SELECT DISTINCT {key_expr}, last_name FROM {persons_table} WHERE {src_where})"
+        )
+    return f"({key_expr}) IN (SELECT DISTINCT {key_expr} FROM {persons_table} WHERE {src_where})"
 
 
 def _field(catalog: FieldCatalog, key: str) -> FieldDef:
@@ -240,7 +428,13 @@ def _field(catalog: FieldCatalog, key: str) -> FieldDef:
     return field_def
 
 
-def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
+def _filter_clause(
+    catalog: FieldCatalog,
+    f: Filter,
+    params: list[Any],
+    *,
+    persons_table: str = _PERSONS,
+) -> str:
     if isinstance(f, AllFilter):
         return "1=1"
     if isinstance(f, EnumFilter):
@@ -282,7 +476,7 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
         return _custom_clause(f, def_, catalog, params)
     if isinstance(f, NestedFilter):
         # Empty inner → 1=1 to match the standalone "empty segment matches everyone" semantic.
-        inner = _criteria_bool_expr(catalog, f.criteria, params)
+        inner = _criteria_bool_expr(catalog, f.criteria, params, persons_table=persons_table)
         return f"({inner})" if inner else "1=1"
     if isinstance(f, PersonIdSetFilter):
         # Resolved canvass / operational-data filter: a literal person set.
@@ -296,6 +490,9 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
     if isinstance(f, (CanvassOutcomeFilter, CanvassResponseFilter)):
         # Should have been reduced to a PersonIdSetFilter in resolve.py.
         raise CriteriaError(f"{type(f).__name__} reached the compiler unresolved")
+    if isinstance(f, HouseholdFilter):
+        # Handled in `_criteria_bool_expr` (needs the running-set prefix).
+        raise CriteriaError("HouseholdFilter reached the compiler without a prefix")
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 

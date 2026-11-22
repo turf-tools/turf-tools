@@ -27,6 +27,7 @@ import {
   type FilterDef,
   type NumberRangeFilter,
   type PhoneFilter,
+  type HouseholdFilter,
   type SegmentFilter,
   type TextFilter,
   type TextMultiFilter,
@@ -35,6 +36,7 @@ import {
   type VotingHistoryCountFilter,
   type VotingHistoryDetailFilter,
 } from "~/lib/filters";
+import { useFilterCatalog } from "~/lib/manifest";
 import { electionsQuery } from "~/lib/queries/elections";
 import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
@@ -48,12 +50,15 @@ export function FilterValueEditor({
   filter,
   def,
   onChange,
+  verb,
   currentSegmentId,
   allSegments,
 }: {
   filter: Filter;
   def: FilterDef | undefined;
   onChange: (next: Filter) => void;
+  // Step verb — householding remove shows the other-segment picker.
+  verb?: Verb;
   // Cycle exclusion for segment refs; pass "" outside the segment editor.
   currentSegmentId: string;
   allSegments: ReadonlyArray<{
@@ -106,6 +111,15 @@ export function FilterValueEditor({
         <SegmentFilterEditor
           filter={filter}
           onChange={onChange}
+          currentSegmentId={currentSegmentId}
+          allSegments={allSegments}
+        />
+      ) : null}
+      {filter.kind === "household" && def?.kind === "household" ? (
+        <HouseholdFilterEditor
+          filter={filter}
+          onChange={onChange}
+          verb={verb}
           currentSegmentId={currentSegmentId}
           allSegments={allSegments}
         />
@@ -982,6 +996,85 @@ function SegmentFilterEditor({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function HouseholdFilterEditor({
+  filter,
+  onChange,
+  verb,
+  currentSegmentId,
+  allSegments,
+}: {
+  filter: HouseholdFilter;
+  onChange: (next: Filter) => void;
+  verb?: Verb;
+  currentSegmentId: string;
+  allSegments: ReadonlyArray<{
+    segmentId: string;
+    name: string;
+    criteria: unknown;
+    isArchived: boolean;
+  }>;
+}) {
+  const { sections } = useFilterCatalog();
+  const hasPhone = sections.some((section) => section.some((d) => d.kind === "phone"));
+  const groupByLabel =
+    filter.groupBy === "phone" ? "Phone" : filter.groupBy === "building_id" ? "Building" : "Door";
+
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center gap-2">
+        <span className="text-muted-foreground shrink-0">By</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-w-0 flex-1 justify-between font-normal"
+              />
+            }
+          >
+            <span className="truncate">{groupByLabel}</span>
+            <Icon name="chevron-down" className="text-muted-foreground shrink-0" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="min-w-48">
+            <DropdownMenuItem onClick={() => onChange({ ...filter, groupBy: "door_id" })}>
+              Door
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onChange({ ...filter, groupBy: "building_id" })}>
+              Building
+            </DropdownMenuItem>
+            {hasPhone ? (
+              <DropdownMenuItem onClick={() => onChange({ ...filter, groupBy: "phone" })}>
+                Phone
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <Toggle
+        size="sm"
+        variant="outline"
+        pressed={filter.matchLastName}
+        onPressedChange={(pressed) => onChange({ ...filter, matchLastName: pressed })}
+        className="h-7 w-full justify-start"
+      >
+        Also match last name
+      </Toggle>
+      {verb === "remove" ? (
+        <SegmentFilterEditor
+          filter={{ kind: "segment", key: "segment", segmentId: filter.otherSegmentId }}
+          onChange={(next) => {
+            if (next.kind !== "segment") return;
+            onChange({ ...filter, otherSegmentId: next.segmentId });
+          }}
+          currentSegmentId={currentSegmentId}
+          allSegments={allSegments}
+        />
+      ) : null}
+    </div>
   );
 }
 

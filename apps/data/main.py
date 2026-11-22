@@ -922,7 +922,13 @@ async def progress_targets(req: _ProgressTargetsRequest):
                     Criteria.model_validate(json.loads(criteria_json)), conn, settings, req.org_slug
                 )
                 where_params: list = []
-                where = criteria_to_where(catalog, criteria, None, where_params)
+                # Resolve household `{persons_geocoded}` placeholders — this
+                # SQL path interpolates an already-FQN `persons` table and
+                # does not run `resolve()` over the full statement.
+                where = resolve(
+                    criteria_to_where(catalog, criteria, None, where_params),
+                    version.schema,
+                )
                 # A zone group has one key group; trust the first row's.
                 key_group = zones[0][3]
                 expr = boundary_key_expr_for(catalog, key_group)
@@ -976,7 +982,10 @@ async def results_aggregate(req: _ResultsAggregateRequest):
         attach_operational_postgres(conn, settings)
         criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
         where_params: list = []
-        where = criteria_to_where(catalog, criteria, None, where_params)
+        where = resolve(
+            criteria_to_where(catalog, criteria, None, where_params),
+            version.schema,
+        )
         persons = resolve("{persons_geocoded}", version.schema)
 
         scope = event_scope(req.org_slug, req.campaign_ids, req.start, req.end, req.day, req.tz)
