@@ -24,7 +24,8 @@ import { DialogError } from "~/components/callout";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { progressQuery } from "~/lib/queries/progress";
 import { turfMapDataQuery, turfsListQuery, zoneMapDataQuery } from "~/lib/queries/turfs";
-import { walksListQuery } from "~/lib/queries/walks";
+import { walksListQuery, walksLiveQuery } from "~/lib/queries/walks";
+import { connectBoard, useStreamUp } from "~/lib/board-refresh";
 import { darkAtom } from "~/lib/atoms/theme";
 import { colorFor } from "~/lib/zone-colors";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
@@ -73,20 +74,13 @@ export const Route = createFileRoute("/$orgSlug/turfs/")({
 });
 
 // Instant board updates: the server publishes an SSE nudge when a scan
-// or walk mutation lands, and we refetch immediately instead of waiting
-// out the poll. The poll remains the correctness backbone — a dropped
-// stream (backgrounded phone tab) just falls back to poll latency.
-// Nudges aren't replayed, so a (re)connect refetches too.
+// or walk mutation lands, and the board refetches immediately instead of
+// waiting out the poll. Nudges aren't replayed, so a (re)connect
+// refetches too.
 function useLiveRefresh() {
   const { orgSlug } = Route.useParams();
   const queryClient = useQueryClient();
-  useEffect(() => {
-    const source = new EventSource(`/api/web/${orgSlug}/live`);
-    source.onopen = source.onmessage = () => {
-      void queryClient.invalidateQueries({ queryKey: ["walks"] });
-    };
-    return () => source.close();
-  }, [orgSlug, queryClient]);
+  useEffect(() => connectBoard(`/api/web/${orgSlug}/live`, queryClient), [orgSlug, queryClient]);
 }
 
 function TurfsIndex() {
@@ -404,7 +398,8 @@ function useTurfRows(campaignId: string | null, zoneId: string | null) {
 }
 
 function useWalkSummaries(campaignId: string | null) {
-  const { data } = useQuery(walksListQuery(campaignId));
+  const streamUp = useStreamUp();
+  const { data } = useQuery(walksLiveQuery(campaignId, streamUp));
   return useMemo(() => {
     const byTurf = new Map<string, WalkRow[]>();
     for (const w of data?.walks ?? []) {
