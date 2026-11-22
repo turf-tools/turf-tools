@@ -1,11 +1,7 @@
-// Keeps the turfs board's walks query current on any connection. One
-// refresh loop owns the query: each attempt has a deadline, network
-// failures retry until one gets through, and triggers (SSE nudges and
-// reconnects) wake the loop instead of fetching on their own. The query
-// stays "fetching" for as long as the loop is trying, so the global
-// spinner is on whenever the board may be behind.
-//
-// Module-level state: one board page is mounted at a time.
+// One refresh loop owns the turfs board's walks query so it stays current
+// on any connection. The query stays "fetching" while the loop tries, so
+// the global spinner means the board may be behind. Module-level state:
+// one board is mounted at a time.
 
 import { ORPCError } from "@orpc/client";
 import { focusManager, type QueryClient, type QueryFunctionContext } from "@tanstack/react-query";
@@ -34,7 +30,6 @@ function isTransient(error: unknown): boolean {
 }
 
 const waits = new Set<() => void>();
-// A wake that arrived while an attempt was running.
 let wokeDuringAttempt = false;
 
 function takeWake(): boolean {
