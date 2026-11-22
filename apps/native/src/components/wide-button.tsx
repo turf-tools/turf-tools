@@ -16,6 +16,8 @@ type Props = {
   // Custom colors for selected buttons
   selectedForegroundColor?: string;
   selectedBackgroundColor?: string;
+  // Label is stand-in copy for blank content, rendered muted italic
+  placeholder?: boolean;
 };
 
 // Full-width button used for responses, unavailable outcomes, and
@@ -30,6 +32,7 @@ export function WideButton({
   className = "",
   selectedForegroundColor,
   selectedBackgroundColor,
+  placeholder = false,
 }: Props) {
   const isAction = variant === "action" || variant === "submit";
   const isDark = useAtomValue(themeAtom) === "dark";
@@ -39,7 +42,7 @@ export function WideButton({
   return (
     <Pressable
       onPress={onPress}
-      className={`flex-row items-center justify-between px-4 py-3.5 rounded-lg border ${
+      className={`flex-row items-center justify-between gap-3 px-4 py-3.5 rounded-lg border ${
         variant === "submit"
           ? "bg-foreground dark:bg-foreground-dark border-foreground dark:border-foreground-dark active:opacity-85"
           : variant === "action"
@@ -57,12 +60,16 @@ export function WideButton({
         ...(useSelectedTint ? { backgroundColor: selectedBackgroundColor } : null),
       }}
     >
+      {/* flex-1 keeps a wrapping label from pushing the check slot out of line. */}
       <Text
-        className={`font-sans text-lg ${
+        className={`flex-1 font-sans text-lg ${
           variant === "submit"
             ? "text-background dark:text-background-dark"
-            : "text-foreground dark:text-foreground-dark"
+            : placeholder
+              ? "text-muted-foreground dark:text-muted-foreground-dark"
+              : "text-foreground dark:text-foreground-dark"
         }`}
+        style={placeholder ? { fontFamily: "Geist_400Regular_Italic" } : undefined}
       >
         {label}
       </Text>
