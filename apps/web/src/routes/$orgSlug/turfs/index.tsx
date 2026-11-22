@@ -397,9 +397,9 @@ function useTurfRows(campaignId: string | null, zoneId: string | null) {
   }, [data, zoneId]);
 }
 
-function useWalkSummaries(campaignId: string | null) {
+function useWalkSummaries(campaignId: string | null, enabled = true) {
   const streamUp = useStreamUp();
-  const { data } = useQuery(walksLiveQuery(campaignId, streamUp));
+  const { data } = useQuery({ ...walksLiveQuery(campaignId, streamUp), enabled });
   return useMemo(() => {
     const byTurf = new Map<string, WalkRow[]>();
     for (const w of data?.walks ?? []) {
@@ -414,8 +414,8 @@ function useWalkSummaries(campaignId: string | null) {
 
 // Null until progress loads — a turf absent from a loaded result means
 // genuinely zero attempts; an absent result means "don't know yet".
-function useProgressByTurf(campaignId: string | null) {
-  const { data } = useQuery(progressQuery(campaignId));
+function useProgressByTurf(campaignId: string | null, enabled = true) {
+  const { data } = useQuery({ ...progressQuery(campaignId), enabled });
   return useMemo(() => (data ? new Map(data.map((r) => [r.turfId, r.attempted])) : null), [data]);
 }
 
@@ -736,8 +736,10 @@ function ZoneMapDialog({
 }) {
   const isDark = useAtomValue(darkAtom);
   const [byProgress, setByProgress] = useState(false);
-  const summaries = useWalkSummaries(group?.campaignId ?? null);
-  const progressByTurf = useProgressByTurf(group?.campaignId ?? null);
+  // Mounted while closed; polling only while open keeps a closed dialog
+  // from refetching alongside the board.
+  const summaries = useWalkSummaries(group?.campaignId ?? null, open);
+  const progressByTurf = useProgressByTurf(group?.campaignId ?? null, open);
   const { data: zoneData } = useQuery({
     ...zoneMapDataQuery(group?.campaignId ?? "", group?.zoneId ?? null),
     enabled: group !== null,
