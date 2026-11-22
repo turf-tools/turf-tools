@@ -202,14 +202,23 @@ const UNIT_WORDS = new Set([
   "PVT",
   "HSE",
   "BOX",
+  "GARDEN",
+  "GRDN",
+  "GDN",
+  "SUPT",
 ]);
 
-// Unit words that keep their capitals: they don't read as abbreviations
-// title-cased ("Bsmt", "Ph").
-const UNIT_CAPITALS = new Set(["PH", "BSMT", "FRNT", "PVT", "HSE"]);
+// A word in a unit line: a unit word, or any run of four or more letters
+// ("TOWER", "CAMPUS"). Shorter letter runs and anything with a digit are codes
+// ("3B", "GA", "LPH") and keep their capitals, except an ordinal's suffix
+// ("2ND" → "2nd").
+function isUnitLineWord(word: string): boolean {
+  return UNIT_WORDS.has(word.toUpperCase()) || /^\p{L}{4,}$/u.test(word);
+}
 
-// A unit line: "APT 16D" → "Apt 16D", "2FL" → "2 Fl", "2ND FLOOR" →
-// "2nd Floor", "PVT HSE" stays. A bare code says nothing about what it is, so
+// A unit line: words are title-cased and codes keep their capitals ("APT 16D"
+// → "Apt 16D", "2FL" → "2 Fl", "2ND FLOOR" → "2nd Floor", "EAST CAMPUS 808" →
+// "East Campus 808"). A line of codes alone says nothing about what it is, so
 // it reads as an apartment ("16D" → "Apt 16D", "#3B" → "Apt 3B"), and a bare
 // ordinal as a floor ("2ND" → "2nd Fl").
 export function unitCase(text: string | null | undefined): string {
@@ -223,12 +232,10 @@ export function unitCase(text: string | null | undefined): string {
       return glued && UNIT_WORDS.has(glued[2].toUpperCase()) ? [glued[1], glued[2]] : [word];
     });
   if (words.length === 0) return "";
-  const named = words.some((word) => UNIT_WORDS.has(word.toUpperCase()));
+  const named = words.some(isUnitLineWord);
   const cased = words
     .map((word) => {
-      const upper = word.toUpperCase();
-      if (UNIT_CAPITALS.has(upper)) return upper;
-      if (UNIT_WORDS.has(upper)) return titleCase(word);
+      if (isUnitLineWord(word)) return titleCase(word);
       return /^\d/u.test(word) ? numberCase(word) : word;
     })
     .join(" ");

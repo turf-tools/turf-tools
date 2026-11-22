@@ -30,6 +30,7 @@ from src.addressing import (
     housenumber_norm_sql,
     street_rewrite_sql,
     tokenize_street_sql,
+    unit_label_sql,
 )
 from src.dsl.criteria import person_h_sql
 from src.dsl.elections import (
@@ -246,10 +247,12 @@ def persons_geocoded(
     Capitalization: address fields are stored in capitals and person fields
     keep the voter file's case (see "Capitalization" in AGENTS.md).
     address_line_1 comes from `canonical_addresses` already in capitals;
-    address_line_2, city and state are normalized here (UPPER + TRIM), since
-    voter files differ ("Num 1"-style unit rows in SBOE; Florida writes most
-    cities "Miami" and some "MIAMI"). Names pass through: Florida's "McDonald"
-    is information an all-capitals file doesn't have.
+    city and state are normalized here (UPPER + TRIM), since voter files
+    differ (Florida writes most cities "Miami" and some "MIAMI"), and
+    address_line_2 takes its standard spelling (`unit_label_sql`), so one
+    unit written several ways ("APT 3B", "3B", "NUM 3B") is one door. Names
+    pass through: Florida's "McDonald" is information an all-capitals file
+    doesn't have.
 
     Persons that didn't end up in either `refined_positions` or
     `osm_only_matches` are excluded entirely — they live in
@@ -289,14 +292,14 @@ def persons_geocoded(
           -- Carry every importer-produced column through generically so any
           -- manifest field reaches persons_geocoded with no pipeline edit.
           -- Excluded: the address columns assembly rewrites and re-derives —
-          -- address_line_1 (canonical), address_line_2 (normalized), half_code
+          -- address_line_1 (canonical), address_line_2 (standard spelling), half_code
           -- (consumed into the canonical address) — and county_fips, which only
           -- the import's geo extent reads. city and state are normalized in
           -- place. All are Person-core, so EXCLUDE and REPLACE always find them.
           SELECT
               p.* EXCLUDE (address_line_1, address_line_2, half_code, county_fips)
                   REPLACE (TRIM(UPPER(p.city)) AS city, TRIM(UPPER(p.state)) AS state),
-              TRIM(UPPER(p.address_line_2)) AS address_line_2
+              {unit_label_sql("p.address_line_2")} AS address_line_2
           FROM {persons_fqn} p
         ),
         -- Coordinates come from refined_positions for TIGER-matched

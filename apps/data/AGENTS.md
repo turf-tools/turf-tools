@@ -446,6 +446,17 @@ unambiguous. Single-family doors get an empty middle segment
 (`address_line_1||building_zip5`) so `building_id` and `door_id` never
 collide.
 
+`address_line_2` there is the unit's standard spelling
+(`addressing.unit_label_sql`), so one unit written several ways is one
+door: a leading type word goes (`APT 3B`, `NUM 3B`, `#3B` → `3B`),
+abbreviations take one spelling (`FLR`, `FLOOR` → `FL`), a direction next to
+a code takes its letter (`PH EAST` → `PH E`), codes come after the words they
+belong to (`4TH FL` → `FL 4`, `8B NORTH TOWER` → `NORTH TOWER 8B`), and a
+code's pieces join across a space or hyphen (`6 D`, `6-D` → `6D`). A word is
+a unit word or any four or more letters; anything else is a code. The word
+tables come from spellings found side by side in the same buildings of the
+NYS and Florida files.
+
 `aggregate.buildings_geocoded` and `aggregate.doors_geocoded` GROUP BY
 these keys to produce one row per physical structure / unit; a
 building's `zip5` there is its `building_zip5`.
