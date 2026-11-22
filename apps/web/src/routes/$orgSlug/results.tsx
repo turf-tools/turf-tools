@@ -1,4 +1,4 @@
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQueries, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useDeferredValue, useMemo, useRef, useState } from "react";
 import { tintStyle } from "~/components/badge";
@@ -35,6 +35,7 @@ import {
   resultsAggregateQuery,
   resultsEventsVersionQuery,
 } from "~/lib/queries/results";
+import { scriptDetailQuery } from "~/lib/queries/scripts";
 import {
   zoneGroupsPerimetersVersion,
   zoneGroupsQuery,
@@ -114,6 +115,11 @@ export const Route = createFileRoute("/$orgSlug/results")({
       queryClient.fetchQuery(resultsEventsVersionQuery(campaignId ? [campaignId] : null)),
       // Question/option selectors paint with real labels on first render.
       queryClient.fetchQuery(questionsWithOptionsQuery()),
+      // Cached scripts serve as-is so revisits never wait; the page
+      // revalidates them in the background.
+      ...scopeScriptIds(campaigns, campaignId ? [campaignId] : null).map((id) =>
+        queryClient.ensureQueryData(scriptDetailQuery(id)),
+      ),
     ]);
     await queryClient.fetchQuery(
       resultsAggregateQuery(campaignId ? [campaignId] : null, deps.day, tz, [], version),
@@ -220,14 +226,48 @@ function ResultsIndex() {
   // count+rate columns; the map colors by the Color-by pick, whose
   // entries are contact rate plus the selected questions' options — so
   // the "color by which option?" ambiguity is resolved by an explicit
-  // pick. Fallbacks are derived: first question when nothing is picked,
-  // Color-by falls back to contact rate when its option leaves the set.
+  // pick. Fallbacks are derived: first answered question when nothing is
+  // picked, Color-by falls back to contact rate when its option leaves the set.
   const { data: questionList } = useSuspenseQuery(questionsWithOptionsQuery());
+  const scopeScripts = useSuspenseQueries({
+    queries: scopeScriptIds(campaigns, deferredScope.campaignIds).map((id) =>
+      scriptDetailQuery(id),
+    ),
+  });
+  // Day- and filter-free so the menu holds still while those change; until
+  // it lands, the current view's answers stand in.
+  const { data: campaignAggregate } = useQuery(
+    resultsAggregateQuery(deferredScope.campaignIds, null, tz, [], deferredScope.version),
+  );
   const [questionPicks, setQuestionPicks] = useState<string[]>([]);
   const [questionMenuOpen, setQuestionMenuOpen] = useState(false);
-  const pickedQuestions = questionList.filter((q) => questionPicks.includes(q.questionId));
-  const activeQuestions = pickedQuestions.length > 0 ? pickedQuestions : questionList.slice(0, 1);
   const totals = sumRows(aggregate.rows);
+  const campaignAnswered = campaignAggregate
+    ? sumRows(campaignAggregate.rows).answered
+    : totals.answered;
+  // Script questions in script order, then others answered in the campaign
+  // (a swapped-out script's, or archived ones, which have no steps).
+  const questionsById = new Map(questionList.map((q) => [q.questionId, q]));
+  const inScripts: typeof questionList = [];
+  for (const { data: script } of scopeScripts) {
+    for (const step of script?.steps ?? []) {
+      const q = step.questionId ? questionsById.get(step.questionId) : undefined;
+      if (q && !inScripts.includes(q)) inScripts.push(q);
+    }
+  }
+  const answeredElsewhere = questionList.filter(
+    (q) => !inScripts.includes(q) && (campaignAnswered[q.questionId] ?? 0) > 0,
+  );
+  const menuQuestions = [
+    ...inScripts,
+    ...answeredElsewhere.filter((q) => !q.archived),
+    ...answeredElsewhere.filter((q) => q.archived),
+  ];
+  const pickedQuestions = menuQuestions.filter((q) => questionPicks.includes(q.questionId));
+  const defaultQuestion =
+    menuQuestions.find((q) => (campaignAnswered[q.questionId] ?? 0) > 0) ?? menuQuestions[0];
+  const activeQuestions =
+    pickedQuestions.length > 0 ? pickedQuestions : defaultQuestion ? [defaultQuestion] : [];
   // The aggregate zero-fills a row per zone; only walked zones render, in
   // zone drag order (as on the turfs board), zoneless rows last by name.
   const walkedRows = aggregate.rows
@@ -430,14 +470,19 @@ function ResultsIndex() {
           >
             <Icon name="clipboard-pen" className="size-3.5" />
             <span className="truncate">
-              {activeQuestions.length === 1
-                ? (activeQuestions[0]?.name ?? "Questions")
-                : `${activeQuestions.length} questions`}
+              {activeQuestions.length > 1
+                ? `${activeQuestions.length} questions`
+                : (activeQuestions[0]?.name ?? "Questions")}
             </span>
             <Icon name="chevron-down" className="size-3.5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-h-96 w-64 overflow-y-auto">
-            {questionList.map((q) => (
+            {menuQuestions.length === 0 ? (
+              <div className="px-1.5 py-1 pointer-coarse:px-2.5 text-sm text-muted-foreground">
+                No questions yet
+              </div>
+            ) : null}
+            {menuQuestions.map((q) => (
               <DropdownMenuCheckboxItem
                 key={q.questionId}
                 closeOnClick={false}
@@ -459,6 +504,9 @@ function ResultsIndex() {
                 }}
               >
                 <span className="truncate">{q.name}</span>
+                {q.archived ? (
+                  <Icon name="archive" className="text-muted-foreground size-3.5 shrink-0" />
+                ) : null}
               </DropdownMenuCheckboxItem>
             ))}
           </DropdownMenuContent>
@@ -871,6 +919,18 @@ function ZoneRow({
       })}
     </TableRow>
   );
+}
+
+// Scripts the scope's campaigns run, deduped: the selected campaign's, or
+// every campaign's under "All campaigns".
+function scopeScriptIds(
+  campaigns: ReadonlyArray<{ campaignId: string; scriptId: string }>,
+  campaignIds: string[] | null,
+): string[] {
+  const inScope = campaignIds
+    ? campaigns.filter((c) => campaignIds.includes(c.campaignId))
+    : campaigns;
+  return [...new Set(inScope.map((c) => c.scriptId))];
 }
 
 // Sum stage counts across zones for the totals row.
