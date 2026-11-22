@@ -24,7 +24,8 @@ import { DialogError } from "~/components/callout";
 import { campaignsListQuery } from "~/lib/queries/campaigns";
 import { progressQuery } from "~/lib/queries/progress";
 import { turfMapDataQuery, turfsListQuery, zoneMapDataQuery } from "~/lib/queries/turfs";
-import { walksListQuery } from "~/lib/queries/walks";
+import { walksListQuery, walksLiveQuery } from "~/lib/queries/walks";
+import { connectBoard, useStreamUp } from "~/lib/board-refresh";
 import { darkAtom } from "~/lib/atoms/theme";
 import { colorFor } from "~/lib/zone-colors";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
@@ -73,20 +74,13 @@ export const Route = createFileRoute("/$orgSlug/turfs/")({
 });
 
 // Instant board updates: the server publishes an SSE nudge when a scan
-// or walk mutation lands, and we refetch immediately instead of waiting
-// out the poll. The poll remains the correctness backbone — a dropped
-// stream (backgrounded phone tab) just falls back to poll latency.
-// Nudges aren't replayed, so a (re)connect refetches too.
+// or walk mutation lands, and the board refetches immediately instead of
+// waiting out the poll. Nudges aren't replayed, so a (re)connect
+// refetches too.
 function useLiveRefresh() {
   const { orgSlug } = Route.useParams();
   const queryClient = useQueryClient();
-  useEffect(() => {
-    const source = new EventSource(`/api/web/${orgSlug}/live`);
-    source.onopen = source.onmessage = () => {
-      void queryClient.invalidateQueries({ queryKey: ["walks"] });
-    };
-    return () => source.close();
-  }, [orgSlug, queryClient]);
+  useEffect(() => connectBoard(`/api/web/${orgSlug}/live`, queryClient), [orgSlug, queryClient]);
 }
 
 function TurfsIndex() {
@@ -403,8 +397,9 @@ function useTurfRows(campaignId: string | null, zoneId: string | null) {
   }, [data, zoneId]);
 }
 
-function useWalkSummaries(campaignId: string | null) {
-  const { data } = useQuery(walksListQuery(campaignId));
+function useWalkSummaries(campaignId: string | null, enabled = true) {
+  const streamUp = useStreamUp();
+  const { data } = useQuery({ ...walksLiveQuery(campaignId, streamUp), enabled });
   return useMemo(() => {
     const byTurf = new Map<string, WalkRow[]>();
     for (const w of data?.walks ?? []) {
@@ -419,8 +414,8 @@ function useWalkSummaries(campaignId: string | null) {
 
 // Null until progress loads — a turf absent from a loaded result means
 // genuinely zero attempts; an absent result means "don't know yet".
-function useProgressByTurf(campaignId: string | null) {
-  const { data } = useQuery(progressQuery(campaignId));
+function useProgressByTurf(campaignId: string | null, enabled = true) {
+  const { data } = useQuery({ ...progressQuery(campaignId), enabled });
   return useMemo(() => (data ? new Map(data.map((r) => [r.turfId, r.attempted])) : null), [data]);
 }
 
@@ -741,8 +736,10 @@ function ZoneMapDialog({
 }) {
   const isDark = useAtomValue(darkAtom);
   const [byProgress, setByProgress] = useState(false);
-  const summaries = useWalkSummaries(group?.campaignId ?? null);
-  const progressByTurf = useProgressByTurf(group?.campaignId ?? null);
+  // Mounted while closed; polling only while open keeps a closed dialog
+  // from refetching alongside the board.
+  const summaries = useWalkSummaries(group?.campaignId ?? null, open);
+  const progressByTurf = useProgressByTurf(group?.campaignId ?? null, open);
   const { data: zoneData } = useQuery({
     ...zoneMapDataQuery(group?.campaignId ?? "", group?.zoneId ?? null),
     enabled: group !== null,

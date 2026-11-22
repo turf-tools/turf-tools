@@ -39,5 +39,7 @@ scripts/bench/results/
 .claude/scheduled_tasks.lock
 # Scratch page for trying nav-status treatments (see components/nav-status.tsx)
 apps/web/src/routes/$orgSlug/toasts.tsx
+# Local dev burst of turf sign-outs for exercising the turfs board
+apps/web/scripts/board-burst.ts
 
 *.env
