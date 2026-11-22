@@ -232,10 +232,16 @@ export function connectBoard(url: string, queryClient: QueryClient): () => void 
   const unsubscribeFocus = focusManager.subscribe((focused) => {
     if (focused) heard();
   });
+  // Check at once when the browser knows it's offline: the fetch fails
+  // and the retry loop puts the spinner up.
+  const onOffline = () => wakeBoard(queryClient);
+  const hasWindow = typeof window !== "undefined";
+  if (hasWindow) window.addEventListener("offline", onOffline);
   const unwatch = watchSettles(queryClient);
   return () => {
     clearInterval(silenceCheck);
     unsubscribeFocus();
+    if (hasWindow) window.removeEventListener("offline", onOffline);
     unwatch();
     source.close();
     resetStream();

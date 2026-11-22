@@ -226,6 +226,18 @@ test("offline doesn't pause the board", async () => {
   expect(fetchStatus()).toBe("fetching");
 });
 
+test("going offline checks at once, so the spinner comes up", async () => {
+  const win = new EventTarget();
+  vi.stubGlobal("window", win);
+  await openSettledBoard();
+  win.dispatchEvent(new Event("offline"));
+  await flush();
+  expect(calls).toHaveLength(1);
+  calls[0].reject(new TypeError("Load failed"));
+  await flush();
+  expect(fetchStatus()).toBe("fetching");
+});
+
 test("a gateway error from a proxy retries until through", async () => {
   await openBoard();
   calls[0].reject(new ORPCError("BAD_GATEWAY", { status: 502 }));
