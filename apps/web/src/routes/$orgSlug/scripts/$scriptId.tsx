@@ -2,7 +2,7 @@ import { Icon } from "~/components/icon";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Badge } from "~/components/badge";
 import { DialogError } from "~/components/callout";
@@ -17,7 +17,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
@@ -607,18 +609,20 @@ function StepConditionRow({
             <Button
               variant="outline"
               size="sm"
-              className={cn(step.showIfOptionId == null && "text-muted-foreground")}
+              className={cn("max-w-full", step.showIfOptionId == null && "text-muted-foreground")}
             />
           }
         >
           <Icon name="corner-down-right" />
-          {step.showIfOptionId == null
-            ? "Show only if…"
-            : current
-              ? `Show only if ${current.question}: ${current.option}`
-              : "Show only if: (unavailable option)"}
+          <span className="truncate">
+            {step.showIfOptionId == null
+              ? "Show only if…"
+              : current
+                ? `Show only if ${current.question}: ${current.option}`
+                : "Show only if: (unavailable option)"}
+          </span>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
+        <DropdownMenuContent align="start" className="w-72">
           {step.showIfOptionId != null ? (
             <>
               <DropdownMenuItem onClick={() => onSet(null)}>Always show</DropdownMenuItem>
@@ -626,8 +630,8 @@ function StepConditionRow({
             </>
           ) : null}
           {candidates.map((q) => (
-            <Fragment key={q.questionId}>
-              <div className="px-2 pt-1.5 pb-0.5 text-sm text-muted-foreground">{q.name}</div>
+            <DropdownMenuGroup key={q.questionId}>
+              <DropdownMenuLabel className="truncate">{q.name}</DropdownMenuLabel>
               {q.options.map((o) => (
                 <DropdownMenuItem
                   key={o.responseOptionId}
@@ -639,7 +643,7 @@ function StepConditionRow({
                   ) : null}
                 </DropdownMenuItem>
               ))}
-            </Fragment>
+            </DropdownMenuGroup>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
