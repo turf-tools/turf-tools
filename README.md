@@ -67,13 +67,15 @@ pnpm dev
 
 This starts:
 
-- `db` — Postgres via Docker Compose (port 5432)
+- `db` — Postgres via Docker Compose (port 5432), skipped when `DATABASE_URL` points elsewhere
 - `web` — TanStack Start admin UI and oRPC API (port 3000)
 - `native` — Expo web preview of the mobile app (port 8081)
 - `data` — FastAPI data service (including DuckDB/DuckLake) (port 8000)
 - `search` — Quickwit search engine (port 7280)
 
 The first time you run `dev`, the web server automatically pushes the Drizzle schema and seeds reference tables plus two dev organizations, an admin user, and sample scripts once Postgres is up. It seeds no voter data.
+
+To use an already-running Postgres instead of Docker, set the same `DATABASE_URL` in `apps/web/.env`, `apps/data/.env`, and `packages/db/.env` (any host and port). Dev scripts wait on that URL and skip starting Compose.
 
 You can also start individual services with the following commands:
 
