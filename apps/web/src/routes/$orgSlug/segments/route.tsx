@@ -625,9 +625,11 @@ function ExportDialog({
   const needsConfirm = !pending && personCount > EXPORT_CONFIRM_THRESHOLD;
   const confirmToggle = needsConfirm ? (
     <>
-      {"Please confirm your export of"}
-      <span className="font-bold text-foreground">~{approxCount(personCount)}</span>
-      {" people. It will begin downloading a large file."}
+      <div>
+        {"Please confirm your export of"}
+        <span className="font-bold text-foreground">~{approxCount(personCount)}</span>
+        {" people. It will begin downloading a large file."}
+      </div>
       <Toggle
         key={"exportConfirm"}
         size="sm"
@@ -645,16 +647,14 @@ function ExportDialog({
 
   const householdingToggle =
     layout === "directMail" ? (
-      <Toggle
-        key={"householding"}
-        size="sm"
-        variant="outline"
-        pressed={householding}
-        onPressedChange={() => setHouseholding(!householding)}
-        className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
-      >
-        Roll up recipients by household?
-      </Toggle>
+      <div className={"flex justify-between"}>
+        Roll up voters by household?
+        <input
+          type={"checkbox"}
+          checked={householding}
+          onChange={(e) => setHouseholding(e.target.checked)}
+        />
+      </div>
     ) : (
       <></>
     );
@@ -698,7 +698,7 @@ function ExportDialog({
               disabled={pending || (needsConfirm && !confirmed)}
               loading={pending}
             >
-              Save
+              Export
             </Button>
           </div>
         </form>

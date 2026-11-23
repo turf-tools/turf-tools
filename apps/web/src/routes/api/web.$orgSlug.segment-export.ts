@@ -28,8 +28,12 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
         const segmentId = url.searchParams.get("segmentId");
 
         const format = url.searchParams.get("format");
+        const layout = url.searchParams.get("layout");
         const effectiveFormat = format === "parquet" || format === "excel" ? format : "csv";
         const formatExtension = effectiveFormat === "excel" ? "xlsx" : effectiveFormat;
+        const effectiveLayout = layout === "directMail" ? layout : "default";
+        const householding =
+          effectiveLayout === "directMail" ? url.searchParams.get("householding") : undefined;
 
         if (!segmentId) return new Response("Bad Request", { status: 400 });
 
@@ -51,6 +55,8 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
             criteria: seg.criteria ?? { steps: [] },
             orgSlug: context.orgSlug,
             format: effectiveFormat,
+            layout: effectiveLayout,
+            householding,
           }),
         });
         if (!upstream.ok) {

@@ -1160,13 +1160,20 @@ async def segments_export(req: _SegmentExportRequest):
                 SELECT
                     CASE
                         WHEN MAX(num_families) = 1 THEN
-                            CASE WHEN MAX(num_persons) = 1 THEN CONCAT_WS(' ', MAX(first_name), MAX(middle_name), MAX(last_name), MAX(name_suffix))
-                            WHEN MAX(num_persons) = 2 THEN STRING_AGG(first_name, ' & ') || ' ' || MAX(last_name)
-                            ELSE 'The ' || MAX(last_name) || ' Family'
+                            CASE
+                                WHEN MAX(num_persons) = 1 THEN CONCAT_WS(
+                                    ' ', MAX(first_name), MAX(middle_name), MAX(last_name), MAX(name_suffix)
+                                )
+                                WHEN MAX(num_persons) = 2 THEN STRING_AGG(first_name, ' & ') || ' ' || MAX(last_name)
+                                ELSE 'The ' || MAX(last_name) || ' Family'
                             END
                         ELSE
-                            CASE WHEN MAX(num_persons) = 2 THEN STRING_AGG(CONCAT_WS(' ', first_name, middle_name, last_name, name_suffix), ' & ')
-                            ELSE 'Our Friends At' END
+                            CASE
+                                WHEN MAX(num_persons) = 2 THEN STRING_AGG(
+                                    CONCAT_WS(' ', first_name, middle_name, last_name, name_suffix), ' & '
+                                )
+                                ELSE 'Our Friends At'
+                            END
                     END AS EnvName,
                     t.city AS City,
                     t.state AS State,
@@ -1210,7 +1217,7 @@ async def segments_export(req: _SegmentExportRequest):
 
         if req.layout == "directMail":
             select_sql = direct_mail_sql(schema, persons_columns, where, householded=True)
-        elif req.layout == "default":
+        else:
             select_sql = default_sql(schema, persons_columns, where)
 
         fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
