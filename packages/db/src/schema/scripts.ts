@@ -20,6 +20,9 @@ export const scripts = app.table("scripts", {
   // Soft retirement — archived scripts leave the rail and pickers but
   // stay resolvable for the campaigns and turfs that reference them.
   archivedAt: timestamp({ withTimezone: true }),
+  // Set on publish or by an explicit lock. While set, step edits are
+  // refused, and so are content edits to every question in the script.
+  lockedAt: timestamp({ withTimezone: true }),
 });
 
 // A step is either stepType='question' (referencing a reusable

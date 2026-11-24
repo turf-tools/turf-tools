@@ -1,9 +1,18 @@
 import { ORPCError } from "@orpc/server";
 import { and, asc, eq, exists, isNull, or, sql } from "@turf-tools/db";
-import { campaigns, segments, turfDrafts, turfs, walks, zones } from "@turf-tools/db/schema";
+import {
+  campaigns,
+  scripts,
+  segments,
+  turfDrafts,
+  turfs,
+  walks,
+  zones,
+} from "@turf-tools/db/schema";
 import { z } from "zod";
 import { DataServiceError, dataPostJson } from "~/lib/server/data-proxy";
 import { activeDatasetId } from "./active-dataset";
+import { lockScript } from "./scripts";
 import { walkEvents } from "./walks";
 import { webMut, webPub } from "../context";
 
@@ -227,22 +236,49 @@ export const publish = mut
       zoneId: z.string().uuid().nullable(),
     }),
   )
-  .handler(async ({ context, input }): Promise<PublishResult> => {
-    try {
-      return await dataPostJson<PublishResult>("/turfs/publish", {
-        campaignId: input.campaignId,
-        zoneId: input.zoneId,
-        createdBy: context.user.id,
-        orgSlug: context.orgSlug,
-      });
-    } catch (e) {
-      // Surface upstream 4xx (e.g. ambiguous-assignment rejection) as a
-      // proper client error with the FastAPI `detail` message, so the UI
-      // shows "Buildings X, Y are inside multiple polygons" instead of a
-      // sanitized "Internal server error".
-      if (e instanceof DataServiceError && e.status >= 400 && e.status < 500) {
-        throw new ORPCError("BAD_REQUEST", { message: e.detail });
+  .handler(
+    async ({ context, input }): Promise<PublishResult & { lockedScriptName: string | null }> => {
+      let result: PublishResult;
+      try {
+        result = await dataPostJson<PublishResult>("/turfs/publish", {
+          campaignId: input.campaignId,
+          zoneId: input.zoneId,
+          createdBy: context.user.id,
+          orgSlug: context.orgSlug,
+        });
+      } catch (e) {
+        // Surface upstream 4xx (e.g. ambiguous-assignment rejection) as a
+        // proper client error with the FastAPI `detail` message, so the UI
+        // shows "Buildings X, Y are inside multiple polygons" instead of a
+        // sanitized "Internal server error".
+        if (e instanceof DataServiceError && e.status >= 400 && e.status < 500) {
+          throw new ORPCError("BAD_REQUEST", { message: e.detail });
+        }
+        throw e;
       }
-      throw e;
-    }
-  });
+      // The turfs are already live, so a lock failure leaves the script
+      // visibly unlocked rather than failing the publish. `lockedScriptName`
+      // is set only when this publish newly locked the script.
+      let lockedScriptName: string | null = null;
+      try {
+        const rows = await context.db
+          .select({ scriptId: scripts.scriptId, name: scripts.name, lockedAt: scripts.lockedAt })
+          .from(campaigns)
+          .innerJoin(scripts, eq(scripts.scriptId, campaigns.scriptId))
+          .where(
+            and(
+              eq(campaigns.campaignId, input.campaignId),
+              eq(campaigns.organizationId, context.organizationId),
+            ),
+          );
+        const script = rows[0];
+        if (script && !script.lockedAt) {
+          await lockScript(context.db, script.scriptId);
+          lockedScriptName = script.name;
+        }
+      } catch (e) {
+        console.error("turfs.publish: script lock failed", e);
+      }
+      return { ...result, lockedScriptName };
+    },
+  );

@@ -1,4 +1,4 @@
-import { useAtomValue } from "jotai";
+import { useAtom } from "jotai";
 import { useEffect, useRef, useState } from "react";
 import { tintStyle } from "~/components/badge";
 import { Icon } from "~/components/icon";
@@ -8,6 +8,8 @@ import { RED, YELLOW } from "~/lib/palette";
 import { cn } from "~/lib/utils";
 
 const HOLD_MS = 3000;
+// Matches the `duration-200` opacity transition below.
+const FADE_MS = 200;
 
 // Confirmations (success/info) are the common case and stay quiet — plain
 // muted text. Problems (error/warning) are rare and should interrupt, so
@@ -23,7 +25,7 @@ const TREATMENTS: Record<NavStatusKind, { icon: IconName | null; hue: string | n
 // each write, holds, fades out; the last message stays mounted so the
 // fade-out has content.
 export function NavStatus({ className }: { className?: string }) {
-  const status = useAtomValue(navStatusAtom);
+  const [status, setStatus] = useAtom(navStatusAtom);
   const [visible, setVisible] = useState(false);
   const last = useRef<{ message: string; kind: NavStatusKind } | null>(null);
   if (status) last.current = { message: status.message, kind: status.kind };
@@ -31,9 +33,19 @@ export function NavStatus({ className }: { className?: string }) {
   useEffect(() => {
     if (!status) return;
     setVisible(true);
-    const t = setTimeout(() => setVisible(false), HOLD_MS);
-    return () => clearTimeout(t);
-  }, [status]);
+    const hide = setTimeout(() => setVisible(false), HOLD_MS);
+    const next = status.next;
+    const follow = next
+      ? setTimeout(
+          () => setStatus({ kind: status.kind, message: next, nonce: Date.now() }),
+          HOLD_MS + FADE_MS,
+        )
+      : undefined;
+    return () => {
+      clearTimeout(hide);
+      clearTimeout(follow);
+    };
+  }, [status, setStatus]);
 
   const s = last.current;
   const t = s ? TREATMENTS[s.kind] : null;

@@ -1,6 +1,6 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQuery, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { notify } from "~/lib/notify";
 import { tintStyle } from "~/components/badge";
@@ -36,10 +36,12 @@ import {
   questionDetailQuery,
   questionsListQuery,
 } from "~/lib/queries/questions";
+import type { IconName } from "~/lib/icon-names";
 import { GRAY } from "~/lib/palette";
 import { useFadeOnce } from "~/lib/use-fade-once";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
+import type { ScriptRef } from "~/rpc/web/questions";
 
 type QuestionsSearch = {
   status: "active" | "archived" | "all";
@@ -71,6 +73,7 @@ export const Route = createFileRoute("/$orgSlug/questions")({
 });
 
 function QuestionsPage() {
+  const queryClient = useQueryClient();
   const { status } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/questions");
@@ -87,8 +90,21 @@ function QuestionsPage() {
       ? "Active"
       : (STATUS_OPTIONS.find((o) => o.value === filterValue)?.label ?? "Active");
 
-  // `null` = closed, `"new"` = create dialog, anything else = a questionId being edited.
-  const [editing, setEditing] = useState<string | null>(null);
+  const [modal, setModal] = useState<ModalState>(null);
+
+  // The loader's detail prefetches have no observers here, so they go stale
+  // and get garbage-collected while the page sits open. Fetching on click
+  // (instant when fresh) keeps the editor from opening empty or with an
+  // outdated lock state.
+  const openEdit = async (questionId: string) => {
+    try {
+      await queryClient.fetchQuery(questionDetailQuery(questionId));
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    setModal({ kind: "edit", questionId });
+  };
 
   return (
     <Page className={cn("flex h-[calc(100vh-3.5rem)] flex-col", shouldFade)}>
@@ -101,28 +117,43 @@ function QuestionsPage() {
           allLabel="Active"
           onChange={onStatusChange}
         />
-        <Button onClick={() => setEditing("new")}>
+        <Button onClick={() => setModal({ kind: "new" })}>
           <Icon name="plus" />
           New question
         </Button>
       </EditorHeader>
-      <QuestionsTable status={status} onEdit={(id) => setEditing(id)} />
-      {editing !== null ? (
+      <QuestionsTable
+        status={status}
+        onEdit={(questionId) => void openEdit(questionId)}
+        onClone={(source) => setModal({ kind: "clone", source })}
+      />
+      {modal !== null ? (
         <QuestionModal
-          initialQuestionId={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
+          initialQuestionId={modal.kind === "edit" ? modal.questionId : null}
+          source={modal.kind === "clone" ? modal.source : null}
+          onClose={() => setModal(null)}
         />
       ) : null}
     </Page>
   );
 }
 
+type CloneSource = { questionId: string; name: string };
+
+type ModalState =
+  | null
+  | { kind: "new" }
+  | { kind: "clone"; source: CloneSource }
+  | { kind: "edit"; questionId: string };
+
 function QuestionsTable({
   status,
   onEdit,
+  onClone,
 }: {
   status: QuestionsSearch["status"];
   onEdit: (questionId: string) => void;
+  onClone: (source: CloneSource) => void;
 }) {
   const { data: rows } = useSuspenseQuery(questionsListQuery(status));
 
@@ -133,14 +164,16 @@ function QuestionsTable({
           <TableHead className="w-72">Name</TableHead>
           <TableHead className="w-36">Type</TableHead>
           <TableHead>Text</TableHead>
-          <TableHead className="w-24">Used in</TableHead>
+          <TableHead className="w-22">Options</TableHead>
+          <TableHead className="w-22">Used in</TableHead>
+          <TableHead className="w-22">Locked</TableHead>
           <TableHead className="w-9" />
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.length === 0 ? (
           <TableRow className="h-10">
-            <TableCell colSpan={5}>
+            <TableCell colSpan={7}>
               <Pill>
                 <span>No questions</span>
               </Pill>
@@ -148,7 +181,12 @@ function QuestionsTable({
           </TableRow>
         ) : null}
         {rows.map((q) => (
-          <QuestionRow key={q.questionId} question={q} onEdit={() => onEdit(q.questionId)} />
+          <QuestionRow
+            key={q.questionId}
+            question={q}
+            onEdit={() => onEdit(q.questionId)}
+            onClone={() => onClone(q)}
+          />
         ))}
       </TableBody>
     </Table>
@@ -157,9 +195,43 @@ function QuestionsTable({
 
 type QuestionListRow = Awaited<ReturnType<typeof client.questions.list>>[number];
 
-function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: () => void }) {
+function QuestionRow({
+  question,
+  onEdit,
+  onClone,
+}: {
+  question: QuestionListRow;
+  onEdit: () => void;
+  onClone: () => void;
+}) {
   const queryClient = useQueryClient();
   const archived = question.archivedAt != null;
+  const locked = question.lockedBy.length > 0;
+  // Snapshotted so the dialog body holds through its close animation.
+  const [scriptsOpen, setScriptsOpen] = useState(false);
+  const [scriptsSnapshot, setScriptsSnapshot] = useState<{
+    kind: "used" | "locked";
+    scripts: ScriptRef[];
+  }>({ kind: "used", scripts: [] });
+  const openScripts = (kind: "used" | "locked", scripts: ScriptRef[]) => {
+    setScriptsSnapshot({ kind, scripts });
+    setScriptsOpen(true);
+  };
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [optionsSnapshot, setOptionsSnapshot] = useState<
+    { responseOptionId: string; text: string }[]
+  >([]);
+  // Details are fetched on click (instant when fresh) so the list is current.
+  const openOptions = async () => {
+    try {
+      const detail = await queryClient.fetchQuery(questionDetailQuery(question.questionId));
+      setOptionsSnapshot(detail?.options ?? []);
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    setOptionsOpen(true);
+  };
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["questions"] });
 
@@ -187,7 +259,6 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
   const [archivePrompt, setArchivePrompt] = useState<{
     gatesSteps: boolean;
     usedCount: number;
-    liveTurfCount: number;
   } | null>(null);
 
   const requestArchive = async () => {
@@ -206,7 +277,6 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
       setArchivePrompt({
         gatesSteps: usage.gatingOptionIds.length > 0,
         usedCount: usage.usedCount,
-        liveTurfCount: usage.liveTurfCount,
       });
       setArchiveDialogOpen(true);
     } else {
@@ -228,7 +298,12 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
               <span className="truncate">{question.name}</span>
             </Pill>
           ) : (
-            <Button variant="outline" className="w-full justify-start" onClick={onEdit}>
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              onClick={onEdit}
+              disabled={locked}
+            >
               <Icon name="pencil" className="size-3.5" />
               <span className="truncate">{question.name}</span>
             </Button>
@@ -248,12 +323,32 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
           </Pill>
         </TableCell>
         <TableCell>
-          <Pill variant="number">{question.usedCount}</Pill>
+          <CountButton
+            icon="list"
+            count={question.optionCount}
+            onClick={() => void openOptions()}
+          />
+        </TableCell>
+        <TableCell>
+          <CountButton
+            icon="clipboard-pen"
+            count={question.usedBy.length}
+            onClick={() => openScripts("used", question.usedBy)}
+          />
+        </TableCell>
+        <TableCell>
+          <CountButton
+            icon="lock"
+            count={question.lockedBy.length}
+            onClick={() => openScripts("locked", question.lockedBy)}
+          />
         </TableCell>
         <TableCell>
           <RowMenu
             archived={archived}
+            locked={locked}
             onEdit={onEdit}
+            onClone={onClone}
             onArchive={() => void requestArchive()}
             onUnarchive={() => unarchive.mutate()}
           />
@@ -263,26 +358,61 @@ function QuestionRow({ question, onEdit }: { question: QuestionListRow; onEdit: 
         open={archiveDialogOpen}
         onOpenChange={setArchiveDialogOpen}
         questionName={question.name}
-        usedCount={archivePrompt?.usedCount ?? question.usedCount}
-        liveTurfCount={archivePrompt?.liveTurfCount ?? 0}
+        usedCount={archivePrompt?.usedCount ?? question.usedBy.length}
         gatesSteps={archivePrompt?.gatesSteps ?? false}
         pending={archive.isPending}
         onConfirm={() => {
           archive.mutate(undefined, { onSuccess: () => setArchiveDialogOpen(false) });
         }}
       />
+      <OptionsDialog
+        open={optionsOpen}
+        onOpenChange={setOptionsOpen}
+        questionName={question.name}
+        options={optionsSnapshot}
+      />
+      <ScriptsDialog
+        open={scriptsOpen}
+        onOpenChange={setScriptsOpen}
+        questionName={question.name}
+        kind={scriptsSnapshot.kind}
+        scripts={scriptsSnapshot.scripts}
+      />
     </>
+  );
+}
+
+// An icon and count that opens a detail dialog; an empty pill at zero.
+function CountButton({
+  icon,
+  count,
+  onClick,
+}: {
+  icon: IconName;
+  count: number;
+  onClick: () => void;
+}) {
+  if (count === 0) return <Pill />;
+  return (
+    <Button variant="outline" className="w-full justify-start" onClick={onClick}>
+      <Icon name={icon} className="size-3.5" />
+      <span className="font-mono tabular-nums">{count}</span>
+    </Button>
   );
 }
 
 function RowMenu({
   archived,
+  locked,
   onEdit,
+  onClone,
   onArchive,
   onUnarchive,
 }: {
   archived: boolean;
+  locked: boolean;
   onEdit: () => void;
+  onClone: () => void;
   onArchive: () => void;
   onUnarchive: () => void;
 }) {
@@ -299,11 +429,15 @@ function RowMenu({
           </DropdownMenuItem>
         ) : (
           <>
-            <DropdownMenuItem onClick={onEdit}>
+            <DropdownMenuItem onClick={onEdit} disabled={locked}>
               <Icon name="pencil" />
               Edit
             </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onClick={onArchive}>
+            <DropdownMenuItem onClick={onClone}>
+              <Icon name="copy" />
+              Clone
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onClick={onArchive} disabled={locked}>
               <Icon name="archive" />
               Archive
             </DropdownMenuItem>
@@ -314,12 +448,110 @@ function RowMenu({
   );
 }
 
+function OptionsDialog({
+  open,
+  onOpenChange,
+  questionName,
+  options,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  questionName: string;
+  options: { responseOptionId: string; text: string }[];
+}) {
+  const n = options.length;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Options</DialogTitle>
+        <DialogDescription className="mb-4">
+          The question <span className="font-medium text-foreground">{questionName}</span> has{" "}
+          <span className="font-bold text-foreground">{n}</span> option{n === 1 ? "" : "s"}.
+        </DialogDescription>
+        <div className="flex flex-col gap-1.5">
+          {options.map((o) => (
+            <Pill key={o.responseOptionId} className="min-w-0">
+              {o.text ? (
+                <span className="truncate">{o.text}</span>
+              ) : (
+                <span className="italic text-muted-foreground">Empty option</span>
+              )}
+            </Pill>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end">
+          <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// The scripts using a question (`used`) or the locked ones among them
+// (`locked`), as links to each script.
+function ScriptsDialog({
+  open,
+  onOpenChange,
+  questionName,
+  kind,
+  scripts,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  questionName: string;
+  kind: "used" | "locked";
+  scripts: ScriptRef[];
+}) {
+  const { orgSlug } = Route.useParams();
+  const n = scripts.length;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>{kind === "locked" ? "Question locked" : "Used in"}</DialogTitle>
+        <DialogDescription className="mb-4">
+          The question <span className="font-medium text-foreground">{questionName}</span> is used
+          in <span className="font-bold text-foreground">{n}</span> script{n === 1 ? "" : "s"}
+          {kind === "locked" ? (
+            <>
+              {" "}
+              that {n === 1 ? "is" : "are"} locked. Unlock {n === 1 ? "it" : "them"} to edit the
+              question.
+            </>
+          ) : (
+            "."
+          )}
+        </DialogDescription>
+        <div className="flex flex-col gap-1.5">
+          {scripts.map((script) => (
+            <Link
+              key={script.scriptId}
+              to="/$orgSlug/scripts/$scriptId"
+              params={{ orgSlug, scriptId: script.scriptId }}
+              className="flex h-8 items-center gap-1.5 rounded-md border border-border pl-2 pr-2.5 text-sm hover:bg-muted"
+            >
+              <Icon name="clipboard-pen" className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{script.name}</span>
+              {script.archived ? <span className="text-muted-foreground">(archived)</span> : null}
+              <Icon
+                name="chevron-right"
+                className="ml-auto size-3.5 shrink-0 text-muted-foreground"
+              />
+            </Link>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end">
+          <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ArchiveQuestionDialog({
   open,
   onOpenChange,
   questionName,
   usedCount,
-  liveTurfCount,
   gatesSteps,
   pending,
   onConfirm,
@@ -328,7 +560,6 @@ function ArchiveQuestionDialog({
   onOpenChange: (open: boolean) => void;
   questionName: string;
   usedCount: number;
-  liveTurfCount: number;
   gatesSteps: boolean;
   pending: boolean;
   onConfirm: () => void;
@@ -353,15 +584,8 @@ function ArchiveQuestionDialog({
             <DialogDescription>
               <span className="font-medium text-foreground">{questionName}</span> is used in{" "}
               <span className="font-bold text-foreground">{usedCount}</span> script step
-              {usedCount === 1 ? "" : "s"}
-              {liveTurfCount > 0 ? (
-                <>
-                  {" "}
-                  and <span className="font-bold text-foreground">{liveTurfCount}</span> published
-                  turf{liveTurfCount === 1 ? "" : "s"}
-                </>
-              ) : null}
-              . Archiving removes it from those scripts. Historical responses keep their reference.
+              {usedCount === 1 ? "" : "s"}. Archiving removes it from those scripts. Historical
+              responses keep their reference.
             </DialogDescription>
             <div className="mt-2 flex justify-end gap-2">
               <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
@@ -380,9 +604,11 @@ function ArchiveQuestionDialog({
 // flash on the create → edit handoff.
 function QuestionModal({
   initialQuestionId,
+  source,
   onClose,
 }: {
   initialQuestionId: string | null;
+  source: CloneSource | null;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -397,7 +623,16 @@ function QuestionModal({
       }}
     >
       <DialogContent className="max-w-xl">
-        {questionId === null ? (
+        {questionId === null && source ? (
+          <CloneBody
+            source={source}
+            onCloned={(question) => {
+              queryClient.setQueryData(["question", question.questionId], question);
+              void queryClient.invalidateQueries({ queryKey: ["questions"] });
+              onClose();
+            }}
+          />
+        ) : questionId === null ? (
           <CreateBody
             onCreated={(question) => {
               seedQuestionDetail(queryClient, question);
@@ -410,6 +645,58 @@ function QuestionModal({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CloneBody({
+  source,
+  onCloned,
+}: {
+  source: CloneSource;
+  onCloned: (question: Awaited<ReturnType<typeof client.questions.clone>>) => void;
+}) {
+  const [name, setName] = useState(`${source.name} (copy)`);
+  const clone = useMutation({
+    mutationFn: (name: string) => client.questions.clone({ questionId: source.questionId, name }),
+    onSuccess: onCloned,
+    onError: (e) => notify.error(e.message),
+  });
+
+  const valid = name.trim().length > 0;
+
+  return (
+    <>
+      <DialogTitle>Clone question</DialogTitle>
+      <DialogDescription>
+        This creates a new question with the same type, text, and active responses. It won't be in
+        any script, it will be unlocked, and you'll be able to edit it.
+      </DialogDescription>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!valid || clone.isPending) return;
+          clone.mutate(name.trim());
+        }}
+        className="flex flex-col gap-4"
+      >
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm text-muted-foreground">Name</label>
+          <Input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={clone.isPending}
+          />
+        </div>
+        <div className="mt-2 flex justify-end gap-2">
+          <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
+          <Button type="submit" disabled={!valid} loading={clone.isPending}>
+            <Icon name="copy" />
+            Clone
+          </Button>
+        </div>
+      </form>
+    </>
   );
 }
 
@@ -506,7 +793,11 @@ function EditBody({ questionId }: { questionId: string }) {
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <label className="text-sm text-muted-foreground">Name</label>
-          <EditNameInput value={question.name} onCommit={(name) => rename.mutate(name)} />
+          <EditNameInput
+            value={question.name}
+            onCommit={(name) => rename.mutate(name)}
+            disabled={question.lockedBy.length > 0}
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-sm text-muted-foreground">Type</label>
@@ -533,7 +824,15 @@ function EditBody({ questionId }: { questionId: string }) {
   );
 }
 
-function EditNameInput({ value, onCommit }: { value: string; onCommit: (text: string) => void }) {
+function EditNameInput({
+  value,
+  onCommit,
+  disabled,
+}: {
+  value: string;
+  onCommit: (text: string) => void;
+  disabled: boolean;
+}) {
   const [local, setLocal] = useState(value);
   useEffect(() => {
     setLocal(value);
@@ -554,6 +853,7 @@ function EditNameInput({ value, onCommit }: { value: string; onCommit: (text: st
           target.closest<HTMLElement>('[role="dialog"]')?.focus();
         }
       }}
+      disabled={disabled}
     />
   );
 }

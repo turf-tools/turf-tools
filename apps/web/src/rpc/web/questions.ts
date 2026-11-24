@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, eq, inArray, isNull, sql } from "@turf-tools/db";
-import { scriptSteps, questions, responseOptions, turfs } from "@turf-tools/db/schema";
+import { and, asc, eq, inArray, isNull, sql, type Db } from "@turf-tools/db";
+import { scriptSteps, questions, responseOptions } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webMut, webPub } from "../context";
 
@@ -16,6 +16,41 @@ const select = {
   archivedAt: questions.archivedAt,
 };
 
+// A question is locked while any locked script contains it. Aliased by hand:
+// drizzle renders column interpolations unqualified inside a select-field
+// fragment, which would make the correlation self-referential.
+export const isLocked = sql<boolean>`EXISTS (
+  SELECT 1 FROM app.script_steps ss
+  INNER JOIN app.scripts s ON s.script_id = ss.script_id
+  WHERE ss.question_id = questions.question_id AND s.locked_at IS NOT NULL
+)`;
+
+export type ScriptRef = { scriptId: string; name: string; archived: boolean };
+
+// The scripts containing the question, by name.
+const scriptRefs = (lockedOnly: boolean) => sql<ScriptRef[]>`COALESCE((
+  SELECT json_agg(
+    json_build_object('scriptId', s.script_id, 'name', s.name, 'archived', s.archived_at IS NOT NULL)
+    ORDER BY s.name
+  )
+  FROM app.script_steps ss
+  INNER JOIN app.scripts s ON s.script_id = ss.script_id
+  WHERE ss.question_id = questions.question_id
+    ${lockedOnly ? sql`AND s.locked_at IS NOT NULL` : sql``}
+), '[]'::json)`;
+
+const usedBy = scriptRefs(false);
+
+// The locked scripts containing the question, so the UI can say what to
+// unlock. Empty = editable.
+export const lockedBy = scriptRefs(true);
+
+// Active options only, matching what the editor and canvassers see.
+const optionCount = sql<number>`(
+  SELECT count(*)::int FROM app.response_options o
+  WHERE o.question_id = questions.question_id AND o.archived_at IS NULL
+)`;
+
 const optionSelect = {
   responseOptionId: responseOptions.responseOptionId,
   text: responseOptions.text,
@@ -25,7 +60,8 @@ const optionSelect = {
 // List questions in the current user's organization.
 // `status` filters: "active" (default, archivedAt IS NULL), "archived"
 // (archivedAt IS NOT NULL), or "all".
-// Each row carries a `usedCount` of how many script_steps reference it.
+// Each row carries `usedBy`, the scripts containing it (a question appears at
+// most once per script).
 export const list = pub
   .input(
     z
@@ -44,7 +80,7 @@ export const list = pub
           : undefined;
 
     const rows = await context.db
-      .select(select)
+      .select({ ...select, usedBy, lockedBy, optionCount })
       .from(questions)
       .where(
         statusCondition
@@ -53,24 +89,7 @@ export const list = pub
       )
       .orderBy(asc(questions.createdAt));
 
-    if (rows.length === 0) return [];
-
-    const counts = await context.db
-      .select({
-        questionId: scriptSteps.questionId,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(scriptSteps)
-      .where(
-        inArray(
-          scriptSteps.questionId,
-          rows.map((r) => r.questionId),
-        ),
-      )
-      .groupBy(scriptSteps.questionId);
-    const countMap = new Map(counts.map((c) => [c.questionId, c.count]));
-
-    return rows.map((r) => ({ ...r, usedCount: countMap.get(r.questionId) ?? 0 }));
+    return rows;
   });
 
 // Questions (active + archived, flagged) with their response options inlined —
@@ -135,7 +154,7 @@ export const getById = pub
   .input(z.object({ questionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
     const rows = await context.db
-      .select(select)
+      .select({ ...select, lockedBy })
       .from(questions)
       .where(
         and(
@@ -158,7 +177,7 @@ export const getById = pub
   });
 
 // One-shot freshness probe for the remove/archive gates — fetched on click
-// (staleTime 0) so the warn/block decision never acts on a stale cache.
+// (staleTime 0) so the block decision never acts on a stale cache.
 export const liveUsage = pub
   .input(z.object({ questionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
@@ -173,17 +192,10 @@ export const liveUsage = pub
       );
     if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
 
-    const [used, live, gating] = await Promise.all([
+    const [used, gating] = await Promise.all([
       context.db
         .select({ count: sql<number>`count(*)::int` })
         .from(scriptSteps)
-        .where(eq(scriptSteps.questionId, input.questionId)),
-      // Active turfs whose stamped script includes this question — removals
-      // here change what canvassers in those turfs see.
-      context.db
-        .select({ count: sql<number>`count(distinct ${turfs.turfId})::int` })
-        .from(scriptSteps)
-        .innerJoin(turfs, and(eq(turfs.scriptId, scriptSteps.scriptId), eq(turfs.status, "active")))
         .where(eq(scriptSteps.questionId, input.questionId)),
       // Options some step's visibility is conditioned on — archiving them
       // (or the whole question) is blocked.
@@ -199,7 +211,6 @@ export const liveUsage = pub
 
     return {
       usedCount: used[0]?.count ?? 0,
-      liveTurfCount: live[0]?.count ?? 0,
       gatingOptionIds: gating.map((g) => g.responseOptionId),
     };
   });
@@ -225,11 +236,26 @@ export const create = mut
     return rows[0]!;
   });
 
-export const rename = mut
+async function assertEditable(db: Db, organizationId: string, questionId: string) {
+  const rows = await db
+    .select({ isLocked })
+    .from(questions)
+    .where(and(eq(questions.questionId, questionId), eq(questions.organizationId, organizationId)));
+  if (rows.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+  if (rows[0]!.isLocked)
+    throw new ORPCError("CONFLICT", {
+      message: "This question is in a locked script. Unlock the script to edit.",
+    });
+}
+
+// Copies the question's type, text, and active options into a new question
+// outside any script, so it starts unlocked — the way to edit a question a
+// locked script is using without touching that script's answers.
+export const clone = mut
   .input(z.object({ questionId: z.string().uuid(), name: z.string().min(1) }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
+    const rows = await context.db
+      .select()
       .from(questions)
       .where(
         and(
@@ -237,7 +263,51 @@ export const rename = mut
           eq(questions.organizationId, context.organizationId),
         ),
       );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    const source = rows[0];
+    if (!source) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    const sourceOptions = await context.db
+      .select({ text: responseOptions.text })
+      .from(responseOptions)
+      .where(
+        and(eq(responseOptions.questionId, input.questionId), isNull(responseOptions.archivedAt)),
+      )
+      .orderBy(asc(responseOptions.order));
+
+    return context.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(questions)
+        .values({
+          organizationId: context.organizationId,
+          name: input.name,
+          responseType: source.responseType,
+          text: source.text,
+          createdBy: context.user.id,
+        })
+        .returning(select);
+      const question = inserted[0]!;
+      const options =
+        sourceOptions.length === 0
+          ? []
+          : await tx
+              .insert(responseOptions)
+              .values(
+                sourceOptions.map((o, i) => ({
+                  questionId: question.questionId,
+                  text: o.text,
+                  order: i,
+                  createdBy: context.user.id,
+                })),
+              )
+              .returning(optionSelect);
+      options.sort((a, b) => a.order - b.order);
+      return { ...question, lockedBy: [] as ScriptRef[], options };
+    });
+  });
+
+export const rename = mut
+  .input(z.object({ questionId: z.string().uuid(), name: z.string().min(1) }))
+  .handler(async ({ context, input }) => {
+    await assertEditable(context.db, context.organizationId, input.questionId);
     await context.db
       .update(questions)
       .set({ name: input.name })
@@ -248,16 +318,7 @@ export const rename = mut
 export const updateText = mut
   .input(z.object({ questionId: z.string().uuid(), text: z.string() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
-      .from(questions)
-      .where(
-        and(
-          eq(questions.questionId, input.questionId),
-          eq(questions.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    await assertEditable(context.db, context.organizationId, input.questionId);
     await context.db
       .update(questions)
       .set({ text: input.text })
@@ -272,16 +333,7 @@ export const updateText = mut
 export const archive = mut
   .input(z.object({ questionId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
-      .from(questions)
-      .where(
-        and(
-          eq(questions.questionId, input.questionId),
-          eq(questions.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    await assertEditable(context.db, context.organizationId, input.questionId);
 
     // Blocked while any step's visibility is conditioned on one of this
     // question's options — archiving would delete the controlling step and
@@ -341,16 +393,7 @@ export const unarchive = mut
 export const addResponseOption = mut
   .input(z.object({ questionId: z.string().uuid(), text: z.string() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
-      .from(questions)
-      .where(
-        and(
-          eq(questions.questionId, input.questionId),
-          eq(questions.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    await assertEditable(context.db, context.organizationId, input.questionId);
 
     const existing = await context.db
       .select({ order: responseOptions.order })
@@ -378,16 +421,7 @@ export const removeResponseOption = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
-      .from(questions)
-      .where(
-        and(
-          eq(questions.questionId, input.questionId),
-          eq(questions.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    await assertEditable(context.db, context.organizationId, input.questionId);
 
     // Blocked while any step's visibility is conditioned on this option — the
     // condition must be removed in the script editor first.
@@ -424,16 +458,7 @@ export const reorderResponseOptions = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
-      .from(questions)
-      .where(
-        and(
-          eq(questions.questionId, input.questionId),
-          eq(questions.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    await assertEditable(context.db, context.organizationId, input.questionId);
 
     const existing = await context.db
       .select({ responseOptionId: responseOptions.responseOptionId })
@@ -469,16 +494,7 @@ export const updateResponseOptionText = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ questionId: questions.questionId })
-      .from(questions)
-      .where(
-        and(
-          eq(questions.questionId, input.questionId),
-          eq(questions.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Question not found" });
+    await assertEditable(context.db, context.organizationId, input.questionId);
     await context.db
       .update(responseOptions)
       .set({ text: input.text })
