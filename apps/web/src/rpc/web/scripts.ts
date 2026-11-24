@@ -10,6 +10,7 @@ import {
 } from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webMut, webPub } from "../context";
+import { lockedBy } from "./questions";
 
 const pub = webPub("scripts.read");
 const mut = webMut("scripts.write");
@@ -19,6 +20,11 @@ const scriptSelect = {
   name: scripts.name,
   createdAt: scripts.createdAt,
   isArchived: sql<boolean>`(${scripts.archivedAt} IS NOT NULL)`,
+  isLocked: sql<boolean>`(${scripts.lockedAt} IS NOT NULL)`,
+  // Any turf, superseded included: its collected responses still read
+  // through this script. Aliased by hand since drizzle renders columns
+  // unqualified inside a select-field fragment.
+  isPublished: sql<boolean>`EXISTS (SELECT 1 FROM app.turfs t WHERE t.script_id = scripts.script_id)`,
 };
 
 // List scripts in the current user's organization, oldest first.
@@ -61,28 +67,6 @@ export const getById = pub
       .orderBy(asc(scriptSteps.order));
 
     return { ...script, steps: stepRows };
-  });
-
-// One-shot freshness probe for the step-removal gate — fetched on click
-// (staleTime 0) so the confirm decision never acts on a stale cache.
-export const countLiveTurfs = pub
-  .input(z.object({ scriptId: z.string().uuid() }))
-  .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ scriptId: scripts.scriptId })
-      .from(scripts)
-      .where(
-        and(
-          eq(scripts.scriptId, input.scriptId),
-          eq(scripts.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
-    const rows = await context.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(turfs)
-      .where(and(eq(turfs.scriptId, input.scriptId), eq(turfs.status, "active")));
-    return { count: rows[0]?.count ?? 0 };
   });
 
 // Create an empty script. Steps are added via the editor.
@@ -291,7 +275,73 @@ export const countCampaigns = pub
     return { count: refs.length };
   });
 
+export async function lockScript(db: Db, scriptId: string) {
+  await db.update(scripts).set({ lockedAt: new Date() }).where(eq(scripts.scriptId, scriptId));
+}
+
+// Lock state of every question in the script, for the client to patch its
+// question caches after a script lock change.
+function scriptQuestionLocks(db: Db, scriptId: string) {
+  return db
+    .select({ questionId: questions.questionId, lockedBy })
+    .from(questions)
+    .where(
+      inArray(
+        questions.questionId,
+        db
+          .select({ questionId: scriptSteps.questionId })
+          .from(scriptSteps)
+          .where(eq(scriptSteps.scriptId, scriptId)),
+      ),
+    );
+}
+
+export const lock = mut
+  .input(z.object({ scriptId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const owned = await context.db
+      .select({ scriptId: scripts.scriptId })
+      .from(scripts)
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      );
+    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    await lockScript(context.db, input.scriptId);
+    return { questions: await scriptQuestionLocks(context.db, input.scriptId) };
+  });
+
+// Its questions stay locked while another locked script contains them.
+export const unlock = mut
+  .input(z.object({ scriptId: z.string().uuid() }))
+  .handler(async ({ context, input }) => {
+    const updated = await context.db
+      .update(scripts)
+      .set({ lockedAt: null })
+      .where(
+        and(
+          eq(scripts.scriptId, input.scriptId),
+          eq(scripts.organizationId, context.organizationId),
+        ),
+      )
+      .returning({ scriptId: scripts.scriptId });
+    if (updated.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    return { questions: await scriptQuestionLocks(context.db, input.scriptId) };
+  });
+
 // --- Step mutations ---
+
+async function assertEditable(db: Db, organizationId: string, scriptId: string) {
+  const rows = await db
+    .select({ lockedAt: scripts.lockedAt })
+    .from(scripts)
+    .where(and(eq(scripts.scriptId, scriptId), eq(scripts.organizationId, organizationId)));
+  if (rows.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+  if (rows[0]!.lockedAt)
+    throw new ORPCError("CONFLICT", { message: "This script is locked. Unlock it to edit." });
+}
 
 const addStepInput = z.discriminatedUnion("stepType", [
   z.object({
@@ -308,13 +358,7 @@ const addStepInput = z.discriminatedUnion("stepType", [
 
 // Append a step at the end of the script. Order is computed server-side.
 export const addStep = mut.input(addStepInput).handler(async ({ context, input }) => {
-  const owned = await context.db
-    .select({ scriptId: scripts.scriptId })
-    .from(scripts)
-    .where(
-      and(eq(scripts.scriptId, input.scriptId), eq(scripts.organizationId, context.organizationId)),
-    );
-  if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+  await assertEditable(context.db, context.organizationId, input.scriptId);
 
   if (input.stepType === "question") {
     const q = await context.db
@@ -367,16 +411,7 @@ export const addStep = mut.input(addStepInput).handler(async ({ context, input }
 export const removeStep = mut
   .input(z.object({ scriptId: z.string().uuid(), scriptStepId: z.string().uuid() }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ scriptId: scripts.scriptId })
-      .from(scripts)
-      .where(
-        and(
-          eq(scripts.scriptId, input.scriptId),
-          eq(scripts.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    await assertEditable(context.db, context.organizationId, input.scriptId);
     await context.db.transaction(async (tx) => {
       const target = await tx
         .select({ questionId: scriptSteps.questionId })
@@ -429,16 +464,7 @@ export const removeStep = mut
 export const reorderSteps = mut
   .input(z.object({ scriptId: z.string().uuid(), scriptStepIds: z.array(z.string().uuid()) }))
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ scriptId: scripts.scriptId })
-      .from(scripts)
-      .where(
-        and(
-          eq(scripts.scriptId, input.scriptId),
-          eq(scripts.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    await assertEditable(context.db, context.organizationId, input.scriptId);
 
     const existing = await context.db
       .select({ scriptStepId: scriptSteps.scriptStepId })
@@ -517,16 +543,7 @@ export const updateTextStep = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ scriptId: scripts.scriptId })
-      .from(scripts)
-      .where(
-        and(
-          eq(scripts.scriptId, input.scriptId),
-          eq(scripts.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    await assertEditable(context.db, context.organizationId, input.scriptId);
     const rows = await context.db
       .select({ stepType: scriptSteps.stepType })
       .from(scriptSteps)
@@ -560,16 +577,7 @@ export const setStepCondition = mut
     }),
   )
   .handler(async ({ context, input }) => {
-    const owned = await context.db
-      .select({ scriptId: scripts.scriptId })
-      .from(scripts)
-      .where(
-        and(
-          eq(scripts.scriptId, input.scriptId),
-          eq(scripts.organizationId, context.organizationId),
-        ),
-      );
-    if (owned.length === 0) throw new ORPCError("NOT_FOUND", { message: "Script not found" });
+    await assertEditable(context.db, context.organizationId, input.scriptId);
 
     const steps = await context.db
       .select({

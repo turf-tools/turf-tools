@@ -17,6 +17,7 @@ import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
 import { Input } from "~/components/input";
 import { Rail, useShowArchived } from "~/components/rail";
+import { patchQuestionLocks, questionLockKeys, type QuestionLock } from "~/lib/queries/questions";
 import { scriptsListQuery } from "~/lib/queries/scripts";
 import { settleMutation } from "~/lib/settle";
 import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
@@ -102,6 +103,31 @@ function ScriptsLayout() {
           return goToScript(created.scriptId);
         },
       }),
+  });
+
+  const settleScriptLock = (scriptId: string, isLocked: boolean, locks: QuestionLock[]) =>
+    settleMutation(queryClient, {
+      keys: [["scripts"], ["script", scriptId], ...questionLockKeys(locks)],
+      patch: () => {
+        queryClient.setQueryData<typeof scripts>(
+          ["scripts"],
+          (old) => old?.map((s) => (s.scriptId === scriptId ? { ...s, isLocked } : s)) ?? old,
+        );
+        queryClient.setQueryData<{ isLocked: boolean } & object>(["script", scriptId], (old) =>
+          old ? { ...old, isLocked } : old,
+        );
+        patchQuestionLocks(queryClient, locks);
+      },
+    });
+
+  const lockScript = useMutation({
+    mutationFn: (scriptId: string) => client.scripts.lock({ scriptId }),
+    onSuccess: (res, scriptId) => settleScriptLock(scriptId, true, res.questions),
+    onError: (e) => notify.error(e.message),
+  });
+  const unlockScript = useDialogMutation({
+    mutationFn: (scriptId: string) => client.scripts.unlock({ scriptId }),
+    onSuccess: (res, scriptId) => settleScriptLock(scriptId, false, res.questions),
   });
 
   const setScriptArchived = useMutation({
@@ -289,6 +315,19 @@ function ScriptsLayout() {
 
         <EditorPage>
           <EditorHeader title="Script Editor" subtitle={activeScript?.name}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!activeScript) return;
+                if (activeScript.isLocked) unlockScript.open();
+                else lockScript.mutate(activeScript.scriptId);
+              }}
+              disabled={!activeScript}
+              loading={lockScript.isPending}
+            >
+              <Icon name={activeScript?.isLocked ? "lock-open" : "lock"} />
+              {activeScript?.isLocked ? "Unlock" : "Lock"}
+            </Button>
             <Button variant="outline" onClick={renameScript.open} disabled={!activeScript}>
               <Icon name="pencil" />
               Rename
@@ -321,6 +360,17 @@ function ScriptsLayout() {
           </div>
         </EditorPage>
       </div>
+
+      <UnlockDialog
+        open={unlockScript.isOpen}
+        onOpenChange={unlockScript.onOpenChange}
+        published={activeScript?.isPublished ?? false}
+        pending={unlockScript.isPending}
+        error={unlockScript.error}
+        onConfirm={() => {
+          if (activeScriptId) unlockScript.mutate(activeScriptId);
+        }}
+      />
 
       <SaveAsDialog
         open={cloneScript.isOpen}
@@ -522,6 +572,44 @@ function ArchiveDialog({
           <Button onClick={onConfirm} loading={pending}>
             <Icon name="archive" />
             Archive script
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UnlockDialog({
+  open,
+  onOpenChange,
+  published,
+  pending,
+  error,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  published: boolean;
+  pending: boolean;
+  error: string | null;
+  onConfirm: () => void;
+}) {
+  useConfirmHotkey({ open, disabled: pending, onConfirm });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>Unlock script?</DialogTitle>
+        <DialogDescription>
+          {published ? "This script appears in published turf." : "This script is locked."} If you
+          unlock it and edit it, canvassers will see the changes, and it could change labels in
+          existing reports. <span className="font-bold text-foreground">Proceed with caution!</span>
+        </DialogDescription>
+        <DialogError error={error} />
+        <div className="mt-2 flex justify-end gap-2">
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button variant="destructive" onClick={onConfirm} loading={pending}>
+            <Icon name="lock-open" />
+            Unlock
           </Button>
         </div>
       </DialogContent>
