@@ -1,4 +1,4 @@
-import { SymbolLayer, VectorSource } from "@maplibre/maplibre-react-native";
+import { Layer, VectorSource } from "@maplibre/maplibre-react-native";
 import { MAPTILER_OPENMAPTILES_TILEJSON_URL } from "@/lib/maptiler";
 
 // Label overlays for the canvassing map. Renders an OpenMapTiles vector
@@ -21,11 +21,12 @@ export function LabelLayers({ isDark = false }: { isDark?: boolean }) {
   return (
     <>
       <VectorSource id={LABELS_SOURCE_ID} url={MAPTILER_OPENMAPTILES_TILEJSON_URL}>
-        <SymbolLayer
+        <Layer
           id="labels-road"
-          sourceLayerID="transportation_name"
-          minZoomLevel={11}
-          maxZoomLevel={22}
+          type="symbol"
+          source-layer="transportation_name"
+          minzoom={11}
+          maxzoom={22}
           filter={["!=", ["get", "class"], "ferry"]}
           style={{
             symbolPlacement: "line",
@@ -36,11 +37,12 @@ export function LabelLayers({ isDark = false }: { isDark?: boolean }) {
             textHaloWidth: 1,
           }}
         />
-        <SymbolLayer
+        <Layer
           id="labels-housenumber"
-          sourceLayerID="housenumber"
-          minZoomLevel={17}
-          maxZoomLevel={22}
+          type="symbol"
+          source-layer="housenumber"
+          minzoom={17}
+          maxzoom={22}
           style={{
             textField: ["get", "housenumber"],
             textSize: ["interpolate", ["linear"], ["zoom"], 17, 9, 22, 11],
