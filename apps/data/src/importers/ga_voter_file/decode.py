@@ -210,7 +210,11 @@ def read_history(source: str, fmt: HistoryFormat, table_fqn: str, conn: duckdb.D
         return
     try:
         with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
-            members = [i for i in zf.infolist() if is_zip_payload_member(i) and pattern.match(i.filename.rsplit("/", 1)[-1])]
+            members = [
+                i
+                for i in zf.infolist()
+                if is_zip_payload_member(i) and i.filename.rsplit("/", 1)[-1].lower().endswith(".csv")
+            ]
             if not members:
                 raise SourceUnreadableError(f"{redact_source(source)!r} has no .csv voter-history files in it.")
             with tempfile.TemporaryDirectory() as tmp:
