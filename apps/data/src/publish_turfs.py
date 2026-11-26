@@ -83,7 +83,12 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     scope, draft_count = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
-    where_sql = criteria_to_where(catalog, criteria, scope.key_filter, where_params)
+    # The WHERE can name {persons_geocoded} (Household Members); the checks
+    # below use a resolved table, so resolve the WHERE on its own.
+    where_sql = resolve(
+        criteria_to_where(catalog, criteria, scope.key_filter, where_params),
+        schema,
+    )
     _check_no_ambiguous_assignments(conn, req, schema, where_sql, where_params)
     _check_no_empty_turfs(conn, req, schema, where_sql, where_params)
 

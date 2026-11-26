@@ -549,6 +549,9 @@ export function Map({
     const map = mapRef.current?.getMap();
     if (!map) return;
     const ensure = (variant: keyof typeof LABEL_BADGE_IMAGES) => {
+      // Style is null while MapLibre is mid-setStyle / tearing down —
+      // hasImage would throw reading getImage on undefined.
+      if (!map.style) return;
       const id = LABEL_BADGE_IMAGES[variant];
       if (!map.hasImage(id)) {
         map.addImage(id, badgePlateImage(variant), LABEL_BADGE_METADATA);
