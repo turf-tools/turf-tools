@@ -1,12 +1,17 @@
-// VAN survey import: multipart with an ID-map file + survey-results file.
-// Creates/updates questions+options from SurveyQuestionId/SurveyResponseId,
-// or matches them onto existing org questions. Joins people via StateFileID.
+// VAN survey import edge: multipart POST → runVanResponseImport.
+//
+// Fields: `idMap` (Standard Text StateFileID ↔ VANID), `survey` (long-format
+// survey-results export), `mappings` (JSON: create / match-to-questionId per
+// SurveyQuestionId; skipped questions are simply omitted). Auth is
+// scripts.write — same gate as editing the questions catalog. Outside oRPC
+// because the payload is two large files, not JSON.
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
 import { runVanResponseImport, type VanQuestionMapping } from "~/lib/server/van-import-run";
 import { buildPermittedContext } from "~/rpc/context";
 
+// Same order of magnitude as custom-field append; survey exports can be large.
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -44,6 +49,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
           return new Response("File is too large to import.", { status: 413 });
         }
 
+        // questionId null → create (or reuse by vanId); string → match that org question.
         const mappingsRaw = form.get("mappings");
         if (typeof mappingsRaw !== "string" || !mappingsRaw.trim()) {
           return new Response("Missing mappings.", { status: 400 });

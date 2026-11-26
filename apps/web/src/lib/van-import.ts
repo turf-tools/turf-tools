@@ -100,12 +100,25 @@ export type VanSurveyQuestionPreview = {
   multiSelect: boolean;
 };
 
+export type VanSurveyRowSkip = {
+  /** 1-based file line (header is line 1). */
+  line: number;
+  reason: "incomplete" | "bad_date";
+  vanId: string;
+  questionVanId: string;
+  responseVanId: string;
+  dateRaw: string;
+};
+
 export type VanSurveyParse = {
   ok: boolean;
   missingColumns: string[];
   rowCount: number;
   answers: VanSurveyAnswer[];
   questions: VanSurveyQuestionPreview[];
+  rowsSkippedIncomplete: number;
+  rowsSkippedBadDate: number;
+  sampleSkipped: VanSurveyRowSkip[];
 };
 
 /** Parse VAN `MM/DD/YYYY` (or `M/D/YYYY`) to noon UTC that day. */
@@ -119,6 +132,13 @@ export function parseVanDate(raw: string): Date | null {
   return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 }
 
+// Parse a long-format VAN survey-results TSV (decoded text).
+//
+// Each row is one answer. We emit (1) flat `answers` for the import join and
+// (2) per-question previews for the match UI — option lists in first-seen order,
+// plus multiSelect when any person has >1 distinct response on the same day.
+// Incomplete rows and unparseable DateCanvassed values are counted, sampled,
+// and console.warn'd rather than failing the whole parse.
 export function parseVanSurveyExport(text: string): VanSurveyParse {
   const { columns, rows: raw } = tsvTable(text);
   const missingColumns = VAN_SURVEY_REQUIRED_COLUMNS.filter((c) => !columns.includes(c));
@@ -129,6 +149,9 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
       rowCount: 0,
       answers: [],
       questions: [],
+      rowsSkippedIncomplete: 0,
+      rowsSkippedBadDate: 0,
+      sampleSkipped: [],
     };
   }
 
@@ -140,28 +163,47 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
   const dateIdx = columns.indexOf("DateCanvassed");
 
   const answers: VanSurveyAnswer[] = [];
-  // questionVanId → responseVanId → { text, count, order }
+  let rowsSkippedIncomplete = 0;
+  let rowsSkippedBadDate = 0;
+  const sampleSkipped: VanSurveyRowSkip[] = [];
+  // Accumulate option catalogs + per person/day response sets while scanning.
   const qMeta = new Map<
     string,
     {
       name: string;
       responses: Map<string, { text: string; count: number; order: number }>;
-      // person+day keys that saw >1 response
       multiDays: Set<string>;
       dayResponses: Map<string, Set<string>>;
     }
   >();
 
-  for (const cells of raw) {
+  for (let i = 0; i < raw.length; i++) {
+    const cells = raw[i]!;
+    const line = i + 2; // 1-based; line 1 is the header
     const vanId = (cells[vanIdx] ?? "").trim();
     const questionVanId = (cells[qIdIdx] ?? "").trim();
     const responseVanId = (cells[rIdIdx] ?? "").trim();
     const questionName = (cells[qNameIdx] ?? "").trim();
     const responseName = (cells[rNameIdx] ?? "").trim();
     const dateRaw = (cells[dateIdx] ?? "").trim();
-    if (!vanId || !questionVanId || !responseVanId || !responseName) continue;
+
+    const noteSkip = (reason: VanSurveyRowSkip["reason"]) => {
+      if (reason === "incomplete") rowsSkippedIncomplete += 1;
+      else rowsSkippedBadDate += 1;
+      if (sampleSkipped.length < 20) {
+        sampleSkipped.push({ line, reason, vanId, questionVanId, responseVanId, dateRaw });
+      }
+    };
+
+    if (!vanId || !questionVanId || !responseVanId || !responseName) {
+      noteSkip("incomplete");
+      continue;
+    }
     const canvassedAt = parseVanDate(dateRaw);
-    if (!canvassedAt) continue;
+    if (!canvassedAt) {
+      noteSkip("bad_date");
+      continue;
+    }
 
     answers.push({
       vanId,
@@ -194,6 +236,8 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
         order: meta.responses.size,
       });
     }
+
+    // multi_select if this person answered the question more than once that day.
     const dayKey = `${vanId}|${canvassedAt.toISOString().slice(0, 10)}`;
     let daySet = meta.dayResponses.get(dayKey);
     if (!daySet) {
@@ -204,6 +248,7 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
     if (daySet.size > 1) meta.multiDays.add(dayKey);
   }
 
+  // Heaviest questions first — nicer default order in the match dialog.
   const questions: VanSurveyQuestionPreview[] = [...qMeta.entries()]
     .map(([questionVanId, meta]) => ({
       questionVanId,
@@ -220,12 +265,24 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
     }))
     .sort((a, b) => b.answerCount - a.answerCount);
 
+  const skippedTotal = rowsSkippedIncomplete + rowsSkippedBadDate;
+  if (skippedTotal > 0) {
+    console.warn(
+      `[van-import] skipped ${skippedTotal} survey row(s)` +
+        ` (incomplete=${rowsSkippedIncomplete}, bad_date=${rowsSkippedBadDate})`,
+      sampleSkipped,
+    );
+  }
+
   return {
     ok: true,
     missingColumns: [],
     rowCount: answers.length,
     answers,
     questions,
+    rowsSkippedIncomplete,
+    rowsSkippedBadDate,
+    sampleSkipped,
   };
 }
 

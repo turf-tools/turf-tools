@@ -107,6 +107,55 @@ test("UTF-8 survey parse works the same", () => {
   expect(parseVanSurveyExport(SURVEY).rowCount).toBe(5);
 });
 
+test("tracks incomplete and bad-date survey rows", () => {
+  const withBad = [
+    SURVEY,
+    [
+      "10426746",
+      "Ashley",
+      "727137",
+      "2916960",
+      "Candidate",
+      "Runoff ID",
+      "2 - Lean Support",
+      "not-a-date",
+    ].join("\t"),
+    [
+      "",
+      "Ashley",
+      "727137",
+      "2916960",
+      "Candidate",
+      "Runoff ID",
+      "2 - Lean Support",
+      "05/30/2026",
+    ].join("\t"),
+  ].join("\r\n");
+  const parsed = parseVanSurveyExport(withBad);
+  expect(parsed.ok).toBe(true);
+  expect(parsed.rowCount).toBe(5);
+  expect(parsed.rowsSkippedBadDate).toBe(1);
+  expect(parsed.rowsSkippedIncomplete).toBe(1);
+  expect(parsed.sampleSkipped).toEqual([
+    {
+      line: 7,
+      reason: "bad_date",
+      vanId: "10426746",
+      questionVanId: "727137",
+      responseVanId: "2916960",
+      dateRaw: "not-a-date",
+    },
+    {
+      line: 8,
+      reason: "incomplete",
+      vanId: "",
+      questionVanId: "727137",
+      responseVanId: "2916960",
+      dateRaw: "05/30/2026",
+    },
+  ]);
+});
+
 test("decodeVanExportBytes detects UTF-16", () => {
   const text = decodeVanExportBytes(utf16Le("StateFileID\tVoter File VANID\n1\t2"));
   expect(text.startsWith("StateFileID")).toBe(true);
