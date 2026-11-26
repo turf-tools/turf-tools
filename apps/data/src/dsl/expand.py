@@ -9,10 +9,6 @@ inlining them as empty `NestedFilter`s would let the compiler interpret
 them as "match universe", which is destructive for `add` (becomes
 everyone) and `remove` (empties the set). Dropping makes a broken
 reference indistinguishable from "step doesn't exist".
-
-`HouseholdFilter` under a ``remove`` verb carries `other_segment_id`;
-those refs are expanded into `other_criteria` here the same way
-(cycles/depth apply).
 """
 
 from __future__ import annotations
@@ -20,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from .criteria import Criteria, HouseholdFilter, NestedFilter, SegmentFilter, Step, Verb
+from .criteria import Criteria, NestedFilter, SegmentFilter, Step
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -56,51 +52,17 @@ def _expand(
     new_steps: list[Step] = []
     for step in criteria.steps:
         f = step.filter
-        if isinstance(f, SegmentFilter):
-            expanded = _expand_segment_id(f.segment_id, segments_by_id, visiting, depth)
-            if expanded is None:
-                continue
-            new_steps.append(Step(verb=step.verb, filter=NestedFilter(kind="nested", criteria=expanded)))
+        if not isinstance(f, SegmentFilter):
+            new_steps.append(step)
             continue
-        if isinstance(f, HouseholdFilter):
-            new_steps.append(
-                Step(
-                    verb=step.verb,
-                    filter=_expand_household(f, step.verb, segments_by_id, visiting, depth),
-                )
-            )
+        seg_id = f.segment_id
+        if seg_id is None:
             continue
-        new_steps.append(step)
+        if seg_id in visiting:
+            raise SegmentRefError(f"Segment reference cycle through {seg_id}", "cycle")
+        referenced = segments_by_id.get(seg_id)
+        if referenced is None:
+            continue
+        inner = _expand(referenced.criteria, segments_by_id, visiting | {seg_id}, depth + 1)
+        new_steps.append(Step(verb=step.verb, filter=NestedFilter(kind="nested", criteria=inner)))
     return Criteria(steps=new_steps)
-
-
-def _expand_household(
-    f: HouseholdFilter,
-    verb: Verb,
-    segments_by_id: Mapping[str, SegmentLike],
-    visiting: frozenset[str],
-    depth: int,
-) -> HouseholdFilter:
-    if verb != "remove" or f.other_segment_id is None:
-        return f
-    expanded = _expand_segment_id(f.other_segment_id, segments_by_id, visiting, depth)
-    if expanded is None:
-        # Missing / null ref → inactive remove (compiler no-ops).
-        return f.model_copy(update={"other_segment_id": None, "other_criteria": None})
-    return f.model_copy(update={"other_criteria": expanded})
-
-
-def _expand_segment_id(
-    seg_id: str | None,
-    segments_by_id: Mapping[str, SegmentLike],
-    visiting: frozenset[str],
-    depth: int,
-) -> Criteria | None:
-    if seg_id is None:
-        return None
-    if seg_id in visiting:
-        raise SegmentRefError(f"Segment reference cycle through {seg_id}", "cycle")
-    referenced = segments_by_id.get(seg_id)
-    if referenced is None:
-        return None
-    return _expand(referenced.criteria, segments_by_id, visiting | {seg_id}, depth + 1)

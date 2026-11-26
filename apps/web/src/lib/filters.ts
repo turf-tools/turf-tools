@@ -142,16 +142,12 @@ export type NestedFilter = {
   criteria: Criteria;
 };
 
-// VoteBuilder-style householding. The step verb selects the shape
-// (narrow → one per key, add → fill, remove → subtract other segment's
-// keys). `groupBy` is the household key; `matchLastName` folds last name
-// into that key. Remove picks another segment via `otherSegmentId`.
+// Household Members: under `add`, everyone sharing a door (or building) with
+// the running set.
 export type HouseholdFilter = {
   kind: "household";
   key: "household";
-  groupBy: "door_id" | "building_id" | "phone";
-  matchLastName: boolean;
-  otherSegmentId: string | null;
+  building: boolean;
 };
 
 export type Filter =
@@ -241,11 +237,10 @@ export const SYSTEM_BOTTOM_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
     },
     { kind: "canvass-response", key: "canvass_response", label: "Canvass Response" },
   ],
-  // Composite — reference another segment by id, or household the running set.
-  [
-    { kind: "segment", key: "segment", label: "Segment" },
-    { kind: "household", key: "household", label: "Householding" },
-  ],
+  // Add the running set's households.
+  [{ kind: "household", key: "household", label: "Household Members" }],
+  // Composite — reference another segment by id.
+  [{ kind: "segment", key: "segment", label: "Segment" }],
 ];
 
 // Helpers
@@ -273,14 +268,7 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "canvass-response")
     return { kind: "canvass-response", key: "canvass_response", questionId: null, optionIds: [] };
   if (def.kind === "segment") return { kind: "segment", key: "segment", segmentId: null };
-  if (def.kind === "household")
-    return {
-      kind: "household",
-      key: "household",
-      groupBy: "door_id",
-      matchLastName: false,
-      otherSegmentId: null,
-    };
+  if (def.kind === "household") return { kind: "household", key: "household", building: false };
   if (def.kind === "voting-history-detail")
     return { kind: "voting-history-detail", key: def.key, mode: "any", elections: [] };
   // Voting history count default: "voted in 1+ recent primaries" (single prime).
@@ -323,10 +311,6 @@ export function isActiveFilter(f: Filter): boolean {
 }
 
 export function isActiveStep(s: Step): boolean {
-  // Remove-householding is inactive until an other segment is picked;
-  if (s.filter.kind === "household" && s.verb === "remove") {
-    return s.filter.otherSegmentId != null;
-  }
   return isActiveFilter(s.filter);
 }
 
@@ -351,16 +335,6 @@ export function criteriaTouchesLiveData(
     if (f.kind === "segment" && f.segmentId != null && segmentsById && !visited.has(f.segmentId)) {
       visited.add(f.segmentId);
       const ref = segmentsById.get(f.segmentId);
-      return ref ? criteriaTouchesLiveData(ref.criteria as Criteria, segmentsById, visited) : false;
-    }
-    if (
-      f.kind === "household" &&
-      f.otherSegmentId != null &&
-      segmentsById &&
-      !visited.has(f.otherSegmentId)
-    ) {
-      visited.add(f.otherSegmentId);
-      const ref = segmentsById.get(f.otherSegmentId);
       return ref ? criteriaTouchesLiveData(ref.criteria as Criteria, segmentsById, visited) : false;
     }
     return false;

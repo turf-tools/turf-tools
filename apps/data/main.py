@@ -531,9 +531,8 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         version, catalog = query_context(conn, req.org_slug)
         criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-        persons_table = resolve("{persons_geocoded}", version.schema)
         params: list = []
-        sql = cascade_sql(catalog, criteria, persons_table, params)
+        sql = resolve(cascade_sql(catalog, criteria, "{persons_geocoded}", params), version.schema)
         with timed("query"):
             row = conn.execute(sql, params).fetchone()
         counts = list(row)
@@ -922,9 +921,8 @@ async def progress_targets(req: _ProgressTargetsRequest):
                     Criteria.model_validate(json.loads(criteria_json)), conn, settings, req.org_slug
                 )
                 where_params: list = []
-                # Resolve household `{persons_geocoded}` placeholders — this
-                # SQL path interpolates an already-FQN `persons` table and
-                # does not run `resolve()` over the full statement.
+                # The WHERE can name {persons_geocoded} (Household Members); this
+                # SQL uses a resolved table, so resolve the WHERE on its own.
                 where = resolve(
                     criteria_to_where(catalog, criteria, None, where_params),
                     version.schema,

@@ -196,24 +196,11 @@ class SegmentFilter(BaseModel):
 
 
 class HouseholdFilter(BaseModel):
-    """VoteBuilder-style householding over the running segment set.
-
-    The step verb selects the shape: ``narrow`` → one per key, ``add`` →
-    fill (seed ∪ key-sharers), ``remove`` → subtract keys of another
-    segment. ``group_by`` picks the household key (``door_id``,
-    ``building_id``, or ``phone``); ``match_last_name`` folds last name
-    into that key. Remove needs ``other_segment_id``; expand fills
-    ``other_criteria``.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
+    """Household Members: under ``add``, everyone sharing a door with the
+    running set, or a building when ``building`` is set."""
 
     kind: Literal["household"]
-    group_by: Literal["door_id", "building_id", "phone"] = Field(default="door_id", validation_alias="groupBy")
-    match_last_name: bool = Field(default=False, validation_alias="matchLastName")
-    other_segment_id: str | None = Field(default=None, validation_alias="otherSegmentId")
-    # Filled by expand_segment_refs for remove; never authored by the web.
-    other_criteria: "Criteria | None" = Field(default=None, validation_alias="otherCriteria")
+    building: bool = False
 
 
 Filter = Annotated[
@@ -267,9 +254,8 @@ class Criteria(BaseModel):
     steps: list[Step] = []
 
 
-# NestedFilter / HouseholdFilter forward-reference Criteria; resolve once both exist.
+# NestedFilter forward-references Criteria; resolve once both exist.
 NestedFilter.model_rebuild()
-HouseholdFilter.model_rebuild()
 
 
 # ---------------------------------------------------------------------------

@@ -83,9 +83,8 @@ def publish_turfs(conn: duckdb.DuckDBPyConnection, req: PublishTurfsRequest) -> 
     scope, draft_count = _load_publish_scope(conn, req)
     criteria = resolve_criteria(scope.criteria, conn, settings, req.orgSlug)
     where_params: list = []
-    # Householding embeds `{persons_geocoded}` subqueries; resolve them to
-    # the same FQN the outer FROM uses (this path does not wrap the full
-    # SQL in `resolve()` the way /persons/* endpoints do).
+    # The WHERE can name {persons_geocoded} (Household Members); the checks
+    # below use a resolved table, so resolve the WHERE on its own.
     where_sql = resolve(
         criteria_to_where(catalog, criteria, scope.key_filter, where_params),
         schema,

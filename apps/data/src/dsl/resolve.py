@@ -27,7 +27,6 @@ from .criteria import (
     CanvassOutcomeFilter,
     CanvassResponseFilter,
     Criteria,
-    HouseholdFilter,
     NestedFilter,
     PersonIdSetFilter,
     SegmentFilter,
@@ -69,8 +68,6 @@ def _has_segment_refs(criteria: Criteria) -> bool:
         f = step.filter
         if isinstance(f, SegmentFilter):
             return True
-        if isinstance(f, HouseholdFilter) and f.other_segment_id is not None:
-            return True
         if isinstance(f, NestedFilter) and _has_segment_refs(f.criteria):
             return True
     return False
@@ -82,8 +79,6 @@ def _has_canvass_refs(criteria: Criteria) -> bool:
         if isinstance(f, (CanvassOutcomeFilter, CanvassResponseFilter)):
             return True
         if isinstance(f, NestedFilter) and _has_canvass_refs(f.criteria):
-            return True
-        if isinstance(f, HouseholdFilter) and f.other_criteria is not None and _has_canvass_refs(f.other_criteria):
             return True
     return False
 
@@ -114,9 +109,6 @@ def _resolve_canvass_refs(
         elif isinstance(f, NestedFilter):
             inner = _resolve_canvass_refs(f.criteria, conn, org_slug)
             new_steps.append(Step(verb=step.verb, filter=NestedFilter(kind="nested", criteria=inner)))
-        elif isinstance(f, HouseholdFilter) and f.other_criteria is not None:
-            inner = _resolve_canvass_refs(f.other_criteria, conn, org_slug)
-            new_steps.append(Step(verb=step.verb, filter=f.model_copy(update={"other_criteria": inner})))
         else:
             new_steps.append(step)
     return Criteria(steps=new_steps)
