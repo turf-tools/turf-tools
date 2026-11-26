@@ -698,6 +698,39 @@ async def person_detail(req: _PersonDetailRequest):
     return await run_query(work)
 
 
+class _PersonsExistingRequest(_WireBaseModel):
+    org_slug: str = Field(validation_alias="orgSlug")
+    external_ids: list[str] = Field(validation_alias="externalIds")
+
+
+@app.post("/persons/existing")
+async def persons_existing(req: _PersonsExistingRequest):
+    """Which of the given external_ids exist in the org's active lake version.
+
+    Used by VAN response import to skip rows whose StateFileID is not in the
+    voter file. Returns ``{externalIds: [...]}`` — the subset that matched.
+    """
+
+    def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+        if not req.external_ids:
+            return {"externalIds": []}
+        version = resolve_version(conn, settings, req.org_slug)
+        # Chunk so a multi-hundred-k list import doesn't blow the bind.
+        found: list[str] = []
+        chunk_size = 10_000
+        for i in range(0, len(req.external_ids), chunk_size):
+            chunk = req.external_ids[i : i + chunk_size]
+            sql = resolve(
+                "SELECT external_id FROM {persons_geocoded} WHERE external_id IN (SELECT unnest(?))",
+                version.schema,
+            )
+            rows = conn.execute(sql, [chunk]).fetchall()
+            found.extend(r[0] for r in rows)
+        return {"externalIds": found}
+
+    return await run_query(work)
+
+
 class _PersonsCountByKeyRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
     key_filter: KeyFilter | None = Field(default=None, validation_alias="keyFilter")
