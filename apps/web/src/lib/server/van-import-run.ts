@@ -251,6 +251,12 @@ export async function runVanResponseImport(
   };
 }
 
+// Resolve one VAN SurveyQuestionId to an app questions.questionId.
+//
+// Paths: (1) UI match → stamp vanId onto the chosen org question (and clear it
+// from any sibling that held it), (2) prior import already set vanId → refresh
+// name/type, (3) else insert a new question. vanId on questions is only for
+// rematching catalog rows across imports, not person identity.
 async function resolveQuestion(
   db: Db,
   opts: {
@@ -262,6 +268,9 @@ async function resolveQuestion(
 ): Promise<{ questionId: string; kind: "created" | "matched" | "updated" }> {
   const responseType = opts.preview.multiSelect ? "multi_select" : "single_select";
 
+  // Org-scoped uniqueness: only one question may own this SurveyQuestionId.
+  // Matching never overwrites name/text (the existing wording wins); multi_select
+  // widens responseType when the VAN export needs it, and archived rows revive.
   if (opts.matchQuestionId) {
     await db
       .update(questions)
@@ -284,6 +293,8 @@ async function resolveQuestion(
     return { questionId: opts.matchQuestionId, kind: "matched" };
   }
 
+  // Create path with vanId already on file from an earlier import — pull
+  // name/text/responseType from this export and unarchive if needed.
   const [byVan] = await db
     .select({ questionId: questions.questionId })
     .from(questions)
@@ -308,6 +319,7 @@ async function resolveQuestion(
     return { questionId: byVan.questionId, kind: "updated" };
   }
 
+  // Brand-new catalog row; vanId lets a later import find it without remapping.
   const [inserted] = await db
     .insert(questions)
     .values({
@@ -322,6 +334,11 @@ async function resolveQuestion(
   return { questionId: inserted!.questionId, kind: "created" };
 }
 
+// Link each VAN SurveyResponseId under a question to a response_options row.
+//
+// Prefer vanId, then case-insensitive text (so matching an existing question
+// attaches options that already share wording). Missing options are inserted;
+// returns SurveyQuestionId:SurveyResponseId → responseOptionId for event write.
 async function linkOptions(
   db: Db,
   opts: {
@@ -345,6 +362,7 @@ async function linkOptions(
   const byVan = new Map(
     existingOpts.filter((o) => o.vanId).map((o) => [o.vanId!, o.responseOptionId]),
   );
+  // Prefer a live row when duplicate text exists (archived fallback still works).
   const byText = new Map<string, string>();
   for (const o of existingOpts) {
     const key = o.text.trim().toLowerCase();
@@ -354,6 +372,8 @@ async function linkOptions(
   let orderCursor = existingOpts.length;
   for (const resp of opts.preview.responses) {
     const mapKey = `${opts.preview.questionVanId}:${resp.responseVanId}`;
+
+    // Already linked from a prior import — refresh label and unarchive.
     const byVanId = byVan.get(resp.responseVanId);
     if (byVanId) {
       await db
@@ -363,6 +383,8 @@ async function linkOptions(
       out.set(mapKey, byVanId);
       continue;
     }
+
+    // First-time match onto an existing option by wording; stamp vanId for next time.
     const byTextId = byText.get(resp.text.trim().toLowerCase());
     if (byTextId) {
       await db
@@ -373,6 +395,8 @@ async function linkOptions(
       out.set(mapKey, byTextId);
       continue;
     }
+
+    // VAN option with no counterpart on the question — append it.
     const [inserted] = await db
       .insert(responseOptions)
       .values({
