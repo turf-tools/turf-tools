@@ -28,6 +28,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
 import { EditorHeader } from "~/components/editor-header";
@@ -37,8 +39,14 @@ import { Input } from "~/components/input";
 import { Pill } from "~/components/pill";
 import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { formatDateTime } from "~/lib/format";
-import { importerLabel, importFilterLabel } from "~/lib/importers";
+import { formatDateTime, formatDuration } from "~/lib/format";
+import {
+  cleanSources,
+  findImporter,
+  importerLabel,
+  importFilterLabel,
+  sourcesComplete,
+} from "~/lib/importers";
 import { useRememberSelection } from "~/lib/last-selected";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
 import type { CustomFieldType } from "@turf-tools/db/schema";
@@ -48,10 +56,12 @@ import {
   customFieldsQuery,
 } from "~/lib/queries/custom-fields";
 import { datasetsListQuery } from "~/lib/queries/datasets";
+import { importersQuery } from "~/lib/queries/importers";
 import { DEFAULT_DISPLAY_TIMEZONE } from "~/lib/timezones";
+import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
-import { RenameDatasetDialog, useDatasetRename } from "./route";
+import { RenameDatasetDialog, SourceInputs, useDatasetRename } from "./route";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   importing: { label: "Importing", color: YELLOW },
@@ -69,6 +79,8 @@ const BASE_KIND_LABELS: Record<string, string> = {
   "voting-history-count": "Voting history",
   "voting-history-detail": "Voting history",
   address: "Address",
+  phone: "Phone",
+  email: "Email",
 };
 
 const FIELD_TYPE_META: Record<CustomFieldType, string> = {
@@ -78,6 +90,18 @@ const FIELD_TYPE_META: Record<CustomFieldType, string> = {
   date: "Date",
   text: "Text",
   text_multi: "Code",
+};
+
+// Help line under the Append dialog's type picker.
+const FIELD_TYPE_HELP: Record<CustomFieldType, string> = {
+  enum: "Text from a small set of options (up to 100) that can be filtered by picking. Examples: Member; Lapsed; Prospect.",
+  enum_multi:
+    "Similar to Category but a person can have multiple values, comma-separated. Examples: Housing; Housing, Transit.",
+  number: "Continuous-valued numbers that can be filtered by range. Examples: 12; 83; 79.",
+  date: "Dates in YYYY-MM-DD format that can be filtered by range. Examples: 2026-03-14; 2026-01-10.",
+  text: "Free text that can be filtered by searching for any part of it. Examples: 'Prefers evening visits'; 'Needs recontact'.",
+  text_multi:
+    "Identifiers that can be filtered by matching to one or more typed values. Examples: 74-013; 12-016.",
 };
 
 // Types whose full option set lives on the registry row.
@@ -169,6 +193,7 @@ function DatasetEditor({
   const queryClient = useQueryClient();
   // Loader-prefetched; suspense keeps the card from painting incomplete.
   const { data: fields } = useSuspenseQuery(customFieldsQuery(dataset.datasetId));
+  const { data: importers } = useSuspenseQuery(importersQuery());
   // Versions arrive newest-first, so this is the latest ready version. The
   // key flips when an import lands — keep the old list up while the new
   // version's fields load instead of suspending the whole route.
@@ -251,7 +276,7 @@ function DatasetEditor({
 
   return (
     <EditorPage>
-      <EditorHeader title={dataset.name} subtitle={importerLabel(dataset.importer)}>
+      <EditorHeader title={dataset.name} subtitle={importerLabel(importers, dataset.importer)}>
         {allVersionsArchived ? (
           <Button variant="outline" onClick={() => unarchiveAll.mutate()}>
             <Icon name="archive-restore" className="size-4" />
@@ -320,6 +345,7 @@ function DatasetEditor({
         onOpenChange={setAppendOpen}
         orgSlug={orgSlug}
         datasetId={dataset.datasetId}
+        fields={fields}
         onAppended={invalidateFields}
       />
       <FieldDialog
@@ -582,29 +608,52 @@ function DetailsDialog({
   version: VersionRow | null;
   timezone: string;
 }) {
+  const { data: importers } = useSuspenseQuery(importersQuery());
+  const importer = version ? findImporter(importers, version.importer) : null;
+  const sources = Object.entries(version?.sources ?? {});
+  const started = formatDateTime(version?.importedAt, timezone);
+  const elapsed =
+    version?.finishedAt && version.importedAt
+      ? formatDuration(
+          new Date(version.finishedAt).getTime() - new Date(version.importedAt).getTime(),
+        )
+      : null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>Details</DialogTitle>
         <DialogCloseX />
-        <DialogDescription>
-          {version?.status === "ready" ? `Imported v${version.versionNumber} of ` : "Import of "}
-          {version?.name} with type {importerLabel(version?.importer ?? "")}, started{" "}
-          {formatDateTime(version?.importedAt, timezone)}
-          {version?.sourceUri ? (
-            <>
-              {", from "}
-              <span className="break-all">{version.sourceUri}</span>
-            </>
+        <DialogDescription render={<div />} className="flex flex-col gap-2">
+          <p>
+            {version?.status === "ready" ? `Imported v${version.versionNumber} of ` : "Import of "}
+            {version?.name} with type {importerLabel(importers, version?.importer ?? "")}.
+          </p>
+          <p>
+            {version?.status === "importing"
+              ? `Started ${started}, still running.`
+              : version?.finishedAt
+                ? `Started ${started} and ${version.status === "failed" ? "failed" : "finished"} ${formatDateTime(version.finishedAt, timezone)} (duration ${elapsed}).`
+                : `Started ${started}.`}
+          </p>
+          {sources.length > 0 ? (
+            <p className="wrap-anywhere">
+              {sources.length === 1 ? "Source: " : "Sources: "}
+              {sources.map(([key, value], i) => (
+                <span key={key}>
+                  {i === 0 ? null : i === sources.length - 1 ? " and " : ", "}
+                  {value} (“{importer?.sources.find((s) => s.key === key)?.label ?? key}”)
+                </span>
+              ))}
+              .
+            </p>
           ) : null}
-          .
         </DialogDescription>
         {version?.status === "failed" ? (
-          <Callout tone="error">
+          <Callout tone="error" className="whitespace-pre-line">
             {version.error ?? "Failed, but no error message was recorded."}
           </Callout>
         ) : version?.status === "importing" ? (
-          <Callout tone="pending">Import in progress — no errors so far.</Callout>
+          <Callout tone="pending">Import in progress with no errors so far.</Callout>
         ) : (
           <Callout tone="success">Completed with no errors.</Callout>
         )}
@@ -648,6 +697,7 @@ function FieldsCard({
   onSelect: (f: FieldRow) => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: importers } = useSuspenseQuery(importersQuery());
   const [showArchived, setShowArchived] = useState(false);
   const visible = fields.filter((f) => showArchived || !f.isArchived);
   const sorted = [...visible].sort(
@@ -667,8 +717,11 @@ function FieldsCard({
         <div className="px-3.5 pt-3 pb-2 text-sm text-muted-foreground">Dataset info</div>
         <div className="flex flex-col gap-1 p-2 pt-1 pb-3">
           {[
-            { label: "Type", value: importerLabel(importer) },
-            { label: "Filter", value: importFilterLabel(importer, importFilter) },
+            { label: "Type", value: importerLabel(importers, importer) },
+            {
+              label: "Filter",
+              value: importFilterLabel(findImporter(importers, importer), importFilter),
+            },
           ]
             .filter((r) => r.value)
             .map((r) => (
@@ -765,7 +818,7 @@ const EXAMPLE_LIMIT = 10;
 
 // Rename / archive / clear a custom field. Rename is
 // safe by construction (criteria and lake values are id-keyed); archive is
-// display-only and re-appending the label revives it; clear deletes values
+// display-only and a merge or replace into it revives it; clear deletes values
 // for everyone (the field stays, at zero coverage).
 function FieldDialog({
   open,
@@ -860,7 +913,7 @@ function FieldDialog({
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium">Type</label>
               {/* Static — retyping a field would invalidate already-typed
-                  values; the honest path is clear + re-append. */}
+                  values; a different type needs a new field. */}
               <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm">
                 {field ? FIELD_TYPE_META[field.fieldType] : ""}
               </span>
@@ -979,21 +1032,23 @@ function UpdateDialog({
   hasReadyVersion: boolean;
   onUpdated: () => void;
 }) {
-  const filterLabel = importFilterLabel(importer, importFilter);
-  const [source, setSource] = useState("");
+  const { data: importers } = useSuspenseQuery(importersQuery());
+  const spec = findImporter(importers, importer);
+  const filterLabel = importFilterLabel(spec, importFilter);
+  const [sources, setSources] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
-      setSource("");
+      setSources({});
       setError(null);
     }
   }
 
   const update = useMutation({
-    mutationFn: () => client.datasets.update({ datasetId, sourceUri: source.trim() }),
+    mutationFn: () => client.datasets.update({ datasetId, sources: cleanSources(sources) }),
     onSuccess: () => {
       onUpdated();
       onOpenChange(false);
@@ -1002,7 +1057,7 @@ function UpdateDialog({
   });
 
   const pending = update.isPending;
-  const valid = source.trim().length > 0;
+  const valid = spec != null && sourcesComplete(spec, sources);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1021,7 +1076,7 @@ function UpdateDialog({
               available once the import finishes.
             </>
           )}{" "}
-          Type {importerLabel(importer)}
+          Type {spec?.label ?? importer}
           {filterLabel ? <>, filtered to {filterLabel}</> : null}.
         </DialogDescription>
         <form
@@ -1032,20 +1087,20 @@ function UpdateDialog({
           }}
           className="flex flex-col gap-4"
         >
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Source</label>
-            <Input
-              autoFocus
-              value={source}
-              onChange={(e) => {
+          {spec ? (
+            <SourceInputs
+              importer={spec}
+              sources={sources}
+              onChange={(next) => {
                 setError(null);
-                setSource(e.target.value);
+                setSources(next);
               }}
-              placeholder="e.g. https://example.com/voters.parquet"
               disabled={pending}
+              autoFocus
             />
-            <span className="text-sm text-muted-foreground italic">URL of the raw file</span>
-          </div>
+          ) : (
+            <Callout tone="error">This dataset type is no longer available.</Callout>
+          )}
           {error ? <DialogError error={error} /> : null}
           <div className="mt-2 flex justify-end gap-2">
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
@@ -1075,10 +1130,9 @@ async function inspectFile(orgSlug: string, file: File): Promise<string[]> {
       slice: (start: number, end?: number) => file.slice(start, end).arrayBuffer(),
     });
     const columns = parquetSchema(metadata).children.map((c) => c.element.name);
-    if (columns.length === 0) throw new Error("Uploaded file has no columns.");
-    if (columns.length > 2)
+    if (columns.length !== 2)
       throw new Error(
-        `File has ${columns.length} columns, must have one (IDs only) or two (IDs and values).`,
+        `File has ${columns.length} column${columns.length === 1 ? "" : "s"}, must have two (IDs and values).`,
       );
     return columns;
   }
@@ -1103,7 +1157,64 @@ type AppendStats = {
   matchedCount: number | null;
 };
 
-// Append a file of (id, value) rows as a custom field. Ingest is synchronous —
+// Pill-button single choice, shared by the Append dialog's rows.
+function ChoiceButtons<T extends string>({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: ReadonlyArray<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => (
+        <button
+          type="button"
+          key={o.value}
+          onClick={() => onChange(o.value)}
+          disabled={disabled}
+          className={cn(
+            "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed enabled:active:translate-y-px",
+            value === o.value ? "bg-foreground/10" : "bg-background enabled:hover:bg-muted",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const FIELD_TYPE_OPTIONS = (Object.keys(FIELD_TYPE_META) as CustomFieldType[]).map((t) => ({
+  value: t,
+  label: FIELD_TYPE_META[t],
+}));
+
+type AppendMode = "new" | "merge" | "replace";
+
+const APPEND_MODE_OPTIONS = [
+  { value: "new", label: "New" },
+  { value: "merge", label: "Merge" },
+  { value: "replace", label: "Replace" },
+] as const;
+
+const APPEND_MODE_ACTION: Record<AppendMode, string> = {
+  new: "Append",
+  merge: "Merge",
+  replace: "Replace",
+};
+
+const APPEND_MODE_HELP: Record<Exclude<AppendMode, "new">, string> = {
+  merge: "Updated values assigned for people in the uploaded file but existing values are kept.",
+  replace: "All values set by the ones in the uploaded file and other existing values are removed.",
+};
+
+// Append a file of (id, value) rows as a custom field — a new one, or merged
+// into / replacing an existing field's values. Ingest is synchronous —
 // the submit request parses, writes, and returns match stats (or the parse
 // error) directly; there is no job or polling.
 function AppendDialog({
@@ -1111,57 +1222,83 @@ function AppendDialog({
   onOpenChange,
   orgSlug,
   datasetId,
+  fields,
   onAppended,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orgSlug: string;
   datasetId: string;
+  fields: FieldRow[];
   onAppended: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   // From pick-time inspection (parquet footer client-side, CSV head via the
-  // server) — the file drives which inputs render.
-  const [fileInfo, setFileInfo] = useState<{
-    columns: number;
-    valueHeader: string | null;
-  } | null>(null);
+  // server); the rest of the form renders once it lands.
+  const [fileInfo, setFileInfo] = useState<{ valueHeader: string } | null>(null);
   // Gates submit while pick-time inspection is in flight; deliberately no
   // loading UI — inspection is near-instant (parquet footer / 64KB CSV
   // head), and every indicator tried here (label swap, button spinner)
   // read as flicker in the common fast case.
   const [inspecting, setInspecting] = useState(false);
+  // Latest pick wins: a slower inspection of an earlier pick is dropped.
+  const pickRef = useRef(0);
+  const [mode, setMode] = useState<AppendMode>("new");
+  const [targetId, setTargetId] = useState<string | null>(null);
   const [fieldType, setFieldType] = useState<CustomFieldType>("enum");
   const [label, setLabel] = useState("");
-  const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [showDuplicate, setShowDuplicate] = useState(false);
   const [stats, setStats] = useState<AppendStats | null>(null);
+  const targetDropdown = useDeferredRadioDropdown({ onCommit: (v) => setTargetId(v || null) });
 
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
     if (open) {
+      pickRef.current++;
       setFile(null);
       setFileInfo(null);
+      setInspecting(false);
+      setMode("new");
+      setTargetId(null);
       setFieldType("enum");
       setLabel("");
-      setValue("");
       setError(null);
+      setShowDuplicate(false);
       setStats(null);
     }
   }
 
-  const resetFeedback = () => setError(null);
+  const resetFeedback = () => {
+    setError(null);
+    setShowDuplicate(false);
+  };
+
+  const target = mode === "new" ? undefined : fields.find((f) => f.customFieldId === targetId);
+  // An existing field keeps its type; the picker only chooses for new fields.
+  const effectiveType = mode === "new" ? fieldType : (target?.fieldType ?? null);
+  const newName = label.trim() || (fileInfo?.valueHeader ?? "");
+  // Mirrors the server's case-insensitive taken-name check, which stays
+  // authoritative. Surfaced on submit, like the dataset import dialog.
+  const duplicate =
+    mode === "new" &&
+    newName.length > 0 &&
+    fields.some((f) => f.label.trim().toLowerCase() === newName.toLowerCase());
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!file || !fileInfo) return;
-      const params = new URLSearchParams({ datasetId, fieldType, filename: file.name });
-      if (fileInfo.columns === 1) {
-        params.set("label", label.trim());
-        params.set("value", value.trim());
-      }
+      if (!file || !fileInfo || !effectiveType) return;
+      const params = new URLSearchParams({
+        datasetId,
+        fieldType: effectiveType,
+        filename: file.name,
+      });
+      if (target) {
+        params.set("customFieldId", target.customFieldId);
+        if (mode === "replace") params.set("replace", "true");
+      } else if (label.trim()) params.set("label", label.trim());
       const res = await fetch(`/api/web/${orgSlug}/custom-field-append?${params.toString()}`, {
         method: "POST",
         body: file,
@@ -1179,24 +1316,24 @@ function AppendDialog({
 
   const pending = submit.isPending;
   const valid =
-    !inspecting &&
-    file != null &&
-    fileInfo != null &&
-    (fileInfo.columns === 2 || (label.trim().length > 0 && value.trim().length > 0));
+    !inspecting && file != null && fileInfo != null && (mode === "new" || target != null);
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending && !next ? null : onOpenChange(next))}>
       <DialogContent>
         <DialogTitle>Append</DialogTitle>
-        <DialogDescription>
-          Add a column to this dataset from a file. Format should be one column (IDs) or two columns
-          (IDs and values) and a header is required. Appended columns will apply to all dataset
-          versions with matching IDs.
-        </DialogDescription>
+        {stats ? null : (
+          <DialogDescription>
+            Add a column to this dataset from a file. Format should be two columns (IDs and values)
+            and a header is required. Appended columns will apply to all dataset versions with
+            matching IDs.
+          </DialogDescription>
+        )}
         {stats ? (
           <div className="flex flex-col gap-4">
             <Callout tone="success">
-              Appended column "<span className="font-medium">{stats.fields.join(", ")}</span>" with{" "}
+              {mode === "merge" ? "Merged" : mode === "replace" ? "Replaced" : "Appended"} column "
+              <span className="font-medium">{stats.fields.join(", ")}</span>" with{" "}
               <span className="font-medium">{stats.rowCount.toLocaleString()}</span> rows
               {stats.matchedCount != null ? (
                 <>
@@ -1227,6 +1364,10 @@ function AppendDialog({
             onSubmit={(e) => {
               e.preventDefault();
               if (!valid || pending) return;
+              if (duplicate) {
+                setShowDuplicate(true);
+                return;
+              }
               setError(null);
               submit.mutate();
             }}
@@ -1242,22 +1383,30 @@ function AppendDialog({
                 onChange={(e) => {
                   resetFeedback();
                   const next = e.target.files?.[0] ?? null;
-                  setFile(next);
-                  setFileInfo(null);
-                  if (!next) return;
+                  const pick = ++pickRef.current;
+                  if (!next) {
+                    setFile(null);
+                    setFileInfo(null);
+                    return;
+                  }
+                  // File and its inspection land in one render, so the name
+                  // and the fields it drives appear together.
                   setInspecting(true);
                   inspectFile(orgSlug, next)
-                    .then((columns) =>
-                      setFileInfo({
-                        columns: columns.length,
-                        valueHeader: columns[1]?.trim() ?? null,
-                      }),
-                    )
+                    .then((columns) => {
+                      if (pick !== pickRef.current) return;
+                      setFile(next);
+                      setFileInfo({ valueHeader: columns[1]!.trim() });
+                    })
                     .catch((err: Error) => {
+                      if (pick !== pickRef.current) return;
                       setError(err.message);
                       setFile(null);
+                      setFileInfo(null);
                     })
-                    .finally(() => setInspecting(false));
+                    .finally(() => {
+                      if (pick === pickRef.current) setInspecting(false);
+                    });
                 }}
               />
               <Button
@@ -1273,79 +1422,110 @@ function AppendDialog({
               </Button>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Type</label>
-              <div className="flex flex-wrap gap-1.5">
-                {(Object.keys(FIELD_TYPE_META) as CustomFieldType[]).map((t) => {
-                  const sel = fieldType === t;
-                  return (
-                    <button
-                      type="button"
-                      key={t}
-                      onClick={() => {
-                        resetFeedback();
-                        setFieldType(t);
-                      }}
-                      disabled={pending}
-                      className={cn(
-                        "rounded-md border border-border px-2.5 py-1 text-sm disabled:cursor-not-allowed active:translate-y-px",
-                        sel ? "bg-foreground/10" : "bg-background hover:bg-muted",
-                      )}
-                    >
-                      {FIELD_TYPE_META[t]}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {fileInfo?.columns === 2 ? (
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium">Field name</label>
-                <Input value={fileInfo.valueHeader ?? ""} disabled readOnly />
-                <span className="text-sm text-muted-foreground italic">
-                  Fixed from the file's value column, you can rename later
-                </span>
-              </div>
-            ) : null}
-            {fileInfo?.columns === 1 ? (
+            {fileInfo ? (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Field name</label>
-                  <Input
-                    value={label}
-                    onChange={(e) => {
-                      resetFeedback();
-                      setLabel(e.target.value);
-                    }}
-                    placeholder="Required"
-                    disabled={pending}
-                  />
+                  <label className="text-sm font-medium">Source name</label>
+                  <span className="w-fit max-w-full truncate rounded-md bg-muted px-2.5 py-1 text-sm">
+                    {fileInfo.valueHeader}
+                  </span>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Value</label>
-                  <Input
-                    value={value}
-                    onChange={(e) => {
+                  <label className="text-sm font-medium">Field name</label>
+                  <ChoiceButtons
+                    options={APPEND_MODE_OPTIONS}
+                    value={mode}
+                    onChange={(m) => {
                       resetFeedback();
-                      setValue(e.target.value);
+                      setMode(m);
                     }}
-                    placeholder="Required"
                     disabled={pending}
                   />
-                  <span className="text-sm text-muted-foreground italic">
-                    Everyone in the list gets this value
-                  </span>
+                  {mode === "new" ? (
+                    <Input
+                      value={label}
+                      onChange={(e) => {
+                        resetFeedback();
+                        setLabel(e.target.value);
+                      }}
+                      placeholder={fileInfo.valueHeader}
+                      disabled={pending}
+                    />
+                  ) : (
+                    <DropdownMenu {...targetDropdown.menu}>
+                      <DropdownMenuTrigger
+                        disabled={pending}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
+                          "enabled:hover:bg-muted disabled:cursor-not-allowed",
+                        )}
+                      >
+                        <span className="truncate">
+                          {target
+                            ? `${target.label}${target.isArchived ? " (Archived)" : ""}`
+                            : "Choose a field..."}
+                        </span>
+                        <Icon name="chevron-down" className="size-3.5 shrink-0" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="min-w-[var(--anchor-width)]">
+                        <DropdownMenuRadioGroup {...targetDropdown.radio} value={targetId ?? ""}>
+                          {fields.map((f) => (
+                            <DropdownMenuRadioItem key={f.customFieldId} value={f.customFieldId}>
+                              {f.label}
+                              {f.isArchived ? " (Archived)" : null}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  {mode !== "new" ? (
+                    <span className="text-sm text-muted-foreground italic">
+                      {target ? (
+                        <>
+                          Existing type is{" "}
+                          <span className="font-bold">{FIELD_TYPE_META[target.fieldType]}</span>
+                          .{" "}
+                        </>
+                      ) : null}
+                      {APPEND_MODE_HELP[mode]}
+                    </span>
+                  ) : null}
+                  {showDuplicate ? (
+                    <Callout tone="pending">
+                      You already have a field named “{newName}”. You can “Merge” or “Replace” to
+                      update the existing field.
+                    </Callout>
+                  ) : null}
                 </div>
               </>
             ) : null}
+
+            {fileInfo && mode === "new" ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">Type</label>
+                <ChoiceButtons
+                  options={FIELD_TYPE_OPTIONS}
+                  value={fieldType}
+                  onChange={(t) => {
+                    resetFeedback();
+                    setFieldType(t);
+                  }}
+                  disabled={pending}
+                />
+                <span className="text-sm text-muted-foreground italic">
+                  {FIELD_TYPE_HELP[fieldType]}
+                </span>
+              </div>
+            ) : null}
+
             {error ? <DialogError error={error} /> : null}
             <div className="mt-2 flex justify-end gap-2">
               <DialogClose render={<Button variant="outline" type="button" disabled={pending} />}>
                 Cancel
               </DialogClose>
               <Button type="submit" disabled={!valid} loading={pending}>
-                Append
+                {APPEND_MODE_ACTION[mode]}
               </Button>
             </div>
           </form>

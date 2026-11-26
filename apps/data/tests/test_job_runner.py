@@ -212,6 +212,21 @@ def test_run_once_marks_exceptions_permanently_failed() -> None:
     assert "Traceback" in stored_job.messages[0]["traceback"]
 
 
+def test_run_once_redacts_credentials_from_stored_errors() -> None:
+    @job
+    def example(payload: Payload, ctx: JobContext) -> None:
+        raise RuntimeError("Unable to connect to postgres://app:s3cret@db-rw:5432/turf_tools")
+
+    stored_job = StoredJob(job_id=uuid.uuid4(), task="example", payload={"name": "Ada"})
+    store = MemoryJobStore([stored_job])
+
+    asyncio.run(JobManager(jobs=[example], store=store).run_once())
+
+    stored = [stored_job.failure_reason, stored_job.messages[0]["message"], stored_job.messages[0]["traceback"]]
+    assert all("s3cret" not in text for text in stored)
+    assert stored_job.failure_reason == "Unable to connect to postgres://app:***@db-rw:5432/turf_tools"
+
+
 def test_run_once_claims_only_one_job_per_active_concurrency_key() -> None:
     seen: list[str] = []
 

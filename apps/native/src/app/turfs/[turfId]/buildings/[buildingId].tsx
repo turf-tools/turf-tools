@@ -8,7 +8,7 @@ import { SwipeAction } from "@/components/swipe-action";
 import { Pill } from "@/components/pill";
 import { useColors } from "@/lib/colors";
 import { useScreenNav } from "@/lib/nav-context";
-import { toTitleCase } from "@/lib/format";
+import { addressCase, unitCase } from "@/lib/display-case";
 import {
   type PersonSummary,
   derivePersonSummaries,
@@ -20,13 +20,7 @@ import {
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import {
-  formatAge,
-  formatEnrollment,
-  formatGender,
-  formatPersonName,
-  formatUnitLabel,
-} from "@/lib/format";
+import { formatAge, formatEnrollment, formatGender, formatPersonName } from "@/lib/format";
 import { findNextBuilding, useTurf } from "@/lib/turf-data";
 import { useAlignedTurfStack } from "@/lib/turf-nav";
 
@@ -159,7 +153,7 @@ function DoorSection({
   allResults: Map<string, PersonSummary>;
   isFirst?: boolean;
 }) {
-  const unitLabel = formatUnitLabel(door.unit) ?? "Unit";
+  const unitLabel = unitCase(door.unit) || "Unit";
   return (
     <View style={{ marginBottom: -7 }}>
       <Text
@@ -237,7 +231,7 @@ function PersonRow({
             className="font-sans text-xl text-foreground dark:text-foreground-dark mb-1"
             numberOfLines={1}
           >
-            {toTitleCase(fullName)}
+            {fullName}
           </Text>
           <View className="flex-row items-center gap-1.5 mt-1">
             {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
@@ -264,5 +258,5 @@ function PersonRow({
 }
 
 function formatBuildingTitle(b: TurfDataBuilding): string {
-  return toTitleCase((b.address.street ?? "").trim()) || "Building";
+  return addressCase(b.address.street) || "Building";
 }

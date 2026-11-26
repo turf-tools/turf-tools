@@ -22,9 +22,17 @@ def test_numbers_are_exact_except_the_last_token() -> None:
     assert build_person_query(address="37-1") == "(address_line_1:37 AND address_line_1:1*)"
 
 
-def test_apostrophes_and_hyphens_in_names_split() -> None:
-    assert build_person_query(last_name="O'Brien") == "(last_name:O* AND last_name:Brien*)"
-    assert build_person_query(last_name="Smith-Jones") == "(last_name:Smith* AND last_name:Jones*)"
+def test_names_in_parts_also_search_their_parts_joined() -> None:
+    # "O'Brien" finds names indexed as `o` + `brien` and as `obrien`.
+    assert build_person_query(last_name="O'Brien") == ("((last_name:O* AND last_name:Brien*) OR last_name:OBrien*)")
+    assert build_person_query(last_name="Smith-Jones") == (
+        "((last_name:Smith* AND last_name:Jones*) OR last_name:SmithJones*)"
+    )
+    assert build_person_query(first_name="Mary") == "(first_name:Mary*)"
+
+
+def test_addresses_are_not_joined() -> None:
+    assert "3214" not in build_person_query(address="32-14 Broadway")
 
 
 def test_accented_letters_stay_in_one_token() -> None:
@@ -39,3 +47,16 @@ def test_fields_are_anded_and_exact_fields_stay_whole() -> None:
     assert build_person_query(first_name="free", zip5="10009", external_id="NY000000000000000001") == (
         "(first_name:free*) AND zip5:10009 AND external_id:NY000000000000000001"
     )
+
+
+def test_phone_matches_digits_from_the_start() -> None:
+    assert build_person_query(phone="(305) 555-") == "phone:305555*"
+    assert build_person_query(phone=" - ") == ""
+
+
+def test_email_is_lowercased_and_escaped() -> None:
+    assert build_person_query(email="Jane+Doe@") == "email:jane\\+doe@*"
+
+
+def test_contact_fields_and_with_the_rest() -> None:
+    assert build_person_query(last_name="garcia", phone="305") == "(last_name:garcia*) AND phone:305*"

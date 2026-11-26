@@ -35,6 +35,34 @@ export function seedQuestionDetail(
 ): void {
   queryClient.setQueryData(["question", question.questionId], {
     ...question,
+    lockedBy: [],
     options: [],
   });
 }
+
+export type QuestionLock = Awaited<ReturnType<typeof client.scripts.lock>>["questions"][number];
+
+// Writes question lock state returned by a script lock/unlock into the detail
+// and list caches. A question is locked while any locked script contains it.
+export function patchQuestionLocks(queryClient: QueryClient, locks: QuestionLock[]) {
+  const byId = new Map(locks.map((l) => [l.questionId, l.lockedBy]));
+  for (const l of locks) {
+    queryClient.setQueryData<{ lockedBy: QuestionLock["lockedBy"] }>(
+      ["question", l.questionId],
+      (old) => (old ? { ...old, lockedBy: l.lockedBy } : old),
+    );
+  }
+  for (const status of ["active", "archived", "all"] as const) {
+    queryClient.setQueryData(questionsListQuery(status).queryKey, (old) =>
+      old?.map((q) => {
+        const lockedBy = byId.get(q.questionId);
+        return lockedBy === undefined ? q : { ...q, lockedBy };
+      }),
+    );
+  }
+}
+
+export const questionLockKeys = (locks: QuestionLock[]) => [
+  ["questions"],
+  ...locks.map((l) => ["question", l.questionId]),
+];

@@ -1,8 +1,17 @@
-"""Tests for placeholder substitution in `src.tables`."""
+"""Tests for `src.tables`: placeholder substitution and post-import pruning."""
 
 import pytest
 
-from src.tables import UnknownAbstractTableError, resolve, table_fqn
+from src.importers.fl_voter_file.manifest import FL_MANIFEST
+from src.tables import (
+    QUERYABLE_TABLES,
+    UnknownAbstractTableError,
+    drop_intermediates,
+    reclaim_dropped_files,
+    resolve,
+    retained_tables,
+    table_fqn,
+)
 
 
 def test_resolves_a_known_placeholder() -> None:
@@ -66,3 +75,47 @@ def test_table_fqn_escapes_embedded_quotes() -> None:
     # practice (org-creation should validate) but the helper handles
     # it correctly if one slips through.
     assert table_fqn('weird"slug', "persons_geocoded") == 'ducklake."weird""slug".persons_geocoded'
+
+
+def test_retained_tables_keeps_queryable_key_group_and_record_tables() -> None:
+    keep = retained_tables(FL_MANIFEST)
+    assert keep >= QUERYABLE_TABLES
+    assert {"fl_zips", "fl_precincts", "elections", "geocoding_summary"} <= keep
+    assert "persons_raw" not in keep
+    assert "persons_scored" not in keep
+
+
+def _tables(conn, schema: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT table_name FROM duckdb_tables() WHERE database_name = 'ducklake' AND schema_name = ?", [schema]
+    ).fetchall()
+    return {name for (name,) in rows}
+
+
+def test_drop_intermediates_drops_only_unkept_tables(conn) -> None:
+    conn.execute("CREATE SCHEMA ducklake.ds_v1")
+    conn.execute("CREATE SCHEMA ducklake.ds_v2")
+    for table in ("persons_geocoded", "nyc_eds", "persons_raw", "persons_scored"):
+        conn.execute(f"CREATE TABLE ducklake.ds_v1.{table} AS SELECT 1 AS x")
+    conn.execute("CREATE TABLE ducklake.ds_v2.persons_raw AS SELECT 1 AS x")
+
+    dropped = drop_intermediates(conn, "ds_v1", frozenset({"persons_geocoded", "nyc_eds"}))
+
+    assert dropped == ["persons_raw", "persons_scored"]
+    assert _tables(conn, "ds_v1") == {"persons_geocoded", "nyc_eds"}
+    assert _tables(conn, "ds_v2") == {"persons_raw"}
+
+
+def test_reclaim_schedules_dropped_files_and_keeps_live_data(conn) -> None:
+    conn.execute("CREATE SCHEMA ducklake.ds_v1")
+    conn.execute("CREATE TABLE ducklake.ds_v1.persons_geocoded AS SELECT range AS x FROM range(1000)")
+    conn.execute("CREATE TABLE ducklake.ds_v1.persons_raw AS SELECT range AS x FROM range(1000)")
+    drop_intermediates(conn, "ds_v1", frozenset({"persons_geocoded"}))
+
+    reclaim_dropped_files(conn)
+
+    scheduled = conn.execute(
+        "SELECT count(*) FROM __ducklake_metadata_ducklake.ducklake_files_scheduled_for_deletion"
+    ).fetchone()
+    assert scheduled == (1,)
+    assert conn.execute("SELECT count(*) FROM ducklake.ds_v1.persons_geocoded").fetchone() == (1000,)

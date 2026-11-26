@@ -1,10 +1,11 @@
 """The contract every registered importer meets, run against its committed samples.
 
-Each importer package ships one fake-data file per accepted format at
-`sample_data/sample.<ext>`, all holding the same people. These tests load each one
-through the importer and check what the shared pipeline and the app rely on, and
-that every format yields identical people — so a new importer, or a new format,
-is covered by adding its sample. Format-specific behaviour lives in each
+Each importer package ships fake-data files at `sample_data/<source key>.<ext>`;
+the files sharing an extension are one sample, a complete set of sources in one
+accepted format, and every format holds the same people. These tests load each
+sample through the importer and check what the shared pipeline and the app rely
+on, and that every format yields identical people — so a new importer, or a new
+format, is covered by adding its sample. Format-specific behaviour lives in each
 importer's own test module.
 """
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.importers.base import ImportFilter
+from src.importers.base import ImportFilter, importer_spec
 from src.importers.registry import IMPORTERS
 from src.models import Person
 from src.tables import table_fqn
@@ -23,15 +24,24 @@ from src.tables import table_fqn
 SCHEMA = "contract_v1"
 
 
-def _samples(importer_cls) -> list[Path]:
-    return sorted((Path(inspect.getfile(importer_cls)).parent / "sample_data").glob("sample.*"))
+def _samples(importer_cls) -> list[dict[str, Path]]:
+    """The importer's samples, each a source key → file mapping, by extension."""
+    keys = {s.key for s in importer_cls.SOURCES}
+    by_ext: dict[str, dict[str, Path]] = {}
+    for path in sorted((Path(inspect.getfile(importer_cls)).parent / "sample_data").iterdir()):
+        if path.stem in keys:
+            by_ext.setdefault(path.suffix, {})[path.stem] = path
+    return [by_ext[ext] for ext in sorted(by_ext)]
+
+
+def _sample_id(sample: dict[str, Path]) -> str:
+    return next(iter(sample.values())).suffix.lstrip(".")
 
 
 importers = pytest.mark.parametrize("importer_cls", list(IMPORTERS.values()), ids=list(IMPORTERS))
 samples = pytest.mark.parametrize(
     ("importer_cls", "sample"),
-    [(cls, path) for cls in IMPORTERS.values() for path in _samples(cls)],
-    ids=lambda v: v.name,  # importer name, sample filename
+    [pytest.param(cls, s, id=f"{cls.name}-{_sample_id(s)}") for cls in IMPORTERS.values() for s in _samples(cls)],
 )
 
 
@@ -43,9 +53,13 @@ class _Progress:
         self.steps += n
 
 
-def _load(importer_cls, sample: Path, conn, filter: ImportFilter | None = None) -> _Progress:
+def _filter_columns(importer_cls) -> set[str]:
+    return {f.column for f in importer_cls.FILTERS}
+
+
+def _load(importer_cls, sample: dict[str, Path], conn, filter: ImportFilter | None = None) -> _Progress:
     progress = _Progress()
-    importer_cls().load(str(sample), SCHEMA, conn, progress, filter)
+    importer_cls().load({key: str(path) for key, path in sample.items()}, SCHEMA, conn, progress, filter)
     return progress
 
 
@@ -86,7 +100,7 @@ def test_every_manifest_column_is_in_the_output(importer_cls, sample, conn) -> N
 @samples
 def test_filter_columns_exist_on_the_raw_table(importer_cls, sample, conn) -> None:
     _load(importer_cls, sample, conn)
-    assert _columns(conn, "persons_raw") >= importer_cls.FILTER_COLUMNS
+    assert _columns(conn, "persons_raw") >= _filter_columns(importer_cls)
 
 
 @samples
@@ -94,7 +108,7 @@ def test_filter_keeps_exactly_the_matching_rows(importer_cls, sample, conn) -> N
     _load(importer_cls, sample, conn)
     raw = table_fqn(SCHEMA, "persons_raw")
     total = conn.sql(f"SELECT count(*) FROM {raw}").fetchone()[0]
-    for column in sorted(importer_cls.FILTER_COLUMNS):
+    for column in sorted(_filter_columns(importer_cls)):
         value, expected = conn.sql(
             f"SELECT {column}, count(*) FROM {raw} WHERE {column} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 1"
         ).fetchone()
@@ -107,8 +121,21 @@ def test_filter_keeps_exactly_the_matching_rows(importer_cls, sample, conn) -> N
 
 
 @importers
-def test_importer_ships_a_sample(importer_cls) -> None:
-    assert _samples(importer_cls), f"{importer_cls.name} has no sample_data/sample.* file"
+def test_spec_keys_are_unique_and_a_source_is_required(importer_cls) -> None:
+    spec = importer_spec(importer_cls)
+    keys = [s.key for s in spec.sources]
+    assert len(keys) == len(set(keys))
+    assert any(s.required for s in spec.sources)
+    columns = [f.column for f in spec.filters]
+    assert len(columns) == len(set(columns))
+
+
+@importers
+def test_importer_ships_a_complete_sample(importer_cls) -> None:
+    keys = {s.key for s in importer_cls.SOURCES}
+    assert _samples(importer_cls), f"{importer_cls.name} has no sample_data/<source key>.<ext> files"
+    for sample in _samples(importer_cls):
+        assert set(sample) == keys, f"{importer_cls.name} sample {_sample_id(sample)} lacks {keys - set(sample)}"
 
 
 @samples
@@ -126,4 +153,4 @@ def test_every_format_yields_the_same_people(importer_cls, conn) -> None:
     expected = _people(conn)
     for sample in others:
         _load(importer_cls, sample, conn)
-        assert _people(conn) == expected, f"{sample.name} differs from {reference.name}"
+        assert _people(conn) == expected, f"{_sample_id(sample)} differs from {_sample_id(reference)}"

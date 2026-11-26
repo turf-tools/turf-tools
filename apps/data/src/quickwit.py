@@ -22,12 +22,14 @@ if TYPE_CHECKING:
 # Index mapping template; `index_id` is swapped per dataset version.
 _INDEX_TEMPLATE = Path(__file__).resolve().parent.parent / "quickwit" / "persons.yaml"
 
-# Stored fields returned for a person hit (everything in the mapping).
+# Stored fields returned for a person hit (the mapping's Person core).
 PERSON_FIELDS = (
     "external_id",
     "external_id_type",
     "first_name",
     "last_name",
+    "middle_name",
+    "name_suffix",
     "address_line_1",
     "address_line_2",
     "city",
@@ -35,6 +37,11 @@ PERSON_FIELDS = (
     "zip5",
     "zip4",
 )
+
+
+# Indexed for matching, never returned in hits. Each is named for a filter kind
+# and filled from the manifest's field of that kind (see `dags/quickwit.py`).
+SEARCH_ONLY_FIELDS = ("phone", "email")
 
 
 def persons_index_id(schema: str) -> str:
@@ -68,6 +75,17 @@ def _prefix_clause(field: str, value: str) -> str | None:
     )
 
 
+def _name_clause(field: str, value: str) -> str | None:
+    """`_prefix_clause`, or the name run together: voter files store one name as
+    "O'Brien", "O BRIEN" or "OBRIEN", indexed as `o` + `brien` or as `obrien`, so a
+    name typed in parts also searches its parts joined."""
+    clause = _prefix_clause(field, value)
+    tokens = re.findall(r"[^\W_]+", value)
+    if clause is None or len(tokens) < 2:
+        return clause
+    return f"({clause}) OR {field}:{_escape_term(''.join(tokens))}*"
+
+
 def build_person_query(
     *,
     first_name: str = "",
@@ -76,24 +94,32 @@ def build_person_query(
     city: str = "",
     zip5: str = "",
     external_id: str = "",
+    phone: str = "",
+    email: str = "",
 ) -> str:
     """Build a Quickwit query from the Lookup form's filled fields, AND-ed
-    together. Name/address are prefix-matched (partial); zip and id are exact.
-    Returns "" when nothing is filled (caller should short-circuit to empty)."""
+    together. Name/address/phone/email are prefix-matched (partial); zip and id
+    are exact. Returns "" when nothing is filled (caller should short-circuit to empty)."""
     clauses: list[str] = []
-    for field, value in (
-        ("first_name", first_name),
-        ("last_name", last_name),
-        ("address_line_1", address),
-        ("city", city),
+    for field, value, clause_of in (
+        ("first_name", first_name, _name_clause),
+        ("last_name", last_name, _name_clause),
+        ("address_line_1", address, _prefix_clause),
+        ("city", city, _prefix_clause),
     ):
-        clause = _prefix_clause(field, value)
+        clause = clause_of(field, value)
         if clause:
             clauses.append(f"({clause})")
     if zip5.strip():
         clauses.append(f"zip5:{_escape_term(zip5.strip())}")
     if external_id.strip():
         clauses.append(f"external_id:{_escape_term(external_id.strip())}")
+    # Phone is indexed as bare digits and email lowercased; both match from the start.
+    digits = re.sub(r"\D", "", phone)
+    if digits:
+        clauses.append(f"phone:{digits}*")
+    if email.strip():
+        clauses.append(f"email:{_escape_term(email.strip().lower())}*")
     return " AND ".join(clauses)
 
 

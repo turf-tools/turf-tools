@@ -20,11 +20,13 @@ from src.dsl.criteria import (
     CanvassResponseFilter,
     Criteria,
     DateRangeFilter,
+    EmailFilter,
     EnumFilter,
     KeyFilter,
     NestedFilter,
     NumberRangeFilter,
     PersonIdSetFilter,
+    PhoneFilter,
     Step,
     TextFilter,
     TextMultiFilter,
@@ -32,6 +34,7 @@ from src.dsl.criteria import (
     VotingHistoryDetailFilter,
     build_field_catalog,
 )
+from src.importers.fl_voter_file.manifest import FL_MANIFEST
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 
 # The compiler is manifest-driven; exercise it against the real NYS field set.
@@ -113,6 +116,10 @@ def test_text_multi_filter_on_top_level_column() -> None:
     assert params == ["10001", "10002"]
 
 
+# How a text filter on last_name compiles (punctuation and spaces ignored).
+LAST_NAME_MATCH = "regexp_replace(last_name, '[^\\p{L}\\p{N}]', '', 'g') ILIKE ?"
+
+
 def test_text_filter_contains_on_top_level_column() -> None:
     params: list = []
     where = criteria_to_where(
@@ -121,8 +128,68 @@ def test_text_filter_contains_on_top_level_column() -> None:
         None,
         params,
     )
-    assert where == "WHERE last_name ILIKE ?"
+    assert where == f"WHERE {LAST_NAME_MATCH}"
     assert params == ["%smith%"]
+
+
+def test_text_filter_ignores_punctuation_and_spaces() -> None:
+    for typed in ("O'Brien", "O Brien", "OBrien"):
+        params: list = []
+        criteria_to_where(CATALOG, _narrow(TextFilter(kind="text", key="last_name", value=typed)), None, params)
+        assert params == ["%OBrien%"]
+    blank = _narrow(TextFilter(kind="text", key="last_name", value=" - "))
+    assert criteria_to_where(CATALOG, blank, None, []) == ""
+
+
+FL_CATALOG = build_field_catalog(FL_MANIFEST)
+
+
+def test_phone_filter_matches_typed_digits_from_the_start() -> None:
+    params: list = []
+    criteria = _narrow(PhoneFilter(kind="phone", key="phone", value="(305) 555-"))
+    where = criteria_to_where(FL_CATALOG, criteria, None, params)
+    assert where == "WHERE starts_with(phone, ?)"
+    assert params == ["305555"]
+
+
+def test_phone_filter_exists_alone_and_with_digits() -> None:
+    params: list = []
+    where = criteria_to_where(FL_CATALOG, _narrow(PhoneFilter(kind="phone", key="phone", exists=True)), None, params)
+    assert where == "WHERE phone IS NOT NULL"
+    assert params == []
+    where = criteria_to_where(
+        FL_CATALOG, _narrow(PhoneFilter(kind="phone", key="phone", value="305", exists=True)), None, params
+    )
+    assert where == "WHERE phone IS NOT NULL AND starts_with(phone, ?)"
+    assert params == ["305"]
+
+
+def test_contact_filter_not_exists_ignores_the_value() -> None:
+    params: list = []
+    criteria = _narrow(EmailFilter(kind="email", key="email", value="@gmail.com", exists=False))
+    assert criteria_to_where(FL_CATALOG, criteria, None, params) == "WHERE email IS NULL"
+    assert params == []
+
+
+def test_email_filter_is_a_case_insensitive_substring() -> None:
+    params: list = []
+    where = criteria_to_where(
+        FL_CATALOG, _narrow(EmailFilter(kind="email", key="email", value=" @Gmail.com ")), None, params
+    )
+    assert where == "WHERE contains(email, ?)"
+    assert params == ["@gmail.com"]
+
+
+def test_contact_filters_without_value_or_toggle_are_inactive() -> None:
+    params: list = []
+    criteria = _narrow(PhoneFilter(kind="phone", key="phone", value=" - "), EmailFilter(kind="email", key="email"))
+    assert criteria_to_where(FL_CATALOG, criteria, None, params) == ""
+    assert params == []
+
+
+def test_phone_filter_on_a_non_phone_field_raises() -> None:
+    with pytest.raises(CriteriaError):
+        criteria_to_where(FL_CATALOG, _narrow(PhoneFilter(kind="phone", key="email", value="305")), None, [])
 
 
 def test_age_range_with_both_bounds() -> None:
@@ -492,7 +559,7 @@ def test_narrow_chain_ands_filters() -> None:
     )
     assert " AND " in where
     assert "enrollment IN (?)" in where
-    assert "last_name ILIKE ?" in where
+    assert LAST_NAME_MATCH in where
     assert params == ["democratic", "%smith%"]
 
 
@@ -542,7 +609,7 @@ def test_remove_as_first_step_negates() -> None:
         None,
         params,
     )
-    assert where == "WHERE NOT (last_name ILIKE ?)"
+    assert where == f"WHERE NOT ({LAST_NAME_MATCH})"
     assert params == ["%smith%"]
 
 
@@ -1100,7 +1167,7 @@ def test_nested_filter_narrow_composes_as_and() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) AND ((enrollment IN (?)))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) AND ((enrollment IN (?)))"
     assert params == ["%smith%", "democratic"]
 
 
@@ -1117,7 +1184,7 @@ def test_nested_filter_add_composes_as_or() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) OR ((enrollment IN (?)))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) OR ((enrollment IN (?)))"
     assert params == ["%smith%", "democratic"]
 
 
@@ -1134,7 +1201,7 @@ def test_nested_filter_remove_composes_as_and_not() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) AND NOT ((enrollment IN (?)))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) AND NOT ((enrollment IN (?)))"
     assert params == ["%smith%", "democratic"]
 
 
@@ -1179,7 +1246,7 @@ def test_nested_filter_with_internal_verbs_preserves_composition() -> None:
         None,
         params,
     )
-    assert where == "WHERE (last_name ILIKE ?) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
+    assert where == f"WHERE ({LAST_NAME_MATCH}) AND (((enrollment IN (?)) OR (enrollment IN (?))))"
     assert params == ["%smith%", "democratic", "working_families"]
 
 

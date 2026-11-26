@@ -802,8 +802,8 @@ export function Map({
         }}
         // Disabled: MapLibre's box-zoom handler intercepts
         // shift+drag (and effectively shift+click) to draw a zoom
-        // rectangle. The zone editor uses shift+click to start a new
-        // zone, so the click event has to reach it untouched.
+        // rectangle. The zone editor binds shift+click, so the click
+        // event has to reach it untouched.
         boxZoom={false}
         doubleClickZoom={doubleClickZoom}
         // `interactiveLayerIds` filters the `features` field on the

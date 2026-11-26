@@ -2,7 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { client } from "~/rpc/client";
 
 // The Lookup form's filled fields. All optional; the data server AND-matches
-// whichever are non-empty (name/address prefix-match, zip/id exact).
+// whichever are non-empty (name/address/phone/email prefix-match, zip/id exact).
 export type PersonSearchFields = {
   firstName: string;
   lastName: string;
@@ -10,6 +10,8 @@ export type PersonSearchFields = {
   city: string;
   zip: string;
   externalId: string;
+  phone: string;
+  email: string;
 };
 
 const filledKeys = (f: PersonSearchFields) =>

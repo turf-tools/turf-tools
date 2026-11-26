@@ -11,9 +11,12 @@ record). `decode_raw_to_table` turns that layout into `persons_raw`, deliberatel
      few free-form legacy fields are dropped as garbage.
   3. Strip leading/trailing whitespace (state pads inside the quotes).
   4. Blank-after-trim → NULL.
+  5. Drop purged records (STATUS `P`): no longer registered, and an export that
+     includes them holds one per past county registration.
 
 `load_tabular_to_table` reads a CSV-with-header or parquet whose columns carry
-the layout's field names (case-insensitive) into the same `persons_raw` shape.
+the layout's field names (case-insensitive) into the same `persons_raw` shape,
+purged records dropped the same way.
 
 Nothing else is touched: codes stay codes, dates stay YYYYMMDD strings, leading
 zeros preserved, `voterhistory` kept as one raw string. Canonicalization is the
@@ -24,16 +27,13 @@ from __future__ import annotations
 
 import codecs
 import csv
-import os
-import shutil
-import tempfile
-import threading
 from pathlib import PurePosixPath
 from typing import Literal
 from urllib.parse import urlsplit
 
 import duckdb
 from src.importers.base import SourceUnreadableError, raw_column_name
+from src.importers.streams import open_source, read_chunks, sql_str, stream_text_to_table
 from src.models import quote_ident
 
 SourceFormat = Literal["txt", "csv", "parquet"]
@@ -139,47 +139,8 @@ ZERO_PADDED_WIDTHS: dict[str, int] = {"countycode": 2, "rzip5": 5, "rzip4": 4}
 # CR/LF that survive a malformed export.
 TRIM_CHARS = " \t\r\n"
 
-# C1 control characters (U+0080..U+009F) appear as stray/corrupt bytes in a few
-# free-form legacy fields. Not meaningful data; map each to None to delete it.
-# Normal accented characters live at U+00A0+ and are preserved.
-C1_STRIP_TABLE = {cp: None for cp in range(0x80, 0xA0)}
-
-
-def sql_str(value: str) -> str:
-    """Quote a Python string as a single-quoted SQL literal."""
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _open_source(path: str):
-    """Open a raw source for streaming reads. A bare path is a local file; a URL
-    (`s3://`, `http(s)://`, …) is streamed via smart_open, so a multi-GB
-    distribution never lands on local disk. smart_open uses boto3's credential
-    chain — the same one the DuckDB S3 secret relies on."""
-    if "://" in path:
-        import smart_open
-
-        return smart_open.open(path, "rb")
-    return open(path, "rb")
-
-
-def _feed_transcoded(input_path: str, dest_path: str, encoding: str, err: dict) -> None:
-    """Stream `input_path` decoded as `encoding`, re-encoded UTF-8, to `dest_path`
-    (a FIFO or file). Incremental decoder so multi-byte sequences split safely
-    across read boundaries; C1 control bytes dropped. Any failure stored in `err`."""
-    try:
-        decoder = codecs.getincrementaldecoder(encoding)()
-        with _open_source(input_path) as src, open(dest_path, "w", encoding="utf-8", newline="") as out:
-            while True:
-                chunk = src.read(1 << 22)  # 4 MiB
-                if not chunk:
-                    break
-                out.write(decoder.decode(chunk).translate(C1_STRIP_TABLE))
-            out.write(decoder.decode(b"", final=True).translate(C1_STRIP_TABLE))
-    except BrokenPipeError:
-        # DuckDB closed the read end early (parse error surfaces on its side).
-        pass
-    except BaseException as exc:  # noqa: BLE001 — report any failure to the caller
-        err["exc"] = exc
+# WHERE clause over the decoded columns that drops purged records.
+_NOT_PURGED = "WHERE status IS DISTINCT FROM 'P'"
 
 
 def _read_csv_sql(stream_path: str) -> str:
@@ -195,12 +156,13 @@ def _read_csv_sql(stream_path: str) -> str:
 
 
 def _select_sql(stream_path: str) -> str:
-    """SELECT trimming every field and mapping blanks to NULL, with output names."""
+    """SELECT trimming every field and mapping blanks to NULL, with output names,
+    purged records dropped."""
     trim_set = sql_str(TRIM_CHARS)
     projections = ",\n    ".join(
         f"NULLIF(trim(c{i:02d}, {trim_set}), '') AS {column}" for i, column in enumerate(COLUMNS, start=1)
     )
-    return f"SELECT\n    {projections}\nFROM {_read_csv_sql(stream_path)}"
+    return f"SELECT * FROM (SELECT\n    {projections}\nFROM {_read_csv_sql(stream_path)}) {_NOT_PURGED}"
 
 
 def decode_raw_to_table(
@@ -210,36 +172,15 @@ def decode_raw_to_table(
     *,
     encoding: str = "latin-1",
 ) -> None:
-    """Decode the raw headerless NYSVOTER layout into `table_fqn` on `conn`.
+    """Decode the raw headerless NYSVOTER layout into `table_fqn` on `conn`,
+    transcoded to UTF-8 and streamed (see `stream_text_to_table`). Result: 47
+    trimmed VARCHAR columns, blanks as NULL, purged records dropped."""
 
-    Transcodes to UTF-8 on the fly and streams through a FIFO (macOS/Linux) into
-    a single low-memory `CREATE TABLE`; falls back to a temp file where FIFOs
-    aren't available. Result: 47 trimmed VARCHAR columns, blanks as NULL."""
-    work_dir = tempfile.mkdtemp(prefix="nys_decode_")
-    use_fifo = hasattr(os, "mkfifo")
-    stream_path = os.path.join(work_dir, "voters.utf8")
-    err: dict = {}
-    feeder: threading.Thread | None = None
-    try:
-        if use_fifo:
-            os.mkfifo(stream_path)
-            feeder = threading.Thread(target=_feed_transcoded, args=(txt_path, stream_path, encoding, err), daemon=True)
-            feeder.start()
-        else:
-            _feed_transcoded(txt_path, stream_path, encoding, err)
-            if "exc" in err:
-                raise err["exc"]
+    def chunks():
+        with open_source(txt_path) as src:
+            yield from read_chunks(src)
 
-        conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} AS {_select_sql(stream_path)}")
-
-        if feeder is not None:
-            feeder.join()
-        if "exc" in err:
-            raise err["exc"]
-    finally:
-        if feeder is not None and feeder.is_alive():
-            feeder.join(timeout=5)
-        shutil.rmtree(work_dir, ignore_errors=True)
+    stream_text_to_table(chunks, _select_sql, table_fqn, conn, encoding=encoding)
 
 
 def source_format(source: str) -> SourceFormat | None:
@@ -254,7 +195,7 @@ def csv_has_header(source: str) -> bool:
 
     A header matches on most of its fields; a voter's name and address match on
     none, short of a coincidence like a surname of `Ward`."""
-    with _open_source(source) as src:
+    with open_source(source) as src:
         first = src.readline().removeprefix(codecs.BOM_UTF8).decode("latin-1")
     fields = next(csv.reader([first]), [])
     matched = sum(1 for f in fields if raw_column_name(f) in _LAYOUT_COLUMNS)
@@ -341,4 +282,5 @@ def _load_tabular(reader: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) 
         else f"CAST(NULL AS VARCHAR) AS {column}"
         for column in COLUMNS
     )
-    conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} AS SELECT\n    {projections}\nFROM {reader}")
+    select = f"SELECT\n    {projections}\nFROM {reader}"
+    conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} AS SELECT * FROM ({select}) {_NOT_PURGED}")

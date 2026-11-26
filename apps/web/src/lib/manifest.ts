@@ -22,7 +22,9 @@ export type ManifestFilterKind =
   | "date-range"
   | "voting-history-count"
   | "voting-history-detail"
-  | "address";
+  | "address"
+  | "phone"
+  | "email";
 
 export type ManifestEnumValue = { value: string; label?: string | null };
 
@@ -71,7 +73,20 @@ function fieldToFilterDef(fd: ManifestFieldDef): FilterDef {
       return { kind: "voting-history-detail", key, label };
     case "address":
       return { kind: "address", key: "address", label };
+    case "phone":
+      return { kind: "phone", key, label };
+    case "email":
+      return { kind: "email", key, label };
   }
+}
+
+// This manifest's field of `kind`, if it has one (mirrors the data side's
+// `Manifest.column_of_kind`).
+export function fieldOfKind(
+  manifest: Manifest,
+  kind: ManifestFilterKind,
+): ManifestFieldDef | undefined {
+  return manifest.fields.flat().find((fd) => fd.filterKind === kind);
 }
 
 export type KeyGroupOption = { value: string; label: string };

@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { Pill } from "@/components/pill";
+import { Placeholder } from "@/components/placeholder";
 import { useColors } from "@/lib/colors";
 import { useScreenNav } from "@/lib/nav-context";
 import { WideButton } from "@/components/wide-button";
@@ -27,14 +28,8 @@ import {
 } from "@/lib/canvass-events";
 import { openSheetAtom } from "@/lib/atoms/sheet";
 import { themeAtom } from "@/lib/atoms/theme";
-import { toTitleCase } from "@/lib/format";
-import {
-  formatAge,
-  formatEnrollment,
-  formatGender,
-  formatPersonName,
-  formatUnitShort,
-} from "@/lib/format";
+import { addressCase, titleCase, unitCase } from "@/lib/display-case";
+import { formatAge, formatEnrollment, formatGender, formatPersonName } from "@/lib/format";
 import { findNextBuilding, useTurf } from "@/lib/turf-data";
 import { useAlignedTurfStack } from "@/lib/turf-nav";
 import { client } from "@/rpc/client";
@@ -428,8 +423,8 @@ export default function PersonScreen() {
     Alert.alert("Coming soon", `The ${action} function is not implemented yet.`);
   };
 
-  const buildingAddress = building ? toTitleCase((building.address.street ?? "").trim()) : "";
-  const titleUnit = formatUnitShort(door?.unit);
+  const buildingAddress = building ? addressCase(building.address.street) : "";
+  const titleUnit = unitCase(door?.unit) || null;
 
   useScreenNav({
     title: buildingAddress || "Person",
@@ -488,7 +483,7 @@ export default function PersonScreen() {
           {/* Person header */}
           <View className="px-5 pt-5 pb-3">
             <Text className="font-sans-bold text-2xl text-foreground dark:text-foreground-dark mb-2">
-              {toTitleCase(fullName)}
+              {fullName}
             </Text>
             <View className="flex-row items-center gap-2">
               {person.dateOfBirth !== undefined && <Pill>{formatAge(person)}</Pill>}
@@ -717,7 +712,7 @@ function ScriptContent({
               className="font-sans text-lg leading-6"
               style={{ fontFamily: "Geist_400Regular_Italic" }}
             >
-              {step.text}
+              {step.text.trim() ? step.text : <Placeholder>Empty text</Placeholder>}
             </Text>
           );
         }
@@ -726,7 +721,7 @@ function ScriptContent({
           return (
             <View key={step.scriptStepId} className="gap-2">
               <Text className="font-sans text-lg leading-6 mb-0.5 text-foreground dark:text-foreground-dark">
-                {step.text}
+                {step.text.trim() ? step.text : <Placeholder>Untitled question</Placeholder>}
               </Text>
               <OpenEndedInput
                 text={value && "text" in value ? value.text : ""}
@@ -741,12 +736,13 @@ function ScriptContent({
         return (
           <View key={step.scriptStepId} className="gap-2">
             <Text className="font-sans text-lg leading-6 mb-0.5 text-foreground dark:text-foreground-dark">
-              {step.text}
+              {step.text.trim() ? step.text : <Placeholder>Untitled question</Placeholder>}
             </Text>
             {step.options.map((opt) => (
               <WideButton
                 key={opt.responseOptionId}
-                label={opt.text}
+                label={opt.text.trim() ? opt.text : "Empty option"}
+                placeholder={!opt.text.trim()}
                 selected={selectedIds.includes(opt.responseOptionId)}
                 selectedForegroundColor={colors.contacted.foreground}
                 selectedBackgroundColor={colors.contacted.background}
@@ -974,12 +970,6 @@ function noteItems(
   return notes.map((n) => ({ label: formatShortDate(n.createdAt), value: n.text }));
 }
 
-const ELECTION_TYPE_LABELS: Record<string, string> = {
-  general: "General",
-  primary: "Primary",
-  presidential_primary: "Pres. primary",
-};
-
 function votingHistoryItems(
   history: TurfDataPerson["votingHistory"],
 ): Array<{ label: string; value: string }> {
@@ -992,7 +982,7 @@ function votingHistoryItems(
   });
   return sorted.slice(0, 5).map((e) => ({
     label: e.date ? formatShortDate(e.date) : String(e.year),
-    value: `${ELECTION_TYPE_LABELS[e.type] ?? e.type} ${e.year}`,
+    value: `${titleCase(e.type.replace(/_/g, " "))} ${e.year}`,
   }));
 }
 

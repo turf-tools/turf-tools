@@ -20,9 +20,13 @@ Scoping: ``relationship_zip_codes`` limits the *blockfaces* (relationship
 endpoints) to those zips, but the wedge structure at each node always
 uses every physical edge incident to the node regardless of zip — a
 boundary node still knows about the arterial just outside the zip. Rows
-to out-of-scope blockfaces are simply not emitted. A scoped run rebuilds
-the output table with only scoped rows (non-incremental, like
-``blockface_final``); production runs pass ``None``.
+to out-of-scope blockfaces are simply not emitted. Production runs pass
+``None``.
+
+Rebuilt per state (`geo_tables.replace_state_rows`): each of the import's
+states is recomputed from all of that state's loaded lines, and other
+states' rows are untouched. A zip-scoped run replaces a state's rows with
+only its scoped rows.
 """
 
 import pandas as pd
@@ -35,7 +39,8 @@ from src.blockface_topology import (
     classify_node,
 )
 from src.dags.tiger import GEO_CATALOG, TIGER_SCHEMA
-from src.models import TableRef
+from src.geo_tables import replace_state_rows, states_to_build
+from src.models import GeoExtent, TableRef
 from src.projection import utm_crs_sql
 
 # How far along the edge (meters) to sample when computing the departure
@@ -76,6 +81,7 @@ def blockface_relationships(
     tiger_edges_raw: TableRef,
     conn: duckdb.DuckDBPyConnection,
     relationship_zip_codes: list[str] | None = None,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
     """Build ``geo_ducklake.tiger.blockface_relationships``.
 
@@ -85,12 +91,48 @@ def blockface_relationships(
     """
     table = "blockface_relationships"
     fqn = _fqn(table)
-    unpivoted_fqn = blockface_unpivoted.fqn
     edges_fqn = tiger_edges_raw.fqn
+    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {GEO_CATALOG}.{TIGER_SCHEMA}")
+    for state in states_to_build(conn, edges_fqn, geo_extent):
+        result_df = _state_relationships(blockface_unpivoted.fqn, edges_fqn, state, relationship_zip_codes, conn)
+        conn.register("_bfrel_result_df", result_df)
+        try:
+            replace_state_rows(
+                conn,
+                fqn,
+                state,
+                f"""
+                SELECT
+                    CAST(blockface_id_a AS VARCHAR)     AS blockface_id_a,
+                    CAST(blockface_id_b AS VARCHAR)     AS blockface_id_b,
+                    CAST(kind AS VARCHAR)               AS kind,
+                    CAST(node_id AS VARCHAR)            AS node_id,
+                    CAST(crossed_line_ids AS VARCHAR[]) AS crossed_line_ids,
+                    CAST(crossed_classes AS VARCHAR[])  AS crossed_classes,
+                    CAST(penalty_class AS VARCHAR)      AS penalty_class,
+                    CAST(crossing_cost_m AS DOUBLE)     AS crossing_cost_m,
+                    '{state}'                           AS state_fips
+                FROM _bfrel_result_df
+                """,
+            )
+        finally:
+            conn.unregister("_bfrel_result_df")
 
+    version = _current_version(conn)
+    return TableRef(catalog=GEO_CATALOG, schema=TIGER_SCHEMA, table=table, version=version)
+
+
+def _state_relationships(
+    unpivoted_fqn: str,
+    edges_fqn: str,
+    state: str,
+    relationship_zip_codes: list[str] | None,
+    conn: duckdb.DuckDBPyConnection,
+) -> pd.DataFrame:
+    """One state's relationship rows, as `_RESULT_COLUMNS`."""
     # -- 1. Scoped blockfaces (dedup alias/address-range rows per id) -----
     zip_clause = ""
-    params: list[object] = []
+    params: list[object] = [state]
     if relationship_zip_codes is not None:
         zip_clause = "AND list_contains(?, zip_code)"
         params.append(relationship_zip_codes)
@@ -106,6 +148,7 @@ def blockface_relationships(
         FROM {unpivoted_fqn}
         WHERE from_node_id IS NOT NULL
           AND to_node_id IS NOT NULL
+          AND tiger_line_id IN (SELECT tiger_line_id FROM {edges_fqn} WHERE state_fips = ?)
           {zip_clause}
         GROUP BY blockface_id
         """,
@@ -221,10 +264,8 @@ def blockface_relationships(
     if current_node is not None:
         relationships.extend(classify_node(current_node, current_ends, blockfaces_by_line_side))
 
-    # -- 6. Bulk write-back ------------------------------------------------
-    # Turf cutting reads this table live from other connections; one
-    # CREATE OR REPLACE statement swaps it in a single commit.
-    result_df = pd.DataFrame(
+    # -- 6. Result rows ----------------------------------------------------
+    return pd.DataFrame(
         [
             (
                 r.blockface_id_a,
@@ -240,24 +281,3 @@ def blockface_relationships(
         ],
         columns=_RESULT_COLUMNS,
     )
-    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {GEO_CATALOG}.{TIGER_SCHEMA}")
-    conn.register("_bfrel_result_df", result_df)
-    try:
-        conn.execute(f"""
-            CREATE OR REPLACE TABLE {fqn} AS
-            SELECT
-                CAST(blockface_id_a AS VARCHAR)     AS blockface_id_a,
-                CAST(blockface_id_b AS VARCHAR)     AS blockface_id_b,
-                CAST(kind AS VARCHAR)               AS kind,
-                CAST(node_id AS VARCHAR)            AS node_id,
-                CAST(crossed_line_ids AS VARCHAR[]) AS crossed_line_ids,
-                CAST(crossed_classes AS VARCHAR[])  AS crossed_classes,
-                CAST(penalty_class AS VARCHAR)      AS penalty_class,
-                CAST(crossing_cost_m AS DOUBLE)     AS crossing_cost_m
-            FROM _bfrel_result_df
-        """)
-    finally:
-        conn.unregister("_bfrel_result_df")
-
-    version = _current_version(conn)
-    return TableRef(catalog=GEO_CATALOG, schema=TIGER_SCHEMA, table=table, version=version)

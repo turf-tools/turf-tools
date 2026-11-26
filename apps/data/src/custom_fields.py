@@ -54,16 +54,6 @@ _FIELD_TYPES = ("number", "date", "text", "text_multi", "enum", "enum_multi")
 # Field types whose option set is enumerated into a picker.
 _PICKER_TYPES = ("enum", "enum_multi")
 
-# Display names for error messages — mirrors the UI's FIELD_TYPE_META.
-_TYPE_LABELS = {
-    "number": "Number",
-    "date": "Date",
-    "text": "Text",
-    "text_multi": "Code",
-    "enum": "Category",
-    "enum_multi": "Multi Category",
-}
-
 
 def custom_fields_fqn(dataset_slug: str) -> str:
     return table_fqn(_SCHEMA, f"{dataset_slug}_custom_fields")
@@ -355,8 +345,8 @@ def load_upload_table(conn: duckdb.DuckDBPyConnection, path: str) -> list[str]:
     cols = [r[0] for r in conn.execute("DESCRIBE _upload").fetchall()]
     if not cols:
         raise ValueError("Uploaded file has no columns.")
-    if len(cols) > 2:
-        raise ValueError(f"File has {len(cols)} columns, must have one (IDs only) or two (IDs and values).")
+    if len(cols) != 2:
+        raise ValueError(f"File has {len(cols)} column{'' if len(cols) == 1 else 's'}, must have two (IDs and values).")
     return cols
 
 
@@ -365,7 +355,6 @@ def parse_upload(
     source: str,
     field_type: str,
     label_arg: str | None,
-    value: str | None,
 ) -> tuple[str, int, int]:
     """Load → normalize → validate one upload file. Leaves the normalized
     rows in the `_rows` temp table for the caller and returns
@@ -374,49 +363,29 @@ def parse_upload(
     if field_type not in _FIELD_TYPES:
         raise ValueError(f"Unknown field type {field_type!r}.")
     cols = load_upload_table(conn, source)
-    # Two-column files: the field name IS the value column's header.
-    if len(cols) == 2:
-        label = cols[1].strip()
-        if not label:
-            raise ValueError("The value column needs a header name.")
-    else:
-        label = label_arg.strip() if label_arg else None
-        if not label:
-            raise ValueError("A one-column file needs a field name.")
+    # The field name is the dialog's override, else the value column's header.
+    label = (label_arg or "").strip() or cols[1].strip()
+    if not label:
+        raise ValueError("The value column needs a header name.")
     id_col = f'CAST("{cols[0]}" AS VARCHAR)'
 
     # Normalize to (external_id, label, value); trim, drop empties, dedupe.
-    # Two columns → per-person values; one column → the dialog's constant
-    # ("everyone in this list gets X").
-    if len(cols) >= 2:
-        # One value per person: on in-file duplicates, keep max() —
-        # deterministic, and dup ids in a scalar file are a data smell
-        # rather than a supported feature. Multi Category joins duplicates
-        # into one comma list instead, so repeated ids union their values.
-        agg = "string_agg({0}, ',')" if field_type == "enum_multi" else "max({0})"
-        conn.execute(
-            f"""
-            CREATE OR REPLACE TEMP TABLE _rows AS
-            SELECT trim({id_col}) AS external_id, ? AS label,
-                {agg.format(f'trim(CAST("{cols[1]}" AS VARCHAR))')} AS value
-            FROM _upload
-            WHERE trim({id_col}) <> '' AND trim(CAST("{cols[1]}" AS VARCHAR)) <> ''
-            GROUP BY trim({id_col})
-            """,
-            [label],
-        )
-    else:
-        value = value.strip() if value else None
-        if not value:
-            raise ValueError("A one-column file needs a value, which will applied to everyone in the list.")
-        conn.execute(
-            f"""
-            CREATE OR REPLACE TEMP TABLE _rows AS
-            SELECT DISTINCT trim({id_col}) AS external_id, ? AS label, ? AS value
-            FROM _upload WHERE trim({id_col}) <> ''
-            """,
-            [label, value],
-        )
+    # One value per person: on in-file duplicates, keep max() — deterministic,
+    # and dup ids in a scalar file are a data smell rather than a supported
+    # feature. Multi Category joins duplicates into one comma list instead,
+    # so repeated ids union their values.
+    agg = "string_agg({0}, ',')" if field_type == "enum_multi" else "max({0})"
+    conn.execute(
+        f"""
+        CREATE OR REPLACE TEMP TABLE _rows AS
+        SELECT trim({id_col}) AS external_id, ? AS label,
+            {agg.format(f'trim(CAST("{cols[1]}" AS VARCHAR))')} AS value
+        FROM _upload
+        WHERE trim({id_col}) <> '' AND trim(CAST("{cols[1]}" AS VARCHAR)) <> ''
+        GROUP BY trim({id_col})
+        """,
+        [label],
+    )
     # Multi Category cells are comma lists: one row per distinct value, so a
     # person carries several rows for the field.
     if field_type == "enum_multi":
@@ -432,17 +401,15 @@ def parse_upload(
     row_count = row[0] if row else 0
     if row_count == 0:
         raise ValueError("No usable rows in the uploaded file.")
-    # Two-column rows with an id but a blank value are ignored entirely
-    # (no write, prior values survive) — counted so the dialog can say so.
-    skipped_count = 0
-    if len(cols) == 2:
-        # Blank CSV cells arrive as NULL (not '') — count both shapes.
-        skipped = conn.execute(
-            f"""SELECT count(*) FROM _upload
-            WHERE trim({id_col}) <> ''
-                AND ("{cols[1]}" IS NULL OR trim(CAST("{cols[1]}" AS VARCHAR)) = '')"""
-        ).fetchone()
-        skipped_count = skipped[0] if skipped else 0
+    # Rows with an id but a blank value are ignored entirely (not written;
+    # a merge keeps their prior values) — counted so the dialog can say so.
+    # Blank CSV cells arrive as NULL (not '') — count both shapes.
+    skipped = conn.execute(
+        f"""SELECT count(*) FROM _upload
+        WHERE trim({id_col}) <> ''
+            AND ("{cols[1]}" IS NULL OR trim(CAST("{cols[1]}" AS VARCHAR)) = '')"""
+    ).fetchone()
+    skipped_count = skipped[0] if skipped else 0
 
     # Typed values are validated at ingest — fail loudly with an example
     # rather than storing values that silently never match at query time
@@ -478,15 +445,41 @@ def append_custom_fields(
     source: str,
     field_type: str,
     label: str | None,
-    value: str | None,
+    custom_field_id: str | None = None,
+    replace: bool = False,
 ) -> dict[str, Any]:
     """One synchronous append: parse the file at `source`, upsert the registry,
-    write values into the lake (latest wins), sync coverage/enum options, and
-    return `{fields, rowCount, skippedCount, matchedCount}` for the dialog.
+    write values into the lake, sync coverage/enum options, and return
+    `{fields, rowCount, skippedCount, matchedCount}` for the dialog.
+    `custom_field_id` targets an existing field (its label and type win):
+    a merge replaces values only for people in the file, `replace` clears
+    the field first. Without it the append creates a new field and rejects
+    a taken name.
     Raises ValueError with a user-facing message on any parse/validation
     failure — nothing is written in that case."""
     attach_operational_postgres(conn, get_settings())
-    label, row_count, skipped_count = parse_upload(conn, source, field_type, label, value)
+    if custom_field_id is not None:
+        target = conn.execute(
+            f"""
+            SELECT label, field_type FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields
+            WHERE custom_field_id = ?::UUID AND dataset_id = ?::UUID
+            """,
+            [custom_field_id, dataset_id],
+        ).fetchone()
+        if target is None:
+            raise ValueError("Field not found.")
+        label, field_type = target
+    label, row_count, skipped_count = parse_upload(conn, source, field_type, label)
+    if custom_field_id is None:
+        taken = conn.execute(
+            f"""
+            SELECT label FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields
+            WHERE dataset_id = ?::UUID AND lower(label) = lower(?)
+            """,
+            [dataset_id, label],
+        ).fetchone()
+        if taken is not None:
+            raise ValueError(f'A field named "{taken[0]}" already exists. Use Merge or Replace to update it.')
 
     _upsert_registry(conn, dataset_id, field_type)
     conn.execute(
@@ -507,12 +500,12 @@ def append_custom_fields(
     values_table = custom_fields_fqn(dataset_slug)
     conn.execute("BEGIN TRANSACTION")
     try:
-        # Latest wins: replace the listed people's values for this field.
+        # Replace clears the whole field; a merge only the listed people.
+        scope = "" if replace else "AND external_id IN (SELECT external_id FROM _rows_ids)"
         conn.execute(
             f"""
             DELETE FROM {values_table}
-            WHERE field_id IN (SELECT DISTINCT field_id FROM _rows_ids)
-                AND external_id IN (SELECT external_id FROM _rows_ids)
+            WHERE field_id IN (SELECT DISTINCT field_id FROM _rows_ids) {scope}
             """
         )
         conn.execute(
@@ -540,25 +533,9 @@ def append_custom_fields(
 
 
 def _upsert_registry(conn: duckdb.DuckDBPyConnection, dataset_id: str, field_type: str) -> None:
-    """Ensure a registry row per label in `_rows`: insert missing (typed),
-    revive archived, and reject type conflicts — a label can't be a number in
-    one upload and a date in the next."""
-    conflict = conn.execute(
-        f"""
-        SELECT f.label, f.field_type, f.archived_at IS NOT NULL
-        FROM {OPERATIONAL_PG_ALIAS}.app.custom_fields f
-        WHERE f.dataset_id = ?::UUID AND f.field_type <> ?
-            AND f.label IN (SELECT DISTINCT label FROM _rows)
-        LIMIT 1
-        """,
-        [dataset_id, field_type],
-    ).fetchone()
-    if conflict is not None:
-        label, existing_type, archived = conflict
-        kind = f"{'an archived' if archived else 'a'} {_TYPE_LABELS.get(existing_type, existing_type)}"
-        raise ValueError(
-            f'Field "{label}" already exists as {kind} field. Rename that field to use this name for a different type.'
-        )
+    """Ensure a registry row per label in `_rows`: insert missing (typed) and
+    revive archived. Type conflicts can't reach here — a new field's label is
+    free, and an update takes its type from the registry."""
     conn.execute(
         f"""
         INSERT INTO {OPERATIONAL_PG_ALIAS}.app.custom_fields (custom_field_id, dataset_id, label, field_type)

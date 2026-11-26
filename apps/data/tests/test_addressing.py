@@ -21,8 +21,10 @@ from src.addressing import (
     canonical_key_sql,
     housenumber_display_sql,
     housenumber_norm_sql,
+    ordinal_tokens_sql,
     street_rewrite_sql,
     tokenize_street_sql,
+    unit_label_sql,
 )
 
 
@@ -160,6 +162,32 @@ class TestHousenumberNormSql:
 # ---------------------------------------------------------------------------
 
 
+class TestOrdinalTokensSql:
+    @pytest.mark.parametrize(
+        ("number", "ordinal"),
+        [
+            ("1", "1st"),
+            ("2", "2nd"),
+            ("3", "3rd"),
+            ("4", "4th"),
+            ("11", "11th"),
+            ("12", "12th"),
+            ("13", "13th"),
+            ("21", "21st"),
+            ("98", "98th"),
+            ("101", "101st"),
+            ("111", "111th"),
+            ("112", "112th"),
+        ],
+    )
+    def test_suffix(self, conn, number, ordinal):
+        assert _eval(conn, ordinal_tokens_sql("s"), [number, "street"]) == [ordinal]
+
+    def test_number_too_long_for_an_integer(self, conn):
+        """A garbage 20+ digit "street number" gets a suffix like any other."""
+        assert _eval(conn, ordinal_tokens_sql("s"), ["123456789012345678901"]) == ["123456789012345678901st"]
+
+
 class TestHousenumberDisplaySql:
     def test_plain_number_no_prefix_no_half(self, conn):
         result = conn.execute(f"""
@@ -241,3 +269,85 @@ class TestCanonicalKeyConvergence:
             [lane_tokens],
         ).fetchone()[0]
         assert place_key != lane_key
+
+
+# ---------------------------------------------------------------------------
+# unit_label_sql
+# ---------------------------------------------------------------------------
+
+
+class TestUnitLabelSql:
+    @pytest.mark.parametrize(
+        ("spellings", "label"),
+        [
+            # Stray punctuation and a leading type word only say it's a unit.
+            (["APT 3B", "3B", "#3B", "# 3B", "NUM  3B", "APT3B", ". 3B"], "3B"),
+            (["UNIT #318", "APT 318", "#318", "318", "UNIT-318", "UNIT: 318"], "318"),
+            (["NUM NUM 1", "NUM 1", "1"], "1"),
+            (["UNITB", "APTB", "B"], "B"),
+            (["APTG2", "G2"], "G2"),
+            # A code's pieces join across a space or hyphen.
+            (["6 D", "6D", "APT 6 D", "6-D"], "6D"),
+            (["C 1", "C1", "C-1"], "C1"),
+            (["2 RR", "2RR"], "2RR"),
+            # Abbreviations take one spelling; a unit word stands apart and comes first.
+            (["4FL", "4 FL", "4 FLR", "4  FLR", "4 FLOOR", "4FLR", "FL 4", "FLR 4"], "FL 4"),
+            (["1ST FL", "1ST FLOOR", "1STFL", "1 ST FL", "1ST", "1 FL"], "FL 1"),
+            (["FRNT1", "FRNT 1", "FRONT 1", "FRONT1", "FRT 1", "1 FRNT"], "FRONT 1"),
+            (["1939 STE", "STE 1939", "SUITE 1939"], "STE 1939"),
+            (["PHA", "PH A", "PENTHOUSE A"], "PH A"),
+            (["PH1G", "PH 1G", "APT PH 1G"], "PH 1G"),
+            (["7 PH", "PH 7", "PH7"], "PH 7"),
+            (["GARDEN", "GDN", "GRDN"], "GARDEN"),
+            (["BSMT", "BASEMENT", "BSMNT", "BAS", "BASE", "BSTM"], "BSMT"),
+            (["SUPT", "SUP", "SUPER", "SUPR", "SUPT."], "SUPT"),
+            (["PVT HSE", "PRVT HSE", "PRIVATE HSE"], "PVT HSE"),
+            (["LWR", "LOWER", "LOWR"], "LOWR"),
+            (["BSMT 1", "BSMT/1", "BMST 1", "BSMENT 1"], "BSMT 1"),
+            # A number glued to a type word is that number.
+            (["1UNIT", "UNIT 1", "1"], "1"),
+            (["BLDG5", "BLDG 5", "BUILDING 5"], "BLDG 5"),
+            # A direction next to a code takes its letter.
+            (["PH EAST", "PH E", "PHE"], "PH E"),
+            (["3C EAST", "3C E"], "3C E"),
+            (["EAST 304", "E304", "E 304"], "E304"),
+            # Codes come after the words they belong to.
+            (["8B NORTH TOWER", "NORTH TOWER 8B"], "NORTH TOWER 8B"),
+            (["806 TOWER B", "806 TWR B", "TOWER B 806", "TOWER B806"], "TOWER B806"),
+            (["1 UPSTAIRS", "UPSTAIRS 1"], "UPSTAIRS 1"),
+        ],
+    )
+    def test_spellings_of_one_unit_share_a_label(self, conn, spellings, label):
+        assert {_eval(conn, unit_label_sql("s"), s) for s in spellings} == {label}
+
+    @pytest.mark.parametrize(
+        ("a", "b"),
+        [
+            ("2 2", "22"),  # spaces between numbers can separate units
+            ("2 1/2 FL", "2 FL"),  # a fraction stays
+            ("1-2", "12"),
+            ("PH BS", "PHS"),
+            ("FL 2", "2"),  # second floor vs apartment 2
+            ("2ND", "2"),
+            ("PH A", "A"),
+            ("BSMT 1", "1"),
+            ("STE 5", "5"),
+            ("3RR", "REAR 3"),  # right rear vs rear
+        ],
+    )
+    def test_different_units_stay_apart(self, conn, a, b):
+        assert _eval(conn, unit_label_sql("s"), a) != _eval(conn, unit_label_sql("s"), b)
+
+    @pytest.mark.parametrize("value", [None, "", "  ", "#"])
+    def test_blank_is_null(self, conn, value):
+        assert _eval(conn, unit_label_sql("s"), value) is None
+
+    def test_pieces_that_contain_a_type_or_unit_word_stay(self, conn):
+        assert _eval(conn, unit_label_sql("s"), "APX12") == "APX12"
+        assert _eval(conn, unit_label_sql("s"), "LPH") == "LPH"
+        assert _eval(conn, unit_label_sql("s"), "UNITED GARDEN") == "UNITED GARDEN"
+        assert _eval(conn, unit_label_sql("s"), "APTO") == "APTO"
+
+    def test_a_direction_naming_a_wing_or_alone_stays_a_word(self, conn):
+        assert _eval(conn, unit_label_sql("s"), "SOUTH TOWER 202") == "SOUTH TOWER 202"
+        assert _eval(conn, unit_label_sql("s"), "EAST") == "EAST"

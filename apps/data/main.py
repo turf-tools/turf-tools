@@ -52,8 +52,9 @@ from src.duckdb import (
     s3_secret_expires,
 )
 from src.import_job import fail_interrupted_versions, import_dataset_version
+from src.importers.registry import importer_specs
 from src.job_runner import JobManager
-from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL
+from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL, export_select_list
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
 from src.quickwit import search as quickwit_search
@@ -273,6 +274,11 @@ async def ducklake_status():
     return await run_query(work)
 
 
+@app.get("/importers")
+async def importers():
+    return [spec.model_dump(by_alias=True) for spec in importer_specs()]
+
+
 @app.get("/key-groups/{key_group}/geojson")
 async def key_group_geojson(key_group: str, org_slug: str):
     """Serve all polygons for a key group as a GeoJSON FeatureCollection.
@@ -362,7 +368,8 @@ async def custom_fields_append(
     field_type: str = Query(alias="fieldType"),
     upload_id: str = Query(alias="uploadId"),
     label: str | None = Query(default=None),
-    value: str | None = Query(default=None),
+    custom_field_id: str | None = Query(default=None, alias="customFieldId"),
+    replace: bool = Query(default=False),
 ):
     """Synchronous append: raw file body + config in query params → parse →
     registry upsert → lake write → coverage/enum sync → stats out, or 400
@@ -384,7 +391,8 @@ async def custom_fields_append(
                 source=source,
                 field_type=field_type,
                 label=label,
-                value=value,
+                custom_field_id=custom_field_id,
+                replace=replace,
             )
         finally:
             conn.close()
@@ -604,15 +612,17 @@ class _PersonsSearchRequest(_WireBaseModel):
     city: str = ""
     zip: str = ""  # noqa: A003
     external_id: str = Field("", validation_alias="externalId")
+    phone: str = ""
+    email: str = ""
     limit: int = 25
     offset: int = 0
 
 
 @app.post("/persons/search")
 async def persons_search(req: _PersonsSearchRequest):
-    """Structured person search (name / address / id, AND-ed) over the org's
-    active-version Quickwit index — powers the Lookup tab. Name/address prefix-
-    match; results are paginated. Empty when no fields are filled or the version
+    """Structured person search (name / address / id / phone / email, AND-ed)
+    over the org's active-version Quickwit index — powers the Lookup tab.
+    Name/address/phone/email prefix-match; results are paginated. Empty when no fields are filled or the version
     has no index yet.
     """
     query = build_person_query(
@@ -622,6 +632,8 @@ async def persons_search(req: _PersonsSearchRequest):
         city=req.city,
         zip5=req.zip,
         external_id=req.external_id,
+        phone=req.phone,
+        email=req.email,
     )
     if not query:
         return {"numHits": 0, "hits": [], "offset": req.offset, "limit": req.limit}
@@ -652,7 +664,7 @@ class _PersonDetailRequest(_WireBaseModel):
 @app.post("/persons/detail")
 async def person_detail(req: _PersonDetailRequest):
     """The full lake record for one person (by external_id) — the Lookup detail
-    pane. The search index only holds name/address; everything else (party,
+    pane. The search index returns only name/address; everything else (party,
     districts, voting history, …) lives in `persons_geocoded`; custom-field
     values come from `person_custom_fields`. Returns ``{person: {<column>: value, …,
     votingHistory: [...], customFields: [{label, fieldType, values}]}}`` or
@@ -666,7 +678,7 @@ async def person_detail(req: _PersonDetailRequest):
         # always exist on persons_geocoded, so EXCLUDE is safe.
         sql = resolve(
             "SELECT * EXCLUDE ("
-            "voting_history, building_id, door_id, building_i, door_i, blockface_id, "
+            "voting_history, building_id, building_zip5, door_id, building_i, door_i, blockface_id, "
             "match_score, position_source, latitude, longitude"
             "), to_json(voting_history) AS voting_history "
             "FROM {persons_geocoded} WHERE external_id = ? LIMIT 1",
@@ -1114,17 +1126,20 @@ async def segments_export(req: _SegmentExportRequest):
     if req.format not in ("csv", "excel", "parquet"):
         raise HTTPException(status_code=400, detail="format must be 'csv' or 'excel' or 'parquet'.")
 
-
     if req.format == "excel":
         suffix = ".xlsx"
     elif req.format == "parquet":
         suffix = ".parquet"
     else:
         suffix = ".csv"
+
     def default_sql(schema: str, persons_columns: set[str], where: str) -> str:
         # Skip only optional-and-absent; a missing required column stays in the
         # SELECT and fails loudly at bind time.
-        select_cols = ", ".join(c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL)
+
+        columns = [c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL]
+        select_cols = export_select_list(columns)
+        
         return resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
 
     def direct_mail_sql(schema: str, persons_columns: set[str], where: str, householded: bool = True) -> str:

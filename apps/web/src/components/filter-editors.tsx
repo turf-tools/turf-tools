@@ -21,10 +21,12 @@ import {
   type CanvassOutcomeFilter,
   type Criteria,
   type DateRangeFilter,
+  type EmailFilter,
   type EnumFilter,
   type Filter,
   type FilterDef,
   type NumberRangeFilter,
+  type PhoneFilter,
   type SegmentFilter,
   type TextFilter,
   type TextMultiFilter,
@@ -34,6 +36,7 @@ import {
   type VotingHistoryDetailFilter,
 } from "~/lib/filters";
 import { electionsQuery } from "~/lib/queries/elections";
+import { manifestQuery } from "~/lib/queries/manifest";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import { findCyclicSegmentIds, type SegmentLike } from "~/lib/segment-refs";
 import { cn } from "~/lib/utils";
@@ -73,6 +76,10 @@ export function FilterValueEditor({
       ) : null}
       {filter.kind === "text-multi" && def?.kind === "text-multi" ? (
         <TextMultiFilterEditor filter={filter} onChange={onChange} />
+      ) : null}
+      {(filter.kind === "phone" && def?.kind === "phone") ||
+      (filter.kind === "email" && def?.kind === "email") ? (
+        <ContactFilterEditor filter={filter} onChange={onChange} />
       ) : null}
       {filter.kind === "date-range" && def?.kind === "date-range" ? (
         <DateRangeFilterEditor filter={filter} onChange={onChange} />
@@ -142,14 +149,86 @@ function TextFilterEditor({
   );
 }
 
-// Per-key normalizer for text-multi values. Run on each token at commit
-// time so the canonical form is what gets stored and queried. Anything
-// the normalizer doesn't recognize passes through unchanged so the user
-// can see the bad value and correct it.
-const NORMALIZERS: Record<string, (v: string) => string> = {
-  // NYC precincts canonicalize as `AA-EEE` (zero-padded AD, dash, zero-padded ED).
-  // Accept compact 5-digit input as a shortcut.
-  precinct: (v) => (/^\d{5}$/.test(v) ? `${v.slice(0, 2)}-${v.slice(2)}` : v),
+// Phone / email: an Exists Yes/No row (neither pressed = either) over a match
+// input (phone matches digits from the start, email anywhere). "No" disables the
+// match — a missing value can't match anything. Same commit-on-blur pattern as
+// TextFilterEditor.
+function ContactFilterEditor({
+  filter,
+  onChange,
+}: {
+  filter: PhoneFilter | EmailFilter;
+  onChange: (next: Filter) => void;
+}) {
+  const [local, setLocal] = useState(filter.value);
+  useEffect(() => setLocal(filter.value), [filter.value]);
+  const commit = () => {
+    if (local !== filter.value) onChange({ ...filter, value: local });
+  };
+  const phone = filter.kind === "phone";
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">Exists</span>
+        {[
+          { exists: true, label: "Yes" },
+          { exists: false, label: "No" },
+        ].map((o) => (
+          <Toggle
+            key={o.label}
+            size="sm"
+            variant="outline"
+            pressed={filter.exists === o.exists}
+            onPressedChange={(pressed) =>
+              onChange({ ...filter, exists: pressed ? o.exists : null })
+            }
+            className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+          >
+            {o.label}
+          </Toggle>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-muted-foreground">{phone ? "Starts with" : "Contains"}</span>
+        <Input
+          disabled={filter.exists === false}
+          value={local}
+          onChange={(e) => setLocal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            }
+          }}
+          inputMode={phone ? "tel" : "email"}
+          className="h-7 px-2"
+          placeholder={phone ? "leading digits" : "any substring"}
+        />
+      </div>
+    </div>
+  );
+}
+
+// NYC precincts canonicalize as `AA-EEE` (zero-padded AD, dash, zero-padded ED).
+// Accept compact 5-digit input as a shortcut.
+const nysPrecinct = (v: string) => (/^\d{5}$/.test(v) ? `${v.slice(0, 2)}-${v.slice(2)}` : v);
+
+// Florida precincts are stored county-prefixed (`DAD-135`, `BRO-Q043`).
+// Accept any case and separator, and drop a `.N` split suffix copied from a
+// polling-place list.
+const flPrecinct = (v: string) => {
+  const m = /^([a-z]{3})[\s-]*([a-z0-9]+?)(?:\.\d+)?$/i.exec(v);
+  return m ? `${m[1]!.toUpperCase()}-${m[2]!.toUpperCase()}` : v;
+};
+
+// Per-(dataset type, field) normalizer for text-multi values. Run on each
+// token at commit time so the canonical form is what gets stored and
+// queried. Anything the normalizer doesn't recognize passes through
+// unchanged so the user can see the bad value and correct it.
+const NORMALIZERS: Record<string, Record<string, (v: string) => string>> = {
+  nys_voter_file: { precinct: nysPrecinct },
+  fl_voter_file: { precinct: flPrecinct },
 };
 
 function TextMultiFilterEditor({
@@ -164,7 +243,8 @@ function TextMultiFilterEditor({
   // (preserve order).
   const [local, setLocal] = useState(filter.values.join(", "));
   useEffect(() => setLocal(filter.values.join(", ")), [filter.values]);
-  const normalize = NORMALIZERS[filter.key] ?? ((v: string) => v);
+  const { data: active } = useQuery(manifestQuery());
+  const normalize = NORMALIZERS[active?.importer ?? ""]?.[filter.key] ?? ((v: string) => v);
   const commit = () => {
     const tokens = local
       .split(",")

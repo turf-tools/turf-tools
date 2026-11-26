@@ -1,4 +1,4 @@
-import { toTitleCase } from "./utils";
+import { nameCase, surnameCase } from "./display-case";
 
 // Display name: "First M Last Suffix" — a middle name collapses to its
 // bare initial when present, nothing otherwise. Shared by lookup (list +
@@ -12,9 +12,7 @@ export function formatPersonName(
 ): string {
   const trimmed = middle?.trim();
   const initial = trimmed ? trimmed[0]?.toUpperCase() : null;
-  return [toTitleCase(first), initial, toTitleCase(last), toTitleCase(suffix)]
-    .filter(Boolean)
-    .join(" ");
+  return [nameCase(first), initial, surnameCase(last), nameCase(suffix)].filter(Boolean).join(" ");
 }
 
 // Formatters shared across the admin UI. Keep date output compact so it
@@ -42,6 +40,15 @@ export function formatDate(value: Date | string | null | undefined, timezone: st
 export function formatDateTime(value: Date | string | null | undefined, timezone: string) {
   if (!value) return "—";
   return `${formatDate(value, timezone)} ${formatTime(value, timezone)}`;
+}
+
+// "42s", "14m 3s", "1h 12m" — elapsed time at the precision that matters.
+export function formatDuration(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 // MM/DD — for badge-sized contexts (the walked-date chip) where the

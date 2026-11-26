@@ -16,7 +16,14 @@ import os
 from typing import TYPE_CHECKING
 
 import duckdb
-from src.importers.base import ImportFilter, InvalidImportFilterError, SourceUnreadableError, redact_source
+from src.importers.base import (
+    FilterSpec,
+    ImportFilter,
+    SourceSpec,
+    SourceUnreadableError,
+    check_import_inputs,
+    redact_source,
+)
 from src.importers.nys_voter_file.decode import (
     csv_has_header,
     decode_raw_to_table,
@@ -26,17 +33,14 @@ from src.importers.nys_voter_file.decode import (
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 from src.importers.nys_voter_file.transform import nys_sboe_transformation_query
 from src.importers.nys_voter_file.voting_history import parse_voting_history
-from src.models import Person, TableRef
-from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
+from src.importers.validate import validated_persons
+from src.tables import ensure_schema, table_fqn
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.importers.base import Manifest, Progress
-
-_EXPECTED_COLUMNS = set(Person.model_fields.keys())
-
-
-def _current_version(conn: duckdb.DuckDBPyConnection) -> int:
-    return conn.sql(f"FROM {PERSON_CATALOG}.current_snapshot()").fetchone()[0]
+    from src.models import TableRef
 
 
 def _voting_history_json(raw: str | None) -> str:
@@ -63,38 +67,49 @@ class NysVoterFileImporter:
     """Curated importer for the NYS statewide voter file. Implements `Importer`."""
 
     name = "nys_voter_file"
-    PROGRESS_STEPS = 3  # decode, transform, parse+validate
+    LABEL = "New York State Voter File"
+    SOURCES = (
+        SourceSpec(
+            key="file",
+            label="Voter file",
+            description="URL of a .txt, .csv, or .parquet file",
+        ),
+    )
     # Geographic slices worth fixing a dataset to. Election district is left
     # out: it's only unique within a county.
-    FILTER_COLUMNS = frozenset({"cd", "ad", "sd", "countycode", "rzip5"})
+    FILTERS = (
+        FilterSpec(column="cd", label="Congressional district"),
+        FilterSpec(column="ad", label="Assembly district"),
+        FilterSpec(column="sd", label="Senate district"),
+        FilterSpec(column="countycode", label="County"),
+        FilterSpec(column="rzip5", label="ZIP code"),
+    )
+    PROGRESS_STEPS = 3  # decode, transform, parse+validate
 
     def manifest(self) -> Manifest:
         return NYS_MANIFEST
 
     def load(
         self,
-        source: str,
+        sources: Mapping[str, str],
         schema: str,
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
         filter: ImportFilter | None = None,
     ) -> TableRef:
-        """Decode/read `source` → transform → parse voting history → validate.
+        """Decode/read the voter file → transform → parse voting history → validate.
         Returns the `persons_validated` TableRef the shared pipeline reads from.
         Reports one progress step per stage (`PROGRESS_STEPS`)."""
-        if filter is not None and filter.column not in self.FILTER_COLUMNS:
-            raise InvalidImportFilterError(
-                f"Import filter column {filter.column!r} is not available for this dataset type."
-            )
+        check_import_inputs(self, sources, filter)
+        source = sources["file"].strip()
         fmt = source_format(source)
         if fmt is None:
             raise SourceUnreadableError(
                 f"Unsupported file type for {redact_source(source)!r}: expected .txt, .csv, or .parquet."
             )
-        # Expand `~` and verify a local source exists up front. A missing path
-        # would otherwise *deadlock* the fixed-width decode: the transcode feeder
-        # can't open the file, so it never opens the FIFO's write end and
-        # `read_csv` blocks forever. Fail fast instead. (`://` = object-storage key.)
+        # Expand `~` and verify a local source exists up front, so a missing
+        # path fails with a clear message before any schema work. (`://` =
+        # object-storage key.)
         source = os.path.expanduser(source)
         if "://" not in source and not os.path.exists(source):
             raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
@@ -145,29 +160,6 @@ class NysVoterFileImporter:
 
         # 4. Validate the result carries the Person-required columns + a sample of
         #    rows through the model. Extra (manifest) columns are allowed.
-        self._validate(validated_fqn, conn)
+        persons_validated = validated_persons(schema, conn)
         progress.advance()
-
-        return TableRef(
-            catalog=PERSON_CATALOG,
-            schema=schema,
-            table="persons_validated",
-            version=_current_version(conn),
-        )
-
-    @staticmethod
-    def _validate(fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
-        rel = conn.table(fqn)
-        # Required-subset, not exact-match: `persons_validated` must contain the
-        # Person core, but also carries the dataset's extra filterable columns
-        # (described by the manifest), which are legitimately present.
-        missing = _EXPECTED_COLUMNS - set(rel.columns)
-        if missing:
-            raise ValueError(f"persons_validated missing columns required by Person: {sorted(missing)}")
-        columns = rel.columns
-        for i, row in enumerate(rel.limit(100).fetchall()):
-            try:
-                # Person ignores the extra columns; only the required core is validated.
-                Person.model_validate(dict(zip(columns, row, strict=True)))
-            except Exception as e:
-                raise ValueError(f"Row {i} failed Person validation: {e}") from e
+        return persons_validated

@@ -15,6 +15,8 @@ from typing import Any, Protocol, get_type_hints, overload
 
 from pydantic import BaseModel, ValidationError
 
+from src.redact import redact_secrets
+
 logger = logging.getLogger("uvicorn")
 
 type JobFunc = Callable[..., Any]
@@ -220,7 +222,7 @@ class JobManager:
                     raise
                 except Exception as exc:  # noqa: BLE001 — any failure is retryable
                     if consecutive_failures == 0:
-                        print(f"WARNING: job poll failed, retrying: {exc}", flush=True)
+                        print(f"WARNING: job poll failed, retrying: {redact_secrets(str(exc))}", flush=True)
                     consecutive_failures += 1
                     await asyncio.sleep(min(self.poll_interval_seconds * consecutive_failures, 30.0))
                     continue
@@ -243,7 +245,7 @@ class JobManager:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — a bad tick must not end the loop
-                print(f"WARNING: job maintenance failed, retrying: {exc}", flush=True)
+                print(f"WARNING: job maintenance failed, retrying: {redact_secrets(str(exc))}", flush=True)
 
     async def maintain_once(self) -> list[ReapedJob]:
         if self._in_flight:
@@ -262,7 +264,7 @@ class JobManager:
             try:
                 await sweep()
             except Exception as exc:  # noqa: BLE001 — retried next tick
-                print(f"WARNING: maintenance sweep failed, will retry: {exc}", flush=True)
+                print(f"WARNING: maintenance sweep failed, will retry: {redact_secrets(str(exc))}", flush=True)
 
         return reaped_jobs
 
@@ -310,16 +312,17 @@ class JobManager:
         except Exception as exc:
             elapsed = time.monotonic() - started
             logger.info("job %s %s failed after %.1fs", claimed_job.task, claimed_job.job_id, elapsed)
+            error = redact_secrets(str(exc))
             await self.store.write_message(
                 job_id=claimed_job.job_id,
                 payload={
                     "level": "error",
-                    "message": str(exc),
+                    "message": error,
                     "exception_type": type(exc).__name__,
-                    "traceback": traceback.format_exc(),
+                    "traceback": redact_secrets(traceback.format_exc()),
                 },
             )
-            await self.store.fail_job(job_id=claimed_job.job_id, failure_reason=_truncate(str(exc)))
+            await self.store.fail_job(job_id=claimed_job.job_id, failure_reason=_truncate(error))
             return
 
         elapsed = time.monotonic() - started

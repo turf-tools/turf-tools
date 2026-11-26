@@ -12,6 +12,7 @@ user promotes it via "Make active".
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any
 
 from hamilton import driver
@@ -26,17 +27,30 @@ from src.importers.base import ImportFilter  # noqa: TC001 — pydantic resolves
 from src.importers.registry import get_importer
 from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContext, job
 from src.quickwit import persons_index_id, recreate_index
+from src.redact import redact_secrets
 from src.settings import get_settings
-from src.tables import dataset_version_schema, drop_schema, ensure_schema, finalize_version
+from src.tables import (
+    dataset_version_schema,
+    drop_intermediates,
+    drop_schema,
+    ensure_schema,
+    finalize_version,
+    reclaim_dropped_files,
+    retained_tables,
+)
 
 if TYPE_CHECKING:
     import duckdb
+    from src.importers.base import Manifest
     from src.settings import Settings
+
+logger = logging.getLogger("uvicorn")
 
 
 class ImportDatasetVersionPayload(BaseModel):
     dataset_version_id: str
-    source: str  # path or object-storage key of the raw file the importer decodes
+    # Path or URL per file the importer reads, keyed by its `SOURCES` keys.
+    sources: dict[str, str]
     # Org that initiated the import — auto-activated onto the new version when it
     # has no active one.
     organization_id: str
@@ -49,7 +63,7 @@ async def _mark_version_failed(dataset_version_id: str, error: str) -> None:
     DuckLake attach is what failed. Guarded on `importing` so a late write can't
     clobber a version that already finished."""
     await postgres.execute(
-        "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000) "
+        "UPDATE app.dataset_versions SET status = 'failed', error = left($2, 1000), finished_at = now() "
         "WHERE dataset_version_id = $1::uuid AND status = 'importing'",
         dataset_version_id,
         error,
@@ -65,7 +79,7 @@ async def fail_interrupted_versions() -> None:
     await postgres.execute(
         """
         UPDATE app.dataset_versions
-        SET status = 'failed', error = $1
+        SET status = 'failed', error = $1, finished_at = now()
         WHERE status = 'importing'
           AND NOT EXISTS (
               SELECT 1 FROM app.jobs
@@ -89,7 +103,7 @@ async def import_dataset_version(payload: ImportDatasetVersionPayload, ctx: JobC
     except Exception as exc:
         # Mark the version failed, then re-raise so the job framework records it
         # on the job row too.
-        await _mark_version_failed(payload.dataset_version_id, str(exc))
+        await _mark_version_failed(payload.dataset_version_id, redact_secrets(str(exc)))
         raise
     await ctx.message("Import complete", **result)
     return result
@@ -169,7 +183,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 2)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
-        persons_validated = importer.load(payload.source, schema, conn, progress, payload.filter)
+        persons_validated = importer.load(payload.sources, schema, conn, progress, payload.filter)
         decoded = conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()
         log.write(f"Decoded {decoded[0]:,} people from source" if decoded else "Source decoded")
         if decoded is not None and decoded[0] == 0 and payload.filter is not None:
@@ -216,6 +230,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
                 "quickwit_config_path": settings.quickwit_config_path,
                 "quickwit_index_id": index_id,
                 "quickwit_batch_size": settings.quickwit_batch_size,
+                "manifest": manifest,
                 "conn": conn,
             },
         )
@@ -233,9 +248,25 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
             derived,
             activate_for_organization_id=payload.organization_id,
         )
+        if not settings.keep_import_intermediates:
+            _prune_intermediates(conn, schema, manifest, log)
         return {"row_count": derived["rowCount"], "schema": schema}
     finally:
         conn.close()
+
+
+def _prune_intermediates(conn: duckdb.DuckDBPyConnection, schema: str, manifest: Manifest, log: JobLog) -> None:
+    """Drop the version's pipeline tables and reclaim disk. The version is already
+    ready, so an error here only leaves extra tables behind: log it and keep the
+    import successful."""
+    try:
+        dropped = drop_intermediates(conn, schema, retained_tables(manifest))
+        reclaim_dropped_files(conn)
+    except Exception:
+        logger.exception("Pruning intermediates in %s failed", schema)
+        log.write("Couldn't remove the import's intermediate tables", level="warning")
+        return
+    log.write(f"Removed {len(dropped)} intermediate tables")
 
 
 def _resolve_version(

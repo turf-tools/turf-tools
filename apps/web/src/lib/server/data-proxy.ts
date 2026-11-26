@@ -62,6 +62,15 @@ export async function dataPostJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  return parseJson<T>(res, path);
+}
+
+// GET counterpart of `dataPostJson`.
+export async function dataGetJson<T>(path: string): Promise<T> {
+  return parseJson<T>(await dataFetch(path), path);
+}
+
+async function parseJson<T>(res: Response, path: string): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
     let detail = text;

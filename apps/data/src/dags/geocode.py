@@ -1,8 +1,9 @@
 """Assign lat/lon coordinates to voters.
 
-Takes voters from `matching.py` (`persons_best_match`) and OSM building
-data from `osm.py` (`osm_building_lookup`) and produces a per-voter
-position. Two mutually-exclusive paths; `assembly.py` unions them.
+Takes voters from `matching.py` (`persons_best_match`) and OSM address
+data from `osm.py` (`osm_addresses_keyed`, looked up as `src/osm_lookup.py`
+describes) and produces a per-voter position. Two mutually-exclusive paths;
+`assembly.py` unions them.
 
 - `refined_positions` — for TIGER-matched voters. Project the OSM
   building centroid onto the matched blockface (or use the OSM
@@ -29,10 +30,13 @@ from src.addressing import (
     canonical_key_sql,
     housenumber_display_sql,
     housenumber_norm_sql,
+    ordinal_tokens_sql,
     street_rewrite_sql,
     tokenize_street_sql,
 )
-from src.models import TableRef
+from src.geo_tables import scoped
+from src.models import GeoExtent, TableRef
+from src.osm_lookup import NEARBY_MATCH_M, zip_lookup_sql
 from src.projection import utm_crs_sql
 from src.tables import PERSON_CATALOG, ensure_schema, table_fqn
 
@@ -63,17 +67,22 @@ def refined_positions(
     persons_best_match: TableRef,
     persons_decomposed: TableRef,
     blockface_final: TableRef,
-    osm_building_lookup: TableRef,
+    osm_addresses_keyed: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
-    """Per-voter (latitude, longitude, position_source, osm_street).
+    """Per-voter (latitude, longitude, position_source, osm_street,
+    osm_housenumber, osm_id, osm_kind, osm_key).
 
     Position rule:
       1. Match the voter to an OSM address by exact
-         `(zip5, canonical_key, housenumber)`. Pick the way variant
+         `(zip5, canonical_key, housenumber)`, picking the way variant
          over a node variant when both exist (way = building polygon
-         centroid; node = doorway).
+         centroid; node = doorway). A voter with no match in their ZIP
+         takes the address with their `(canonical_key, housenumber)`
+         nearest their matched blockface, within `NEARBY_MATCH_M` and
+         whatever its ZIP (see `src/osm_lookup.py`).
       2. If matched AND the building centroid is inside an OSM
          `landuse=residential` polygon (large residential complexes
          where individual buildings sit well off any road), use the
@@ -91,8 +100,9 @@ def refined_positions(
          centroid directly. This avoids snapping voters to the wrong
          end of a too-short blockface.
       5. Else (no OSM match): `fraction = rank / (max_rank + 1)` via
-         DENSE_RANK ordering by (prefix, housenumber, half_code) —
-         the original TIGER linear-ramp behavior.
+         DENSE_RANK ordering by (prefix, housenumber, half_code),
+         measured from the end where the side's TIGER range starts —
+         the line's far end when its numbers fall along it.
       6. Road-projected positions (cases 3 and 5) get a perpendicular
          offset (`ROAD_OFFSET_M`) and a 1D shove so distinct buildings
          stay ≥ `MIN_BUILDING_SPACING_M` apart.
@@ -103,9 +113,9 @@ def refined_positions(
       - `osm_off_segment` — OSM centroid (projection clamped on matched blockface)
       - `tiger_only`      — fraction from DENSE_RANK fallback
 
-    `osm_street` is carried through so `canonical_addresses` can pick
-    OSM's per-building canonical name (more stable than TIGER's, which
-    has aliases for the same physical street).
+    The matched OSM record (`osm_id`, `osm_kind`), its street and house
+    number, and its street key (`osm_key`) are carried through for
+    `canonical_addresses`, which gives each OSM building one address.
 
     Non-incremental: drops + recreates every run. DENSE_RANK is a
     window over the full blockface, so new voters would shift everyone
@@ -117,8 +127,8 @@ def refined_positions(
 
     pbm = persons_best_match.fqn
     pd_ = persons_decomposed.fqn
-    bf_ = blockface_final.fqn
-    obl = osm_building_lookup.fqn
+    bf_ = scoped(blockface_final.fqn, geo_extent)
+    oak = scoped(osm_addresses_keyed.fqn, geo_extent)
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
 
@@ -156,6 +166,9 @@ def refined_positions(
             m.external_id, m.blockface_id, m.geom AS bf_geom, m.side AS bf_side,
             m.tiger_line_id,
             m.person_house_number,
+            -- TIGER draws a line in either direction; a range whose numbers
+            -- fall along it (from > to) runs from the line's far end.
+            m.from_house_num > m.to_house_num AS bf_descending,
             COALESCE(d.half_code, '') AS half_code,
             COALESCE(d.house_num_prefix, '') AS house_num_prefix,
             d.zip5,
@@ -176,24 +189,73 @@ def refined_positions(
     # mostly fall back to the DENSE_RANK ramp (which orders by half_code,
     # so 47 and 47-1/2 still get distinct positions).
     conn.execute(f"""
-        CREATE OR REPLACE TEMP TABLE _voter_with_osm AS
+        CREATE OR REPLACE TEMP TABLE _voter_by_zip AS
         SELECT v.*, o.osm_lat, o.osm_lon,
                o.street AS osm_street,
                o.housenumber AS osm_housenumber,
+               o.osm_id, o.kind AS osm_kind,
                COALESCE(o.in_residential_complex, false) AS in_complex
         FROM _voter_keyed v
-        LEFT JOIN {obl} o
+        LEFT JOIN ({zip_lookup_sql(oak)}) o
           ON o.zip_code         = v.zip5
          AND o.canonical_key    = v.canonical_key
          AND o.housenumber_norm = v.housenumber_norm
     """)
-    n_matched = conn.execute("""
-        SELECT count(*) FROM _voter_with_osm WHERE osm_lat IS NOT NULL
-    """).fetchone()[0]
-    n_total = conn.execute("SELECT count(*) FROM _voter_with_osm").fetchone()[0]
+    # A voter the ZIP lookup misses takes the address with their key nearest
+    # their matched blockface, measured in the blockface's UTM zone.
+    conn.execute(f"""
+        CREATE OR REPLACE TEMP TABLE _voter_nearby AS
+        WITH missed AS (
+            SELECT external_id, canonical_key, housenumber_norm, crs,
+                   ST_Transform(bf_geom, 'OGC:CRS84', crs) AS bf_m
+            FROM _voter_by_zip
+            WHERE osm_lat IS NULL AND canonical_key != ''
+        ),
+        candidates AS (
+            SELECT m.external_id, a.osm_id, a.kind, a.lat, a.lon, a.street, a.housenumber,
+                   a.in_residential_complex,
+                   ST_Distance(m.bf_m, ST_Transform(ST_Point(a.lon, a.lat), 'OGC:CRS84', m.crs)) AS d_m
+            FROM missed m
+            JOIN {oak} a
+              ON a.canonical_key    = m.canonical_key
+             AND a.housenumber_norm = m.housenumber_norm
+        )
+        SELECT external_id, lat AS osm_lat, lon AS osm_lon, street AS osm_street,
+               housenumber AS osm_housenumber, osm_id, kind AS osm_kind,
+               in_residential_complex AS in_complex
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY external_id ORDER BY d_m, osm_id) AS rn
+            FROM candidates
+            WHERE d_m <= {NEARBY_MATCH_M}
+        )
+        WHERE rn = 1
+    """)
+    conn.execute("""
+        CREATE OR REPLACE TEMP TABLE _voter_with_osm AS
+        SELECT z.* REPLACE (
+                   COALESCE(z.osm_lat, n.osm_lat) AS osm_lat,
+                   COALESCE(z.osm_lon, n.osm_lon) AS osm_lon,
+                   CASE WHEN z.osm_lat IS NULL THEN n.osm_street ELSE z.osm_street END AS osm_street,
+                   CASE WHEN z.osm_lat IS NULL THEN n.osm_housenumber ELSE z.osm_housenumber END
+                       AS osm_housenumber,
+                   CASE WHEN z.osm_lat IS NULL THEN n.osm_id ELSE z.osm_id END AS osm_id,
+                   CASE WHEN z.osm_lat IS NULL THEN n.osm_kind ELSE z.osm_kind END AS osm_kind,
+                   CASE WHEN z.osm_lat IS NULL THEN COALESCE(n.in_complex, false) ELSE z.in_complex END
+                       AS in_complex
+               )
+        FROM _voter_by_zip z
+        LEFT JOIN _voter_nearby n USING (external_id)
+    """)
+    n_by_zip, n_nearby, n_total = conn.execute("""
+        SELECT (SELECT count(*) FROM _voter_by_zip WHERE osm_lat IS NOT NULL),
+               (SELECT count(*) FROM _voter_nearby),
+               (SELECT count(*) FROM _voter_with_osm)
+    """).fetchone()
+    n_matched = n_by_zip + n_nearby
     print(
         f"  {n_matched:,}/{n_total:,} voters got an OSM match "
-        f"({100.0 * n_matched / max(n_total, 1):.1f}%) in {time.time() - t0:.1f}s"
+        f"({100.0 * n_matched / max(n_total, 1):.1f}%; {n_nearby:,} by location, ZIP aside) "
+        f"in {time.time() - t0:.1f}s"
     )
 
     print("  computing fractions + final positions…")
@@ -211,8 +273,9 @@ def refined_positions(
         WITH voter_geo AS (
             SELECT
                 external_id, blockface_id, bf_side, tiger_line_id,
-                house_num_prefix, person_house_number, half_code,
-                osm_lat, osm_lon, osm_street, osm_housenumber, in_complex, crs,
+                house_num_prefix, person_house_number, half_code, bf_descending,
+                osm_lat, osm_lon, osm_street, osm_housenumber, osm_id, osm_kind,
+                canonical_key, in_complex, crs,
                 ST_Transform(bf_geom, 'OGC:CRS84', crs) AS bf_m,
                 CASE WHEN osm_lat IS NOT NULL
                      THEN ST_Transform(ST_Point(osm_lon, osm_lat), 'OGC:CRS84', crs)
@@ -255,18 +318,24 @@ def refined_positions(
         ),
         fracced AS (
             SELECT *,
-                MAX(house_rank) OVER (PARTITION BY tiger_line_id, bf_side) AS max_rank
+                MAX(house_rank) OVER (PARTITION BY tiger_line_id, bf_side) AS max_rank,
+                -- A side whose ranges mostly descend along the line ramps
+                -- from its far end, so house numbers run the way TIGER says.
+                AVG(bf_descending::INT) OVER (PARTITION BY tiger_line_id, bf_side) > 0.5
+                    AS side_descending
             FROM ranked
         ),
         with_frac AS (
             SELECT external_id, blockface_id, bf_side, tiger_line_id, bf_m, crs,
-                house_rank,
+                house_rank, side_descending,
                 CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
                      THEN 'osm_matched' ELSE 'tiger_only'
                 END AS position_source,
                 LEAST(GREATEST(
                     CASE WHEN osm_frac > 0.0 AND osm_frac < 1.0
                          THEN osm_frac
+                         WHEN side_descending
+                         THEN 1.0 - house_rank::DOUBLE / (1 + max_rank)
                          ELSE house_rank::DOUBLE / (1 + max_rank)
                     END,
                     0.05
@@ -312,7 +381,10 @@ def refined_positions(
                         SELECT *,
                             DENSE_RANK() OVER (PARTITION BY tiger_line_id,
                                                             bf_side
-                                               ORDER BY frac, house_rank) AS rn,
+                                               ORDER BY frac,
+                                                        CASE WHEN side_descending
+                                                             THEN -house_rank
+                                                             ELSE house_rank END) AS rn,
                             ST_Length(bf_m) AS bf_len_m
                         FROM with_frac
                     )
@@ -349,7 +421,10 @@ def refined_positions(
                ST_X(f.pt_4326) AS longitude,
                f.position_source,
                v.osm_street,
-               v.osm_housenumber
+               v.osm_housenumber,
+               v.osm_id,
+               v.osm_kind,
+               CASE WHEN v.osm_id IS NOT NULL THEN v.canonical_key END AS osm_key
         FROM final_geom f
         LEFT JOIN _voter_with_osm v ON v.external_id = f.external_id
         UNION ALL
@@ -362,7 +437,10 @@ def refined_positions(
                osm_lon  AS longitude,
                'osm_complex' AS position_source,
                osm_street,
-               osm_housenumber
+               osm_housenumber,
+               osm_id,
+               osm_kind,
+               canonical_key AS osm_key
         FROM _voter_with_osm
         WHERE in_complex
         UNION ALL
@@ -378,7 +456,10 @@ def refined_positions(
                vof.osm_lon AS longitude,
                'osm_off_segment' AS position_source,
                vof.osm_street,
-               vof.osm_housenumber
+               vof.osm_housenumber,
+               vof.osm_id,
+               vof.osm_kind,
+               vof.canonical_key AS osm_key
         FROM with_osm_frac vof
         WHERE NOT vof.in_complex
           AND vof.osm_lat IS NOT NULL
@@ -402,23 +483,26 @@ def refined_positions(
 def osm_only_matches(
     persons_decomposed: TableRef,
     persons_best_match: TableRef,
-    osm_building_lookup: TableRef,
+    osm_addresses_keyed: TableRef,
     blockface_final: TableRef,
     address_tokens: TableRef,
     schema: str,
     conn: duckdb.DuckDBPyConnection,
+    geo_extent: GeoExtent | None = None,
 ) -> TableRef:
     """Voters TIGER couldn't match, rescued by direct OSM lookup.
 
     For each voter without a `persons_best_match` row, derive a
     canonical_key from their raw address (same STREET_REWRITES +
-    equivalency expansion as the OSM side), join to
-    `osm_building_lookup` to find their building, then snap to the
+    equivalency expansion as the OSM side), look it up in
+    `osm_addresses_keyed` by ZIP to find their building (and, when that
+    finds nothing, again with bare street numbers read as ordinals:
+    "WEST 127 STREET" as "West 127th Street"), then snap to the
     nearest blockface in the same zip5 for downstream consumers that
     need a `blockface_id` (e.g. turf assignment).
 
-    Schema: (external_id, latitude, longitude, osm_street,
-             blockface_id, snap_distance_m).
+    Schema: (external_id, latitude, longitude, osm_street, osm_housenumber,
+             osm_id, osm_kind, osm_key, blockface_id, snap_distance_m).
 
     The snap is informational — `snap_distance_m` reports how far the
     voter is from their associated blockface. Large distances just mean
@@ -434,8 +518,8 @@ def osm_only_matches(
 
     pd_ = persons_decomposed.fqn
     pbm = persons_best_match.fqn
-    obl = osm_building_lookup.fqn
-    bf_ = blockface_final.fqn
+    oak = scoped(osm_addresses_keyed.fqn, geo_extent)
+    bf_ = scoped(blockface_final.fqn, geo_extent)
     tok = address_tokens.fqn
 
     conn.execute(f"DROP TABLE IF EXISTS {fqn}")
@@ -443,7 +527,9 @@ def osm_only_matches(
     print("Rescuing TIGER-miss voters via OSM lookup…")
     t0 = time.time()
 
-    # Step 1: keyed TIGER-miss voters
+    # Step 1: keyed TIGER-miss voters. Each gets a second key that also reads
+    # bare street numbers as ordinals, for streets the voter file writes
+    # without them ("WEST 127 STREET" vs OSM's "West 127th Street").
     hn_display = housenumber_display_sql("d.house_num_prefix", "d.house_number", "d.half_code")
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_raw AS
@@ -457,9 +543,13 @@ def osm_only_matches(
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_keyed AS
         WITH tokens AS (
-            SELECT external_id, zip5, housenumber_norm,
-                {tokenize_street_sql("street_norm")} AS raw_tokens
-            FROM _miss_raw
+            SELECT external_id, zip5, housenumber_norm, raw_tokens,
+                list_distinct(list_concat(raw_tokens, {ordinal_tokens_sql("raw_tokens")})) AS ordinal_tokens
+            FROM (
+                SELECT external_id, zip5, housenumber_norm,
+                    {tokenize_street_sql("street_norm")} AS raw_tokens
+                FROM _miss_raw
+            )
         ),
         extras AS (
             SELECT b.external_id, flatten(list(t.equivalent_tokens)) AS extra
@@ -467,36 +557,65 @@ def osm_only_matches(
             JOIN {tok} t ON len(list_intersect(b.raw_tokens, t.equivalent_tokens)) > 0
             GROUP BY b.external_id
         ),
+        ordinal_extras AS (
+            SELECT b.external_id, flatten(list(t.equivalent_tokens)) AS extra
+            FROM tokens b
+            JOIN {tok} t ON len(list_intersect(b.ordinal_tokens, t.equivalent_tokens)) > 0
+            GROUP BY b.external_id
+        ),
         combined AS (
             SELECT b.external_id, b.zip5, b.housenumber_norm,
-                list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, []))) AS expanded
-            FROM tokens b LEFT JOIN extras e USING (external_id)
+                list_distinct(list_concat(b.raw_tokens, COALESCE(e.extra, []))) AS expanded,
+                list_distinct(list_concat(b.ordinal_tokens, COALESCE(oe.extra, []))) AS ordinal_expanded
+            FROM tokens b
+            LEFT JOIN extras e USING (external_id)
+            LEFT JOIN ordinal_extras oe USING (external_id)
         )
         SELECT external_id, zip5, housenumber_norm,
-            {canonical_key_sql("expanded")} AS canonical_key
+            {canonical_key_sql("expanded")} AS canonical_key,
+            {canonical_key_sql("ordinal_expanded")} AS ordinal_key
         FROM combined
     """)
     n_miss = conn.execute("SELECT count(*) FROM _miss_keyed").fetchone()[0]
     print(f"  {n_miss:,} TIGER-miss voters keyed in {time.time() - t0:.1f}s")
 
-    # Step 2: lookup each in OSM
-    print("  joining to osm_building_lookup…")
+    # Step 2: lookup each in OSM, by the voter's key first and the ordinal
+    # key only for voters the first finds nothing for.
+    print("  joining to osm_addresses_keyed…")
     t0 = time.time()
     conn.execute(f"""
         CREATE OR REPLACE TEMP TABLE _miss_with_osm AS
-        SELECT v.external_id, v.zip5,
-               o.osm_lat AS latitude, o.osm_lon AS longitude,
-               o.street  AS osm_street,
-               o.housenumber AS osm_housenumber
-        FROM _miss_keyed v
-        JOIN {obl} o
-          ON o.zip_code         = v.zip5
-         AND o.canonical_key    = v.canonical_key
-         AND o.housenumber_norm = v.housenumber_norm
-        WHERE v.canonical_key != ''
+        WITH lookup AS ({zip_lookup_sql(oak)}),
+        found AS (
+            SELECT v.external_id, v.zip5, o.*, 1 AS attempt
+            FROM _miss_keyed v
+            JOIN lookup o
+              ON o.zip_code         = v.zip5
+             AND o.canonical_key    = v.canonical_key
+             AND o.housenumber_norm = v.housenumber_norm
+            WHERE v.canonical_key != ''
+            UNION ALL
+            SELECT v.external_id, v.zip5, o.*, 2 AS attempt
+            FROM _miss_keyed v
+            JOIN lookup o
+              ON o.zip_code         = v.zip5
+             AND o.canonical_key    = v.ordinal_key
+             AND o.housenumber_norm = v.housenumber_norm
+            WHERE v.ordinal_key != v.canonical_key
+        )
+        SELECT external_id, zip5, attempt,
+               osm_lat AS latitude, osm_lon AS longitude,
+               street  AS osm_street,
+               housenumber AS osm_housenumber,
+               osm_id, kind AS osm_kind,
+               canonical_key AS osm_key
+        FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY external_id ORDER BY attempt) AS rn FROM found)
+        WHERE rn = 1
     """)
-    n_osm = conn.execute("SELECT count(*) FROM _miss_with_osm").fetchone()[0]
-    print(f"  {n_osm:,} matched to OSM in {time.time() - t0:.1f}s")
+    n_osm, n_ordinal = conn.execute(
+        "SELECT count(*), count(*) FILTER (WHERE attempt = 2) FROM _miss_with_osm"
+    ).fetchone()
+    print(f"  {n_osm:,} matched to OSM ({n_ordinal:,} reading street numbers as ordinals) in {time.time() - t0:.1f}s")
 
     # Step 3: snap each matched voter to nearest blockface in same zip.
     # Many osm_only voters live in the same building (same osm_lat,
@@ -562,6 +681,7 @@ def osm_only_matches(
                                THEN 'left' ELSE 'right' END
         )
         SELECT v.external_id, v.latitude, v.longitude, v.osm_street, v.osm_housenumber,
+               v.osm_id, v.osm_kind, v.osm_key,
                s.blockface_id, s.snap_distance_m
         FROM _miss_with_osm v
         JOIN sided s

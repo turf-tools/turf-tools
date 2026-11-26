@@ -22,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import duckdb
     from src.models import TableRef
 
@@ -40,6 +42,8 @@ FilterKind = Literal[
     "voting-history-count",  # count of matching elections in a recency window
     "voting-history-detail",  # membership in specific named elections (multi-select)
     "address",  # the geocodable composite (canonical; also filters)
+    "phone",  # 10-digit phone number; digits-prefix match and/or exists
+    "email",  # lowercased email address; substring match and/or exists
 ]
 
 
@@ -121,19 +125,56 @@ class Manifest(_CamelModel):
 
     fields: list[list[FieldDef]]
 
+    def column_of_kind(self, kind: FilterKind) -> str | None:
+        """The column of this manifest's field of `kind`, if it has one."""
+        return next((fd.column for section in self.fields for fd in section if fd.filter_kind == kind), None)
+
 
 class ImportFilter(_CamelModel):
     """Row filter applied at import, fixed on the dataset like its importer.
-    `column` is a decoded source column the importer allowlists in
-    `FILTER_COLUMNS`; rows whose value isn't in `values` are dropped before
-    transform, so every version of the dataset is the same slice."""
+    `column` is a decoded source column from the importer's `FILTERS`; rows
+    whose value isn't in `values` are dropped before transform, so every version
+    of the dataset is the same slice."""
 
     column: str
     values: list[str]
 
 
+class SourceSpec(_CamelModel):
+    """One file an importer reads. A dataset version's `sources` maps each
+    `key` to a path or URL; the import form renders one input per spec."""
+
+    key: str
+    label: str
+    description: str
+    required: bool = True
+
+
+class FilterSpec(_CamelModel):
+    """A source column an `ImportFilter` may name, with its form label."""
+
+    column: str
+    label: str
+
+
+class ImporterSpec(_CamelModel):
+    """What the web needs to offer an importer: served by `GET /importers`, so
+    the import form, its server-side checks, and the dataset page's labels all
+    read the registry rather than a copy of it."""
+
+    name: str
+    label: str
+    sources: list[SourceSpec]
+    filters: list[FilterSpec]
+
+
 class InvalidImportFilterError(ValueError):
     """The filter names a column the importer doesn't allow. Message is user-facing."""
+
+
+class InvalidImportSourcesError(ValueError):
+    """The sources miss a required file or name one the importer doesn't read.
+    Message is user-facing."""
 
 
 class Progress(Protocol):
@@ -151,6 +192,13 @@ def raw_column_name(field: str) -> str:
     names its raw columns this way and renames only in its transform, onto the
     `Person` schema. Also normalizes a tabular source's header for matching."""
     return re.sub(r"[^a-z0-9]+", "_", field.strip().lstrip("\ufeff").lower()).strip("_")
+
+
+def is_readable_source(source: str) -> bool:
+    """Whether an import can read `source`: an http(s) link, or a path on the
+    data server. Other URL schemes (`s3://`, …) are refused: the server holds no
+    credentials for them, so a link carries its own access or it's public."""
+    return urlsplit(source.strip()).scheme.lower() in ("", "http", "https")
 
 
 def redact_source(source: str) -> str:
@@ -187,8 +235,8 @@ class Importer(Protocol):
     `load` owns the full source→canonical path: an optional decode stage (a raw
     fixed-width state file → tabular columns), the transform to the `Person`
     schema, value canonicalization, and validation — returning the
-    `persons_validated` TableRef the shared pipeline picks up from. `source` may
-    be a raw distribution (decoded) or an already-tabular parquet/CSV (decode
+    `persons_validated` TableRef the shared pipeline picks up from. Each source
+    may be a raw distribution (decoded) or an already-tabular parquet/CSV (decode
     skipped).
 
     Convention: each importer is a package whose `importer.py` defines the
@@ -197,20 +245,53 @@ class Importer(Protocol):
     """
 
     name: str
+    # Display name shown in the import form.
+    LABEL: str
+    # The files `load` reads, keyed in its `sources` mapping.
+    SOURCES: tuple[SourceSpec, ...]
+    # Decoded source columns an `ImportFilter` may name.
+    FILTERS: tuple[FilterSpec, ...]
     # Number of times `load` calls `progress.advance()`, so the job can size the
     # progress total (these stages + the DAG's nodes) before running.
     PROGRESS_STEPS: int
-    # Decoded source columns an `ImportFilter` may name. Mirrored by the web's
-    # importer entry so the dialog only offers these.
-    FILTER_COLUMNS: frozenset[str]
 
     def manifest(self) -> Manifest: ...
 
     def load(
         self,
-        source: str,
+        sources: Mapping[str, str],
         schema: str,
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
         filter: ImportFilter | None = None,
     ) -> TableRef: ...
+
+
+def importer_spec(importer: type[Importer]) -> ImporterSpec:
+    return ImporterSpec(
+        name=importer.name,
+        label=importer.LABEL,
+        sources=list(importer.SOURCES),
+        filters=list(importer.FILTERS),
+    )
+
+
+def check_import_inputs(
+    importer: type[Importer] | Importer, sources: Mapping[str, str], filter: ImportFilter | None
+) -> None:
+    """Reject sources and a filter the importer can't take, before anything is
+    read. `load` calls this first; the web runs the same checks from the spec."""
+    known = {s.key for s in importer.SOURCES}
+    unknown = sorted(set(sources) - known)
+    if unknown:
+        raise InvalidImportSourcesError(f"This dataset type doesn't read {', '.join(map(repr, unknown))}.")
+    missing = [s.label for s in importer.SOURCES if s.required and not sources.get(s.key, "").strip()]
+    if missing:
+        raise InvalidImportSourcesError(f"Missing {', '.join(missing)}.")
+    unreadable = [s.label for s in importer.SOURCES if not is_readable_source(sources.get(s.key, ""))]
+    if unreadable:
+        raise InvalidImportSourcesError(f"{', '.join(unreadable)} must be an http:// or https:// link.")
+    if filter is not None and filter.column not in {f.column for f in importer.FILTERS}:
+        raise InvalidImportFilterError(
+            f"Import filter column {filter.column!r} is not available for this dataset type."
+        )

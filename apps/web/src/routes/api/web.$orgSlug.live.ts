@@ -2,9 +2,8 @@
 // walk mutation lands, instead of waiting out the poll interval. Lives
 // outside oRPC because oRPC responses are one-shot JSON; this is a
 // long-lived text/event-stream. Events carry no payload — the client
-// just invalidates its queries, so the poll stays the source of truth
-// and a dropped stream (backgrounded phone tab) degrades to polling.
-// EventSource reconnects on its own.
+// just refetches (lib/board-refresh.ts), so the poll stays the source of
+// truth and a dropped stream degrades to polling.
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
@@ -48,9 +47,10 @@ export const Route = createFileRoute("/api/web/$orgSlug/live")({
             console.log(
               `[live] open org=${organizationId} user=${who} subs=${subscriberCount(organizationId)}`,
             );
-            // Comment-frame heartbeat keeps intermediaries from timing
-            // out the idle connection.
-            const heartbeat = setInterval(() => send(": ping\n\n"), HEARTBEAT_MS);
+            // Keeps intermediaries from timing out the idle connection and
+            // lets the client spot a dead stream. Named with a data line so
+            // page code sees it; named events skip onmessage, so no refetch.
+            const heartbeat = setInterval(() => send("event: ping\ndata: 1\n\n"), HEARTBEAT_MS);
             request.signal.addEventListener("abort", () => {
               closed = true;
               clearInterval(heartbeat);

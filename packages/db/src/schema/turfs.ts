@@ -86,6 +86,7 @@ export const turfs = app.table(
   (t) => [
     uniqueIndex("turfs_turf_code").on(t.turfCode),
     index("turfs_scope_idx").on(t.campaignId, t.zoneId),
+    index("turfs_script_idx").on(t.scriptId),
   ],
 );
 

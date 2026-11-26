@@ -1,6 +1,6 @@
 {$DOMAIN} {
 	# Access log with per-request duration, so a stall shows up as either a
-	# slow request or no request at all. `tt logs <stack> caddy`.
+	# slow request or no request at all (`docker compose logs caddy`).
 	log {
 		output stdout
 		format json

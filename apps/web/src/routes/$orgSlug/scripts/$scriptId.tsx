@@ -2,7 +2,7 @@ import { Icon } from "~/components/icon";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Reorder, useDragControls } from "motion/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Badge } from "~/components/badge";
 import { DialogError } from "~/components/callout";
@@ -17,7 +17,9 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/dropdown-menu";
@@ -32,7 +34,6 @@ import {
   ResponseTypePicker,
 } from "~/components/question-editor-parts";
 import { scriptDetailQuery, scriptsListQuery } from "~/lib/queries/scripts";
-import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import {
   seedQuestionDetail,
   questionDetailQuery,
@@ -84,6 +85,7 @@ function ScriptEditor() {
   const { data: script } = useQuery(scriptDetailQuery(scriptId));
 
   const steps: ScriptStepRow[] = script?.steps ?? [];
+  const locked = script?.isLocked ?? false;
   const [draft, setDraft] = useState<ScriptStepRow[] | null>(null);
   const displaySteps = draft ?? steps;
 
@@ -137,7 +139,7 @@ function ScriptEditor() {
     },
     onSuccess: (row) => {
       setSteps((s) => [...s, row]);
-      // usedCount on the questions list reflects script_step references.
+      // usedBy on the questions list reflects script_step references.
       void queryClient.invalidateQueries({ queryKey: ["questions"] });
     },
     onError: (e) => {
@@ -170,12 +172,9 @@ function ScriptEditor() {
     },
   });
 
-  // Step removal is gated: blocked while another step's visibility depends on
-  // the step's question, confirmed when the script is live in published turfs,
-  // immediate otherwise. Snapshot state is split from `open` so the dialog
-  // keeps its body during the close animation.
-  const [stepRemoveGate, setStepRemoveGate] = useState<StepRemoveGate>({ kind: "blocked" });
-  const [stepRemoveOpen, setStepRemoveOpen] = useState(false);
+  // Step removal is blocked while another step's visibility depends on the
+  // step's question.
+  const [stepRemoveBlockedOpen, setStepRemoveBlockedOpen] = useState(false);
 
   // Computed from the live step list + cached question options so it tracks
   // condition edits instantly; the server guard backstops a cold detail cache.
@@ -195,37 +194,9 @@ function ScriptEditor() {
     );
   };
 
-  const handleRemoveStep = async (step: ScriptStepRow) => {
-    // The dependency check is local (live step list + cached options), so the
-    // blocked case never waits on the network.
-    if (stepGatesOthers(step)) {
-      setStepRemoveGate({ kind: "blocked" });
-      setStepRemoveOpen(true);
-      return;
-    }
-    let liveTurfCount: number;
-    try {
-      const res = await queryClient.fetchQuery({
-        queryKey: ["script-live-turfs", scriptId],
-        queryFn: () => client.scripts.countLiveTurfs({ scriptId }),
-        staleTime: 0,
-      });
-      liveTurfCount = res.count;
-    } catch (e) {
-      notify.error(e instanceof Error ? e.message : String(e));
-      return;
-    }
-    if (liveTurfCount > 0) {
-      setStepRemoveGate({
-        kind: "confirm",
-        scriptStepId: step.scriptStepId,
-        stepType: step.stepType,
-        turfCount: liveTurfCount,
-      });
-      setStepRemoveOpen(true);
-    } else {
-      removeStep.mutate(step.scriptStepId);
-    }
+  const handleRemoveStep = (step: ScriptStepRow) => {
+    if (stepGatesOthers(step)) setStepRemoveBlockedOpen(true);
+    else removeStep.mutate(step.scriptStepId);
   };
 
   const removeStep = useMutation({
@@ -358,6 +329,7 @@ function ScriptEditor() {
                     variant="outline"
                     className="flex-1 justify-start"
                     loading={addExistingQuestion.isPending || createAndAddQuestion.isPending}
+                    disabled={locked}
                   />
                 }
               >
@@ -385,6 +357,7 @@ function ScriptEditor() {
               className="flex-1 justify-start"
               onClick={() => addText.mutate()}
               loading={addText.isPending}
+              disabled={locked}
             >
               <Icon name="plus" />
               Add text
@@ -404,6 +377,7 @@ function ScriptEditor() {
                   number={idx + 1}
                   step={step}
                   earlierSteps={displaySteps.slice(0, idx)}
+                  locked={locked}
                   onRemove={() => handleRemoveStep(step)}
                   onChangeText={(text) =>
                     updateText.mutate({ scriptStepId: step.scriptStepId, text })
@@ -427,68 +401,32 @@ function ScriptEditor() {
         error={createAndAddQuestion.error?.message ?? null}
         onSubmit={(name, responseType) => createAndAddQuestion.mutate({ name, responseType })}
       />
-      <RemoveStepDialog
-        open={stepRemoveOpen}
-        onOpenChange={setStepRemoveOpen}
-        gate={stepRemoveGate}
-        onConfirm={() => {
-          if (stepRemoveGate.kind === "confirm") removeStep.mutate(stepRemoveGate.scriptStepId);
-          setStepRemoveOpen(false);
-        }}
+      <RemoveStepBlockedDialog
+        open={stepRemoveBlockedOpen}
+        onOpenChange={setStepRemoveBlockedOpen}
       />
     </>
   );
 }
 
-type StepRemoveGate =
-  | { kind: "blocked" }
-  | { kind: "confirm"; scriptStepId: string; stepType: string; turfCount: number };
-
-function RemoveStepDialog({
+function RemoveStepBlockedDialog({
   open,
   onOpenChange,
-  gate,
-  onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  gate: StepRemoveGate;
-  onConfirm: () => void;
 }) {
-  useConfirmHotkey({ open: open && gate.kind === "confirm", disabled: false, onConfirm });
-  const isQuestion = gate.kind === "confirm" && gate.stepType === "question";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        {gate.kind === "blocked" ? (
-          <>
-            <DialogTitle>Can't remove question</DialogTitle>
-            <DialogDescription>
-              Another script step depends on one of this question's options being selected. Remove
-              that condition from the script first.
-            </DialogDescription>
-            <div className="mt-2 flex justify-end">
-              <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
-            </div>
-          </>
-        ) : (
-          <>
-            <DialogTitle>Confirm remove?</DialogTitle>
-            <DialogDescription>
-              This script is used in{" "}
-              <span className="font-bold text-foreground">{gate.turfCount}</span> published turf
-              {gate.turfCount === 1 ? "" : "s"}. Removing this {isQuestion ? "question" : "text"}{" "}
-              will hide it for canvassers
-              {isQuestion ? ", but existing responses will be preserved" : ""}.
-            </DialogDescription>
-            <div className="mt-2 flex justify-end gap-2">
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <Button variant="destructive" onClick={onConfirm}>
-                Remove {isQuestion ? "question" : "text"}
-              </Button>
-            </div>
-          </>
-        )}
+        <DialogTitle>Can't remove question</DialogTitle>
+        <DialogDescription>
+          Another script step depends on one of this question's options being selected. Remove that
+          condition from the script first.
+        </DialogDescription>
+        <div className="mt-2 flex justify-end">
+          <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -501,6 +439,7 @@ function ReorderStepRow({
   number: number;
   step: ScriptStepRow;
   earlierSteps: ScriptStepRow[];
+  locked: boolean;
   onRemove: () => void;
   onChangeText: (text: string) => void;
   onSetCondition: (showIfOptionId: string | null) => void;
@@ -526,6 +465,7 @@ function StepRow({
   number,
   step,
   earlierSteps,
+  locked,
   onRemove,
   onChangeText,
   onSetCondition,
@@ -534,17 +474,22 @@ function StepRow({
   number: number;
   step: ScriptStepRow;
   earlierSteps: ScriptStepRow[];
+  locked: boolean;
   onRemove: () => void;
   onChangeText: (text: string) => void;
   onSetCondition: (showIfOptionId: string | null) => void;
   dragControls?: ReturnType<typeof useDragControls>;
 }) {
   return (
-    <div className="rounded-md border border-border bg-card p-3">
+    // Locked cards dim as a whole via LockedOverlay, so disabled controls
+    // inside drop their own fade. `isolate` keeps controls raised above the
+    // overlay from also rising above the sticky add bar.
+    <div className="relative isolate rounded-md border border-border bg-card p-3 [&_:disabled]:opacity-100">
       {step.stepType === "question" && step.questionId ? (
         <QuestionStepBody
           number={number}
           questionId={step.questionId}
+          scriptLocked={locked}
           onRemove={onRemove}
           dragControls={dragControls}
         />
@@ -552,12 +497,18 @@ function StepRow({
         <TextStepBody
           number={number}
           text={step.text ?? ""}
+          locked={locked}
           onChangeText={onChangeText}
           onRemove={onRemove}
           dragControls={dragControls}
         />
       )}
-      <StepConditionRow step={step} earlierSteps={earlierSteps} onSet={onSetCondition} />
+      <StepConditionRow
+        step={step}
+        earlierSteps={earlierSteps}
+        locked={locked}
+        onSet={onSetCondition}
+      />
     </div>
   );
 }
@@ -568,10 +519,12 @@ function StepRow({
 function StepConditionRow({
   step,
   earlierSteps,
+  locked,
   onSet,
 }: {
   step: ScriptStepRow;
   earlierSteps: ScriptStepRow[];
+  locked: boolean;
   onSet: (showIfOptionId: string | null) => void;
 }) {
   const candidateIds = earlierSteps
@@ -607,18 +560,21 @@ function StepConditionRow({
             <Button
               variant="outline"
               size="sm"
-              className={cn(step.showIfOptionId == null && "text-muted-foreground")}
+              className={cn("max-w-full", RAISED_WHEN_ENABLED)}
+              disabled={locked}
             />
           }
         >
           <Icon name="corner-down-right" />
-          {step.showIfOptionId == null
-            ? "Show only if…"
-            : current
-              ? `Show only if ${current.question}: ${current.option}`
-              : "Show only if: (unavailable option)"}
+          <span className="truncate">
+            {step.showIfOptionId == null
+              ? "Show only if…"
+              : current
+                ? `Show only if ${current.question}: ${current.option}`
+                : "Show only if: (unavailable option)"}
+          </span>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
+        <DropdownMenuContent align="start" className="w-72">
           {step.showIfOptionId != null ? (
             <>
               <DropdownMenuItem onClick={() => onSet(null)}>Always show</DropdownMenuItem>
@@ -626,8 +582,8 @@ function StepConditionRow({
             </>
           ) : null}
           {candidates.map((q) => (
-            <Fragment key={q.questionId}>
-              <div className="px-2 pt-1.5 pb-0.5 text-sm text-muted-foreground">{q.name}</div>
+            <DropdownMenuGroup key={q.questionId}>
+              <DropdownMenuLabel className="truncate">{q.name}</DropdownMenuLabel>
               {q.options.map((o) => (
                 <DropdownMenuItem
                   key={o.responseOptionId}
@@ -639,7 +595,7 @@ function StepConditionRow({
                   ) : null}
                 </DropdownMenuItem>
               ))}
-            </Fragment>
+            </DropdownMenuGroup>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
@@ -647,13 +603,24 @@ function StepConditionRow({
   );
 }
 
-function GripHandle({ dragControls }: { dragControls?: ReturnType<typeof useDragControls> }) {
+function GripHandle({
+  dragControls,
+  disabled,
+}: {
+  dragControls?: ReturnType<typeof useDragControls>;
+  disabled: boolean;
+}) {
   return (
     <button
       type="button"
-      className="cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground shrink-0"
+      className={cn(
+        "cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground shrink-0",
+        "disabled:pointer-events-none",
+        RAISED_WHEN_ENABLED,
+      )}
       onPointerDown={(e) => dragControls?.start(e)}
       aria-label="Drag to reorder"
+      disabled={disabled}
     >
       <Icon name="grip-vertical" className="size-3.5" />
     </button>
@@ -666,7 +633,30 @@ function KindBadge({ meta }: { meta: BadgeMeta }) {
   return <Badge color={meta.color}>{meta.label}</Badge>;
 }
 
-function RemoveButton({ onRemove }: { onRemove: () => void }) {
+// A question locked by another script still leaves this script's own controls
+// (drag, remove, condition) usable; these lift them above the card's overlay.
+const RAISED_WHEN_ENABLED = "enabled:relative enabled:z-20";
+
+function LockBadge() {
+  return (
+    <Badge color={GRAY} className="flex h-5 items-center">
+      <Icon name="lock" className="size-3" />
+    </Badge>
+  );
+}
+
+// Clicks pass through, so controls raised above it via RAISED_WHEN_ENABLED
+// stay usable.
+function LockedOverlay() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute -inset-px z-10 rounded-md bg-background/50"
+    />
+  );
+}
+
+function RemoveButton({ onRemove, disabled }: { onRemove: () => void; disabled: boolean }) {
   return (
     <Button
       variant="outline"
@@ -674,6 +664,8 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
       onClick={onRemove}
       onMouseDown={(e) => e.preventDefault()}
       aria-label="Remove step"
+      className={RAISED_WHEN_ENABLED}
+      disabled={disabled}
     >
       <Icon name="x" className="size-4" />
     </Button>
@@ -683,12 +675,14 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
 function TextStepBody({
   number,
   text,
+  locked,
   onChangeText,
   onRemove,
   dragControls,
 }: {
   number: number;
   text: string;
+  locked: boolean;
   onChangeText: (text: string) => void;
   onRemove: () => void;
   dragControls?: ReturnType<typeof useDragControls>;
@@ -697,12 +691,13 @@ function TextStepBody({
     <>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
-          <GripHandle dragControls={dragControls} />
+          <GripHandle dragControls={dragControls} disabled={locked} />
           <span className="text-sm text-muted-foreground pr-0.5 tabular-nums">{number}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {locked ? <LockBadge /> : null}
           <KindBadge meta={TEXT_STEP_BADGE} />
-          <RemoveButton onRemove={onRemove} />
+          <RemoveButton onRemove={onRemove} disabled={locked} />
         </div>
       </div>
       <BlurSaveTextarea
@@ -710,7 +705,9 @@ function TextStepBody({
         onCommit={onChangeText}
         placeholder="Script text..."
         rows={2}
+        disabled={locked}
       />
+      {locked ? <LockedOverlay /> : null}
     </>
   );
 }
@@ -718,11 +715,13 @@ function TextStepBody({
 function QuestionStepBody({
   number,
   questionId,
+  scriptLocked,
   onRemove,
   dragControls,
 }: {
   number: number;
   questionId: string;
+  scriptLocked: boolean;
   onRemove: () => void;
   dragControls?: ReturnType<typeof useDragControls>;
 }) {
@@ -753,12 +752,16 @@ function QuestionStepBody({
   if (!question) {
     return (
       <div className="flex items-center gap-1.5">
-        <GripHandle dragControls={dragControls} />
+        <GripHandle dragControls={dragControls} disabled={scriptLocked} />
         <span className="text-sm text-muted-foreground tabular-nums">{number}</span>
         <span className="text-sm italic text-muted-foreground">Loading…</span>
       </div>
     );
   }
+
+  // A locked script locks its questions; checking both covers the moment
+  // between a script lock and its question caches being patched.
+  const questionLocked = scriptLocked || question.lockedBy.length > 0;
 
   // Clearing edit mode and the optimistic rename happen together in this one
   // component, so they re-render atomically.
@@ -772,7 +775,7 @@ function QuestionStepBody({
     <>
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 flex-1">
-          <GripHandle dragControls={dragControls} />
+          <GripHandle dragControls={dragControls} disabled={scriptLocked} />
           <span className="text-sm text-muted-foreground pr-0.5 tabular-nums">{number}</span>
           {editingName ? (
             <Input
@@ -792,17 +795,21 @@ function QuestionStepBody({
           ) : (
             <span
               onDoubleClick={() => {
+                if (questionLocked) return;
                 setNameDraft(question.name);
                 setEditingName(true);
               }}
-              className="text-sm select-none cursor-text truncate flex-1 min-w-0"
-              title="Double-click to rename"
+              className={cn(
+                "text-sm select-none truncate flex-1 min-w-0",
+                !questionLocked && "cursor-text",
+              )}
             >
               {question.name}
             </span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {questionLocked ? <LockBadge /> : null}
           <KindBadge
             meta={
               RESPONSE_TYPE_META[question.responseType] ?? {
@@ -811,13 +818,14 @@ function QuestionStepBody({
               }
             }
           />
-          <RemoveButton onRemove={onRemove} />
+          <RemoveButton onRemove={onRemove} disabled={scriptLocked} />
         </div>
       </div>
       <QuestionTextEditor questionId={questionId} />
       <div className={cn("mb-1", question.responseType === "open_ended" ? "mt-3" : "mt-4")}>
         <ResponseOptionsEditor questionId={questionId} />
       </div>
+      {questionLocked ? <LockedOverlay /> : null}
     </>
   );
 }

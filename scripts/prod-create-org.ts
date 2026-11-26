@@ -8,16 +8,16 @@ const log = createLogger("create-org");
 const cli = meow(
   `
   Usage
-    $ pnpm prod:create-org [<slug> <name>]
-    $ pnpm prod:create-org --slug <slug> --name <name>
+    $ pnpm org:create [<slug> <name>]
+    $ pnpm org:create --slug <slug> --name <name>
 
   Options
     --slug   Org slug (URL-safe identifier, used in URLs + DuckLake schema names)
     --name   Display name
 
   Examples
-    $ pnpm prod:create-org myorg 'My Org'
-    $ pnpm prod:create-org --slug myorg --name 'My Org'
+    $ pnpm org:create myorg 'My Org'
+    $ pnpm org:create --slug myorg --name 'My Org'
 `,
   {
     importMeta: import.meta,

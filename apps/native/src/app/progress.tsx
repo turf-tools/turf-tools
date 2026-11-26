@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useAtomValue } from "jotai";
 import { X } from "lucide-react-native";
-import { Fragment, useMemo } from "react";
+import { Fragment, type ReactNode, useMemo } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
@@ -13,6 +13,7 @@ import { deriveResponseTallies, deriveTurfProgress } from "@/lib/progress";
 import { useTurf } from "@/lib/turf-data";
 import { client } from "@/rpc/client";
 import { Pill } from "@/components/pill";
+import { Placeholder } from "@/components/placeholder";
 
 // Progress modal — the active turf's completion breakdown: people and
 // doors counts, results by outcome, and per-question response tallies.
@@ -137,12 +138,18 @@ function ProgressContent({ turfId, bottomInset }: { turfId: string; bottomInset:
               {idx > 0 && <View className="h-px bg-border dark:bg-border-dark my-2" />}
               <View className="mb-1">
                 <Text className="py-1 font-sans text-xl text-foreground dark:text-foreground-dark">
-                  {question.text}
+                  {question.text.trim() ? (
+                    question.text
+                  ) : (
+                    <Placeholder>Untitled question</Placeholder>
+                  )}
                 </Text>
                 {question.options.map((option) => (
                   <TallyRow
                     key={option.responseOptionId}
-                    label={option.text}
+                    label={
+                      option.text.trim() ? option.text : <Placeholder>Empty option</Placeholder>
+                    }
                     count={option.count}
                     percent={option.percent}
                   />
@@ -191,7 +198,7 @@ function TallyRow({
   percent,
   role,
 }: {
-  label: string;
+  label: ReactNode;
   count: number;
   percent: number;
   role?: "contacted" | "unavailable";
@@ -199,7 +206,7 @@ function TallyRow({
   return (
     <View className="flex-row items-center py-1.5">
       <Text
-        className="flex-1 font-sans text-xl text-foreground dark:text-foreground-dark"
+        className="flex-1 mr-6 font-sans text-xl text-foreground dark:text-foreground-dark"
         numberOfLines={1}
       >
         {label}

@@ -2,7 +2,7 @@
 
 Each transformation maps a state/source-specific raw voter-file schema onto
 the `Person` required core (see `src/models.py`) plus the dataset's filterable
-fields. State-specific raw codes are normalized to canonical cross-state labels
+fields. State-specific raw codes are normalized to canonical cross-state values
 via the maps defined in this module.
 
 Every field — the Person core and each filterable extra (enrollment, dates,
@@ -14,16 +14,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.importers.dedupe import one_record_per_id_sql
+
 if TYPE_CHECKING:
     from src.importers.base import ImportFilter
 
 # NYS raw → canonical mappings used by the SQL CASE expressions below.
-# Keys are NYS-specific codes; values are cross-state canonical labels.
+# Keys are NYS-specific codes, mapped to their cross-state canonical values.
 
-NYS_REGISTRATION_STATUS_LABELS: dict[str, str] = {
+NYS_REGISTRATION_STATUSES: dict[str, str] = {
     "A": "active",
     "I": "inactive",
     "AF": "federal_only",
+    "AP": "presidential_only",
+    "AM": "military",
+    "AU": "overseas",
     "17": "preregistered",
 }
 
@@ -46,7 +51,7 @@ NYS_COUNTY_FIPS: dict[str, str] = {
 
 # NYS encodes party as (ENROLLMENT, OTHERPARTY); flatten the two-step
 # into a canonical label.
-NYS_ENROLLMENT_LABELS: dict[tuple[str, str | None], str] = {
+NYS_ENROLLMENTS: dict[tuple[str, str | None], str] = {
     ("DEM", None): "democratic",
     ("REP", None): "republican",
     ("CON", None): "conservative",
@@ -76,7 +81,7 @@ def _enrollment_case_sql() -> str:
     canonical party label. Unmatched `OTH` + OTHERPARTY values fall back
     to `other`."""
     pairs_by_enrollment: dict[str, list[tuple[str | None, str]]] = {}
-    for (enr, other), canonical in NYS_ENROLLMENT_LABELS.items():
+    for (enr, other), canonical in NYS_ENROLLMENTS.items():
         pairs_by_enrollment.setdefault(enr, []).append((other, canonical))
 
     parts: list[str] = []
@@ -109,6 +114,12 @@ def _iso_date_sql(col: str) -> str:
     )
 
 
+# A voter who changes county keeps their statewide SBOEID and gets a new county
+# registration, and an export can hold both. Keep the current one: active over
+# inactive, then the latest registration. (Purged records are dropped on read.)
+_CURRENT_RECORD_FIRST = "CASE WHEN r.status = 'I' THEN 1 ELSE 0 END, r.regdate DESC NULLS LAST, r.countycode"
+
+
 def nys_sboe_transformation_query(
     source_table: str,
     filter: ImportFilter | None = None,
@@ -117,10 +128,12 @@ def nys_sboe_transformation_query(
 
     Args:
         source_table: fully-qualified `persons_raw` table the query reads from,
-            aliased to ``raw`` so the column expressions below resolve.
+            narrowed to one record per voter and aliased to ``raw`` so the column
+            expressions below resolve.
         filter: optional row filter (`raw.<column> IN (values)`), the dataset's
-            fixed import slice. The column must already be allowlisted by the
-            importer; values are compared as the file's own text.
+            fixed import slice, applied after a voter's current record is
+            picked. The column must already be allowlisted by the importer;
+            values are compared as the file's own text.
     """
     where = ""
     if filter and filter.values:
@@ -172,7 +185,7 @@ SELECT
     raw.gender AS gender,
     {_iso_date_sql("raw.dob")} AS date_of_birth,
     {_iso_date_sql("raw.regdate")} AS registration_date,
-    {_case_from_map("raw.status", NYS_REGISTRATION_STATUS_LABELS, default="unknown")} AS registration_status,
+    {_case_from_map("raw.status", NYS_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
     {_iso_date_sql("raw.lastvoterdate")} AS last_voted_date,
     raw.countycode AS county_code,
     {_case_from_map("raw.countycode", NYS_COUNTY_FIPS)} AS county_fips,
@@ -187,6 +200,6 @@ SELECT
     -- Transient raw column; the importer's load parses it into the structured
     -- `voting_history` STRUCT[] and drops it.
     raw.voterhistory AS voter_history
-FROM {source_table} AS raw
+FROM {one_record_per_id_sql(source_table, "sboeid", _CURRENT_RECORD_FIRST)} AS raw
 {where}
 """

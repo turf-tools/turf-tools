@@ -26,6 +26,8 @@ const FIELD_TYPES: CustomFieldType[] = [
   "enum_multi",
 ];
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Worst realistic append is a full-population two-column CSV (~100–150MB for
 // 5M rows); typical lists are well under 15MB. Cap well above the worst case.
 const MAX_BODY_BYTES = 250 * 1024 * 1024;
@@ -55,11 +57,18 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-append")({
 
         const datasetId = url.searchParams.get("datasetId");
         const fieldType = url.searchParams.get("fieldType") as CustomFieldType | null;
-        // Sent only for one-column files (name + constant value).
+        // Optional rename of a new field; defaults to the value column header.
         const label = url.searchParams.get("label")?.trim() || null;
-        const value = url.searchParams.get("value")?.trim() || null;
         const filename = url.searchParams.get("filename") || null;
-        if (!datasetId || !fieldType || !FIELD_TYPES.includes(fieldType)) {
+        // Merge or replace into an existing field; absent → a new field.
+        const customFieldId = url.searchParams.get("customFieldId") || null;
+        const replace = url.searchParams.get("replace") === "true";
+        if (
+          !datasetId ||
+          !fieldType ||
+          !FIELD_TYPES.includes(fieldType) ||
+          (customFieldId != null && !UUID_RE.test(customFieldId))
+        ) {
           return new Response("Bad Request", { status: 400 });
         }
 
@@ -89,7 +98,8 @@ export const Route = createFileRoute("/api/web/$orgSlug/custom-field-append")({
           uploadId: customFieldUploadId,
         });
         if (label) params.set("label", label);
-        if (value) params.set("value", value);
+        if (customFieldId) params.set("customFieldId", customFieldId);
+        if (replace) params.set("replace", "true");
         const upstream = await dataFetch(`/custom-fields/append?${params.toString()}`, {
           method: "POST",
           body,

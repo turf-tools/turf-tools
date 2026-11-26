@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Build and push the web and data images.
+# Build and push the web and data images. Pushes to ghcr.io/turf-tools unless
+# REGISTRY names another, e.g. for a deployment that builds its own web image
+# with its own VITE_MAPTILER_KEY.
 #
 #   pnpm images:push                    # tags :latest and :sha-<commit>
 #   pnpm images:push:web                # just the web image

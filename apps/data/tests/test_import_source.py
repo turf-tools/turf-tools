@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.importers.base import SourceUnreadableError, redact_source
+from src.importers.base import InvalidImportSourcesError, SourceUnreadableError, is_readable_source, redact_source
 from src.importers.nys_voter_file import NysVoterFileImporter
 
 # A presigned URL and a credential-in-URI, the two shapes that make a raw source
@@ -20,7 +20,7 @@ PRESIGNED = (
     "https://bucket.example.com/scratch/voters.parquet"
     "?X-Amz-Credential=AKIAEXAMPLE%2F20260802%2Fus-east-1&X-Amz-Signature=deadbeefcafe"
 )
-CREDENTIALED = "s3://AKIAEXAMPLE:sUp3rS3cr3t@bucket/scratch/voters.parquet"
+CREDENTIALED = "https://AKIAEXAMPLE:sUp3rS3cr3t@bucket.example.com/scratch/voters.parquet"
 
 
 class _Progress:
@@ -32,10 +32,9 @@ class _Progress:
 
 
 def test_missing_local_source_fails_before_touching_the_catalog() -> None:
-    # No connection needed: the up-front check runs before any schema work,
-    # which is what stops the fixed-width decode deadlocking on a missing file.
+    # No connection needed: the up-front check runs before any schema work.
     with pytest.raises(SourceUnreadableError, match="Import source not found"):
-        NysVoterFileImporter().load("/nope/not-here.parquet", "irrelevant", None, _Progress())
+        NysVoterFileImporter().load({"file": "/nope/not-here.parquet"}, "irrelevant", None, _Progress())
 
 
 def test_unreadable_source_is_wrapped_rather_than_surfacing_driver_text(conn, tmp_path) -> None:
@@ -43,7 +42,7 @@ def test_unreadable_source_is_wrapped_rather_than_surfacing_driver_text(conn, tm
     not_parquet.write_text("this is not a parquet file", encoding="utf-8")
 
     with pytest.raises(SourceUnreadableError) as excinfo:
-        NysVoterFileImporter().load(str(not_parquet), "nys_voter_file_v1", conn, _Progress())
+        NysVoterFileImporter().load({"file": str(not_parquet)}, "nys_voter_file_v1", conn, _Progress())
 
     message = str(excinfo.value)
     assert str(not_parquet) in message
@@ -64,7 +63,7 @@ def test_redact_source_drops_presigned_query_but_keeps_the_file_identifiable() -
 def test_redact_source_drops_credentials_embedded_in_the_uri() -> None:
     redacted = redact_source(CREDENTIALED)
 
-    assert redacted == "s3://bucket/scratch/voters.parquet"
+    assert redacted == "https://bucket.example.com/scratch/voters.parquet"
     assert "sUp3rS3cr3t" not in redacted
     assert "AKIAEXAMPLE" not in redacted
 
@@ -77,9 +76,36 @@ def test_error_message_never_carries_the_raw_source(conn) -> None:
     # The message lands in `dataset_versions.error` and renders in the UI, so a
     # presigned source must not survive into it.
     with pytest.raises(SourceUnreadableError) as excinfo:
-        NysVoterFileImporter().load(PRESIGNED, "nys_voter_file_v1", conn, _Progress())
+        NysVoterFileImporter().load({"file": PRESIGNED}, "nys_voter_file_v1", conn, _Progress())
 
     message = str(excinfo.value)
     assert "X-Amz-Signature" not in message
     assert "deadbeefcafe" not in message
     assert "bucket.example.com/scratch/voters.parquet" in message
+
+
+def test_missing_required_source_is_rejected_before_anything_is_read() -> None:
+    with pytest.raises(InvalidImportSourcesError, match="Missing Voter file"):
+        NysVoterFileImporter().load({"file": "  "}, "irrelevant", None, _Progress())
+
+
+def test_unknown_source_key_is_rejected() -> None:
+    with pytest.raises(InvalidImportSourcesError, match="'history'"):
+        NysVoterFileImporter().load(
+            {"file": "/nope/not-here.parquet", "history": "/nope/h.txt"}, "irrelevant", None, _Progress()
+        )
+
+
+def test_sources_are_http_links_or_local_paths() -> None:
+    assert is_readable_source("https://example.com/voters.parquet")
+    assert is_readable_source("http://example.com/voters.parquet")
+    assert is_readable_source("/data/voters.parquet")
+    assert is_readable_source("~/fixtures/voters.parquet")
+    assert is_readable_source("")  # an optional source left blank
+    assert not is_readable_source("s3://bucket/voters.parquet")
+    assert not is_readable_source("gs://bucket/voters.parquet")
+
+
+def test_s3_source_is_rejected_before_anything_is_read() -> None:
+    with pytest.raises(InvalidImportSourcesError, match="Voter file must be an http:// or https:// link"):
+        NysVoterFileImporter().load({"file": "s3://bucket/voters.parquet"}, "irrelevant", None, _Progress())
