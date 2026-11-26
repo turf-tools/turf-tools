@@ -441,11 +441,17 @@ export function Cutter({
       setPublishOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["turfs"] });
       void queryClient.invalidateQueries({ queryKey: ["turf-stats", campaignId] });
+      // Publishing locks the campaign's script and its questions.
+      for (const queryKey of [["scripts"], ["script"], ["questions"], ["question"]])
+        void queryClient.invalidateQueries({ queryKey });
       const n = publishSummary.count;
       const superseded = result.summary.supersededCount;
       notify.success(
         `Published ${n} turf${n === 1 ? "" : "s"}` +
           (superseded > 0 ? `, replacing ${superseded}` : ""),
+        {
+          next: result.lockedScriptName ? `Script "${result.lockedScriptName}" locked` : undefined,
+        },
       );
     },
   });

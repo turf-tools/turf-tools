@@ -242,9 +242,8 @@ function ResultsIndex() {
   const [questionPicks, setQuestionPicks] = useState<string[]>([]);
   const [questionMenuOpen, setQuestionMenuOpen] = useState(false);
   const totals = sumRows(aggregate.rows);
-  const campaignAnswered = campaignAggregate
-    ? sumRows(campaignAggregate.rows).answered
-    : totals.answered;
+  const campaignTotals = campaignAggregate ? sumRows(campaignAggregate.rows) : totals;
+  const campaignAnswered = campaignTotals.answered;
   // Script questions in script order, then others answered in the campaign
   // (a swapped-out script's, or archived ones, which have no steps).
   const questionsById = new Map(questionList.map((q) => [q.questionId, q]));
@@ -277,11 +276,11 @@ function ResultsIndex() {
         (a.zoneOrder ?? Number.POSITIVE_INFINITY) - (b.zoneOrder ?? Number.POSITIVE_INFINITY) ||
         regionLabel(a).localeCompare(regionLabel(b)),
     );
-  // Archived options stay visible while they carry answers in scope —
+  // Archived options stay visible while they carry answers in the campaign —
   // archive hides options from pickers, never from history.
   const visibleOptions = (q: (typeof questionList)[number]) =>
     q.options.filter(
-      (o) => !o.archived || (totals.responses[q.questionId]?.[o.responseOptionId] ?? 0) > 0,
+      (o) => !o.archived || (campaignTotals.responses[q.questionId]?.[o.responseOptionId] ?? 0) > 0,
     );
   // One column per visible option; a question with none (open-ended,
   // or every option archived with no in-scope answers) gets a single
@@ -513,23 +512,19 @@ function ResultsIndex() {
         </DropdownMenu>
         <Filter
           icon={<Icon name="paintbrush" className="size-3.5" />}
-          label={
-            metricColumn
-              ? `${metricColumn.question.name} | ${metricColumn.option.text}`
-              : "Contact rate"
-          }
+          label={metricColumn ? metricColumn.option.text || "Empty option" : "Contact rate"}
           value={metricColumn ? metricPick : "contact"}
           options={[
             { value: "contact", label: "Contact rate" },
             ...optionColumns.map((c) => ({
               value: c.option.responseOptionId,
-              // Always question-qualified — an option label alone ("Yes")
-              // doesn't say what the map would color by.
-              label: `${c.question.name} | ${c.option.text}`,
+              label: c.option.text || "Empty option",
+              group: c.question.name,
             })),
           ]}
           allLabel={null}
           onChange={(next) => next !== null && setMetricPick(next)}
+          menuClassName="w-72"
         />
         {/* Scope cluster: Add filter (chips appear on the row below),
             then date and campaign. */}

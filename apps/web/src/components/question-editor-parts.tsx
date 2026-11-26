@@ -14,9 +14,9 @@ import {
 } from "~/components/dialog";
 import { Input } from "~/components/input";
 import { questionDetailQuery } from "~/lib/queries/questions";
-import { useConfirmHotkey } from "~/lib/use-confirm-hotkey";
 import { cn } from "~/lib/utils";
 import { client } from "~/rpc/client";
+import type { ScriptRef } from "~/rpc/web/questions";
 
 // Shared editors and metadata for questions. Components write
 // optimistically against ["question", id], so any surface that
@@ -78,6 +78,7 @@ type QuestionDetail = {
   text: string;
   createdAt: Date;
   archivedAt: Date | null;
+  lockedBy: ScriptRef[];
   options: ResponseOption[];
 };
 
@@ -114,6 +115,7 @@ export function QuestionTextEditor({ questionId }: { questionId: string }) {
       onCommit={(text) => updateText.mutate(text)}
       placeholder="Full question text..."
       rows={2}
+      disabled={question.lockedBy.length > 0}
     />
   );
 }
@@ -181,8 +183,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
     },
   });
 
-  const [removeGate, setRemoveGate] = useState<RemoveGate>({ kind: "blocked" });
-  const [removeGateOpen, setRemoveGateOpen] = useState(false);
+  const [removeBlockedOpen, setRemoveBlockedOpen] = useState(false);
 
   const removeOption = useMutation({
     mutationFn: (responseOptionId: string) =>
@@ -265,11 +266,10 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
   };
 
   if (!question) return null;
+  const locked = question.lockedBy.length > 0;
 
   // Removal is gated on a click-time freshness probe: blocked while a step's
-  // visibility depends on the option, confirmed when the question is live in
-  // published turfs, immediate otherwise. Snapshot state is split from `open`
-  // so the dialog keeps its body during the close animation.
+  // visibility depends on the option, immediate otherwise.
   const handleRemove = async (opt: ResponseOption) => {
     let usage: Awaited<ReturnType<typeof client.questions.liveUsage>>;
     try {
@@ -282,19 +282,8 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
       notify.error(e instanceof Error ? e.message : String(e));
       return;
     }
-    if (usage.gatingOptionIds.includes(opt.responseOptionId)) {
-      setRemoveGate({ kind: "blocked" });
-      setRemoveGateOpen(true);
-    } else if (usage.liveTurfCount > 0) {
-      setRemoveGate({
-        kind: "confirm",
-        responseOptionId: opt.responseOptionId,
-        turfCount: usage.liveTurfCount,
-      });
-      setRemoveGateOpen(true);
-    } else {
-      removeOption.mutate(opt.responseOptionId);
-    }
+    if (usage.gatingOptionIds.includes(opt.responseOptionId)) setRemoveBlockedOpen(true);
+    else removeOption.mutate(opt.responseOptionId);
   };
 
   // Open-ended questions have no options — canvassers type the answer.
@@ -329,6 +318,7 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
               onRemove={() => handleRemove(opt)}
               onDragEnd={handleOptionsDragEnd}
               isNew={!isPreExisting(opt.responseOptionId)}
+              disabled={locked}
             />
           ))}
         </Reorder.Group>
@@ -351,73 +341,36 @@ export function ResponseOptionsEditor({ questionId }: { questionId: string }) {
           className="h-8 flex-1 justify-start bg-card dark:bg-card"
           onClick={() => addOption.mutate()}
           loading={addOption.isPending}
+          disabled={locked}
         >
           <Icon name="plus" className="-ml-0.5 mr-0.5" />
           Add option
         </Button>
         <span aria-hidden className="w-6 shrink-0" />
       </motion.div>
-      <RemoveOptionDialog
-        open={removeGateOpen}
-        onOpenChange={setRemoveGateOpen}
-        gate={removeGate}
-        onConfirm={() => {
-          if (removeGate.kind === "confirm") removeOption.mutate(removeGate.responseOptionId);
-          setRemoveGateOpen(false);
-        }}
-      />
+      <RemoveOptionBlockedDialog open={removeBlockedOpen} onOpenChange={setRemoveBlockedOpen} />
     </div>
   );
 }
 
-type RemoveGate =
-  | { kind: "blocked" }
-  | { kind: "confirm"; responseOptionId: string; turfCount: number };
-
-function RemoveOptionDialog({
+function RemoveOptionBlockedDialog({
   open,
   onOpenChange,
-  gate,
-  onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  gate: RemoveGate;
-  onConfirm: () => void;
 }) {
-  useConfirmHotkey({ open: open && gate.kind === "confirm", disabled: false, onConfirm });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        {gate.kind === "blocked" ? (
-          <>
-            <DialogTitle>Can't archive option</DialogTitle>
-            <DialogDescription>
-              Another script step depends on this option being selected. Remove that condition from
-              the script first.
-            </DialogDescription>
-            <div className="mt-2 flex justify-end">
-              <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
-            </div>
-          </>
-        ) : (
-          <>
-            <DialogTitle>Confirm archive?</DialogTitle>
-            <DialogDescription>
-              This option is used in{" "}
-              <span className="font-bold text-foreground">{gate.turfCount}</span> published turf
-              {gate.turfCount === 1 ? "" : "s"}. Archiving will hide it, but existing responses will
-              be preserved.
-            </DialogDescription>
-            <div className="mt-2 flex justify-end gap-2">
-              <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-              <Button onClick={onConfirm}>
-                <Icon name="archive" />
-                Archive option
-              </Button>
-            </div>
-          </>
-        )}
+        <DialogTitle>Can't archive option</DialogTitle>
+        <DialogDescription>
+          Another script step depends on this option being selected. Remove that condition from the
+          script first.
+        </DialogDescription>
+        <div className="mt-2 flex justify-end">
+          <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -432,6 +385,7 @@ function ReorderOptionRow({
   onRemove: () => void;
   onDragEnd?: () => void;
   isNew: boolean;
+  disabled: boolean;
 }) {
   const controls = useDragControls();
   return (
@@ -455,21 +409,27 @@ function OptionRow({
   onRemove,
   dragControls,
   isNew,
+  disabled,
 }: {
   option: ResponseOption;
   onChangeText: (text: string) => void;
   onRemove: () => void;
   dragControls?: ReturnType<typeof useDragControls>;
   isNew: boolean;
+  disabled: boolean;
 }) {
   return (
     <div className="flex items-center gap-1.5">
       <div className="relative flex-1 min-w-0">
         <button
           type="button"
-          className="absolute left-2 top-1/2 -translate-y-1/2 cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground"
+          className={cn(
+            "absolute left-2 top-1/2 -translate-y-1/2 cursor-grab touch-none",
+            "text-muted-foreground/40 hover:text-muted-foreground disabled:pointer-events-none",
+          )}
           onPointerDown={(e) => dragControls?.start(e)}
           aria-label="Drag to reorder"
+          disabled={disabled}
         >
           <Icon name="grip-vertical" className="size-3.5" />
         </button>
@@ -478,6 +438,7 @@ function OptionRow({
           onCommit={onChangeText}
           className="h-8 w-full pl-7"
           placeholder="Option text"
+          disabled={disabled}
         />
       </div>
       <Button
@@ -487,6 +448,7 @@ function OptionRow({
         onMouseDown={(e) => e.preventDefault()}
         aria-label="Remove option"
         className={cn("h-8 w-6", isNew && "animate-in fade-in duration-200")}
+        disabled={disabled}
       >
         <Icon name="x" className="size-4 text-muted-foreground" />
       </Button>
@@ -499,11 +461,13 @@ export function BlurSaveInput({
   onCommit,
   className,
   placeholder,
+  disabled,
 }: {
   value: string;
   onCommit: (text: string) => void;
   className?: string;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => {
@@ -527,6 +491,7 @@ export function BlurSaveInput({
         }
       }}
       placeholder={placeholder}
+      disabled={disabled}
       className={className}
     />
   );
@@ -537,11 +502,13 @@ export function BlurSaveTextarea({
   onCommit,
   placeholder,
   rows,
+  disabled,
 }: {
   value: string;
   onCommit: (text: string) => void;
   placeholder?: string;
   rows?: number;
+  disabled?: boolean;
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => {
@@ -569,11 +536,13 @@ export function BlurSaveTextarea({
       }}
       placeholder={placeholder}
       rows={rows}
+      disabled={disabled}
       className={cn(
         "block w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm",
         "placeholder:text-muted-foreground",
         "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
         "outline-none",
+        "disabled:cursor-not-allowed",
       )}
     />
   );
