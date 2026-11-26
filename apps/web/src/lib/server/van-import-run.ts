@@ -1,10 +1,9 @@
-import { and, eq, inArray, isNull, ne, sql, type Db } from "@turf-tools/db";
+import { and, eq, inArray, isNull, ne, type Db } from "@turf-tools/db";
 import {
   canvassEvents,
   type CanvassEventPayload,
   questions,
   responseOptions,
-  vanPersonIds,
 } from "@turf-tools/db/schema";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import { ensureVanHistoryTurf } from "~/lib/server/van-history";
@@ -23,6 +22,17 @@ export type VanQuestionMapping = {
   questionId: string | null;
 };
 
+// Import VAN survey answers into canvass_events.
+//
+// Inputs: (1) Standard Text ID map (StateFileID ↔ Voter File VANID),
+// (2) long-format survey export (one row per answer with SurveyQuestionId /
+// SurveyResponseId / DateCanvassed), (3) UI mappings that say create / match /
+// skip for each VAN question.
+//
+// Pipeline: parse → resolve questions & options to app UUIDs → join answers
+// onto lake persons via the ID-map file → write one canvass_events result per
+// (person, DateCanvassed day) on the org's hidden VAN History turf. Re-imports
+// of the same person/day no-op via clientEventId.
 export async function runVanResponseImport(
   db: Db,
   opts: {
@@ -51,6 +61,7 @@ export async function runVanResponseImport(
     throw new Error("Map at least one survey question to import.");
   }
 
+  // Restrict to questions the UI chose to import (skip is simply absent).
   const mappingByVan = new Map(opts.mappings.map((m) => [m.questionVanId, m]));
   const answers = survey.answers.filter((a) => mappingByVan.has(a.questionVanId));
   const questionPreviews = survey.questions.filter((q) => mappingByVan.has(q.questionVanId));
@@ -58,6 +69,8 @@ export async function runVanResponseImport(
     throw new Error("No survey answers to import (check question selection).");
   }
 
+  // Match targets must be live org questions; one existing question can't be
+  // claimed by two VAN questions in the same import.
   const matchIds = opts.mappings
     .map((m) => m.questionId)
     .filter((id): id is string => typeof id === "string");
@@ -80,31 +93,14 @@ export async function runVanResponseImport(
     }
   }
 
+  // Join this import's answers using the uploaded ID map only — person VANIDs
+  // are not persisted.
   const vanToState = new Map<string, string>();
   for (const row of idMap.rows) vanToState.set(row.vanId, row.stateFileId);
 
-  const now = new Date();
-  for (const group of chunk(idMap.rows, 500)) {
-    await db
-      .insert(vanPersonIds)
-      .values(
-        group.map((r) => ({
-          organizationId: opts.organizationId,
-          vanId: r.vanId,
-          externalId: r.stateFileId,
-          createdAt: now,
-          updatedAt: now,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [vanPersonIds.organizationId, vanPersonIds.vanId],
-        set: {
-          externalId: sql`excluded.external_id`,
-          updatedAt: now,
-        },
-      });
-  }
-
+  // Build VAN SurveyQuestionId / SurveyResponseId → app UUID maps. Matching an
+  // existing question stamps vanId on it and links options by vanId or text
+  // (creating any options the existing question is missing).
   let questionsCreated = 0;
   let questionsUpdated = 0;
   let questionsMatched = 0;
@@ -136,12 +132,16 @@ export async function runVanResponseImport(
     for (const [key, optionId] of linked.map) optionIdByVan.set(key, optionId);
   }
 
+  // canvass_events require a turfId; the VAN History turf is superseded so it
+  // stays off the board while still joining into canvass-response filters.
   const { turfId } = await ensureVanHistoryTurf(db, {
     organizationId: opts.organizationId,
     orgSlug: opts.orgSlug,
     userId: opts.userId,
   });
 
+  // VANID → StateFileID via the map, then keep only people present in the
+  // org's active lake version (filters join canvass personId to external_id).
   const unmappedVanIds = new Set<string>();
   const withState: { answer: (typeof answers)[number]; stateFileId: string }[] = [];
   for (const a of answers) {
@@ -165,6 +165,8 @@ export async function runVanResponseImport(
     ...new Set(withState.filter((r) => !existingSet.has(r.stateFileId)).map((r) => r.stateFileId)),
   ];
 
+  // Collapse long-format rows into one result snapshot per person/day — the
+  // same shape the native app writes (outcome + responses keyed by questionId).
   type EventBucket = {
     vanId: string;
     stateFileId: string;
@@ -221,6 +223,7 @@ export async function runVanResponseImport(
     });
   }
 
+  // Dedup on clientEventId = van:{vanId}:{YYYY-MM-DD}.
   let eventsInserted = 0;
   for (const group of chunk(eventRows, 500)) {
     const result = await db

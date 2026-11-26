@@ -1,4 +1,4 @@
-import { index, integer, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { integer, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { app } from "./app";
 import { organizations } from "./organizations";
 import { users } from "./auth/users";
@@ -26,26 +26,6 @@ export const questions = app.table(
     archivedAt: timestamp({ withTimezone: true }),
   },
   (t) => [uniqueIndex("questions_org_van_id").on(t.organizationId, t.vanId)],
-);
-
-// Maps a VAN person id (Voter File VANID) to the lake external_id (StateFileID)
-// for an org. Upserted on every VAN response import.
-export const vanPersonIds = app.table(
-  "van_person_ids",
-  {
-    vanPersonId: uuid().defaultRandom().primaryKey(),
-    organizationId: uuid()
-      .notNull()
-      .references(() => organizations.organizationId),
-    vanId: text().notNull(),
-    externalId: text().notNull(),
-    createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    uniqueIndex("van_person_ids_org_van").on(t.organizationId, t.vanId),
-    index("van_person_ids_org_external").on(t.organizationId, t.externalId),
-  ],
 );
 
 // One selectable answer for a question. Order is per-question.
