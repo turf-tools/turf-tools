@@ -2,8 +2,9 @@
 // Dev Postgres helpers for root package.json scripts.
 //
 // Resolves DATABASE_URL from the environment or local .env files, waits on its
-// host:port, starts Docker Compose only for the built-in docker-compose.dev.yml
-// URL, and derives Quickwit's metastore URI from the same credentials.
+// host:port, starts (or wipes) Docker Compose Postgres only for the built-in
+// docker-compose.dev.yml URL, and derives Quickwit's metastore URI from the
+// same credentials.
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -53,15 +54,37 @@ export function resolveDatabaseUrl() {
   return DEV_DOCKER_DATABASE_URL;
 }
 
+// Each app reads only its own .env, falling back to the Docker URL, so files
+// that disagree (or one that's unset) put the apps on different databases. A
+// shell DATABASE_URL overrides every file, so there's nothing to compare.
+function warnIfEnvFilesDisagree() {
+  if (process.env.DATABASE_URL) return;
+  const urls = ENV_CANDIDATES.map(
+    (path) => parseEnvFile(path).DATABASE_URL || DEV_DOCKER_DATABASE_URL,
+  );
+  if (new Set(urls).size === 1) return;
+  console.warn("DATABASE_URL differs across .env files; each app uses its own:");
+  ENV_CANDIDATES.forEach((path, i) =>
+    console.warn(`  ${path.slice(root.length + 1)}: ${describeDatabaseUrl(urls[i])}`),
+  );
+}
+
 export function usesDevDockerDb(url = resolveDatabaseUrl()) {
   return url === DEV_DOCKER_DATABASE_URL;
 }
 
-export function tcpTarget(url = resolveDatabaseUrl()) {
+function hostPort(url) {
   const parsed = new URL(url);
-  const host = parsed.hostname || "127.0.0.1";
-  const port = parsed.port || "5432";
-  return `tcp:${host}:${port}`;
+  return `${parsed.hostname || "127.0.0.1"}:${parsed.port || "5432"}`;
+}
+
+/** host:port/database, without credentials, for logs. */
+function describeDatabaseUrl(url) {
+  return `${hostPort(url)}${new URL(url).pathname}`;
+}
+
+export function tcpTarget(url = resolveDatabaseUrl()) {
+  return `tcp:${hostPort(url)}`;
 }
 
 /** Same host/user/password as DATABASE_URL, database name `quickwit`. */
@@ -83,10 +106,19 @@ function run(command, args, { env = process.env, cwd = root } = {}) {
   });
 }
 
+// Long enough for a first-run image pull or Docker Desktop starting up.
+const WAIT_TIMEOUT_MS = 5 * 60_000;
+
 async function waitForDb() {
   const target = tcpTarget();
   console.log(`waiting for Postgres at ${target}`);
-  await waitOn({ resources: [target], timeout: 60_000 });
+  try {
+    await waitOn({ resources: [target], timeout: WAIT_TIMEOUT_MS });
+  } catch {
+    throw new Error(
+      `Postgres at ${describeDatabaseUrl(resolveDatabaseUrl())} didn't accept connections within 5 minutes`,
+    );
+  }
 }
 
 async function dockerUp({ detach }) {
@@ -96,21 +128,40 @@ async function dockerUp({ detach }) {
   await run("docker", args);
 }
 
+function logExternal() {
+  console.log(
+    `Using external DATABASE_URL (${describeDatabaseUrl(resolveDatabaseUrl())}); skipping Docker Postgres`,
+  );
+}
+
 async function cmdDocker() {
+  warnIfEnvFilesDisagree();
   if (!usesDevDockerDb()) {
-    console.log(`Using external DATABASE_URL (${resolveDatabaseUrl()}); skipping Docker Postgres`);
+    logExternal();
     return;
   }
   await dockerUp({ detach: false });
 }
 
 async function cmdUp() {
+  warnIfEnvFilesDisagree();
   if (usesDevDockerDb()) {
     await dockerUp({ detach: true });
   } else {
-    console.log(`Using external DATABASE_URL (${resolveDatabaseUrl()}); skipping Docker Postgres`);
+    logExternal();
   }
   await waitForDb();
+}
+
+// Only the Docker database is ours to wipe; an external one is left alone.
+async function cmdClear() {
+  warnIfEnvFilesDisagree();
+  if (!usesDevDockerDb()) {
+    throw new Error(
+      `DATABASE_URL points at your own Postgres (${describeDatabaseUrl(resolveDatabaseUrl())}); db:clear only resets the Docker database`,
+    );
+  }
+  await run("docker", ["compose", "-f", "docker-compose.dev.yml", "down", "-v"]);
 }
 
 async function cmdQuickwit() {
@@ -133,9 +184,10 @@ async function main() {
   if (command === "wait") await waitForDb();
   else if (command === "docker") await cmdDocker();
   else if (command === "up") await cmdUp();
+  else if (command === "clear") await cmdClear();
   else if (command === "quickwit") await cmdQuickwit();
   else {
-    console.error(`usage: node scripts/dev-database.mjs <wait|docker|up|quickwit>`);
+    console.error(`usage: node scripts/dev-database.mjs <wait|docker|up|clear|quickwit>`);
     process.exit(1);
   }
 }
