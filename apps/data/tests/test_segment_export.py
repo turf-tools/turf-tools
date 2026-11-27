@@ -92,7 +92,7 @@ def test_household_names_follow_who_lives_there() -> None:
     conn = _conn()
     rows = _run(conn, "households", ["household_name", "address_line_2", "zip5"])
     assert rows == [
-        ("ADA B LOVELACE", None, "10001"),
+        ("ADA LOVELACE", None, "10001"),
         ("JANE & JOHN SMITH", "3B", "10001"),
         ("THE NG FAMILY", None, "10002"),
         ("DEE RAY & EVE CHO", None, "10002"),
@@ -105,6 +105,8 @@ def test_households_count_only_segment_members() -> None:
     rows = _run(conn, "households", ["household_name"], "WHERE enrollment = ?", ["democratic"])
     # John (republican) is at Jane's door but not in the segment.
     assert ("JANE SMITH",) in rows
+    rows = _run(conn, "households", ["household_name"], "WHERE enrollment = ?", ["republican"])
+    assert rows == [("JOHN SMITH JR",)]
 
 
 def test_household_default_columns_and_missing_unit_column() -> None:

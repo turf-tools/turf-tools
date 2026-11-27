@@ -84,7 +84,9 @@ def export_sql(
 
 def _households_sql(columns: list[str], where: str, persons_columns: set[str]) -> str:
     name_parts = [c for c in NAME_COLUMNS if c in persons_columns]
-    full_name = f"concat_ws(' ', {', '.join(name_parts)})"
+    # Envelopes leave out middle names; a suffix tells a JR from his SR at one door.
+    envelope_parts = [c for c in ("first_name", "last_name", "name_suffix") if c in persons_columns]
+    full_name = f"concat_ws(' ', {', '.join(envelope_parts)})"
     # Capitals before grouping, so "Smith" and "SMITH" at one door are one family.
     upper_names = ", ".join(f"upper({c}) AS {c}" for c in name_parts)
     exprs = {
