@@ -34,6 +34,7 @@ from .criteria import (
     FieldCatalog,
     FieldDef,
     Filter,
+    HouseholdFilter,
     KeyFilter,
     NestedFilter,
     NumberRangeFilter,
@@ -71,10 +72,11 @@ def criteria_to_where(
     - ``add``    → OR  (union)
     - ``remove`` → AND NOT (difference)
 
-    This produces a single flat predicate — no subqueries, no CTEs, no extra
-    column reads. The resulting WHERE clause is semantically equivalent to the
-    sequential set operations and lets DuckDB apply its normal predicate
-    pushdown and column-pruning optimisations.
+    This produces a single flat predicate that is semantically equivalent to
+    the sequential set operations and lets DuckDB apply its normal predicate
+    pushdown and column-pruning optimisations. Household Members steps are the
+    exception: they read the running set, so they compile to a subquery over
+    ``{persons_geocoded}``, which the caller resolves along with its own SQL.
 
     Params are appended in-place. Returns ``""`` (no WHERE) for empty
     criteria with no key_filter.
@@ -105,7 +107,15 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     moves to a scalar subquery, which DuckDB answers from table stats.
     Params bind in textual order: the projection's clauses in step order,
     then the pushdown's copies in the same order.
+
+    Household Members steps depend on who else is in the running set, so
+    they can't be a per-row column, and the pushdown would drop the
+    household members they add back. Criteria with one count each prefix
+    in its own subquery instead.
     """
+    if _has_household(criteria):
+        return _cascade_sql_per_prefix(catalog, criteria, persons_table, params)
+
     # Universe-count prefixes (step_0, and any step before the first active
     # filter) come from a scalar subquery, which DuckDB answers from table
     # stats — and which stays correct when pushdown filters the source.
@@ -151,6 +161,25 @@ def cascade_sql(catalog: FieldCatalog, criteria: Criteria, persons_table: str, p
     )
 
 
+def _has_household(criteria: Criteria) -> bool:
+    """True if any step, including inside a nested segment, is Household Members."""
+    return any(
+        isinstance(step.filter, HouseholdFilter)
+        or (isinstance(step.filter, NestedFilter) and _has_household(step.filter.criteria))
+        for step in criteria.steps
+    )
+
+
+def _cascade_sql_per_prefix(catalog: FieldCatalog, criteria: Criteria, persons_table: str, params: list[Any]) -> str:
+    """Waterfall counts with one subquery per prefix of the steps."""
+    parts = [f"(SELECT count(*) FROM {persons_table}) AS step_0"]
+    for i in range(1, len(criteria.steps) + 1):
+        expr = _criteria_bool_expr(catalog, Criteria(steps=criteria.steps[:i]), params)
+        where = f" WHERE {expr}" if expr else ""
+        parts.append(f"(SELECT count(*) FROM {persons_table}{where}) AS step_{i}")
+    return f"SELECT {', '.join(parts)}"
+
+
 def column_expr_for(catalog: FieldCatalog, field_key: str) -> str:
     """SQL expression for a field — every field is a bare top-level column."""
     if field_key not in catalog.fields:
@@ -184,6 +213,13 @@ def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[
     Folded predicates buffer their params locally so bind order still matches
     textual order when non-custom narrows interleave.
 
+    A Household Members step under ``add`` replaces the running expression
+    with everyone sharing a door (or building) with it. The running
+    expression appears once, inside the subquery, so its params bind in
+    textual order. As the
+    first step it adds everyone's households, which is everyone. The editor
+    only offers it under ``add``; under ``narrow`` or ``remove`` it's ignored.
+
     Returns ``""`` for empty / fully-inactive criteria (match all).
     """
     current: str | None = None  # None = True (full universe)
@@ -205,6 +241,12 @@ def _criteria_bool_expr(catalog: FieldCatalog, criteria: Criteria, params: list[
 
     for step in criteria.steps:
         f = step.filter
+        if isinstance(f, HouseholdFilter):
+            flush()
+            if step.verb == "add" and current is not None:
+                key = "building_i" if f.building else "door_i"
+                current = f"{key} IN (SELECT {key} FROM {{persons_geocoded}} WHERE {current})"
+            continue
         def_ = catalog.fields.get(f.key) if hasattr(f, "key") else None
         if step.verb == "narrow" and isinstance(def_, CustomFieldDef):
             pred = _custom_pred(f, def_, pending_params)
@@ -296,6 +338,9 @@ def _filter_clause(catalog: FieldCatalog, f: Filter, params: list[Any]) -> str:
     if isinstance(f, (CanvassOutcomeFilter, CanvassResponseFilter)):
         # Should have been reduced to a PersonIdSetFilter in resolve.py.
         raise CriteriaError(f"{type(f).__name__} reached the compiler unresolved")
+    if isinstance(f, HouseholdFilter):
+        # Reads the running set, so `_criteria_bool_expr` compiles it.
+        raise CriteriaError("HouseholdFilter compiles only as a step")
     raise CriteriaError(f"Unknown filter kind: {type(f).__name__}")
 
 

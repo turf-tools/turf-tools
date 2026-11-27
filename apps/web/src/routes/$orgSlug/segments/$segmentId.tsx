@@ -224,9 +224,10 @@ function SegmentEditor() {
   };
   // If the first step ends up as `add` (after a delete or reorder), coerce
   // it to `narrow` — first-step add is semantically equivalent to narrow but
-  // would read oddly in the UI.
+  // would read oddly in the UI. A leading Household Members step stays `add`:
+  // it matches everyone until a step moves above it, then fills as usual.
   const coerceFirstStep = (s: Step[]): Step[] => {
-    if (s[0]?.verb !== "add") return s;
+    if (s[0]?.verb !== "add" || s[0].filter.kind === "household") return s;
     return [{ ...s[0], verb: "narrow" }, ...s.slice(1)];
   };
 

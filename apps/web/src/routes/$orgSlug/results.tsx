@@ -337,10 +337,15 @@ function ResultsIndex() {
   // No canvass leaves here: outcomes/responses are this page's outputs,
   // and conditioning on them reads circular. Targeting-time use stays in
   // the segment editor (reachable via a segment reference if truly needed).
+  // No Household Members either: these filters narrow, and it only adds.
   const addableSections = sections
     .map((section) =>
       section.filter(
-        (d) => d.kind !== "all" && d.kind !== "canvass-outcome" && d.kind !== "canvass-response",
+        (d) =>
+          d.kind !== "all" &&
+          d.kind !== "canvass-outcome" &&
+          d.kind !== "canvass-response" &&
+          d.kind !== "household",
       ),
     )
     .filter((section) => section.length > 0);

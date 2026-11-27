@@ -142,6 +142,14 @@ export type NestedFilter = {
   criteria: Criteria;
 };
 
+// Household Members: under `add`, everyone sharing a door (or building) with
+// the running set.
+export type HouseholdFilter = {
+  kind: "household";
+  key: "household";
+  building: boolean;
+};
+
 export type Filter =
   | AllFilter
   | EnumFilter
@@ -158,7 +166,8 @@ export type Filter =
   | CanvassOutcomeFilter
   | CanvassResponseFilter
   | SegmentFilter
-  | NestedFilter;
+  | NestedFilter
+  | HouseholdFilter;
 
 // Criteria — ordered sequence of steps with verbs.
 export type Verb = "add" | "narrow" | "remove";
@@ -194,7 +203,8 @@ export type FilterDef =
       values: ReadonlyArray<{ value: string; label?: string }>;
     }
   | { kind: "canvass-response"; key: "canvass_response"; label: string }
-  | { kind: "segment"; key: "segment"; label: string };
+  | { kind: "segment"; key: "segment"; label: string }
+  | { kind: "household"; key: "household"; label: string };
 
 // System filters are dataset-independent — they match everyone, read
 // canvass_events, or reference another segment, so they live outside the
@@ -227,6 +237,8 @@ export const SYSTEM_BOTTOM_SECTIONS: ReadonlyArray<ReadonlyArray<FilterDef>> = [
     },
     { kind: "canvass-response", key: "canvass_response", label: "Canvass Response" },
   ],
+  // Add the running set's households.
+  [{ kind: "household", key: "household", label: "Household Members" }],
   // Composite — reference another segment by id.
   [{ kind: "segment", key: "segment", label: "Segment" }],
 ];
@@ -256,6 +268,7 @@ export function emptyFilterFor(def: FilterDef): Filter {
   if (def.kind === "canvass-response")
     return { kind: "canvass-response", key: "canvass_response", questionId: null, optionIds: [] };
   if (def.kind === "segment") return { kind: "segment", key: "segment", segmentId: null };
+  if (def.kind === "household") return { kind: "household", key: "household", building: false };
   if (def.kind === "voting-history-detail")
     return { kind: "voting-history-detail", key: def.key, mode: "any", elections: [] };
   // Voting history count default: "voted in 1+ recent primaries" (single prime).
@@ -290,6 +303,7 @@ export function isActiveFilter(f: Filter): boolean {
   if (f.kind === "canvass-outcome") return f.outcomes.length > 0;
   if (f.kind === "canvass-response") return f.questionId != null && f.optionIds.length > 0;
   if (f.kind === "segment") return f.segmentId != null;
+  if (f.kind === "household") return true;
   if (f.kind === "nested") return f.criteria.steps.length > 0;
   if (f.kind === "voting-history-detail") return f.elections.length > 0;
   // voting-history-count: active when window and count are non-degenerate.

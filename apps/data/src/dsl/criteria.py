@@ -195,6 +195,14 @@ class SegmentFilter(BaseModel):
     segment_id: str | None = Field(default=None, validation_alias="segmentId")
 
 
+class HouseholdFilter(BaseModel):
+    """Household Members: under ``add``, everyone sharing a door with the
+    running set, or a building when ``building`` is set."""
+
+    kind: Literal["household"]
+    building: bool = False
+
+
 Filter = Annotated[
     AllFilter
     | EnumFilter
@@ -212,7 +220,8 @@ Filter = Annotated[
     | CanvassResponseFilter
     | PersonIdSetFilter
     | NestedFilter
-    | SegmentFilter,
+    | SegmentFilter
+    | HouseholdFilter,
     Field(discriminator="kind"),
 ]
 

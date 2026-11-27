@@ -531,9 +531,8 @@ async def persons_count_cascade(req: _PersonsCountCascadeRequest):
     def work(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         version, catalog = query_context(conn, req.org_slug)
         criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
-        persons_table = resolve("{persons_geocoded}", version.schema)
         params: list = []
-        sql = cascade_sql(catalog, criteria, persons_table, params)
+        sql = resolve(cascade_sql(catalog, criteria, "{persons_geocoded}", params), version.schema)
         with timed("query"):
             row = conn.execute(sql, params).fetchone()
         counts = list(row)
@@ -924,7 +923,12 @@ async def progress_targets(req: _ProgressTargetsRequest):
                     Criteria.model_validate(json.loads(criteria_json)), conn, settings, req.org_slug
                 )
                 where_params: list = []
-                where = criteria_to_where(catalog, criteria, None, where_params)
+                # The WHERE can name {persons_geocoded} (Household Members); this
+                # SQL uses a resolved table, so resolve the WHERE on its own.
+                where = resolve(
+                    criteria_to_where(catalog, criteria, None, where_params),
+                    version.schema,
+                )
                 # A zone group has one key group; trust the first row's.
                 key_group = zones[0][3]
                 expr = boundary_key_expr_for(catalog, key_group)
@@ -978,7 +982,10 @@ async def results_aggregate(req: _ResultsAggregateRequest):
         attach_operational_postgres(conn, settings)
         criteria = resolve_criteria(req.criteria, conn, settings, req.org_slug)
         where_params: list = []
-        where = criteria_to_where(catalog, criteria, None, where_params)
+        where = resolve(
+            criteria_to_where(catalog, criteria, None, where_params),
+            version.schema,
+        )
         persons = resolve("{persons_geocoded}", version.schema)
 
         scope = event_scope(req.org_slug, req.campaign_ids, req.start, req.end, req.day, req.tz)
