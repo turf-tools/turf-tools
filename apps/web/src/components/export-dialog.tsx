@@ -13,12 +13,8 @@ import {
 
 export type ExportChoice = { rows: ExportRows; format: ExportFormat; columns: string[] };
 
-// Round to 2 significant figures for a friendlier display.
-function approxCount(n: number): string {
-  if (n < 1000) return n.toLocaleString();
-  const factor = 10 ** (Math.floor(Math.log10(n)) - 1);
-  return (Math.round(n / factor) * factor).toLocaleString();
-}
+// The file is written in full before the download starts, so big ones pause.
+const LARGE_EXPORT_ROWS = 100_000;
 
 const CHIP = "aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground";
 
@@ -165,8 +161,11 @@ export function ExportDialog({
                 {counts == null
                   ? "\u00a0"
                   : rows === "people"
-                    ? `Exporting ~${approxCount(counts.people)} people.`
-                    : `Exporting ~${approxCount(counts.households)} households of ~${approxCount(counts.people)} people.`}
+                    ? `Exporting ${counts.people.toLocaleString()} people.`
+                    : `Exporting ${counts.households.toLocaleString()} households of ${counts.people.toLocaleString()} people.`}
+                {count != null && count > LARGE_EXPORT_ROWS
+                  ? " Large exports can take a moment to start."
+                  : null}
               </span>
             </Field>
             <Field label="Format">
@@ -180,7 +179,9 @@ export function ExportDialog({
                 onChange={setFormat}
               />
               {excelTooBig ? (
-                <span className="text-muted-foreground italic">Excel only supports ~1M rows.</span>
+                <span className="text-muted-foreground italic">
+                  Excel only supports {EXCEL_MAX_ROWS.toLocaleString()} rows.
+                </span>
               ) : null}
             </Field>
             <Field label={`Columns (${picked.length})`}>
