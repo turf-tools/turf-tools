@@ -32,7 +32,6 @@ const CORE_COLUMNS: ExportColumn[] = [
 
 const HOUSEHOLD_COLUMNS: ExportColumn[] = [
   { key: "household_name", label: "Household Name" },
-  { key: "person_count", label: "People" },
   { key: "address_line_1", label: "Address" },
   { key: "address_line_2", label: "Unit" },
   { key: "city", label: "City" },

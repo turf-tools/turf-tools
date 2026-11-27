@@ -90,20 +90,21 @@ def test_columns_outside_the_row_type_are_rejected() -> None:
 
 def test_household_names_follow_who_lives_there() -> None:
     conn = _conn()
-    rows = _run(conn, "households", ["household_name", "person_count", "address_line_2", "zip5"])
+    rows = _run(conn, "households", ["household_name", "address_line_2", "zip5"])
     assert rows == [
-        ("ADA B LOVELACE", 1, None, "10001"),
-        ("JANE & JOHN SMITH", 2, "3B", "10001"),
-        ("THE NG FAMILY", 3, None, "10002"),
-        ("DEE RAY & EVE CHO", 2, None, "10002"),
-        ("OUR FRIENDS AT", 3, None, "10002"),
+        ("ADA B LOVELACE", None, "10001"),
+        ("JANE & JOHN SMITH", "3B", "10001"),
+        ("THE NG FAMILY", None, "10002"),
+        ("DEE RAY & EVE CHO", None, "10002"),
+        ("OUR FRIENDS AT", None, "10002"),
     ]
 
 
 def test_households_count_only_segment_members() -> None:
     conn = _conn()
-    rows = _run(conn, "households", ["household_name", "person_count"], "WHERE enrollment = ?", ["democratic"])
-    assert ("JANE SMITH", 1) in rows
+    rows = _run(conn, "households", ["household_name"], "WHERE enrollment = ?", ["democratic"])
+    # John (republican) is at Jane's door but not in the segment.
+    assert ("JANE SMITH",) in rows
 
 
 def test_household_default_columns_and_missing_unit_column() -> None:
@@ -117,7 +118,7 @@ def test_absent_optional_columns_are_dropped_not_rejected() -> None:
     conn.execute("ALTER TABLE persons DROP COLUMN middle_name")
     assert len(_run(conn, "people", ["external_id", "middle_name"])[0]) == 1
     conn.execute("ALTER TABLE persons DROP COLUMN address_line_2")
-    assert len(_run(conn, "households", ["person_count", "address_line_2"])[0]) == 1
+    assert len(_run(conn, "households", ["household_name", "address_line_2"])[0]) == 1
 
 
 def test_names_export_in_capitals_and_group_whatever_their_case() -> None:

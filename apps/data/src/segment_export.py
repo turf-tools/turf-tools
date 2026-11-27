@@ -2,8 +2,8 @@
 
 People columns are the core `EXPORT_COLUMNS` plus the dataset's own manifest
 fields, limited to what the version's `persons_geocoded` actually has.
-Household columns describe the door, with a household name and head count in
-place of per-person fields. Names export in capitals, like the addresses, so
+Household columns describe the door, with a household name in place of
+per-person fields. Names export in capitals, like the addresses, so
 every voter file's export reads the same (USPS prefers capitals on every line
 of an address block). The returned SQL names `{persons_geocoded}`; the caller
 resolves it.
@@ -25,7 +25,6 @@ _LIST_KINDS = {"voting-history-count", "voting-history-detail"}
 
 HOUSEHOLD_COLUMNS = [
     "household_name",
-    "person_count",
     "address_line_1",
     "address_line_2",
     "city",
@@ -97,7 +96,6 @@ def _households_sql(columns: list[str], where: str, persons_columns: set[str]) -
             WHEN count(*) = 2 THEN string_agg(full_name, ' & ' ORDER BY full_name)
             ELSE 'OUR FRIENDS AT'
         END""",
-        "person_count": "count(*)",
         "address_line_1": "min(address_line_1)",
         "address_line_2": "min(address_line_2)",
         "city": "min(city)",
