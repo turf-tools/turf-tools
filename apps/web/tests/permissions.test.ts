@@ -1,5 +1,5 @@
 import { test, expect } from "vite-plus/test";
-import { canManage, hasPermission, PERMISSIONS } from "../src/lib/permissions";
+import { canManage, hasPermission, PERMISSIONS, ROLE_NAMES } from "../src/lib/permissions";
 
 test("owner and admin hold every permission", () => {
   for (const p of PERMISSIONS) {
@@ -15,10 +15,18 @@ test("turf viewer holds only what the turfs board calls", () => {
   }
 });
 
-test("campaign editor holds everything except users and datasets", () => {
+test("campaign editor holds everything except users, datasets and person exports", () => {
   for (const p of PERMISSIONS) {
-    const denied = p === "users.manage" || p === "datasets.manage";
+    const denied = p === "users.manage" || p === "datasets.manage" || p === "persons.export";
     expect(hasPermission("campaign_editor", p)).toBe(!denied);
+  }
+});
+
+test("only owners and admins export people; report exports follow reports.read", () => {
+  for (const role of ROLE_NAMES) {
+    const ownerOrAdmin = role === "owner" || role === "admin";
+    expect(hasPermission(role, "persons.export")).toBe(ownerOrAdmin);
+    expect(hasPermission(role, "reports.export")).toBe(hasPermission(role, "reports.read"));
   }
 });
 

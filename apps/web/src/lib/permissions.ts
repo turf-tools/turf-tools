@@ -4,7 +4,8 @@
 
 // Read/write pairs per editing section; scripts covers the Questions tab too.
 // turfs.cut is the cutter, walks are sign-outs on the board, persons.read is
-// any person-level data (lookup, samples, exports, map points).
+// any person-level data on screen (lookup, samples, map points), and the
+// *.export pair are bulk downloads (segment exports, report exports).
 export const PERMISSIONS = [
   "datasets.read",
   "datasets.manage",
@@ -22,9 +23,11 @@ export const PERMISSIONS = [
   "walks.read",
   "walks.write",
   "persons.read",
+  "persons.export",
   "progress.read",
   "results.read",
   "reports.read",
+  "reports.export",
   "users.manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
@@ -41,7 +44,9 @@ export const ROLES = {
   campaign_editor: {
     rank: 1,
     label: "Campaign editor",
-    permissions: PERMISSIONS.filter((p) => p !== "users.manage" && p !== "datasets.manage"),
+    permissions: PERMISSIONS.filter(
+      (p) => p !== "users.manage" && p !== "datasets.manage" && p !== "persons.export",
+    ),
   },
   analytics_viewer: {
     rank: 1,
@@ -50,6 +55,7 @@ export const ROLES = {
       "progress.read",
       "results.read",
       "reports.read",
+      "reports.export",
       "datasets.read",
       "campaigns.read",
       "segments.read",

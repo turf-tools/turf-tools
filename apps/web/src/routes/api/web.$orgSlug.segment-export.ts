@@ -10,6 +10,9 @@ import { segments } from "@turf-tools/db/schema";
 import { dataFetch, passthrough } from "~/lib/server/data-proxy";
 import { buildPermittedContext } from "~/rpc/context";
 
+const EXTENSIONS = { csv: "csv", excel: "xlsx", parquet: "parquet" } as const;
+type ExportFormat = keyof typeof EXTENSIONS;
+
 export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
   server: {
     handlers: {
@@ -20,22 +23,23 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
 
         let context: Awaited<ReturnType<typeof buildPermittedContext>>;
         try {
-          context = await buildPermittedContext(db, request.headers, orgSlug, "persons.read");
+          context = await buildPermittedContext(db, request.headers, orgSlug, "persons.export");
         } catch {
           return new Response("Unauthorized", { status: 401 });
         }
 
         const segmentId = url.searchParams.get("segmentId");
-
-        const format = url.searchParams.get("format");
-        const layout = url.searchParams.get("layout");
-        const effectiveFormat = format === "parquet" || format === "excel" ? format : "csv";
-        const formatExtension = effectiveFormat === "excel" ? "xlsx" : effectiveFormat;
-        const effectiveLayout = layout === "directMail" ? layout : "default";
-        const householding =
-          effectiveLayout === "directMail" ? url.searchParams.get("householding") : undefined;
-
-        if (!segmentId) return new Response("Bad Request", { status: 400 });
+        const formatParam = url.searchParams.get("format") ?? "csv";
+        const rows = url.searchParams.get("rows") ?? "people";
+        // Comma-separated; absent means the row type's default columns.
+        const columns = url.searchParams.get("columns")?.split(",").filter(Boolean);
+        if (
+          !segmentId ||
+          !Object.hasOwn(EXTENSIONS, formatParam) ||
+          (rows !== "people" && rows !== "households")
+        )
+          return new Response("Bad Request", { status: 400 });
+        const format = formatParam as ExportFormat;
 
         const [seg] = await db
           .select({ name: segments.name, criteria: segments.criteria })
@@ -54,9 +58,9 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
           body: JSON.stringify({
             criteria: seg.criteria ?? { steps: [] },
             orgSlug: context.orgSlug,
-            format: effectiveFormat,
-            layout: effectiveLayout,
-            householding,
+            format,
+            rows,
+            columns,
           }),
         });
         if (!upstream.ok) {
@@ -70,15 +74,17 @@ export const Route = createFileRoute("/api/web/$orgSlug/segment-export")({
             userId: context.user.id,
             orgId: context.organizationId,
             segmentId,
-            format: effectiveFormat,
-            rows: upstream.headers.get("X-Export-Rows"),
+            format,
+            rows,
+            columns,
+            rowCount: upstream.headers.get("X-Export-Rows"),
           }),
         );
 
         const date = new Date().toISOString().slice(0, 10);
         const safeName = (seg.name || "segment").replace(/[^\w.-]+/g, "_").slice(0, 80);
         return passthrough(upstream, {
-          "Content-Disposition": `attachment; filename="${safeName}-${date}.${formatExtension}"`,
+          "Content-Disposition": `attachment; filename="${safeName}-${date}.${EXTENSIONS[format]}"`,
         });
       },
     },

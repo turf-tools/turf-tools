@@ -32,6 +32,8 @@ const ICONS = [
   "door-closed",
   "download",
   "eraser",
+  "eye",
+  "eye-off",
   "file-text",
   "files",
   "funnel",

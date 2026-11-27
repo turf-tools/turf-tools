@@ -40,7 +40,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # reach out to the extension repository on first query.
 RUN python -c "\
 import duckdb; c = duckdb.connect();\
-[c.install_extension(e) for e in ('ducklake', 'httpfs', 'postgres', 'spatial')]" \
+[c.install_extension(e) for e in ('ducklake', 'excel', 'httpfs', 'postgres', 'spatial')]" \
     && cp -r /root/.duckdb /app/.duckdb
 ENV HOME=/app
 

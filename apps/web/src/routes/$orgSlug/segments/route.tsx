@@ -1,7 +1,7 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
@@ -12,19 +12,14 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "~/components/dropdown-menu";
 import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
+import { ExportDialog, type ExportChoice } from "~/components/export-dialog";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail, useShowArchived } from "~/components/rail";
+import { exportColumns, type ExportRows } from "~/lib/export-columns";
 import type { Criteria } from "~/lib/filters";
 import { customFieldsQuery } from "~/lib/queries/custom-fields";
 import { electionsQuery } from "~/lib/queries/elections";
@@ -38,20 +33,9 @@ import { useFadeOnce } from "~/lib/use-fade-once";
 import { useHotkey } from "~/lib/use-hotkey";
 import { cn, nextUntitledName } from "~/lib/utils";
 import { client } from "~/rpc/client";
-import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
-import { Toggle } from "~/components/toggle";
 
 function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-const EXPORT_CONFIRM_THRESHOLD = 100_000;
-
-// Round to 2 significant figures for a friendlier display.
-function approxCount(n: number): string {
-  if (n < 1000) return n.toLocaleString();
-  const factor = 10 ** (Math.floor(Math.log10(n)) - 1);
-  return (Math.round(n / factor) * factor).toLocaleString();
 }
 
 export const Route = createFileRoute("/$orgSlug/segments")({
@@ -68,7 +52,7 @@ export const Route = createFileRoute("/$orgSlug/segments")({
   component: SegmentsLayout,
 });
 
-async function SegmentsLayout() {
+function SegmentsLayout() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { orgSlug } = Route.useParams();
@@ -88,28 +72,46 @@ async function SegmentsLayout() {
   const goToSegment = (id: string) =>
     navigate({ to: "/$orgSlug/segments/$segmentId", params: { orgSlug, segmentId: id } });
 
-  const downloadExport = (exportRequest: {
-    format: string;
-    layout: string;
-    householding?: boolean;
-  }) => {
+  const exportCols = useMemo(() => exportColumns(manifest?.manifest ?? null), [manifest]);
+  const [exportOpen, setExportOpen] = useState(false);
+  // Kept apart from the open flag so the count stays put during the close
+  // animation instead of flashing empty.
+  const [exportCounts, setExportCounts] = useState<Record<ExportRows, number> | null>(null);
+
+  const countQuery = (detail: { criteria: unknown } | null | undefined) =>
+    segmentCountsQuery((detail?.criteria ?? { steps: [] }) as Criteria, segments);
+
+  // The dialog shows live person and door counts. The editor has usually just
+  // computed them, so cached counts show on open and the fetch only refreshes.
+  const openExport = async () => {
     if (!activeSegmentId) return;
-    // Content-Disposition on the /api route makes the browser download rather
-    // than navigate, so the SPA stays put.
-    window.location.href =
-      `/api/web/${orgSlug}/segment-export?segmentId=${activeSegmentId}&format=${exportRequest.format}&layout=${exportRequest.layout}` +
-      (exportRequest.householding !== undefined
-        ? `&householding=${exportRequest.householding}`
-        : "");
+    const cachedDetail = queryClient.getQueryData(segmentDetailQuery(activeSegmentId).queryKey);
+    const cached = cachedDetail
+      ? queryClient.getQueryData(countQuery(cachedDetail).queryKey)
+      : undefined;
+    setExportCounts(cached ? { people: cached.personCount, households: cached.doorCount } : null);
+    setExportOpen(true);
+    try {
+      const detail = await queryClient.fetchQuery(segmentDetailQuery(activeSegmentId));
+      const { personCount, doorCount } = await queryClient.fetchQuery(countQuery(detail));
+      setExportCounts({ people: personCount, households: doorCount });
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : "Couldn't count this segment.");
+    }
   };
 
-  // Split open-boolean from the value so the confirm body keeps its count
-  // during the close animation instead of flashing empty.
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
-
-  // Fetch the live person count (a cache hit while the editor is open) to gate
-  // large exports behind a confirm; small ones download straight away — the
-  // browser's own download UI is the only feedback needed.
+  const downloadExport = ({ rows, format, columns }: ExportChoice) => {
+    if (!activeSegmentId) return;
+    const params = new URLSearchParams({
+      segmentId: activeSegmentId,
+      rows,
+      format,
+      columns: columns.join(","),
+    });
+    // Content-Disposition on the /api route makes the browser download rather
+    // than navigate, so the SPA stays put.
+    window.location.href = `/api/web/${orgSlug}/segment-export?${params.toString()}`;
+  };
 
   const renameSegment = useDialogMutation({
     mutationFn: (input: { segmentId: string; name: string }) => client.segments.rename(input),
@@ -324,13 +326,6 @@ async function SegmentsLayout() {
     );
   }
 
-  const detail = activeSegment
-    ? await queryClient.fetchQuery(segmentDetailQuery(activeSegment.segmentId))
-    : undefined;
-  const { personCount } = await queryClient.fetchQuery(
-    segmentCountsQuery((detail?.criteria ?? { steps: [] }) as Criteria, segments),
-  );
-
   return (
     <>
       <div className={cn("flex h-[calc(100vh-3.5rem)]", shouldFade)}>
@@ -373,14 +368,12 @@ async function SegmentsLayout() {
 
         <EditorPage>
           <EditorHeader title="Segment Editor" subtitle={activeSegment?.name}>
-            <Button
-              variant="outline"
-              onClick={() => setExportDialogOpen(true)}
-              disabled={!activeSegment}
-            >
-              <Icon name="download" />
-              Export
-            </Button>
+            {hasPermission(role, "persons.export") ? (
+              <Button variant="outline" onClick={openExport} disabled={!activeSegment}>
+                <Icon name="download" />
+                Export
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
               <Icon name="pencil" />
               Rename
@@ -422,18 +415,11 @@ async function SegmentsLayout() {
       </div>
 
       <ExportDialog
-        open={exportDialogOpen}
-        formatOptions={[
-          { value: "csv", label: "CSV" },
-          { value: "excel", label: "Excel" },
-          { value: "parquet", label: "Parquet" },
-        ]}
-        layoutOptions={[
-          { value: "default", label: "Default" },
-          { value: "directMail", label: "Direct Mail" },
-        ]}
-        onSubmit={downloadExport}
-        personCount={personCount}
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        columns={exportCols}
+        counts={exportCounts}
+        onExport={downloadExport}
       />
 
       <SaveAsDialog
@@ -540,165 +526,6 @@ function SaveAsDialog({
             <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!valid} loading={pending}>
               Clone
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-type SelectOption = { value: string; label: string };
-
-function ConfigField({
-  label,
-  placeholder,
-  value,
-  options,
-  onChange,
-  noneLabel,
-}: {
-  label: string;
-  placeholder: string;
-  value: string | null;
-  options: ReadonlyArray<SelectOption>;
-  onChange: (value: string) => void;
-  // When set, renders an explicit "none" item at the top of the list
-  // that commits `null`. The trigger displays this label when value is
-  // null (instead of the placeholder).
-  noneLabel?: string;
-}) {
-  const dd = useDeferredRadioDropdown({ onCommit: onChange });
-  const current = options.find((o) => o.value === value);
-  const triggerLabel = current
-    ? current.label
-    : value === null && noneLabel
-      ? noneLabel
-      : placeholder;
-  return (
-    <div className="flex flex-col gap-1.5">
-      {label ? <label className="text-sm text-muted-foreground">{label}</label> : null}
-      <DropdownMenu {...dd.menu}>
-        <DropdownMenuTrigger
-          className={cn(
-            "flex w-full items-center justify-between gap-1 rounded-md border border-border bg-background px-2 py-1 text-sm",
-            "enabled:hover:bg-muted",
-          )}
-        >
-          <span className="truncate">{triggerLabel}</span>
-          <Icon name="chevron-down" className="size-3.5 shrink-0" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-[var(--anchor-width)]">
-          <DropdownMenuRadioGroup {...dd.radio} value={value ?? ""}>
-            {noneLabel ? <DropdownMenuRadioItem value="">{noneLabel}</DropdownMenuRadioItem> : null}
-            {options.map((o) => (
-              <DropdownMenuRadioItem key={o.value} value={o.value}>
-                {o.label}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
-function ExportDialog({
-  open,
-  formatOptions,
-  layoutOptions,
-  personCount,
-  onSubmit,
-}: {
-  open: boolean;
-  formatOptions: ReadonlyArray<SelectOption>;
-  layoutOptions: ReadonlyArray<SelectOption>;
-  personCount?: number;
-  onSubmit: (post: { format: string; layout: string; householding?: boolean }) => void;
-}) {
-  const [format, setFormat] = useState("csv");
-  const [layout, setLayout] = useState("default");
-  const [householding, setHouseholding] = useState(true);
-  const [confirmed, setConfirmed] = useState(false);
-
-  const pending = personCount === undefined;
-  const needsConfirm = !pending && personCount > EXPORT_CONFIRM_THRESHOLD;
-  const confirmToggle = needsConfirm ? (
-    <>
-      <div>
-        {"Please confirm your export of"}
-        <span className="font-bold text-foreground">~{approxCount(personCount)}</span>
-        {" people. It will begin downloading a large file."}
-      </div>
-      <Toggle
-        key={"exportConfirm"}
-        size="sm"
-        variant="outline"
-        pressed={confirmed}
-        onPressedChange={() => setConfirmed(!confirmed)}
-        className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
-      >
-        Confirm
-      </Toggle>
-    </>
-  ) : (
-    <></>
-  );
-
-  const householdingToggle =
-    layout === "directMail" ? (
-      <div className={"flex justify-between"}>
-        Roll up voters by household?
-        <input
-          type={"checkbox"}
-          checked={householding}
-          onChange={(e) => setHouseholding(e.target.checked)}
-        />
-      </div>
-    ) : (
-      <></>
-    );
-
-  return (
-    <Dialog open={open} onOpenChange={() => {}}>
-      <DialogContent>
-        <DialogTitle>Export segment</DialogTitle>
-        <DialogDescription>
-          Choose a file format and the layout of the data for exporting your segment.
-        </DialogDescription>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            // Segment and script have no "none" option — null only means
-            // the fields seeded before the campaign loaded.
-            onSubmit({ format, layout, householding });
-          }}
-          className="mt-2 flex flex-col gap-3"
-        >
-          <ConfigField
-            label="File format"
-            placeholder="Pick a file format…"
-            value={format}
-            options={formatOptions}
-            onChange={setFormat}
-          />
-          <ConfigField
-            label="Layout"
-            placeholder="Pick a layout…"
-            value={layout}
-            options={layoutOptions}
-            onChange={setLayout}
-          />
-          {householdingToggle}
-          {confirmToggle}
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" type="button" />}>Cancel</DialogClose>
-            <Button
-              type="submit"
-              disabled={pending || (needsConfirm && !confirmed)}
-              loading={pending}
-            >
-              Export
             </Button>
           </div>
         </form>

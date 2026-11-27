@@ -7,7 +7,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -54,11 +54,11 @@ from src.duckdb import (
 from src.import_job import fail_interrupted_versions, import_dataset_version
 from src.importers.registry import importer_specs
 from src.job_runner import JobManager
-from src.models import EXPORT_COLUMNS, EXPORT_OPTIONAL, export_select_list
 from src.publish_turfs import PublishTurfsRequest, publish_turfs
 from src.quickwit import build_person_query, persons_index_id
 from src.quickwit import search as quickwit_search
 from src.reports import SPECS, build_ctx, export_copy, preview
+from src.segment_export import EXCEL_MAX_ROWS, ExportColumnError, Rows, export_sql
 from src.settings import get_settings
 from src.tables import (
     QUERYABLE_TABLES,
@@ -752,9 +752,22 @@ async def persons_count_by_key(req: _PersonsCountByKeyRequest):
 class _SegmentExportRequest(_WireBaseModel):
     criteria: Criteria = Criteria()
     org_slug: str = Field(validation_alias="orgSlug")
-    format: str = "csv"
-    layout: str = "default"
-    householding: bool | None = False
+    format: Literal["csv", "excel", "parquet"] = "csv"
+    rows: Rows = "people"
+    # None exports the row type's default columns.
+    columns: list[str] | None = None
+
+
+# format → (file suffix, COPY options, media type)
+_EXPORT_FORMATS = {
+    "csv": (".csv", "FORMAT csv, HEADER", "text/csv"),
+    "excel": (
+        ".xlsx",
+        "FORMAT xlsx, HEADER true",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ),
+    "parquet": (".parquet", "FORMAT parquet", "application/octet-stream"),
+}
 
 
 class _ZonePerimetersRequest(_WireBaseModel):
@@ -1123,110 +1136,15 @@ async def reports_canvassers(req: _ReportRequest):
 
 @app.post("/segments/export")
 async def segments_export(req: _SegmentExportRequest):
-    """Stream a segment's matched persons as CSV or Parquet.
+    """Stream a segment's matched persons as CSV, Excel or Parquet.
 
-    Resolves the criteria (same path as /persons/count), writes the canonical
-    columns to a temp file via DuckDB COPY, and returns it as a download. A
-    background task removes the temp file after the response is sent.
-    `X-Export-Rows` carries the row count so the caller can log it.
+    Resolves the criteria (same path as /persons/count), writes the requested
+    columns — one row per person, or per household — to a temp file via
+    DuckDB COPY, and returns it as a download. A background task removes the
+    temp file after the response is sent. `X-Export-Rows` carries the row
+    count so the caller can log it.
     """
-    if req.format not in ("csv", "excel", "parquet"):
-        raise HTTPException(status_code=400, detail="format must be 'csv' or 'excel' or 'parquet'.")
-
-    if req.format == "excel":
-        suffix = ".xlsx"
-    elif req.format == "parquet":
-        suffix = ".parquet"
-    else:
-        suffix = ".csv"
-
-    def default_sql(schema: str, persons_columns: set[str], where: str) -> str:
-        # Skip only optional-and-absent; a missing required column stays in the
-        # SELECT and fails loudly at bind time.
-
-        columns = [c for c in EXPORT_COLUMNS if c in persons_columns or c not in EXPORT_OPTIONAL]
-        select_cols = export_select_list(columns)
-        
-        return resolve(f"SELECT {select_cols} FROM {{persons_geocoded}} {where}", schema)
-
-    def direct_mail_sql(schema: str, persons_columns: set[str], where: str, householded: bool = True) -> str:
-        cte_sql = f"""
-            SELECT
-                first_name,
-                {"middle_name" if "middle_name" in persons_columns else "NULL AS middle_name"},
-                last_name,
-                {"name_suffix" if "name_suffix" in persons_columns else "NULL AS name_suffix"},
-                city,
-                state,
-                zip5,
-                {"zip4" if "zip4" in persons_columns else "'' AS zip4"},
-                address_line_1 {" || ' ' || address_line_2" if "address_line_2" in persons_columns else ""} AS address
-            FROM {{persons_geocoded}}
-            {where}
-        """
-
-        if householded:
-            return resolve(
-                f"""
-                WITH targets AS ({cte_sql}),
-                household_stats AS (
-                    SELECT
-                        address,
-                        city,
-                        state,
-                        COUNT(DISTINCT last_name) AS num_families,
-                        COUNT(*) AS num_persons
-                    FROM targets
-                    GROUP BY address, city, state
-                )
-                SELECT
-                    CASE
-                        WHEN MAX(num_families) = 1 THEN
-                            CASE
-                                WHEN MAX(num_persons) = 1 THEN CONCAT_WS(
-                                    ' ', MAX(first_name), MAX(middle_name), MAX(last_name), MAX(name_suffix)
-                                )
-                                WHEN MAX(num_persons) = 2 THEN STRING_AGG(first_name, ' & ') || ' ' || MAX(last_name)
-                                ELSE 'The ' || MAX(last_name) || ' Family'
-                            END
-                        ELSE
-                            CASE
-                                WHEN MAX(num_persons) = 2 THEN STRING_AGG(
-                                    CONCAT_WS(' ', first_name, middle_name, last_name, name_suffix), ' & '
-                                )
-                                ELSE 'Our Friends At'
-                            END
-                    END AS EnvName,
-                    t.city AS City,
-                    t.state AS State,
-                    MAX(zip5) AS Zip5,
-                    MAX(zip4) AS Zip4,
-                    t.address AS Address
-                FROM targets t
-                JOIN household_stats hs ON (
-                    hs.address = t.address AND
-                    hs.city = t.city AND
-                    hs.state = t.state
-                )
-                GROUP BY t.address, t.city, t.state
-            """,
-                schema,
-            )
-        else:
-            return resolve(
-                f"""
-                WITH targets AS ({cte_sql})
-                SELECT
-                    CONCAT_WS(' ', first_name, middle_name, last_name, name_suffix) AS EnvName,
-                    city AS City,
-                    state AS State,
-                    zip5 AS Zip5,
-                    zip4 AS Zip4,
-                    address AS Address
-                FROM targets
-            """,
-                schema,
-            )
+    suffix, copy_opts, media = _EXPORT_FORMATS[req.format]
 
     def work(conn: duckdb.DuckDBPyConnection) -> tuple[str, int]:
         version, catalog = query_context(conn, req.org_slug)
@@ -1236,23 +1154,21 @@ async def segments_export(req: _SegmentExportRequest):
         where = criteria_to_where(catalog, criteria, None, params)
         describe_sql = f"DESCRIBE {resolve('{persons_geocoded}', schema)}"
         persons_columns = {row[0] for row in conn.execute(describe_sql).fetchall()}
-
-        if req.layout == "directMail":
-            select_sql = direct_mail_sql(schema, persons_columns, where, householded=True)
-        else:
-            select_sql = default_sql(schema, persons_columns, where)
+        try:
+            sql = export_sql(req.rows, req.columns, where, version.manifest, persons_columns)
+        except ExportColumnError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        select_sql = resolve(sql, schema)
+        if req.format == "excel":
+            (n,) = conn.execute(f"SELECT count(*) FROM ({select_sql})", params).fetchone()
+            if n > EXCEL_MAX_ROWS:
+                raise HTTPException(status_code=400, detail=f"{n:,} rows is more than an Excel sheet holds.")
 
         fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="segment-export-")
         os.close(fd)
-        # `tmp_path` is server-generated and the COPY options are from a fixed
-        # allowlist, so the only untrusted input (criteria) stays in bound `params`.
-        if req.format == "excel":
-            copy_opts = "FORMAT xlsx, HEADER true"
-        elif req.format == "parquet":
-            copy_opts = "FORMAT parquet"
-        else:
-            copy_opts = "FORMAT csv, HEADER"
-
+        # `tmp_path` is server-generated, columns are checked against the
+        # version's own, and the COPY options are from a fixed allowlist, so the
+        # only untrusted input (criteria) stays in bound `params`.
         copy_sql = f"COPY ({select_sql}) TO '{tmp_path}' ({copy_opts})"
         try:
             row = conn.execute(copy_sql, params).fetchone()
@@ -1264,7 +1180,6 @@ async def segments_export(req: _SegmentExportRequest):
 
     tmp_path, row_count = await run_query(work)
 
-    media = "application/octet-stream" if req.format == "parquet" or req.format == "excel" else "text/csv"
     return FileResponse(
         tmp_path,
         media_type=media,

@@ -27,6 +27,8 @@ export const ICON_NAMES = [
   "door-closed",
   "download",
   "eraser",
+  "eye",
+  "eye-off",
   "file-text",
   "files",
   "funnel",
