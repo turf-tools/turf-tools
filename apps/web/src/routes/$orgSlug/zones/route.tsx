@@ -528,7 +528,7 @@ function CreateZoneGroupDialog({
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Name</label>
+            <label className="text-sm text-muted-foreground">Name</label>
             <Input
               autoFocus
               value={name}
@@ -538,7 +538,7 @@ function CreateZoneGroupDialog({
             />
           </div>
           <div className="flex flex-col gap-1.5 mt-1">
-            <label className="text-sm font-medium text-foreground">Unit type</label>
+            <label className="text-sm text-muted-foreground">Unit type</label>
             <div className="flex flex-wrap gap-1.5">
               {keyGroups.map((kg) => {
                 const selected = keyGroup === kg.value;
