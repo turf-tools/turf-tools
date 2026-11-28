@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from src.importers.base import ImportFilter, importer_spec
+from src.importers.history import ELECTION_TYPES
 from src.importers.registry import IMPORTERS
 from src.models import Person
 from src.tables import table_fqn
@@ -98,6 +99,14 @@ def test_every_manifest_column_is_in_the_output(importer_cls, sample, conn) -> N
 
 
 @samples
+def test_voting_history_uses_the_shared_election_types(importer_cls, sample, conn) -> None:
+    _load(importer_cls, sample, conn)
+    people = table_fqn(SCHEMA, "persons_validated")
+    types = conn.sql(f"SELECT DISTINCT e.type FROM (SELECT unnest(voting_history) AS e FROM {people})").fetchall()
+    assert {t for (t,) in types} <= set(ELECTION_TYPES)
+
+
+@samples
 def test_filter_columns_exist_on_the_raw_table(importer_cls, sample, conn) -> None:
     _load(importer_cls, sample, conn)
     assert _columns(conn, "persons_raw") >= _filter_columns(importer_cls)
@@ -108,10 +117,15 @@ def test_filter_keeps_exactly_the_matching_rows(importer_cls, sample, conn) -> N
     _load(importer_cls, sample, conn)
     raw = table_fqn(SCHEMA, "persons_raw")
     total = conn.sql(f"SELECT count(*) FROM {raw}").fetchone()[0]
-    for column in sorted(_filter_columns(importer_cls)):
-        value, expected = conn.sql(
+    # The commonest value per column, read before any filtered load: a kept raw
+    # table stores only the rows its filter selects.
+    commonest = {
+        column: conn.sql(
             f"SELECT {column}, count(*) FROM {raw} WHERE {column} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 1"
         ).fetchone()
+        for column in sorted(_filter_columns(importer_cls))
+    }
+    for column, (value, expected) in commonest.items():
         # The sample has to vary on every filter column, or this proves nothing.
         assert expected < total, f"sample has a single value for filter column {column!r}"
 

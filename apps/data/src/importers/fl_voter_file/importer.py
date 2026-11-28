@@ -9,20 +9,14 @@ Everything below the returned `persons_validated` is the shared pipeline.
 
 from __future__ import annotations
 
-import math
 import os
 from typing import TYPE_CHECKING
 
 from src.importers.base import FilterSpec, ImportFilter, SourceSpec, check_import_inputs
 from src.importers.fl_voter_file.decode import create_empty_history, read_history, read_registration
 from src.importers.fl_voter_file.manifest import FL_MANIFEST
-from src.importers.fl_voter_file.transform import (
-    VOTES_PER_BATCH,
-    VOTING_HISTORY_TYPE,
-    fl_history_batch_query,
-    fl_transformation_query,
-    fl_votes_query,
-)
+from src.importers.fl_voter_file.transform import fl_transformation_query, fl_votes_query
+from src.importers.history import group_votes
 from src.importers.validate import validated_persons
 from src.tables import ensure_schema, table_fqn
 
@@ -71,6 +65,7 @@ class FlVoterFileImporter:
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
         filter: ImportFilter | None = None,
+        base_schema: str | None = None,
     ) -> TableRef:
         """Read the zips → transform → validate. Returns the `persons_validated`
         TableRef the shared pipeline reads from. Reports one progress step per
@@ -93,11 +88,7 @@ class FlVoterFileImporter:
         votes_fqn = table_fqn(schema, "voting_history_votes")
         conn.execute(f"CREATE OR REPLACE TABLE {votes_fqn} AS {fl_votes_query(registration_fqn, history_fqn, filter)}")
         grouped_fqn = table_fqn(schema, "voting_history_grouped")
-        conn.execute(f"CREATE OR REPLACE TABLE {grouped_fqn} (voter_id VARCHAR, voting_history {VOTING_HISTORY_TYPE})")
-        votes = conn.execute(f"SELECT count(*) FROM {votes_fqn}").fetchone()[0]
-        batches = max(1, math.ceil(votes / VOTES_PER_BATCH))
-        for batch in range(batches):
-            conn.execute(f"INSERT INTO {grouped_fqn} {fl_history_batch_query(votes_fqn, batches, batch)}")
+        group_votes(votes_fqn, grouped_fqn, conn)
         query = fl_transformation_query(registration_fqn, grouped_fqn, filter)
         conn.execute(f"CREATE OR REPLACE TABLE {table_fqn(schema, 'persons_validated')} AS {query}")
         progress.advance()

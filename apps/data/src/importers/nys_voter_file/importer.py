@@ -24,15 +24,13 @@ from src.importers.base import (
     check_import_inputs,
     redact_source,
 )
-from src.importers.nys_voter_file.decode import (
-    csv_has_header,
-    decode_raw_to_table,
-    load_tabular_to_table,
-    source_format,
-)
+from src.importers.history import VOTING_HISTORY_TYPE
+from src.importers.nys_voter_file.decode import NOT_PURGED, NYS_LAYOUT, decode_raw_to_table, source_format
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 from src.importers.nys_voter_file.transform import nys_sboe_transformation_query
 from src.importers.nys_voter_file.voting_history import parse_voting_history
+from src.importers.streams import check_source_exists
+from src.importers.tabular import csv_has_header, load_tabular_to_table
 from src.importers.validate import validated_persons
 from src.tables import ensure_schema, table_fqn
 
@@ -96,6 +94,7 @@ class NysVoterFileImporter:
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
         filter: ImportFilter | None = None,
+        base_schema: str | None = None,
     ) -> TableRef:
         """Decode/read the voter file → transform → parse voting history → validate.
         Returns the `persons_validated` TableRef the shared pipeline reads from.
@@ -111,8 +110,7 @@ class NysVoterFileImporter:
         # path fails with a clear message before any schema work. (`://` =
         # object-storage key.)
         source = os.path.expanduser(source)
-        if "://" not in source and not os.path.exists(source):
-            raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
+        check_source_exists(source)
         ensure_schema(conn, schema)
         raw_fqn = table_fqn(schema, "persons_raw")
         transformed_fqn = table_fqn(schema, "persons_transformed")
@@ -123,10 +121,10 @@ class NysVoterFileImporter:
         #    A remote source can't be checked up front the way a local path can,
         #    so this is where a bad URL surfaces.
         try:
-            if fmt == "txt" or (fmt == "csv" and not csv_has_header(source)):
+            if fmt == "txt" or (fmt == "csv" and not csv_has_header(source, NYS_LAYOUT)):
                 decode_raw_to_table(source, raw_fqn, conn)
             else:
-                load_tabular_to_table(source, fmt, raw_fqn, conn)
+                load_tabular_to_table(source, fmt, raw_fqn, conn, NYS_LAYOUT, NOT_PURGED)
         except (duckdb.Error, OSError) as exc:
             raise SourceUnreadableError(
                 f"Could not read the import source {redact_source(source)!r}. Check that it exists and is reachable."
@@ -149,9 +147,7 @@ class NysVoterFileImporter:
                 CREATE OR REPLACE TABLE {validated_fqn} AS
                 SELECT
                   * EXCLUDE (voter_history),
-                  CAST(parse_voting_history_json(voter_history)::JSON
-                       AS STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]
-                      ) AS voting_history
+                  CAST(parse_voting_history_json(voter_history)::JSON AS {VOTING_HISTORY_TYPE}) AS voting_history
                 FROM {transformed_fqn}
             """)
         finally:

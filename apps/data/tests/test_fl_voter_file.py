@@ -3,14 +3,12 @@
 
 from __future__ import annotations
 
-import zipfile
 from pathlib import Path
 
 import pytest
 
 from src.importers.base import ImportFilter, SourceUnreadableError
 from src.importers.fl_voter_file import FlVoterFileImporter
-from src.importers.fl_voter_file.decode import _HISTORY_MEMBER, _members
 from src.importers.fl_voter_file.sample_data.make_sample import PEOPLE, voter_id
 from src.tables import table_fqn
 
@@ -132,7 +130,7 @@ def test_one_entry_per_election_and_only_counted_ballots(conn) -> None:
     # B, L, P, and N aren't votes.
     assert _history(conn, 3) == []
     # Exact duplicate rows collapse; a runoff keeps its type.
-    assert _history(conn, 4) == [("2024-11-05", "general", "poll_site"), ("2026-06-02", "runoff", "poll_site")]
+    assert _history(conn, 4) == [("2024-11-05", "general", "poll_site"), ("2026-06-02", "primary_runoff", "poll_site")]
 
 
 def test_gen_and_pri_off_the_regular_dates_are_specials(conn) -> None:
@@ -175,21 +173,10 @@ def test_a_non_zip_is_rejected(conn, tmp_path) -> None:
         _load(conn, {"detail": str(not_zip)})
 
 
-def test_macos_sidecar_members_are_ignored(tmp_path) -> None:
-    path = tmp_path / "history.zip"
-    with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("DAD_H_20260101.txt", "ok\n")
-        zf.writestr("__MACOSX/._DAD_H_20260101.txt", "junk")
-        zf.writestr("._DAD_H_20260101.txt", "junk")
-    with zipfile.ZipFile(path) as zf:
-        names = [i.filename for i in _members(zf, _HISTORY_MEMBER)]
-    assert names == ["DAD_H_20260101.txt"]
-
-
 def test_history_grouped_in_batches_matches_one_pass(conn, monkeypatch) -> None:
     _load(conn)
     one_pass = _people(conn)
-    monkeypatch.setattr("src.importers.fl_voter_file.importer.VOTES_PER_BATCH", 2)
+    monkeypatch.setattr("src.importers.history.VOTES_PER_BATCH", 2)
     _load(conn)
     assert _people(conn) == one_pass
 

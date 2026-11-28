@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.importers.dedupe import one_record_per_id_sql
+from src.importers.sql import case_from_map, where_sql
 
 if TYPE_CHECKING:
     from src.importers.base import ImportFilter
@@ -66,14 +67,6 @@ NYS_ENROLLMENTS: dict[tuple[str, str | None], str] = {
     ("OTH", "WEP"): "other",
     ("OTH", "SAM"): "other",
 }
-
-
-def _case_from_map(col: str, mapping: dict[str, str], default: str | None = None) -> str:
-    """SQL CASE mapping `col`'s values via `mapping`. `default` is the label for
-    unmatched values (None → NULL)."""
-    branches = "\n            ".join(f"WHEN {col} = '{raw}' THEN '{canonical}'" for raw, canonical in mapping.items())
-    else_clause = "NULL" if default is None else f"'{default}'"
-    return f"CASE\n            {branches}\n            ELSE {else_clause}\n        END"
 
 
 def _enrollment_case_sql() -> str:
@@ -135,10 +128,7 @@ def nys_sboe_transformation_query(
             picked. The column must already be allowlisted by the importer;
             values are compared as the file's own text.
     """
-    where = ""
-    if filter and filter.values:
-        joined = ", ".join("'" + v.replace("'", "''") + "'" for v in filter.values)
-        where = f"WHERE raw.{filter.column} IN ({joined})"
+    where = where_sql(filter)
 
     enrollment_sql = _enrollment_case_sql()
 
@@ -185,10 +175,10 @@ SELECT
     raw.gender AS gender,
     {_iso_date_sql("raw.dob")} AS date_of_birth,
     {_iso_date_sql("raw.regdate")} AS registration_date,
-    {_case_from_map("raw.status", NYS_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
+    coalesce({case_from_map("raw.status", NYS_REGISTRATION_STATUSES)}, 'unknown') AS registration_status,
     {_iso_date_sql("raw.lastvoterdate")} AS last_voted_date,
     raw.countycode AS county_code,
-    {_case_from_map("raw.countycode", NYS_COUNTY_FIPS)} AS county_fips,
+    {case_from_map("raw.countycode", NYS_COUNTY_FIPS)} AS county_fips,
     -- `precinct` is the smallest political unit. NYC uses the
     -- "AA-EEE" assembly+election composite; a bare ED is
     -- meaningless across assembly districts.

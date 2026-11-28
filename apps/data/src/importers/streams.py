@@ -1,9 +1,12 @@
-"""Stream a source's bytes into a DuckDB table without staging it on disk.
+"""Read import sources (local paths, links, zips) and stream their bytes into a
+DuckDB table without staging them on disk.
 
 A state distribution can be several GB and arrive as a URL, a zip, or a text
 encoding DuckDB doesn't read. `stream_text_to_table` decodes the bytes to UTF-8
 on a feeder thread and hands them to DuckDB through a FIFO, so one low-memory
 `CREATE TABLE ... AS SELECT ... FROM read_csv(<fifo>)` reads the whole thing.
+Zip members are found by name, skipping macOS Finder metadata, and streamed one
+after another (`zip_chunks`) or one at a time (`zip_member_chunks`).
 """
 
 from __future__ import annotations
@@ -13,15 +16,24 @@ import os
 import shutil
 import tempfile
 import threading
+import zipfile
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO
+from urllib.parse import urlsplit
+
+from src.importers.base import SourceUnreadableError, redact_source
 
 if TYPE_CHECKING:
-    import zipfile
+    import re
     from collections.abc import Callable, Iterator
 
     import duckdb
 
 CHUNK_BYTES = 1 << 22  # 4 MiB
+
+# Trimmed from every field. Space is the usual padding; tabs and bare CR/LF
+# survive in malformed exports.
+TRIM_CHARS = " \t\r\n"
 
 # C1 control characters (U+0080..U+009F) show up as stray bytes in free-form
 # fields of some state exports. Never meaningful data; each maps to None to
@@ -46,6 +58,34 @@ def open_source(path: str) -> BinaryIO:
     return open(path, "rb")  # noqa: SIM115 — the caller owns the handle
 
 
+def source_extension(source: str) -> str:
+    """The source's lowercased extension (`.csv`), read off the URL path so a
+    presigned query string doesn't hide it."""
+    return PurePosixPath(urlsplit(source).path).suffix.lower()
+
+
+def check_source_exists(source: str) -> None:
+    """Fail with a readable message when a local path doesn't exist. A link
+    can't be checked up front; it fails where it's read."""
+    if "://" not in source and not os.path.exists(source):
+        raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
+
+
+def source_chunks(source: str) -> Iterator[bytes]:
+    """The source's bytes in `CHUNK_BYTES` pieces."""
+    with open_source(source) as src:
+        yield from read_chunks(src)
+
+
+def first_line(source: str, member: str | None = None) -> bytes:
+    """The first line of `source`, or of the zip member named `member` in it."""
+    with open_source(source) as src:
+        if member is None:
+            return src.readline()
+        with zipfile.ZipFile(src) as zf, zf.open(member) as m:
+            return m.readline()
+
+
 def is_zip_payload_member(info: zipfile.ZipInfo) -> bool:
     """True for real file members — skips directories and macOS Finder junk.
 
@@ -59,6 +99,53 @@ def is_zip_payload_member(info: zipfile.ZipInfo) -> bool:
     if any(p == "__MACOSX" or p.startswith("._") for p in parts):
         return False
     return not base.startswith(".")
+
+
+def zip_members(zf: zipfile.ZipFile, pattern: re.Pattern[str]) -> list[zipfile.ZipInfo]:
+    """The zip's payload files whose base name matches `pattern`, in name order."""
+    found = [i for i in zf.infolist() if is_zip_payload_member(i) and pattern.match(i.filename.rsplit("/", 1)[-1])]
+    return sorted(found, key=lambda i: i.filename)
+
+
+def check_zip(source: str, pattern: re.Pattern[str], expected: str) -> list[str]:
+    """The names of `source`'s members matching `pattern`. Fails with a readable
+    message unless `source` is a zip holding at least one (`expected` names
+    them, e.g. "voting history (CNT_H_YYYYMMDD.txt)")."""
+    check_source_exists(source)
+    try:
+        with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
+            names = [i.filename for i in zip_members(zf, pattern)]
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise SourceUnreadableError(
+            f"Could not read {redact_source(source)!r} as a zip. Check that it exists and is reachable."
+        ) from exc
+    if not names:
+        raise SourceUnreadableError(f"{redact_source(source)!r} has no {expected} files in it.")
+    return names
+
+
+def _member_chunks(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> Iterator[bytes]:
+    """One member's bytes, ending in a newline."""
+    last = b"\n"
+    with zf.open(info) as member:
+        for chunk in read_chunks(member):
+            last = chunk[-1:]
+            yield chunk
+    if last != b"\n":
+        yield b"\r\n"
+
+
+def zip_chunks(source: str, pattern: re.Pattern[str]) -> Iterator[bytes]:
+    """Every member matching `pattern`, back to back, each ending in a newline."""
+    with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
+        for info in zip_members(zf, pattern):
+            yield from _member_chunks(zf, info)
+
+
+def zip_member_chunks(source: str, member: str) -> Iterator[bytes]:
+    """The bytes of the member named `member`, ending in a newline."""
+    with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
+        yield from _member_chunks(zf, zf.getinfo(member))
 
 
 def read_chunks(src: BinaryIO) -> Iterator[bytes]:
@@ -91,9 +178,11 @@ def stream_text_to_table(
     conn: duckdb.DuckDBPyConnection,
     *,
     encoding: str,
+    append: bool = False,
 ) -> None:
     """`CREATE OR REPLACE TABLE table_fqn AS select_sql(path)`, where `path` is a
-    UTF-8 text stream of `chunks()` decoded as `encoding`.
+    UTF-8 text stream of `chunks()` decoded as `encoding`; with `append`,
+    `INSERT INTO table_fqn select_sql(path)`.
 
     Streams through a FIFO (macOS/Linux) so the text never sits on disk; falls
     back to a temp file where FIFOs aren't available. `chunks` is called once,
@@ -113,7 +202,8 @@ def stream_text_to_table(
             if "exc" in err:
                 raise err["exc"]
 
-        conn.execute(f"CREATE OR REPLACE TABLE {table_fqn} AS {select_sql(stream_path)}")
+        statement = f"INSERT INTO {table_fqn}" if append else f"CREATE OR REPLACE TABLE {table_fqn} AS"
+        conn.execute(f"{statement} {select_sql(stream_path)}")
 
         if feeder is not None:
             feeder.join()
