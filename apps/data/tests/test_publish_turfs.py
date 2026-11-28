@@ -15,6 +15,7 @@ from src.campaign_scope import CampaignScope
 from src.dsl.criteria import Criteria
 from src.duckdb import OPERATIONAL_PG_ALIAS
 from src.publish_turfs import (
+    _OPTIONAL_PAYLOAD_FIELDS,
     PublishTurfsRequest,
     _load_publish_scope,
     _publish,
@@ -464,3 +465,19 @@ def test_payload_carries_each_persons_live_custom_fields(conn) -> None:
     ]
     assert persons["p2"]["customFields"] == []
     assert persons["p4"]["customFields"] == [{"label": "support score", "fieldType": "number", "values": ["0.1"]}]
+
+
+def test_payload_sends_a_birth_year_as_january_first(conn) -> None:
+    _seed_campaign(conn)
+    _seed_drafts(conn, ZONE, [(0, 0)])
+    persons = table_fqn(SCHEMA, "persons_geocoded")
+    conn.execute(f"ALTER TABLE {persons} ADD COLUMN year_of_birth INTEGER")
+    conn.execute(f"UPDATE {persons} SET year_of_birth = 1985 WHERE external_id = 'p1'")
+    present = [f for f in _OPTIONAL_PAYLOAD_FIELDS if f[0] == "year_of_birth"]
+
+    scope = _scope(ZONE)
+    _publish(conn, _request(ZONE), scope, 1, scope.criteria, SCHEMA, "", [], present, VERSION)
+
+    people = _persons_by_id(conn)
+    assert people["p1"]["dateOfBirth"] == "1985-01-01"
+    assert people["p2"]["dateOfBirth"] is None

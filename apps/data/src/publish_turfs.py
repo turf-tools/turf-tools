@@ -386,12 +386,15 @@ def _load_publish_scope(conn: duckdb.DuckDBPyConnection, req: PublishTurfsReques
 # Non-canonical person fields the native card renders (party, gender, age, and
 # voting history). Emitted into the canvasser payload only when the dataset
 # provides the column, so publishing works for any importer; the native card
-# hides what isn't sent. `date_of_birth` drives the age pill client-side.
+# hides what isn't sent. `dateOfBirth` drives the age pill client-side; a
+# dataset with a birth year alone sends January 1 of it, the date that gives
+# the age reached this year.
 _OPTIONAL_PAYLOAD_FIELDS: list[tuple[str, str, str]] = [
     # (persons_geocoded column, assigned-CTE select, json_object entry)
     ("enrollment", "p.enrollment", "'enrollment', enrollment"),
     ("gender", "p.gender", "'gender', gender"),
     ("date_of_birth", "p.date_of_birth", "'dateOfBirth', date_of_birth"),
+    ("year_of_birth", "p.year_of_birth", "'dateOfBirth', CAST(year_of_birth AS VARCHAR) || '-01-01'"),
     (
         "voting_history",
         "p.voting_history",

@@ -434,7 +434,9 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
         raise CriteriaError(f"Field {f.key} is not an age-range field")
     if f.min is None and f.max is None:
         return ""
-    expr = f.key
+    expr = def_.column
+    if expr == "year_of_birth":
+        return _birth_year_age_clause(expr, f, params)
     # Age bounds compare the ISO date string against a birthdate cutoff
     # DuckDB folds to a constant — import guarantees YYYY-MM-DD or NULL,
     # so lexicographic order is chronological and the per-row work is one
@@ -449,6 +451,19 @@ def _age_range_clause(f: AgeRangeFilter, def_: FieldDef, params: list[Any]) -> s
         # age <= max ⇔ born after the (max+1)-year cutoff.
         parts.append(f"{expr} > {cutoff}")
         params.append(f.max + 1)
+    return f"({' AND '.join(parts)})"
+
+
+def _birth_year_age_clause(expr: str, f: AgeRangeFilter, params: list[Any]) -> str:
+    """Age from a birth year alone is the age reached this year."""
+    year = "year(current_date) - CAST(? AS INTEGER)"
+    parts: list[str] = []
+    if f.min is not None:
+        parts.append(f"{expr} <= {year}")
+        params.append(f.min)
+    if f.max is not None:
+        parts.append(f"{expr} >= {year}")
+        params.append(f.max)
     return f"({' AND '.join(parts)})"
 
 

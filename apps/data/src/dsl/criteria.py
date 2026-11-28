@@ -271,6 +271,8 @@ class EnumFieldDef(BaseModel):
 class AgeRangeFieldDef(BaseModel):
     kind: Literal["age-range"]
     key: str
+    # `date_of_birth` (YYYY-MM-DD) or `year_of_birth` (an integer year).
+    column: str
 
 
 class TextFieldDef(BaseModel):
@@ -417,7 +419,7 @@ def build_field_catalog(
         elif fd.filter_kind == "email":
             fields[key] = EmailFieldDef(kind="email", key=key)
         elif fd.filter_kind == "age-range":
-            fields[key] = AgeRangeFieldDef(kind="age-range", key=key)
+            fields[key] = AgeRangeFieldDef(kind="age-range", key=key, column=fd.column or key)
         elif fd.filter_kind == "date-range":
             fields[key] = DateRangeFieldDef(kind="date-range", key=key)
         elif fd.filter_kind == "voting-history-count":
