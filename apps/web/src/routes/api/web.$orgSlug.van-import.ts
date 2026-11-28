@@ -1,19 +1,28 @@
-// VAN survey import edge: multipart POST → runVanResponseImport.
+// Survey response import edge: multipart POST → format-specific runner.
 //
-// Fields: `idMap` (Standard Text StateFileID ↔ VANID), `survey` (long-format
-// survey-results export), `mappings` (JSON: create / match-to-questionId per
-// SurveyQuestionId; skipped questions are simply omitted). Auth is
-// scripts.write — same gate as editing the questions catalog. Outside oRPC
-// because the payload is two large files, not JSON.
+// Fields: `source` (van | s2w_phonebank | s2w_textbank; defaults to van),
+// `idMap` (Standard Text StateFileID ↔ VANID — person keys are VANIDs in
+// every format today), `survey` (format-specific export), `mappings` (JSON:
+// create / match-to-questionId per question external id; skipped questions
+// omitted). Auth is scripts.write. Outside oRPC because the payload is large
+// files. Path kept as van-import for the existing file route.
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
-import { runVanResponseImport, type VanQuestionMapping } from "~/lib/server/van-import-run";
+import {
+  runS2wPhonebankImport,
+  runS2wTextbankImport,
+  runVanResponseImport,
+  type SurveyQuestionMapping,
+} from "~/lib/server/van-import-run";
+import { S2W_PHONEBANK_SOURCE_TYPE, S2W_TEXTBANK_SOURCE_TYPE } from "~/lib/s2w-import";
+import { VAN_SOURCE_TYPE } from "~/lib/van-import";
 import { buildPermittedContext } from "~/rpc/context";
 
-// Same order of magnitude as custom-field append; survey exports can be large.
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const SOURCES = new Set([VAN_SOURCE_TYPE, S2W_PHONEBANK_SOURCE_TYPE, S2W_TEXTBANK_SOURCE_TYPE]);
 
 export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
   server: {
@@ -37,6 +46,13 @@ export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
           return new Response("Expected multipart form data.", { status: 400 });
         }
 
+        const sourceRaw = form.get("source");
+        const source =
+          typeof sourceRaw === "string" && sourceRaw.length > 0 ? sourceRaw : VAN_SOURCE_TYPE;
+        if (!SOURCES.has(source)) {
+          return new Response("Unknown source.", { status: 400 });
+        }
+
         const idMapFile = form.get("idMap");
         const surveyFile = form.get("survey");
         if (!(idMapFile instanceof File) || !(surveyFile instanceof File)) {
@@ -54,7 +70,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
         if (typeof mappingsRaw !== "string" || !mappingsRaw.trim()) {
           return new Response("Missing mappings.", { status: 400 });
         }
-        let mappings: VanQuestionMapping[];
+        let mappings: SurveyQuestionMapping[];
         try {
           const parsed = JSON.parse(mappingsRaw) as unknown;
           if (!Array.isArray(parsed)) throw new Error("bad");
@@ -75,15 +91,22 @@ export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
           return new Response("Invalid mappings JSON.", { status: 400 });
         }
 
+        const common = {
+          organizationId: context.organizationId,
+          orgSlug: context.orgSlug,
+          userId: context.user.id,
+          idMapBuffer: await idMapFile.arrayBuffer(),
+          surveyBuffer: await surveyFile.arrayBuffer(),
+          mappings,
+        };
+
         try {
-          const stats = await runVanResponseImport(db, {
-            organizationId: context.organizationId,
-            orgSlug: context.orgSlug,
-            userId: context.user.id,
-            idMapBuffer: await idMapFile.arrayBuffer(),
-            surveyBuffer: await surveyFile.arrayBuffer(),
-            mappings,
-          });
+          const stats =
+            source === VAN_SOURCE_TYPE
+              ? await runVanResponseImport(db, common)
+              : source === S2W_PHONEBANK_SOURCE_TYPE
+                ? await runS2wPhonebankImport(db, common)
+                : await runS2wTextbankImport(db, common);
           return Response.json(stats);
         } catch (e) {
           const message = e instanceof Error ? e.message : "Import failed.";

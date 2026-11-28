@@ -88,6 +88,8 @@ export type VanSurveyAnswer = {
   responseName: string;
   /** Parsed DateCanvassed (noon UTC on that calendar day). */
   canvassedAt: Date;
+  /** Stable dedupe key for imported_responses.source_key. */
+  sourceKey: string;
 };
 
 export type VanSurveyQuestionPreview = {
@@ -120,6 +122,20 @@ export type VanSurveyParse = {
   rowsSkippedBadDate: number;
   sampleSkipped: VanSurveyRowSkip[];
 };
+
+/** Source type stamped on question/option external-id refs and imported_responses. */
+export const VAN_SOURCE_TYPE = "van";
+
+/** Stable dedupe key for one imported VAN answer option. */
+export function vanImportedResponseKey(
+  vanId: string,
+  contactedAt: Date,
+  questionVanId: string,
+  responseVanId: string,
+): string {
+  const day = contactedAt.toISOString().slice(0, 10);
+  return `${vanId}:${day}:${questionVanId}:${responseVanId}`;
+}
 
 /** Parse VAN `MM/DD/YYYY` (or `M/D/YYYY`) to noon UTC that day. */
 export function parseVanDate(raw: string): Date | null {
@@ -212,6 +228,7 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
       questionName: questionName || questionVanId,
       responseName,
       canvassedAt,
+      sourceKey: vanImportedResponseKey(vanId, canvassedAt, questionVanId, responseVanId),
     });
 
     let meta = qMeta.get(questionVanId);
@@ -288,20 +305,6 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
 
 export function parseVanSurveyExportBytes(buffer: ArrayBuffer): VanSurveyParse {
   return parseVanSurveyExport(decodeVanExportBytes(buffer));
-}
-
-/** Source type stamped on question/option external-id refs and imported_responses. */
-export const VAN_SOURCE_TYPE = "van";
-
-/** Stable dedupe key for one imported answer option. */
-export function vanImportedResponseKey(
-  vanId: string,
-  contactedAt: Date,
-  questionVanId: string,
-  responseVanId: string,
-): string {
-  const day = contactedAt.toISOString().slice(0, 10);
-  return `${vanId}:${day}:${questionVanId}:${responseVanId}`;
 }
 
 export type VanImportStats = {

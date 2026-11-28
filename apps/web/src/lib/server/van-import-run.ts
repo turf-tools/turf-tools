@@ -8,41 +8,50 @@ import {
 } from "@turf-tools/db/schema";
 import { dataPostJson } from "~/lib/server/data-proxy";
 import {
+  parseS2wPhonebankBytes,
+  parseS2wTextbankBytes,
+  S2W_PHONEBANK_SOURCE_TYPE,
+  S2W_TEXTBANK_SOURCE_TYPE,
+} from "~/lib/s2w-import";
+import {
   parseVanIdMapBytes,
   parseVanSurveyExportBytes,
   VAN_SOURCE_TYPE,
-  vanImportedResponseKey,
   type VanImportStats,
+  type VanSurveyParse,
   type VanSurveyQuestionPreview,
 } from "~/lib/van-import";
 
-/** Per VAN survey question: create a new question, or attach to an existing one. */
+/** Per survey question: create a new question, or attach to an existing one. */
 export type VanQuestionMapping = {
   questionVanId: string;
   /** Null → create new (or reuse by external id). Set → match to this org question. */
   questionId: string | null;
 };
 
-// Import VAN survey answers into imported_responses (not canvass_events).
+export type SurveyQuestionMapping = VanQuestionMapping;
+
+// Import survey answers into imported_responses (not canvass_events).
 //
-// Inputs: (1) Standard Text ID map (StateFileID ↔ Voter File VANID),
-// (2) long-format survey export (one row per answer with SurveyQuestionId /
-// SurveyResponseId / DateCanvassed), (3) UI mappings that say create / match /
-// skip for each VAN question.
+// Inputs: (1) Standard Text ID map (StateFileID ↔ Voter File VANID) — person
+// keys in every current format are VANIDs, (2) a parsed survey (VAN long
+// format, S2W phonebank, or S2W textbank), (3) UI mappings create / match /
+// skip per question external id.
 //
-// Pipeline: parse → resolve questions & options to app UUIDs (stamping
-// question_external_ids / response_option_external_ids with sourceType 'van')
-// → join answers onto lake persons via the ID-map file → write one
+// Pipeline: resolve questions & options to app UUIDs (stamping
+// question_external_ids / response_option_external_ids with `sourceType`) →
+// join answers onto lake persons via the ID-map file → write one
 // imported_responses row per selected option. Re-imports no-op via sourceKey.
-export async function runVanResponseImport(
+export async function runSurveyResponseImport(
   db: Db,
   opts: {
     organizationId: string;
     orgSlug: string;
     userId: string;
+    sourceType: string;
     idMapBuffer: ArrayBuffer;
-    surveyBuffer: ArrayBuffer;
-    mappings: VanQuestionMapping[];
+    survey: VanSurveyParse;
+    mappings: SurveyQuestionMapping[];
   },
 ): Promise<VanImportStats> {
   const idMap = parseVanIdMapBytes(opts.idMapBuffer);
@@ -52,10 +61,9 @@ export async function runVanResponseImport(
         "Need StateFileID and Voter File VANID.",
     );
   }
-  const survey = parseVanSurveyExportBytes(opts.surveyBuffer);
-  if (!survey.ok) {
+  if (!opts.survey.ok) {
     throw new Error(
-      `Survey export missing required column(s): ${survey.missingColumns.join(", ")}.`,
+      `Survey export missing required column(s): ${opts.survey.missingColumns.join(", ")}.`,
     );
   }
   if (opts.mappings.length === 0) {
@@ -63,20 +71,20 @@ export async function runVanResponseImport(
   }
 
   // Restrict to questions the UI chose to import (skip is simply absent).
-  const mappingByVan = new Map(opts.mappings.map((m) => [m.questionVanId, m]));
-  const answers = survey.answers.filter((a) => mappingByVan.has(a.questionVanId));
-  const questionPreviews = survey.questions.filter((q) => mappingByVan.has(q.questionVanId));
+  const mappingByExt = new Map(opts.mappings.map((m) => [m.questionVanId, m]));
+  const answers = opts.survey.answers.filter((a) => mappingByExt.has(a.questionVanId));
+  const questionPreviews = opts.survey.questions.filter((q) => mappingByExt.has(q.questionVanId));
   if (answers.length === 0 || questionPreviews.length === 0) {
     throw new Error("No survey answers to import (check question selection).");
   }
 
   // Match targets must be live org questions; one existing question can't be
-  // claimed by two VAN questions in the same import.
+  // claimed by two survey questions in the same import.
   const matchIds = opts.mappings
     .map((m) => m.questionId)
     .filter((id): id is string => typeof id === "string");
   if (new Set(matchIds).size !== matchIds.length) {
-    throw new Error("Each existing question can only be matched to one VAN question.");
+    throw new Error("Each existing question can only be matched to one survey question.");
   }
   if (matchIds.length > 0) {
     const owned = await db
@@ -99,22 +107,23 @@ export async function runVanResponseImport(
   const vanToState = new Map<string, string>();
   for (const row of idMap.rows) vanToState.set(row.vanId, row.stateFileId);
 
-  // Build SurveyQuestionId / SurveyResponseId → app UUID maps. Matching an
-  // existing question stamps an external-id ref and links options by external
-  // id or text (creating any options the existing question is missing).
+  // Build external question/response ids → app UUID maps. Matching an existing
+  // question stamps an external-id ref and links options by external id or text
+  // (creating any options the existing question is missing).
   let questionsCreated = 0;
   let questionsUpdated = 0;
   let questionsMatched = 0;
   let optionsCreated = 0;
 
-  const questionIdByVan = new Map<string, string>();
-  const optionIdByVan = new Map<string, string>();
+  const questionIdByExt = new Map<string, string>();
+  const optionIdByExt = new Map<string, string>();
 
   for (const preview of questionPreviews) {
-    const mapping = mappingByVan.get(preview.questionVanId)!;
+    const mapping = mappingByExt.get(preview.questionVanId)!;
     const resolved = await resolveQuestion(db, {
       organizationId: opts.organizationId,
       userId: opts.userId,
+      sourceType: opts.sourceType,
       preview,
       matchQuestionId: mapping.questionId,
     });
@@ -122,15 +131,16 @@ export async function runVanResponseImport(
     else if (resolved.kind === "matched") questionsMatched += 1;
     else questionsUpdated += 1;
 
-    questionIdByVan.set(preview.questionVanId, resolved.questionId);
+    questionIdByExt.set(preview.questionVanId, resolved.questionId);
 
     const linked = await linkOptions(db, {
       userId: opts.userId,
+      sourceType: opts.sourceType,
       questionId: resolved.questionId,
       preview,
     });
     optionsCreated += linked.created;
-    for (const [key, optionId] of linked.map) optionIdByVan.set(key, optionId);
+    for (const [key, optionId] of linked.map) optionIdByExt.set(key, optionId);
   }
 
   // VANID → StateFileID via the map, then keep only people present in the
@@ -170,8 +180,8 @@ export async function runVanResponseImport(
   }[] = [];
 
   for (const { answer: a, stateFileId } of matched) {
-    const questionId = questionIdByVan.get(a.questionVanId);
-    const optionId = optionIdByVan.get(`${a.questionVanId}:${a.responseVanId}`);
+    const questionId = questionIdByExt.get(a.questionVanId);
+    const optionId = optionIdByExt.get(`${a.questionVanId}:${a.responseVanId}`);
     if (!questionId || !optionId) continue;
     responseRows.push({
       organizationId: opts.organizationId,
@@ -179,8 +189,8 @@ export async function runVanResponseImport(
       questionId,
       responseOptionId: optionId,
       respondedAt: a.canvassedAt,
-      sourceType: VAN_SOURCE_TYPE,
-      sourceKey: vanImportedResponseKey(a.vanId, a.canvassedAt, a.questionVanId, a.responseVanId),
+      sourceType: opts.sourceType,
+      sourceKey: a.sourceKey,
     });
   }
 
@@ -203,7 +213,7 @@ export async function runVanResponseImport(
 
   return {
     idMapRows: idMap.rowCount,
-    surveyRows: survey.rowCount,
+    surveyRows: opts.survey.rowCount,
     questionsCreated,
     questionsUpdated,
     questionsMatched,
@@ -218,11 +228,69 @@ export async function runVanResponseImport(
   };
 }
 
-// Resolve one VAN SurveyQuestionId to an app questions.questionId.
+export async function runVanResponseImport(
+  db: Db,
+  opts: {
+    organizationId: string;
+    orgSlug: string;
+    userId: string;
+    idMapBuffer: ArrayBuffer;
+    surveyBuffer: ArrayBuffer;
+    mappings: SurveyQuestionMapping[];
+  },
+): Promise<VanImportStats> {
+  const survey = parseVanSurveyExportBytes(opts.surveyBuffer);
+  return runSurveyResponseImport(db, {
+    ...opts,
+    sourceType: VAN_SOURCE_TYPE,
+    survey,
+  });
+}
+
+export async function runS2wPhonebankImport(
+  db: Db,
+  opts: {
+    organizationId: string;
+    orgSlug: string;
+    userId: string;
+    idMapBuffer: ArrayBuffer;
+    surveyBuffer: ArrayBuffer;
+    mappings: SurveyQuestionMapping[];
+  },
+): Promise<VanImportStats> {
+  const survey = parseS2wPhonebankBytes(opts.surveyBuffer);
+  return runSurveyResponseImport(db, {
+    ...opts,
+    sourceType: S2W_PHONEBANK_SOURCE_TYPE,
+    survey,
+  });
+}
+
+export async function runS2wTextbankImport(
+  db: Db,
+  opts: {
+    organizationId: string;
+    orgSlug: string;
+    userId: string;
+    idMapBuffer: ArrayBuffer;
+    surveyBuffer: ArrayBuffer;
+    mappings: SurveyQuestionMapping[];
+  },
+): Promise<VanImportStats> {
+  // Textbank exports have no contact datetime — stamp this import's clock.
+  const survey = parseS2wTextbankBytes(opts.surveyBuffer, new Date());
+  return runSurveyResponseImport(db, {
+    ...opts,
+    sourceType: S2W_TEXTBANK_SOURCE_TYPE,
+    survey,
+  });
+}
+
+// Resolve one survey question external id to an app questions.questionId.
 //
 // Paths: (1) UI match → stamp external-id ref onto the chosen org question
 // (and clear it from any sibling that held it), (2) prior import already
-// linked this SurveyQuestionId → refresh name/type, (3) else insert a new
+// linked this external id → refresh name/type, (3) else insert a new
 // question + ref. External ids are for rematching catalog rows across
 // imports, not person identity.
 async function resolveQuestion(
@@ -230,6 +298,7 @@ async function resolveQuestion(
   opts: {
     organizationId: string;
     userId: string;
+    sourceType: string;
     preview: VanSurveyQuestionPreview;
     matchQuestionId: string | null;
   },
@@ -237,12 +306,14 @@ async function resolveQuestion(
   const responseType = opts.preview.multiSelect ? "multi_select" : "single_select";
   const externalId = opts.preview.questionVanId;
 
-  // Org-scoped uniqueness: only one question may own this SurveyQuestionId.
-  // Matching never overwrites name/text (the existing wording wins); multi_select
-  // widens responseType when the VAN export needs it, and archived rows revive.
+  // Org-scoped uniqueness: only one question may own this external id for the
+  // source. Matching never overwrites name/text (the existing wording wins);
+  // multi_select widens responseType when the export needs it, and archived
+  // rows revive.
   if (opts.matchQuestionId) {
     await stampQuestionExternalId(db, {
       organizationId: opts.organizationId,
+      sourceType: opts.sourceType,
       questionId: opts.matchQuestionId,
       externalId,
     });
@@ -264,7 +335,7 @@ async function resolveQuestion(
     .where(
       and(
         eq(questionExternalIds.organizationId, opts.organizationId),
-        eq(questionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(questionExternalIds.sourceType, opts.sourceType),
         eq(questionExternalIds.externalId, externalId),
       ),
     )
@@ -296,6 +367,7 @@ async function resolveQuestion(
     .returning({ questionId: questions.questionId });
   await stampQuestionExternalId(db, {
     organizationId: opts.organizationId,
+    sourceType: opts.sourceType,
     questionId: inserted!.questionId,
     externalId,
   });
@@ -304,26 +376,26 @@ async function resolveQuestion(
 
 async function stampQuestionExternalId(
   db: Db,
-  opts: { organizationId: string; questionId: string; externalId: string },
+  opts: { organizationId: string; sourceType: string; questionId: string; externalId: string },
 ): Promise<void> {
-  // Free this SurveyQuestionId from any other org question.
+  // Free this external id from any other org question for this source.
   await db
     .delete(questionExternalIds)
     .where(
       and(
         eq(questionExternalIds.organizationId, opts.organizationId),
-        eq(questionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(questionExternalIds.sourceType, opts.sourceType),
         eq(questionExternalIds.externalId, opts.externalId),
         ne(questionExternalIds.questionId, opts.questionId),
       ),
     );
-  // One link per (question, source): replace whatever van id was there.
+  // One link per (question, source): replace whatever id was there.
   await db
     .delete(questionExternalIds)
     .where(
       and(
         eq(questionExternalIds.questionId, opts.questionId),
-        eq(questionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(questionExternalIds.sourceType, opts.sourceType),
         ne(questionExternalIds.externalId, opts.externalId),
       ),
     );
@@ -332,7 +404,7 @@ async function stampQuestionExternalId(
     .values({
       questionId: opts.questionId,
       organizationId: opts.organizationId,
-      sourceType: VAN_SOURCE_TYPE,
+      sourceType: opts.sourceType,
       externalId: opts.externalId,
     })
     .onConflictDoNothing({
@@ -344,15 +416,16 @@ async function stampQuestionExternalId(
     });
 }
 
-// Link each VAN SurveyResponseId under a question to a response_options row.
+// Link each survey response external id under a question to a response_options row.
 //
 // Prefer external-id ref, then case-insensitive text (so matching an existing
 // question attaches options that already share wording). Missing options are
-// inserted; returns SurveyQuestionId:SurveyResponseId → responseOptionId.
+// inserted; returns questionExt:responseExt → responseOptionId.
 async function linkOptions(
   db: Db,
   opts: {
     userId: string;
+    sourceType: string;
     questionId: string;
     preview: VanSurveyQuestionPreview;
   },
@@ -377,7 +450,7 @@ async function linkOptions(
     .where(
       and(
         eq(responseOptionExternalIds.questionId, opts.questionId),
-        eq(responseOptionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(responseOptionExternalIds.sourceType, opts.sourceType),
       ),
     );
   const byExt = new Map(existingRefs.map((r) => [r.externalId, r.responseOptionId]));
@@ -408,6 +481,7 @@ async function linkOptions(
     const byTextId = byText.get(resp.text.trim().toLowerCase());
     if (byTextId) {
       await stampOptionExternalId(db, {
+        sourceType: opts.sourceType,
         questionId: opts.questionId,
         responseOptionId: byTextId,
         externalId: resp.responseVanId,
@@ -421,7 +495,7 @@ async function linkOptions(
       continue;
     }
 
-    // VAN option with no counterpart on the question — append it.
+    // Survey option with no counterpart on the question — append it.
     const [inserted] = await db
       .insert(responseOptions)
       .values({
@@ -432,6 +506,7 @@ async function linkOptions(
       })
       .returning({ responseOptionId: responseOptions.responseOptionId });
     await stampOptionExternalId(db, {
+      sourceType: opts.sourceType,
       questionId: opts.questionId,
       responseOptionId: inserted!.responseOptionId,
       externalId: resp.responseVanId,
@@ -446,14 +521,14 @@ async function linkOptions(
 
 async function stampOptionExternalId(
   db: Db,
-  opts: { questionId: string; responseOptionId: string; externalId: string },
+  opts: { sourceType: string; questionId: string; responseOptionId: string; externalId: string },
 ): Promise<void> {
   await db
     .delete(responseOptionExternalIds)
     .where(
       and(
         eq(responseOptionExternalIds.questionId, opts.questionId),
-        eq(responseOptionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(responseOptionExternalIds.sourceType, opts.sourceType),
         eq(responseOptionExternalIds.externalId, opts.externalId),
         ne(responseOptionExternalIds.responseOptionId, opts.responseOptionId),
       ),
@@ -463,7 +538,7 @@ async function stampOptionExternalId(
     .where(
       and(
         eq(responseOptionExternalIds.responseOptionId, opts.responseOptionId),
-        eq(responseOptionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(responseOptionExternalIds.sourceType, opts.sourceType),
         ne(responseOptionExternalIds.externalId, opts.externalId),
       ),
     );
@@ -472,7 +547,7 @@ async function stampOptionExternalId(
     .values({
       responseOptionId: opts.responseOptionId,
       questionId: opts.questionId,
-      sourceType: VAN_SOURCE_TYPE,
+      sourceType: opts.sourceType,
       externalId: opts.externalId,
     })
     .onConflictDoNothing({

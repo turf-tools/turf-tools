@@ -20,8 +20,14 @@ import { Input } from "~/components/input";
 import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import {
   RESPONSE_IMPORT_SOURCES,
+  responseImportSource,
   type ResponseImportSourceId,
 } from "~/lib/response-import-sources";
+import {
+  parseS2wPhonebankBytes,
+  parseS2wTextbankBytes,
+  S2W_PHONEBANK_SOURCE_TYPE,
+} from "~/lib/s2w-import";
 import {
   parseVanIdMapBytes,
   parseVanSurveyExportBytes,
@@ -80,6 +86,15 @@ function defaultChoicesFor(
   return initial;
 }
 
+function parseSurveyForSource(
+  sourceId: ResponseImportSourceId,
+  buffer: ArrayBuffer,
+): VanSurveyParse {
+  if (sourceId === VAN_SOURCE_TYPE) return parseVanSurveyExportBytes(buffer);
+  if (sourceId === S2W_PHONEBANK_SOURCE_TYPE) return parseS2wPhonebankBytes(buffer);
+  return parseS2wTextbankBytes(buffer, new Date());
+}
+
 export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const { data: orgQuestions } = useQuery({
@@ -97,6 +112,8 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
   const [stats, setStats] = useState<VanImportStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoMatched, setAutoMatched] = useState(false);
+
+  const source = sourceId ? responseImportSource(sourceId) : undefined;
 
   const selectableQuestions = useMemo(
     () => (orgQuestions ?? []).filter((q) => !q.archived),
@@ -178,23 +195,23 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
     setParseError(null);
     if (!file || !sourceId) return;
     try {
-      const parsed = parseVanSurveyExportBytes(await file.arrayBuffer());
+      const parsed = parseSurveyForSource(sourceId, await file.arrayBuffer());
       setSurvey(parsed);
       if (!parsed.ok) {
         setParseError(
-          `Survey export missing required column(s): ${parsed.missingColumns.join(", ")}.`,
+          `Results file missing required column(s): ${parsed.missingColumns.join(", ")}.`,
         );
         return;
       }
       setChoices(defaultChoicesFor(parsed, selectableQuestions, sourceId));
       setAutoMatched(selectableQuestions.length > 0);
     } catch (e) {
-      setParseError(e instanceof Error ? e.message : "Could not read survey export.");
+      setParseError(e instanceof Error ? e.message : "Could not read results file.");
     }
   };
 
   const canSubmit =
-    sourceId === VAN_SOURCE_TYPE &&
+    sourceId != null &&
     idMapFile != null &&
     surveyFile != null &&
     idMap?.ok === true &&
@@ -203,8 +220,9 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!idMapFile || !surveyFile || !canSubmit) return null;
+      if (!idMapFile || !surveyFile || !sourceId || !canSubmit) return null;
       const body = new FormData();
+      body.set("source", sourceId);
       body.set("idMap", idMapFile);
       body.set("survey", surveyFile);
       body.set("mappings", JSON.stringify(mappings));
@@ -263,7 +281,8 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
         {stats ? null : (
           <DialogDescription>
             Choose the system the export came from, then upload its files and match questions to
-            your catalog. Options match by text; missing options are added.
+            your catalog. Options match by text; missing options are added. Person join uses a VAN
+            ID map (StateFileID ↔ VANID) for every format today.
           </DialogDescription>
         )}
 
@@ -319,16 +338,16 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
             <div className="flex flex-col gap-1.5">
               <div className="text-sm font-medium">System</div>
               <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Import system">
-                {RESPONSE_IMPORT_SOURCES.map((source) => {
-                  const selected = sourceId === source.id;
+                {RESPONSE_IMPORT_SOURCES.map((s) => {
+                  const selected = sourceId === s.id;
                   return (
                     <button
-                      key={source.id}
+                      key={s.id}
                       type="button"
                       role="radio"
                       aria-checked={selected}
                       disabled={pending}
-                      onClick={() => selectSource(source.id)}
+                      onClick={() => selectSource(s.id)}
                       className={cn(
                         "flex flex-col gap-0.5 rounded-md border px-3 py-2 text-left transition-colors",
                         selected
@@ -337,15 +356,15 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                         pending && "opacity-50",
                       )}
                     >
-                      <span className="text-sm font-medium">{source.label}</span>
-                      <span className="text-xs text-muted-foreground">{source.description}</span>
+                      <span className="text-sm font-medium">{s.label}</span>
+                      <span className="text-xs text-muted-foreground">{s.description}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {sourceId === VAN_SOURCE_TYPE ? (
+            {source ? (
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium">ID map</label>
@@ -365,10 +384,10 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Survey results</label>
+                  <label className="text-sm font-medium">{source.surveyLabel}</label>
                   <Input
                     type="file"
-                    accept=".xls,.txt,.tsv,.csv,text/plain"
+                    accept={source.surveyAccept}
                     disabled={pending}
                     onChange={(e) => void loadSurvey(e.target.files?.[0] ?? null)}
                   />
@@ -384,7 +403,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
 
                 {parseError ? <DialogError error={parseError} /> : null}
 
-                {survey?.ok ? (
+                {survey?.ok && sourceId ? (
                   <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-medium">Question matching</div>
@@ -394,9 +413,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                           size="xs"
                           disabled={pending}
                           onClick={() => {
-                            setChoices(
-                              defaultChoicesFor(survey, selectableQuestions, VAN_SOURCE_TYPE),
-                            );
+                            setChoices(defaultChoicesFor(survey, selectableQuestions, sourceId));
                             setAutoMatched(true);
                           }}
                         >
@@ -499,7 +516,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                                       }
                                     >
                                       {oq.name}
-                                      {externalIdForSource(oq, VAN_SOURCE_TYPE) === q.questionVanId
+                                      {externalIdForSource(oq, sourceId) === q.questionVanId
                                         ? " · linked"
                                         : ""}
                                     </DropdownMenuItem>
