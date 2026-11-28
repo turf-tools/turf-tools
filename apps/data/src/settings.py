@@ -1,6 +1,6 @@
 import os
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -8,16 +8,9 @@ def _default_database_url() -> str:
     """Dev Postgres fallback — mirrors packages/db/src/index.ts."""
     if os.environ.get("NODE_ENV") == "production":
         raise ValueError("DATABASE_URL is required in production.")
+    if url := os.environ.get("DATABASE_URL"):
+        return url
     return "postgres://postgres:postgres@127.0.0.1:5432/postgres"
-
-
-def _default_ducklake_metadata_url() -> str | None:
-    """Dev defaults DuckLake to a Postgres catalog (concurrency-safe, so import
-    jobs don't fight the serving connection over a single-writer local file).
-    Prod sets it explicitly; unset in prod → local-file fallback."""
-    if os.environ.get("NODE_ENV") == "production":
-        return None
-    return _default_database_url()
 
 
 def _default_keep_import_intermediates() -> bool:
@@ -50,7 +43,7 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env"}
 
     ducklake_metadata_postgres_url: str | None = Field(
-        default_factory=_default_ducklake_metadata_url,
+        default=None,
         description="PostgreSQL connection URL for the DuckLake metadata catalog. If not set, uses local DuckDB file.",
     )
     # Postgres schema holding this catalog's metadata tables. Same names in
@@ -59,7 +52,7 @@ class Settings(BaseSettings):
     ducklake_meta_schema: str = "catalog"
 
     ducklake_geo_metadata_postgres_url: str | None = Field(
-        default_factory=_default_ducklake_metadata_url,
+        default=None,
         description=(
             "PostgreSQL connection URL for the geo DuckLake metadata catalog. If not set, uses local DuckDB file."
         ),
@@ -70,6 +63,18 @@ class Settings(BaseSettings):
         default_factory=_default_database_url,
         description="PostgreSQL connection URL for operational data shared with the web app.",
     )
+
+    @model_validator(mode="after")
+    def _dev_catalogs_share_the_database(self) -> "Settings":
+        """Dev puts both DuckLake catalogs in the operational Postgres
+        (concurrency-safe, so import jobs don't fight the serving connection over
+        a single-writer local file), wherever `database_url` came from: the
+        environment or `.env`. Prod sets them explicitly; unset in prod is the
+        local-file fallback."""
+        if os.environ.get("NODE_ENV") != "production":
+            self.ducklake_metadata_postgres_url = self.ducklake_metadata_postgres_url or self.database_url
+            self.ducklake_geo_metadata_postgres_url = self.ducklake_geo_metadata_postgres_url or self.database_url
+        return self
 
     storage: StorageConfig = Field(default_factory=StorageConfig)
     ducklake_prefix: str = Field(default="ducklake", description="Key prefix for the person lake.")
