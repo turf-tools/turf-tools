@@ -17,14 +17,14 @@ export type ResponseImportSource = {
 export const RESPONSE_IMPORT_SOURCES: readonly ResponseImportSource[] = [
   {
     id: VAN_SOURCE_TYPE,
-    label: "VAN",
+    label: "VAN Survey Responses",
     description: "Standard Text ID map (StateFileID ↔ VANID) plus a Survey Responses List export.",
     surveyLabel: "Survey results",
     surveyAccept: ".xls,.txt,.tsv,.csv,text/plain",
   },
   {
     id: S2W_PHONEBANK_SOURCE_TYPE,
-    label: "ScaleToWin phonebank",
+    label: "ScaleToWin Phonebank",
     description:
       "Standard Text ID map plus a ScaleToWin phonebank CSV (Contact VanID + question columns).",
     surveyLabel: "Phonebank CSV",
@@ -32,7 +32,7 @@ export const RESPONSE_IMPORT_SOURCES: readonly ResponseImportSource[] = [
   },
   {
     id: S2W_TEXTBANK_SOURCE_TYPE,
-    label: "ScaleToWin textbank",
+    label: "ScaleToWin Textbank",
     description:
       "Standard Text ID map plus a ScaleToWin textbank CSV (van_id + Tag columns). Dates use import time.",
     surveyLabel: "Textbank CSV",
