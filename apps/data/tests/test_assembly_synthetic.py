@@ -437,7 +437,7 @@ class TestPersonsGeocoded:
         assert conn.execute(f"SELECT city, state, address_line_2, first_name FROM {ref.fqn}").fetchone() == (
             "MIAMI",
             "FL",
-            "APT 3B",
+            "3B",
             "McDonald",
         )
 
@@ -473,7 +473,7 @@ class TestPersonsGeocoded:
         assert v1[2] == f"{v1[3]}||{v1[4]}"
         v2 = rows["v2"]
         assert v2[1] == f"{v2[3]}|{v2[4]}"
-        assert "APT 3B" in v2[2]
+        assert v2[2] == f"{v2[3]}|3B|{v2[4]}"
         assert v2[1] != v2[2]
 
     def test_one_building_across_voter_zips(self, synth):

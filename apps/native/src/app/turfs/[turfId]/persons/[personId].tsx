@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { Pill } from "@/components/pill";
+import { Placeholder } from "@/components/placeholder";
 import { useColors } from "@/lib/colors";
 import { useScreenNav } from "@/lib/nav-context";
 import { WideButton } from "@/components/wide-button";
@@ -711,7 +712,7 @@ function ScriptContent({
               className="font-sans text-lg leading-6"
               style={{ fontFamily: "Geist_400Regular_Italic" }}
             >
-              {step.text}
+              {step.text.trim() ? step.text : <Placeholder>Empty text</Placeholder>}
             </Text>
           );
         }
@@ -720,7 +721,7 @@ function ScriptContent({
           return (
             <View key={step.scriptStepId} className="gap-2">
               <Text className="font-sans text-lg leading-6 mb-0.5 text-foreground dark:text-foreground-dark">
-                {step.text}
+                {step.text.trim() ? step.text : <Placeholder>Untitled question</Placeholder>}
               </Text>
               <OpenEndedInput
                 text={value && "text" in value ? value.text : ""}
@@ -735,12 +736,13 @@ function ScriptContent({
         return (
           <View key={step.scriptStepId} className="gap-2">
             <Text className="font-sans text-lg leading-6 mb-0.5 text-foreground dark:text-foreground-dark">
-              {step.text}
+              {step.text.trim() ? step.text : <Placeholder>Untitled question</Placeholder>}
             </Text>
             {step.options.map((opt) => (
               <WideButton
                 key={opt.responseOptionId}
-                label={opt.text}
+                label={opt.text.trim() ? opt.text : "Empty option"}
+                placeholder={!opt.text.trim()}
                 selected={selectedIds.includes(opt.responseOptionId)}
                 selectedForegroundColor={colors.contacted.foreground}
                 selectedBackgroundColor={colors.contacted.background}

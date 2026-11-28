@@ -114,12 +114,23 @@ test("unit words are title-cased and unit codes kept as stored", () => {
   expect(unitCase("UNIT 220")).toBe("Unit 220");
   expect(unitCase("2 FL")).toBe("2 Fl");
   expect(unitCase("2ND FLOOR")).toBe("2nd Floor");
-  expect(unitCase("BSMT")).toBe("BSMT");
-  expect(unitCase("PH M")).toBe("PH M");
-  expect(unitCase("PVT HSE")).toBe("PVT HSE");
+  expect(unitCase("BSMT")).toBe("Bsmt");
+  expect(unitCase("PH M")).toBe("Ph M");
+  expect(unitCase("PVT HSE")).toBe("Pvt Hse");
   expect(unitCase("SPC 42")).toBe("Spc 42");
   expect(unitCase("LOT H-13")).toBe("Lot H-13");
   expect(unitCase("PO BOX 167")).toBe("PO Box 167");
+  expect(unitCase("GARDEN")).toBe("Garden");
+  expect(unitCase("SUPT")).toBe("Supt");
+});
+
+test("words in a unit line are title-cased and codes keep their capitals", () => {
+  expect(unitCase("EAST CAMPUS 808")).toBe("East Campus 808");
+  expect(unitCase("NORTH TOWER 8B")).toBe("North Tower 8B");
+  expect(unitCase("UPSTAIRS")).toBe("Upstairs");
+  expect(unitCase("PH S")).toBe("Ph S");
+  expect(unitCase("3RR")).toBe("Apt 3RR");
+  expect(unitCase("LPH")).toBe("Apt LPH");
 });
 
 test("a bare unit code reads as an apartment", () => {

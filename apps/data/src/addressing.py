@@ -17,6 +17,8 @@ Contents:
 - `housenumber_norm_sql(col)`         — normalize a house-number string for join keys
 - `housenumber_display_sql(prefix, num, half)`
                                       — assemble a human-readable house-number string
+- `unit_label_sql(col)`               — a unit line's standard spelling, which is
+                                         also its door identity
 - `ordinal_tokens_sql(tokens_col)`    — the ordinal form of each bare-number token
 - `GENERIC_STREET_TOKENS`             — tokens treated as non-distinctive by
                                          the candidate-matching predicate
@@ -24,6 +26,8 @@ Contents:
                                          `address_tokens` table
 - `STREET_REWRITES`                   — phrase rewrites applied uniformly
                                          to every source before tokenization
+- `UNIT_TYPE_WORDS`, `UNIT_WORDS`, `UNIT_SYNONYMS`, `UNIT_DIRECTIONS`
+                                      — the word tables `unit_label_sql` reads
 """
 
 
@@ -101,6 +105,87 @@ def housenumber_display_sql(prefix_col: str, number_col: str, half_col: str) -> 
         f" || CASE WHEN {half_col} IS NOT NULL AND {half_col} != ''"
         f"         THEN ' ' || {half_col} ELSE '' END"
     )
+
+
+def unit_label_sql(col: str) -> str:
+    """SQL fragment: a unit line (`address_line_2`) in its standard spelling,
+    which is both what a door displays and what makes two voters' units the
+    same door. Periods and slashes separate words (`BSMT.`, `BSMT/1`); stray
+    leading punctuation and a leading type word go, and a number glued to a
+    type word is that number (`APT 3B`, `#3B`, `NUM 3B` → `3B`; `1UNIT` → `1`;
+    the display adds "Apt" back to a bare code); abbreviations take one spelling
+    (`UNIT_SYNONYMS`); a direction next to a code takes its letter (`PH EAST`
+    → `PH E`); unit words stand apart from what they label (`4FL`, `FRNT1`,
+    `PHA`); a floor drops its ordinal; codes come after the words they belong
+    to (`4TH FL` → `FL 4`, `8B NORTH TOWER` → `NORTH TOWER 8B`); and a code's
+    pieces join across a space or hyphen (`6 D`, `6-D` → `6D`). A word is a
+    unit word, a type word, or any four or more letters; anything else is a
+    code. Spaces, hyphens, periods and slashes between two numbers stay: `2 2`
+    and `22` can be different units, and `1/2` is a fraction. NULL when blank.
+
+    The rules run twice: moving words to the front can expose a type word or
+    a glued unit word for the earlier steps. Two passes settle every unit in
+    the NYS and Florida files this was built from (a third changes nothing)."""
+    return _unit_label_pass_sql(_unit_label_pass_sql(col))
+
+
+def _unit_label_pass_sql(col: str) -> str:
+    """One pass of the rules `unit_label_sql` runs."""
+    types = "|".join(UNIT_TYPE_WORDS)
+    words = "|".join(sorted(UNIT_WORDS, key=len, reverse=True))
+    synonyms = [a for alts in UNIT_SYNONYMS.values() for a in alts]
+    # `AP` stays out: in `1AP` it's more likely a code than "apartment 1".
+    glued_types = [t for t in UNIT_TYPE_WORDS if t != "AP"]
+    spellings = "|".join(sorted({*UNIT_WORDS, *synonyms, *glued_types}, key=len, reverse=True))
+    ordinal = "(ST|ND|RD|TH)"
+    e = f"upper(trim({col}))"
+    # A period or slash separates words (`BSMT.`, `BSMT/1`) except inside a number (`1/2`).
+    e = f"regexp_replace({e}, '([^0-9])[./]', '\\1 ', 'g')"
+    e = f"regexp_replace({e}, '[./]([^0-9])', ' \\1', 'g')"
+    e = f"regexp_replace(trim({e}), '\\s+', ' ', 'g')"
+    e = f"regexp_replace({e}, '^[^0-9A-Z#]+', '')"
+    e = f"regexp_replace({e}, '^#\\s*', '')"
+    for _ in range(2):  # `NUM NUM 1`
+        e = f"regexp_replace({e}, '^({types})[.#:\\s-]+', '')"
+        e = f"regexp_replace({e}, '^({types})([0-9])', '\\2')"
+    # Glued to one letter (`UNITB`, `APTG2`); `UNITED` and a bare `APTO` stay.
+    e = f"regexp_replace({e}, '^UNIT([A-Z])([^A-Z]|$)', '\\1\\2')"
+    e = f"regexp_replace({e}, '^APT([A-NP-Z])([^A-Z]|$)', '\\1\\2')"
+    e = f"regexp_replace({e}, '([0-9])-([A-Z])', '\\1\\2', 'g')"
+    e = f"regexp_replace({e}, '([A-Z])-([0-9A-Z])', '\\1\\2', 'g')"
+    # A number glued to any spelling of a unit word (`4FLR`), so the renaming
+    # below sees the word; renaming runs before the word-first splits, which
+    # would otherwise read `FLR` as `FL` plus a letter.
+    e = f"regexp_replace({e}, '([0-9]){ordinal}?({spellings})([^A-Z]|$)', '\\1\\2 \\3\\4', 'g')"
+    for canon, alts in UNIT_SYNONYMS.items():
+        e = f"regexp_replace({e}, '(^|[^A-Z])({'|'.join(alts)})([^A-Z]|$)', '\\1{canon}\\3', 'g')"
+    # A direction next to a code takes its letter (`PH EAST`, `EAST 304`); one
+    # that names a wing (`SOUTH TOWER`) or stands alone stays a word.
+    for letter, word in UNIT_DIRECTIONS.items():
+        e = f"regexp_replace({e}, '(^|[^A-Z]){word}( ?[0-9])', '\\1{letter}\\2', 'g')"
+        e = f"regexp_replace({e}, '([^A-Z]){word}$', '\\1{letter}')"
+    e = f"regexp_replace({e}, '(^|[^A-Z])({words})([0-9])', '\\1\\2 \\3', 'g')"
+    e = f"regexp_replace({e}, '(^|[^A-Z])({words})([A-Z])([^A-Z0-9]|$)', '\\1\\2 \\3\\4', 'g')"
+    # A floor drops its ordinal, written glued, spaced, or bare (`4TH FL`, `4 TH FL`, `4TH`).
+    e = f"regexp_replace({e}, '(^|[^A-Z0-9])([0-9]+) ?{ordinal} FL([^A-Z]|$)', '\\1\\2 FL\\4', 'g')"
+    e = f"regexp_replace({e}, '^([0-9]+) ?{ordinal}$', '\\1 FL')"
+    # Leading codes move after the words (`4 FL` → `FL 4`), before a code's pieces join,
+    # so `806 TOWER B` and `TOWER B 806` both become `TOWER B806`.
+    known = ", ".join(f"'{w}'" for w in sorted({*UNIT_WORDS, *UNIT_TYPE_WORDS}))
+    is_word = f"(list_contains([{known}], t) OR regexp_matches(t, '^[A-Z]{{4,}}$'))"
+    e = (
+        f"list_transform([string_split({e}, ' ')], ts -> CASE"
+        f" WHEN list_position(list_transform(ts, t -> {is_word}), true) > 1"
+        f" THEN array_to_string(list_concat("
+        f"ts[list_position(list_transform(ts, t -> {is_word}), true):],"
+        f" ts[:list_position(list_transform(ts, t -> {is_word}), true) - 1]), ' ')"
+        f" ELSE array_to_string(ts, ' ') END)[1]"
+    )
+    e = f"regexp_replace({e}, '(^| )([0-9]+) ([A-Z])( |$)', '\\1\\2\\3\\4', 'g')"
+    e = f"regexp_replace({e}, '(^| )([A-Z]) ([0-9]+)( |$)', '\\1\\2\\3\\4', 'g')"
+    # With words in front, two letters after a number are a code (`2 RR`).
+    e = f"regexp_replace({e}, '^([0-9]+) ([A-Z]{{2}})$', '\\1\\2')"
+    return f"nullif(trim(regexp_replace({e}, ' +', ' ', 'g')), '')"
 
 
 def ordinal_tokens_sql(tokens_col: str) -> str:
@@ -313,3 +398,89 @@ STREET_REWRITES: list[tuple[str, str]] = [
     (r"\bfdr\b", "f d r"),
     (r"\bfranklin\s+d(?:elano)?\s+roosevelt\b", "f d r"),
 ]
+
+
+# Words that only say a unit line names a unit, dropped when they lead it:
+# `APT 3B`, `NUM 3B`, `UNIT 3B` and `3B` are one apartment.
+UNIT_TYPE_WORDS: list[str] = ["APARTMENT", "APTO", "APT", "AP", "NUM", "UNIT"]
+
+# Words that say what kind of unit it is, kept apart from the number or letter
+# they label: the USPS secondary unit designators plus voter-file forms, with
+# FRONT spelled out because it reads better than FRNT.
+UNIT_WORDS: list[str] = [
+    "BLDG",
+    "BOX",
+    "BSMT",
+    "DEPT",
+    "FL",
+    "FRONT",
+    "GARDEN",
+    "GRND",
+    "GROUND",
+    "HNGR",
+    "HSE",
+    "KEY",
+    "LBBY",
+    "LOT",
+    "LOWR",
+    "OFC",
+    "PH",
+    "PIER",
+    "PVT",
+    "REAR",
+    "RM",
+    "SIDE",
+    "SLIP",
+    "SPC",
+    "STE",
+    "STOP",
+    "SUPT",
+    "TOP",
+    "TOWER",
+    "TRLR",
+    "UPPR",
+    "WING",
+]
+
+# Spellings of one unit word found side by side in the same buildings of the
+# NYS and Florida voter files, or misspelled there, each mapped to one form.
+UNIT_SYNONYMS: dict[str, list[str]] = {
+    "FL": ["FLR", "FLOOR"],
+    "BSMT": [
+        "BASEMENT",
+        "BSMNT",
+        "BASMT",
+        "BSM",
+        "BMT",
+        "BST",
+        "BSTM",
+        "BAS",
+        "BASE",
+        "BASM",
+        "BASEM",
+        "BASMENT",
+        "BASEMET",
+        "BASEMEN",
+        "BASEMNT",
+        "BASEMT",
+        "BMST",
+        "BSMENT",
+        "BMNT",
+        "BAMT",
+    ],
+    "GARDEN": ["GRDN", "GDN"],
+    "PH": ["PENTHOUSE"],
+    "BLDG": ["BUILDING", "BLD", "BLG"],
+    "FRONT": ["FRNT", "FRT"],
+    "RM": ["ROOM"],
+    "STE": ["SUITE"],
+    "PVT": ["PRIVATE", "PRVT", "PRIV", "PRV"],
+    "SUPT": ["SUP", "SUPER", "SUPR"],
+    "LOWR": ["LOWER", "LWR"],
+    "UPPR": ["UPPER"],
+    "TOWER": ["TWR"],
+}
+
+# Directions, which take their letter next to a code so "PH EAST" reads like
+# its neighbours "PH W" and "1E".
+UNIT_DIRECTIONS: dict[str, str] = {"E": "EAST", "W": "WEST", "N": "NORTH", "S": "SOUTH"}

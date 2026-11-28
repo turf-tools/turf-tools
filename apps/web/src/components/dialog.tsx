@@ -65,13 +65,15 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
       <DialogPrimitive.Popup
         ref={popupRef}
         tabIndex={-1}
-        // Focus an input if present so the user can start typing;
+        // Focus an enabled input if present so the user can start typing;
         // otherwise focus the popup itself (outline-none so no ring).
         // The Enter handler below makes the keyless popup still
         // dismissable without auto-focusing a button — keyboard-opened
         // dialogs would otherwise show a :focus-visible ring on Cancel.
         initialFocus={() =>
-          popupRef.current?.querySelector<HTMLElement>("input, textarea") ?? popupRef.current
+          popupRef.current?.querySelector<HTMLElement>(
+            "input:not(:disabled), textarea:not(:disabled)",
+          ) ?? popupRef.current
         }
         finalFocus={FINAL_FOCUS_NONE}
         // Default Enter clicks the first DialogClose (Cancel/Ok), so

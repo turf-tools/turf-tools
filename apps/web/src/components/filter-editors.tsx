@@ -26,6 +26,7 @@ import {
   type Filter,
   type FilterDef,
   type NumberRangeFilter,
+  type HouseholdFilter,
   type PhoneFilter,
   type SegmentFilter,
   type TextFilter,
@@ -110,6 +111,7 @@ export function FilterValueEditor({
           allSegments={allSegments}
         />
       ) : null}
+      {filter.kind === "household" ? <HouseholdEditor filter={filter} onChange={onChange} /> : null}
     </>
   );
 }
@@ -985,6 +987,35 @@ function SegmentFilterEditor({
   );
 }
 
+function HouseholdEditor({
+  filter,
+  onChange,
+}: {
+  filter: HouseholdFilter;
+  onChange: (next: Filter) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 text-sm">
+      <span className="text-muted-foreground">By</span>
+      {[
+        { building: false, label: "Door" },
+        { building: true, label: "Building" },
+      ].map((o) => (
+        <Toggle
+          key={o.label}
+          size="sm"
+          variant="outline"
+          pressed={filter.building === o.building}
+          onPressedChange={() => onChange({ ...filter, building: o.building })}
+          className="aria-pressed:border-muted-foreground data-[state=on]:border-muted-foreground"
+        >
+          {o.label}
+        </Toggle>
+      ))}
+    </div>
+  );
+}
+
 export function AddStepMenu({
   sections,
   isFirstStep,
@@ -1007,7 +1038,13 @@ export function AddStepMenu({
       {allVerbs.map((verb) => {
         const { label } = VERB_META[verb];
         const disabled = isFirstStep && verb === "add"; // add only makes sense after a first step
-        const visibleSections = sections;
+        // Household Members adds to the running set, so it's only offered under Add.
+        const visibleSections =
+          verb === "add"
+            ? sections
+            : sections
+                .map((section) => section.filter((def) => def.kind !== "household"))
+                .filter((section) => section.length > 0);
         return (
           <div key={verb} className="flex-1">
             <DropdownMenu>
