@@ -139,7 +139,7 @@ def test_address_assembles_direction_type_and_unit(conn) -> None:
         person["precinct"],
         person["gender"],
         person["race"],
-    ) == ("4041 CONWAY VALLEY RD NW", None, "13089", "DEKALB-JA", "M", "black")
+    ) == ("4041 CONWAY VALLEY RD NW", None, "13089", "JA-DEKALB", "M", "black")
 
 
 def test_county_numbered_codes_carry_their_county(conn) -> None:
@@ -149,24 +149,26 @@ def test_county_numbered_codes_carry_their_county(conn) -> None:
         people[voter_registration_number(1)]["precinct"],
         people[voter_registration_number(1)]["county_commission_district"],
     ) == (
-        "FULTON-01A",
-        "FULTON-3",
+        "01A-FULTON",
+        "3-FULTON",
     )
-    assert people[voter_registration_number(2)]["county_commission_district"] == "DEKALB-2"
+    assert people[voter_registration_number(2)]["county_commission_district"] == "2-DEKALB"
 
 
-def test_a_county_written_with_spaces_reads_as_the_states_spelling(conn, tmp_path) -> None:
+def test_place_names_written_with_spaces_read_as_the_states_spelling(conn, tmp_path) -> None:
     text = (SAMPLE_DATA / "file.csv").read_text().replace('"FULTON","10000001"', '"BEN HILL","10000001"', 1)
+    text = text.replace('"02-ATLANTA"', '"02-sandy springs"', 1)
     spaced = tmp_path / "file.csv"
     spaced.write_text(text)
     _load(conn, {"file": str(spaced)})
     person = _people(conn)[voter_registration_number(1)]
-    assert (person["county_code"], person["county_fips"], person["precinct"], person["county_commission_district"]) == (
-        "BENHILL",
-        "13017",
-        "BENHILL-01A",
-        "BENHILL-3",
-    )
+    assert (
+        person["county_code"],
+        person["county_fips"],
+        person["precinct"],
+        person["county_commission_district"],
+        person["city_council_district"],
+    ) == ("BENHILL", "13017", "01A-BENHILL", "3-BENHILL", "02-SANDYSPRINGS")
 
 
 def test_without_history_everyone_has_an_empty_history(conn) -> None:

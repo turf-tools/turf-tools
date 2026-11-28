@@ -18,10 +18,12 @@ def case_from_map(col: str, mapping: Mapping[str, str], default: str | None = No
     return f"CASE {branches} ELSE {else_clause} END"
 
 
-def county_local_sql(col: str, county: str) -> str:
-    """A code that's only unique within its county, prefixed with the county:
-    precinct `135` in Miami-Dade → `DAD-135`."""
-    return f"CASE WHEN {col} IS NULL THEN NULL ELSE {county} || '-' || {col} END"
+def county_local_sql(col: str, county: str, *, county_first: bool = True) -> str:
+    """A code that's only unique within its county, joined to the county with a
+    hyphen: precinct `135` in Miami-Dade → `DAD-135`, or `135-DAD` without
+    `county_first`, for a state that writes its own place-scoped codes code first."""
+    joined = f"{county} || '-' || {col}" if county_first else f"{col} || '-' || {county}"
+    return f"CASE WHEN {col} IS NULL THEN NULL ELSE {joined} END"
 
 
 def filter_predicate(filter: ImportFilter | None, expressions: Mapping[str, str] | None = None) -> str | None:

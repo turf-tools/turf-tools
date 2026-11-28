@@ -354,12 +354,15 @@ SELECT
     END AS last_party_voted,
     {county_key} AS county_code,
     {case_from_map(county_key, county_fips)} AS county_fips,
-    {county_local_sql("raw.county_precinct", county_key)} AS precinct,
+    -- Codes numbered within a county get the county after them, the way the
+    -- file writes city council districts (`05-ATLANTA`). Place names are
+    -- uppercase without spaces in all three.
+    {county_local_sql("raw.county_precinct", county_key, county_first=False)} AS precinct,
     raw.congressional_district AS congressional_district,
     raw.state_senate_district AS senate_district,
     raw.state_house_district AS house_district,
-    {county_local_sql("raw.county_commission_district", county_key)} AS county_commission_district,
-    raw.city_council_district AS city_council_district,
+    {county_local_sql("raw.county_commission_district", county_key, county_first=False)} AS county_commission_district,
+    replace(upper(raw.city_council_district), ' ', '') AS city_council_district,
     raw.municipality AS municipality,
     coalesce(history.voting_history, CAST([] AS {VOTING_HISTORY_TYPE})) AS voting_history
 FROM {registration_table} AS raw
