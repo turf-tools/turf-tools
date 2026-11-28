@@ -1,6 +1,11 @@
 import { ORPCError } from "@orpc/server";
 import { and, asc, eq, inArray, isNull, sql, type Db } from "@turf-tools/db";
-import { scriptSteps, questions, responseOptions } from "@turf-tools/db/schema";
+import {
+  questionExternalIds,
+  questions,
+  responseOptions,
+  scriptSteps,
+} from "@turf-tools/db/schema";
 import { z } from "zod";
 import { webMut, webPub } from "../context";
 
@@ -12,7 +17,6 @@ const select = {
   name: questions.name,
   responseType: questions.responseType,
   text: questions.text,
-  vanId: questions.vanId,
   createdAt: questions.createdAt,
   archivedAt: questions.archivedAt,
 };
@@ -103,7 +107,6 @@ export const listWithOptions = pub.handler(async ({ context }) => {
       questionId: questions.questionId,
       name: questions.name,
       responseType: questions.responseType,
-      vanId: questions.vanId,
       archivedAt: questions.archivedAt,
     })
     .from(questions)
@@ -111,21 +114,28 @@ export const listWithOptions = pub.handler(async ({ context }) => {
     .orderBy(asc(questions.createdAt));
   if (qs.length === 0) return [];
 
-  const opts = await context.db
-    .select({
-      questionId: responseOptions.questionId,
-      responseOptionId: responseOptions.responseOptionId,
-      text: responseOptions.text,
-      archivedAt: responseOptions.archivedAt,
-    })
-    .from(responseOptions)
-    .where(
-      inArray(
-        responseOptions.questionId,
-        qs.map((q) => q.questionId),
-      ),
-    )
-    .orderBy(asc(responseOptions.order));
+  const questionIds = qs.map((q) => q.questionId);
+
+  const [opts, extRows] = await Promise.all([
+    context.db
+      .select({
+        questionId: responseOptions.questionId,
+        responseOptionId: responseOptions.responseOptionId,
+        text: responseOptions.text,
+        archivedAt: responseOptions.archivedAt,
+      })
+      .from(responseOptions)
+      .where(inArray(responseOptions.questionId, questionIds))
+      .orderBy(asc(responseOptions.order)),
+    context.db
+      .select({
+        questionId: questionExternalIds.questionId,
+        sourceType: questionExternalIds.sourceType,
+        externalId: questionExternalIds.externalId,
+      })
+      .from(questionExternalIds)
+      .where(inArray(questionExternalIds.questionId, questionIds)),
+  ]);
 
   // Include archived options (flagged). The segment editor must still render an
   // archived option an existing filter references, so it stays removable;
@@ -143,12 +153,18 @@ export const listWithOptions = pub.handler(async ({ context }) => {
     });
     byQuestion.set(o.questionId, list);
   }
+  const extByQuestion = new Map<string, { sourceType: string; externalId: string }[]>();
+  for (const e of extRows) {
+    const list = extByQuestion.get(e.questionId) ?? [];
+    list.push({ sourceType: e.sourceType, externalId: e.externalId });
+    extByQuestion.set(e.questionId, list);
+  }
   return qs.map((q) => ({
     questionId: q.questionId,
     name: q.name,
     responseType: q.responseType,
-    vanId: q.vanId,
     archived: q.archivedAt !== null,
+    externalIds: extByQuestion.get(q.questionId) ?? [],
     options: byQuestion.get(q.questionId) ?? [],
   }));
 });

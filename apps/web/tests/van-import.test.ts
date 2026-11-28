@@ -6,7 +6,7 @@ import {
   parseVanIdMapBytes,
   parseVanSurveyExport,
   parseVanSurveyExportBytes,
-  vanClientEventId,
+  vanImportedResponseKey,
 } from "../src/lib/van-import";
 
 function utf16Le(text: string): ArrayBuffer {
@@ -166,7 +166,12 @@ test("parseVanDate handles M/D/YYYY", () => {
   expect(parseVanDate("bogus")).toBeNull();
 });
 
-test("vanClientEventId is day-stable", () => {
-  const a = vanClientEventId("10426746", new Date("2026-05-30T12:00:00.000Z"));
-  expect(a).toBe("van:10426746:2026-05-30");
+test("vanImportedResponseKey is stable", () => {
+  const a = vanImportedResponseKey(
+    "10426746",
+    new Date("2026-05-30T12:00:00.000Z"),
+    "727137",
+    "2916960",
+  );
+  expect(a).toBe("10426746:2026-05-30:727137:2916960");
 });

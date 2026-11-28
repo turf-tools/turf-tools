@@ -1,16 +1,17 @@
 import { and, eq, inArray, isNull, ne, type Db } from "@turf-tools/db";
 import {
-  canvassEvents,
-  type CanvassEventPayload,
+  importedResponses,
+  questionExternalIds,
   questions,
+  responseOptionExternalIds,
   responseOptions,
 } from "@turf-tools/db/schema";
 import { dataPostJson } from "~/lib/server/data-proxy";
-import { ensureVanHistoryTurf } from "~/lib/server/van-history";
 import {
   parseVanIdMapBytes,
   parseVanSurveyExportBytes,
-  vanClientEventId,
+  VAN_SOURCE_TYPE,
+  vanImportedResponseKey,
   type VanImportStats,
   type VanSurveyQuestionPreview,
 } from "~/lib/van-import";
@@ -18,21 +19,21 @@ import {
 /** Per VAN survey question: create a new question, or attach to an existing one. */
 export type VanQuestionMapping = {
   questionVanId: string;
-  /** Null → create new (or reuse by vanId). Set → match to this org question. */
+  /** Null → create new (or reuse by external id). Set → match to this org question. */
   questionId: string | null;
 };
 
-// Import VAN survey answers into canvass_events.
+// Import VAN survey answers into imported_responses (not canvass_events).
 //
 // Inputs: (1) Standard Text ID map (StateFileID ↔ Voter File VANID),
 // (2) long-format survey export (one row per answer with SurveyQuestionId /
 // SurveyResponseId / DateCanvassed), (3) UI mappings that say create / match /
 // skip for each VAN question.
 //
-// Pipeline: parse → resolve questions & options to app UUIDs → join answers
-// onto lake persons via the ID-map file → write one canvass_events result per
-// (person, DateCanvassed day) on the org's hidden VAN History turf. Re-imports
-// of the same person/day no-op via clientEventId.
+// Pipeline: parse → resolve questions & options to app UUIDs (stamping
+// question_external_ids / response_option_external_ids with sourceType 'van')
+// → join answers onto lake persons via the ID-map file → write one
+// imported_responses row per selected option. Re-imports no-op via sourceKey.
 export async function runVanResponseImport(
   db: Db,
   opts: {
@@ -98,9 +99,9 @@ export async function runVanResponseImport(
   const vanToState = new Map<string, string>();
   for (const row of idMap.rows) vanToState.set(row.vanId, row.stateFileId);
 
-  // Build VAN SurveyQuestionId / SurveyResponseId → app UUID maps. Matching an
-  // existing question stamps vanId on it and links options by vanId or text
-  // (creating any options the existing question is missing).
+  // Build SurveyQuestionId / SurveyResponseId → app UUID maps. Matching an
+  // existing question stamps an external-id ref and links options by external
+  // id or text (creating any options the existing question is missing).
   let questionsCreated = 0;
   let questionsUpdated = 0;
   let questionsMatched = 0;
@@ -132,16 +133,8 @@ export async function runVanResponseImport(
     for (const [key, optionId] of linked.map) optionIdByVan.set(key, optionId);
   }
 
-  // canvass_events require a turfId; the VAN History turf is superseded so it
-  // stays off the board while still joining into canvass-response filters.
-  const { turfId } = await ensureVanHistoryTurf(db, {
-    organizationId: opts.organizationId,
-    orgSlug: opts.orgSlug,
-    userId: opts.userId,
-  });
-
   // VANID → StateFileID via the map, then keep only people present in the
-  // org's active lake version (filters join canvass personId to external_id).
+  // org's active lake version (filters join personId to external_id).
   const unmappedVanIds = new Set<string>();
   const withState: { answer: (typeof answers)[number]; stateFileId: string }[] = [];
   for (const a of answers) {
@@ -165,73 +158,47 @@ export async function runVanResponseImport(
     ...new Set(withState.filter((r) => !existingSet.has(r.stateFileId)).map((r) => r.stateFileId)),
   ];
 
-  // Collapse long-format rows into one result snapshot per person/day — the
-  // same shape the native app writes (outcome + responses keyed by questionId).
-  type EventBucket = {
-    vanId: string;
-    stateFileId: string;
-    canvassedAt: Date;
-    responses: Map<string, Set<string>>;
-  };
-  const buckets = new Map<string, EventBucket>();
+  // One imported_responses row per selected option (multi-select = many rows).
+  const responseRows: {
+    organizationId: string;
+    personId: string;
+    questionId: string;
+    responseOptionId: string;
+    respondedAt: Date;
+    sourceType: string;
+    sourceKey: string;
+  }[] = [];
+
   for (const { answer: a, stateFileId } of matched) {
-    const day = a.canvassedAt.toISOString().slice(0, 10);
-    const key = `${a.vanId}|${day}`;
-    let bucket = buckets.get(key);
-    if (!bucket) {
-      bucket = {
-        vanId: a.vanId,
-        stateFileId,
-        canvassedAt: a.canvassedAt,
-        responses: new Map(),
-      };
-      buckets.set(key, bucket);
-    }
     const questionId = questionIdByVan.get(a.questionVanId);
     const optionId = optionIdByVan.get(`${a.questionVanId}:${a.responseVanId}`);
     if (!questionId || !optionId) continue;
-    let optsSet = bucket.responses.get(questionId);
-    if (!optsSet) {
-      optsSet = new Set();
-      bucket.responses.set(questionId, optsSet);
-    }
-    optsSet.add(optionId);
-  }
-
-  const eventRows: {
-    clientEventId: string;
-    turfId: string;
-    personId: string;
-    kind: string;
-    payload: CanvassEventPayload;
-    createdAt: Date;
-  }[] = [];
-
-  for (const bucket of buckets.values()) {
-    if (bucket.responses.size === 0) continue;
-    const responses: Record<string, { optionIds: string[] }> = {};
-    for (const [questionId, optionIds] of bucket.responses) {
-      responses[questionId] = { optionIds: [...optionIds] };
-    }
-    eventRows.push({
-      clientEventId: vanClientEventId(bucket.vanId, bucket.canvassedAt),
-      turfId,
-      personId: bucket.stateFileId,
-      kind: "result",
-      payload: { kind: "result", outcome: "canvassed", responses },
-      createdAt: bucket.canvassedAt,
+    responseRows.push({
+      organizationId: opts.organizationId,
+      personId: stateFileId,
+      questionId,
+      responseOptionId: optionId,
+      respondedAt: a.canvassedAt,
+      sourceType: VAN_SOURCE_TYPE,
+      sourceKey: vanImportedResponseKey(a.vanId, a.canvassedAt, a.questionVanId, a.responseVanId),
     });
   }
 
-  // Dedup on clientEventId = van:{vanId}:{YYYY-MM-DD}.
-  let eventsInserted = 0;
-  for (const group of chunk(eventRows, 500)) {
+  // Dedup on (org, sourceType, sourceKey).
+  let responsesInserted = 0;
+  for (const group of chunk(responseRows, 500)) {
     const result = await db
-      .insert(canvassEvents)
+      .insert(importedResponses)
       .values(group)
-      .onConflictDoNothing({ target: canvassEvents.clientEventId })
-      .returning({ sequence: canvassEvents.sequence });
-    eventsInserted += result.length;
+      .onConflictDoNothing({
+        target: [
+          importedResponses.organizationId,
+          importedResponses.sourceType,
+          importedResponses.sourceKey,
+        ],
+      })
+      .returning({ importedResponseId: importedResponses.importedResponseId });
+    responsesInserted += result.length;
   }
 
   return {
@@ -244,8 +211,8 @@ export async function runVanResponseImport(
     peopleWritten: new Set(matched.map((r) => r.stateFileId)).size,
     peopleSkippedUnmapped: unmappedVanIds.size,
     peopleSkippedUnmatched: unmatchedExternalIds.length,
-    eventsInserted,
-    eventsDeduped: eventRows.length - eventsInserted,
+    responsesInserted,
+    responsesDeduped: responseRows.length - responsesInserted,
     sampleUnmappedVanIds: [...unmappedVanIds].slice(0, 20),
     sampleUnmatchedExternalIds: unmatchedExternalIds.slice(0, 20),
   };
@@ -253,10 +220,11 @@ export async function runVanResponseImport(
 
 // Resolve one VAN SurveyQuestionId to an app questions.questionId.
 //
-// Paths: (1) UI match → stamp vanId onto the chosen org question (and clear it
-// from any sibling that held it), (2) prior import already set vanId → refresh
-// name/type, (3) else insert a new question. vanId on questions is only for
-// rematching catalog rows across imports, not person identity.
+// Paths: (1) UI match → stamp external-id ref onto the chosen org question
+// (and clear it from any sibling that held it), (2) prior import already
+// linked this SurveyQuestionId → refresh name/type, (3) else insert a new
+// question + ref. External ids are for rematching catalog rows across
+// imports, not person identity.
 async function resolveQuestion(
   db: Db,
   opts: {
@@ -267,25 +235,20 @@ async function resolveQuestion(
   },
 ): Promise<{ questionId: string; kind: "created" | "matched" | "updated" }> {
   const responseType = opts.preview.multiSelect ? "multi_select" : "single_select";
+  const externalId = opts.preview.questionVanId;
 
   // Org-scoped uniqueness: only one question may own this SurveyQuestionId.
   // Matching never overwrites name/text (the existing wording wins); multi_select
   // widens responseType when the VAN export needs it, and archived rows revive.
   if (opts.matchQuestionId) {
-    await db
-      .update(questions)
-      .set({ vanId: null })
-      .where(
-        and(
-          eq(questions.organizationId, opts.organizationId),
-          eq(questions.vanId, opts.preview.questionVanId),
-          ne(questions.questionId, opts.matchQuestionId),
-        ),
-      );
+    await stampQuestionExternalId(db, {
+      organizationId: opts.organizationId,
+      questionId: opts.matchQuestionId,
+      externalId,
+    });
     await db
       .update(questions)
       .set({
-        vanId: opts.preview.questionVanId,
         ...(opts.preview.multiSelect ? { responseType: "multi_select" as const } : {}),
         archivedAt: null,
       })
@@ -293,20 +256,21 @@ async function resolveQuestion(
     return { questionId: opts.matchQuestionId, kind: "matched" };
   }
 
-  // Create path with vanId already on file from an earlier import — pull
+  // Create path with external id already on file from an earlier import — pull
   // name/text/responseType from this export and unarchive if needed.
-  const [byVan] = await db
-    .select({ questionId: questions.questionId })
-    .from(questions)
+  const [byExt] = await db
+    .select({ questionId: questionExternalIds.questionId })
+    .from(questionExternalIds)
     .where(
       and(
-        eq(questions.organizationId, opts.organizationId),
-        eq(questions.vanId, opts.preview.questionVanId),
+        eq(questionExternalIds.organizationId, opts.organizationId),
+        eq(questionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(questionExternalIds.externalId, externalId),
       ),
     )
     .limit(1);
 
-  if (byVan) {
+  if (byExt) {
     await db
       .update(questions)
       .set({
@@ -315,11 +279,11 @@ async function resolveQuestion(
         responseType,
         archivedAt: null,
       })
-      .where(eq(questions.questionId, byVan.questionId));
-    return { questionId: byVan.questionId, kind: "updated" };
+      .where(eq(questions.questionId, byExt.questionId));
+    return { questionId: byExt.questionId, kind: "updated" };
   }
 
-  // Brand-new catalog row; vanId lets a later import find it without remapping.
+  // Brand-new catalog row; external-id ref lets a later import find it without remapping.
   const [inserted] = await db
     .insert(questions)
     .values({
@@ -327,18 +291,64 @@ async function resolveQuestion(
       name: opts.preview.name,
       text: opts.preview.name,
       responseType,
-      vanId: opts.preview.questionVanId,
       createdBy: opts.userId,
     })
     .returning({ questionId: questions.questionId });
+  await stampQuestionExternalId(db, {
+    organizationId: opts.organizationId,
+    questionId: inserted!.questionId,
+    externalId,
+  });
   return { questionId: inserted!.questionId, kind: "created" };
+}
+
+async function stampQuestionExternalId(
+  db: Db,
+  opts: { organizationId: string; questionId: string; externalId: string },
+): Promise<void> {
+  // Free this SurveyQuestionId from any other org question.
+  await db
+    .delete(questionExternalIds)
+    .where(
+      and(
+        eq(questionExternalIds.organizationId, opts.organizationId),
+        eq(questionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(questionExternalIds.externalId, opts.externalId),
+        ne(questionExternalIds.questionId, opts.questionId),
+      ),
+    );
+  // One link per (question, source): replace whatever van id was there.
+  await db
+    .delete(questionExternalIds)
+    .where(
+      and(
+        eq(questionExternalIds.questionId, opts.questionId),
+        eq(questionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        ne(questionExternalIds.externalId, opts.externalId),
+      ),
+    );
+  await db
+    .insert(questionExternalIds)
+    .values({
+      questionId: opts.questionId,
+      organizationId: opts.organizationId,
+      sourceType: VAN_SOURCE_TYPE,
+      externalId: opts.externalId,
+    })
+    .onConflictDoNothing({
+      target: [
+        questionExternalIds.organizationId,
+        questionExternalIds.sourceType,
+        questionExternalIds.externalId,
+      ],
+    });
 }
 
 // Link each VAN SurveyResponseId under a question to a response_options row.
 //
-// Prefer vanId, then case-insensitive text (so matching an existing question
-// attaches options that already share wording). Missing options are inserted;
-// returns SurveyQuestionId:SurveyResponseId → responseOptionId for event write.
+// Prefer external-id ref, then case-insensitive text (so matching an existing
+// question attaches options that already share wording). Missing options are
+// inserted; returns SurveyQuestionId:SurveyResponseId → responseOptionId.
 async function linkOptions(
   db: Db,
   opts: {
@@ -352,16 +362,26 @@ async function linkOptions(
   const existingOpts = await db
     .select({
       responseOptionId: responseOptions.responseOptionId,
-      vanId: responseOptions.vanId,
       text: responseOptions.text,
       archivedAt: responseOptions.archivedAt,
     })
     .from(responseOptions)
     .where(eq(responseOptions.questionId, opts.questionId));
 
-  const byVan = new Map(
-    existingOpts.filter((o) => o.vanId).map((o) => [o.vanId!, o.responseOptionId]),
-  );
+  const existingRefs = await db
+    .select({
+      responseOptionId: responseOptionExternalIds.responseOptionId,
+      externalId: responseOptionExternalIds.externalId,
+    })
+    .from(responseOptionExternalIds)
+    .where(
+      and(
+        eq(responseOptionExternalIds.questionId, opts.questionId),
+        eq(responseOptionExternalIds.sourceType, VAN_SOURCE_TYPE),
+      ),
+    );
+  const byExt = new Map(existingRefs.map((r) => [r.externalId, r.responseOptionId]));
+
   // Prefer a live row when duplicate text exists (archived fallback still works).
   const byText = new Map<string, string>();
   for (const o of existingOpts) {
@@ -374,24 +394,29 @@ async function linkOptions(
     const mapKey = `${opts.preview.questionVanId}:${resp.responseVanId}`;
 
     // Already linked from a prior import — refresh label and unarchive.
-    const byVanId = byVan.get(resp.responseVanId);
-    if (byVanId) {
+    const byExtId = byExt.get(resp.responseVanId);
+    if (byExtId) {
       await db
         .update(responseOptions)
         .set({ text: resp.text, archivedAt: null })
-        .where(eq(responseOptions.responseOptionId, byVanId));
-      out.set(mapKey, byVanId);
+        .where(eq(responseOptions.responseOptionId, byExtId));
+      out.set(mapKey, byExtId);
       continue;
     }
 
-    // First-time match onto an existing option by wording; stamp vanId for next time.
+    // First-time match onto an existing option by wording; stamp external id for next time.
     const byTextId = byText.get(resp.text.trim().toLowerCase());
     if (byTextId) {
+      await stampOptionExternalId(db, {
+        questionId: opts.questionId,
+        responseOptionId: byTextId,
+        externalId: resp.responseVanId,
+      });
+      byExt.set(resp.responseVanId, byTextId);
       await db
         .update(responseOptions)
-        .set({ vanId: resp.responseVanId, archivedAt: null })
+        .set({ archivedAt: null })
         .where(eq(responseOptions.responseOptionId, byTextId));
-      byVan.set(resp.responseVanId, byTextId);
       out.set(mapKey, byTextId);
       continue;
     }
@@ -403,15 +428,60 @@ async function linkOptions(
         questionId: opts.questionId,
         text: resp.text,
         order: orderCursor,
-        vanId: resp.responseVanId,
         createdBy: opts.userId,
       })
       .returning({ responseOptionId: responseOptions.responseOptionId });
+    await stampOptionExternalId(db, {
+      questionId: opts.questionId,
+      responseOptionId: inserted!.responseOptionId,
+      externalId: resp.responseVanId,
+    });
     orderCursor += 1;
     created += 1;
+    byExt.set(resp.responseVanId, inserted!.responseOptionId);
     out.set(mapKey, inserted!.responseOptionId);
   }
   return { map: out, created };
+}
+
+async function stampOptionExternalId(
+  db: Db,
+  opts: { questionId: string; responseOptionId: string; externalId: string },
+): Promise<void> {
+  await db
+    .delete(responseOptionExternalIds)
+    .where(
+      and(
+        eq(responseOptionExternalIds.questionId, opts.questionId),
+        eq(responseOptionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        eq(responseOptionExternalIds.externalId, opts.externalId),
+        ne(responseOptionExternalIds.responseOptionId, opts.responseOptionId),
+      ),
+    );
+  await db
+    .delete(responseOptionExternalIds)
+    .where(
+      and(
+        eq(responseOptionExternalIds.responseOptionId, opts.responseOptionId),
+        eq(responseOptionExternalIds.sourceType, VAN_SOURCE_TYPE),
+        ne(responseOptionExternalIds.externalId, opts.externalId),
+      ),
+    );
+  await db
+    .insert(responseOptionExternalIds)
+    .values({
+      responseOptionId: opts.responseOptionId,
+      questionId: opts.questionId,
+      sourceType: VAN_SOURCE_TYPE,
+      externalId: opts.externalId,
+    })
+    .onConflictDoNothing({
+      target: [
+        responseOptionExternalIds.questionId,
+        responseOptionExternalIds.sourceType,
+        responseOptionExternalIds.externalId,
+      ],
+    });
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {

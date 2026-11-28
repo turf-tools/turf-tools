@@ -21,6 +21,7 @@ import { questionsWithOptionsQuery } from "~/lib/queries/questions";
 import {
   parseVanIdMapBytes,
   parseVanSurveyExportBytes,
+  VAN_SOURCE_TYPE,
   type VanIdMapParse,
   type VanImportStats,
   type VanSurveyParse,
@@ -38,9 +39,13 @@ type QuestionChoice = { kind: "skip" } | { kind: "create" } | { kind: "match"; q
 type SelectableQuestion = {
   questionId: string;
   name: string;
-  vanId: string | null;
+  externalIds: { sourceType: string; externalId: string }[];
   options: { text: string; archived: boolean }[];
 };
+
+function vanExternalId(q: SelectableQuestion): string | undefined {
+  return q.externalIds.find((e) => e.sourceType === VAN_SOURCE_TYPE)?.externalId;
+}
 
 function defaultChoicesFor(
   parsed: VanSurveyParse,
@@ -49,10 +54,10 @@ function defaultChoicesFor(
   const initial: Record<string, QuestionChoice> = {};
   const used = new Set<string>();
   for (const q of parsed.questions) {
-    const byVan = selectable.find((oq) => oq.vanId === q.questionVanId);
-    if (byVan && !used.has(byVan.questionId)) {
-      initial[q.questionVanId] = { kind: "match", questionId: byVan.questionId };
-      used.add(byVan.questionId);
+    const byExt = selectable.find((oq) => vanExternalId(oq) === q.questionVanId);
+    if (byExt && !used.has(byExt.questionId)) {
+      initial[q.questionVanId] = { kind: "match", questionId: byExt.questionId };
+      used.add(byExt.questionId);
       continue;
     }
     const byName = selectable.find(
@@ -91,7 +96,7 @@ export function VanImportDialog({ orgSlug, open, onOpenChange }: Props) {
     [orgQuestions],
   );
 
-  // Apply name/vanId auto-match once org questions are available after survey load.
+  // Apply external-id / name auto-match once org questions are available after survey load.
   useEffect(() => {
     if (!survey?.ok || autoMatched || selectableQuestions.length === 0) return;
     setChoices(defaultChoicesFor(survey, selectableQuestions));
@@ -248,9 +253,9 @@ export function VanImportDialog({ orgSlug, open, onOpenChange }: Props) {
           <div className="flex flex-col gap-4">
             <Callout tone="success">
               Imported <span className="font-medium">{stats.peopleWritten.toLocaleString()}</span>{" "}
-              people ({stats.eventsInserted.toLocaleString()} new events
-              {stats.eventsDeduped > 0
-                ? `, ${stats.eventsDeduped.toLocaleString()} already imported`
+              people ({stats.responsesInserted.toLocaleString()} new responses
+              {stats.responsesDeduped > 0
+                ? `, ${stats.responsesDeduped.toLocaleString()} already imported`
                 : ""}
               ).
               {stats.questionsMatched > 0
@@ -440,7 +445,7 @@ export function VanImportDialog({ orgSlug, open, onOpenChange }: Props) {
                                   }
                                 >
                                   {oq.name}
-                                  {oq.vanId === q.questionVanId ? " · linked" : ""}
+                                  {vanExternalId(oq) === q.questionVanId ? " · linked" : ""}
                                 </DropdownMenuItem>
                               );
                             })}

@@ -290,9 +290,18 @@ export function parseVanSurveyExportBytes(buffer: ArrayBuffer): VanSurveyParse {
   return parseVanSurveyExport(decodeVanExportBytes(buffer));
 }
 
-export function vanClientEventId(vanId: string, contactedAt: Date): string {
+/** Source type stamped on question/option external-id refs and imported_responses. */
+export const VAN_SOURCE_TYPE = "van";
+
+/** Stable dedupe key for one imported answer option. */
+export function vanImportedResponseKey(
+  vanId: string,
+  contactedAt: Date,
+  questionVanId: string,
+  responseVanId: string,
+): string {
   const day = contactedAt.toISOString().slice(0, 10);
-  return `van:${vanId}:${day}`;
+  return `${vanId}:${day}:${questionVanId}:${responseVanId}`;
 }
 
 export type VanImportStats = {
@@ -305,8 +314,8 @@ export type VanImportStats = {
   peopleWritten: number;
   peopleSkippedUnmapped: number;
   peopleSkippedUnmatched: number;
-  eventsInserted: number;
-  eventsDeduped: number;
+  responsesInserted: number;
+  responsesDeduped: number;
   sampleUnmappedVanIds: string[];
   sampleUnmatchedExternalIds: string[];
 };

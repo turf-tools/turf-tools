@@ -158,12 +158,14 @@ def _canvass_response_person_ids(
     question_id: str,
     option_ids: list[str],
 ) -> list[str]:
-    """Persons (by `external_id`) whose *current* result in some turf answered
-    `question_id` with one of `option_ids`. Same latest-per-(turf, person)
-    reduction as `_canvass_outcome_person_ids`; then overlaps the question's selected
-    option ids against the filter set. Free-text answers and unanswered
-    questions never match (no `optionIds` → NULL list). v1 is existential
-    across turfs, unscoped — see `_canvass_outcome_person_ids`."""
+    """Persons (by `external_id`) who answered `question_id` with one of
+    `option_ids` via field canvass_events *or* imported_responses.
+
+    Field path: latest result per `(turf, person)` then option overlap (same
+    as before). Import path: latest `responded_at` per person for that
+    question, collect that day's option ids, same overlap. Union is
+    existential — a person matches if either source matches. Free-text /
+    unanswered never match on the field path. Outcomes stay events-only."""
     # Built here but passed as a bind param (never interpolated into the SQL),
     # so the question id can't inject. Same json_extract idiom as the outcome
     # query above, just pulling an array rather than a scalar.
@@ -171,24 +173,49 @@ def _canvass_response_person_ids(
     rows = conn.execute(
         f"""
         SELECT DISTINCT person_id FROM (
-            SELECT
-                e.person_id,
-                CAST(json_extract(CAST(e.payload AS VARCHAR), ?) AS VARCHAR[]) AS selected
-            FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
-            JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
-            JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
-            JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
-                ON o.organization_id = c.organization_id
-            WHERE e.kind = 'result'
-                AND e.person_id IS NOT NULL
-                AND o.slug = ?
-            QUALIFY row_number() OVER (
-                PARTITION BY e.turf_id, e.person_id ORDER BY e.sequence DESC
-            ) = 1
+            SELECT person_id FROM (
+                SELECT
+                    e.person_id,
+                    CAST(json_extract(CAST(e.payload AS VARCHAR), ?) AS VARCHAR[]) AS selected
+                FROM {OPERATIONAL_PG_ALIAS}.app.canvass_events e
+                JOIN {OPERATIONAL_PG_ALIAS}.app.turfs t ON t.turf_id = e.turf_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.campaigns c ON c.campaign_id = t.campaign_id
+                JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                    ON o.organization_id = c.organization_id
+                WHERE e.kind = 'result'
+                    AND e.person_id IS NOT NULL
+                    AND o.slug = ?
+                QUALIFY row_number() OVER (
+                    PARTITION BY e.turf_id, e.person_id ORDER BY e.sequence DESC
+                ) = 1
+            )
+            WHERE list_has_any(selected, ?)
+
+            UNION
+
+            SELECT person_id FROM (
+                SELECT
+                    person_id,
+                    CAST(list(response_option_id) AS VARCHAR[]) AS selected
+                FROM (
+                    SELECT
+                        ir.person_id,
+                        ir.response_option_id,
+                        ir.responded_at,
+                        max(ir.responded_at) OVER (PARTITION BY ir.person_id) AS latest_at
+                    FROM {OPERATIONAL_PG_ALIAS}.app.imported_responses ir
+                    JOIN {OPERATIONAL_PG_ALIAS}.app.organizations o
+                        ON o.organization_id = ir.organization_id
+                    WHERE o.slug = ?
+                        AND ir.question_id = ?
+                )
+                WHERE responded_at = latest_at
+                GROUP BY person_id
+            )
+            WHERE list_has_any(selected, ?)
         )
-        WHERE list_has_any(selected, ?)
         """,
-        [options_path, org_slug, option_ids],
+        [options_path, org_slug, option_ids, org_slug, question_id, option_ids],
     ).fetchall()
     return [r[0] for r in rows]
 

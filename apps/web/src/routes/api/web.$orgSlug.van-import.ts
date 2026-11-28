@@ -49,7 +49,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
           return new Response("File is too large to import.", { status: 413 });
         }
 
-        // questionId null → create (or reuse by vanId); string → match that org question.
+        // questionId null → create (or reuse by external id); string → match that org question.
         const mappingsRaw = form.get("mappings");
         if (typeof mappingsRaw !== "string" || !mappingsRaw.trim()) {
           return new Response("Missing mappings.", { status: 400 });
