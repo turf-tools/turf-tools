@@ -29,12 +29,14 @@ Members are found by name inside each zip, so the zips' own filenames don't matt
 
 ### Georgia Voter File (`ga_voter_file`)
 
-The Secretary of State's ordered voter list (county extracts and the statewide file), laid out as a quoted CSV with a header row. The 53 fields match recent SOS deliveries; the field list is in `ga_voter_file/decode.py`. Accepted formats are:
+The Secretary of State's ordered voter list (county extracts and the statewide file), a quoted CSV with a header row, plus the free per-election voter-history files from [mvp.sos.ga.gov](https://mvp.sos.ga.gov/s/voter-history-files). The 53 voter-list fields are in `ga_voter_file/decode.py`. Accepted formats are:
 
-- **Voter file** (required) — `.csv` (SOS delivery: UTF-8 or Latin-1, quoted fields, header required) or `.parquet` (columns named after the layout's fields, case-insensitive).
-- **Voter history** (optional) — free per-election CSVs from [mvp.sos.ga.gov](https://mvp.sos.ga.gov/s/voter-history-files): a single `.csv`, or a `.zip` of several. Columns are matched by name; order varies by year. History joins on registration number alone.
+- **Voter file** (required on the first import) — `.csv` (UTF-8 or Latin-1, header row) or `.parquet` (columns named after the layout's fields, case-insensitive; numeric registration numbers, ZIPs, and districts get their leading zeros back).
+- **Voter history** (optional) — one election's `.csv`, or a `.zip` of them. Each file's columns are matched by name from its own header, since their order varies between files.
 
-Georgia does not register party; `Last Party Voted` is the last primary ballot style, not enrollment. Age is birth year only (stored as `YYYY-01-01` for age-range filters). Without a history source only `Last Vote Date` is available; with history, per-election `voting_history` is filled. Precincts are county-prefixed (`FULTON-01A`).
+History joins on the 8-digit registration number. Its `Election Type` describes the contest on the voter's ballot, not the election, so a special election for a seat elected at the general is labelled `GENERAL`: a `GENERAL` outside November, or a `GENERAL ELECTION RUNOFF` outside December or January, is a special election. Labels and ballot styles the importer doesn't list become `other`. Last Voted is the later of the voter list's date and the newest election in history, since the two are separate snapshots.
+
+The state ships one history file per election, by expiring link, so an Update builds on the version before it: the voter file left blank keeps that version's, and history supplied is added to its elections (see "Updates" below). Georgia does not register party; `Last Party Voted` is the party of the voter's last primary ballot, not enrollment, taken from history when a party ballot there is newer than the voter list's last vote, and `none` when there's no party ballot on record. Age comes from the birth year alone (`year_of_birth`), as the age reached this year. Precincts and county commission districts are numbered within each county, so they're stored county-prefixed (`FULTON-02F1`, `FULTON-3`).
 
 ## Adding an importer
 
@@ -45,3 +47,9 @@ An importer first reads its source into `persons_raw`, naming each column after 
 Each person must come out once: validation rejects repeated IDs. If the source can list someone more than once, the transform picks one record per ID with `one_record_per_id_sql` (`dedupe.py`), ordered by the importer's own preference, before applying the import filter.
 
 Each package must include sample files in `sample_data/`, named after the source they fill: `<source key>.<ext>`. The files that share an extension form one sample, a complete set of sources in one accepted format (NYS has three: `file.txt`, `file.csv`, and `file.parquet`; Florida has one: `detail.zip` with `history.zip`). These should be small files with a repeated set of invented people, each in its format's exact layout, all built by a corresponding `make_sample.py`. For testing, `tests/test_importers.py` loads every sample of every registered importer and runs the same checks on each (required columns, unique IDs, filters, repeatable results). It also checks that all of an importer's samples produce identical people. Tests that are unique to a specific format can go in a format-specific test file, like `tests/test_nys_voter_file.py`.
+
+Reading sources is shared: `streams.py` opens local paths and links, finds zip members by name (skipping macOS Finder metadata), and streams text into a table; `tabular.py` reads a CSV-with-header or parquet against a layout; `history.py` turns one row per vote into the canonical `voting_history` list, with the election types every importer uses (`ELECTION_TYPES`); `sql.py` holds the transform's value-mapping and import-filter clauses.
+
+### Updates
+
+Each version is built in its own schema, normally from its own sources alone. A source whose state delivery can't be supplied again in full declares what an Update does with it (`SourceSpec.on_update`): `keep` reuses the previous version's copy when left blank, and `add` adds what's supplied to the previous version's. Such a source names the raw table it fills (`table`); every version keeps that table, and the importer calls `carry_forward` (`carry.py`) after reading whatever was supplied. An Update builds on the latest ready version that isn't archived, recorded on the version as `baseVersionNumber`.

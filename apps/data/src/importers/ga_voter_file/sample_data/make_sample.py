@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from src.importers.ga_voter_file.decode import HISTORY_LAYOUT, LAYOUT
+from src.importers.ga_voter_file.decode import LAYOUT
 
 HERE = Path(__file__).parent
 
@@ -81,7 +81,7 @@ PEOPLE: list[dict[str, str]] = [
         "Residence Street Type": "AVE",
         "Residence Apt Unit Number": "201",
     },
-    # DeKalb; different CD/SD/HD/ZIP so import filters have variety.
+    # DeKalb, outside Atlanta; different CD/SD/HD/ZIP so import filters have variety.
     {
         "Last Name": "SAMPLE",
         "First Name": "BLAKE",
@@ -102,6 +102,8 @@ PEOPLE: list[dict[str, str]] = [
         "Gender": "MALE",
         "Race": "BLACK",
         "Last Party Voted": "REPUBLICAN",
+        "Municipality": "BROOKHAVEN",
+        "City Council District": "",
     },
     # Inactive with returned mail; non-partisan last ballot; no last vote.
     {
@@ -134,7 +136,7 @@ PEOPLE: list[dict[str, str]] = [
         "State House District": "056",
         "Residence Zipcode": "30303",
     },
-    # Unknown race/gender; American Indian sibling variety in another HD.
+    # American Indian; unknown gender; another house district; a lettered precinct.
     {
         "Last Name": "MOCKLEY",
         "First Name": "ELLIS",
@@ -149,8 +151,7 @@ PEOPLE: list[dict[str, str]] = [
         "State House District": "058",
         "County Precinct": "03P1A",
     },
-    # Other race; X gender; Ben Hill-style multi-word county isn't in this
-    # Atlanta slice — keep Fulton with a third ZIP for filter variety.
+    # Other race; X gender; a third ZIP; no party ballot on record.
     {
         "Last Name": "EXAMPLE",
         "First Name": "FINN",
@@ -172,123 +173,62 @@ def voter_registration_number(index: int) -> str:
     return f"{10_000_000 + index}"
 
 
-# History rows exercise type/method mapping, zero-padded IDs, dedupe, and drops.
+# The order mvp.sos.ga.gov's recent per-election files use.
+HISTORY_HEADER = [
+    "Election Date",
+    "County Name",
+    "Voter Registration Number",
+    "Election Type",
+    "Party",
+    "Ballot Style",
+    "Absentee",
+    "Provisional",
+    "Supplemental",
+]
+
+
+def _vote(
+    voter: str, date: str, county: str, type_: str, party: str, style: str, absentee: str, provisional: str
+) -> dict[str, str]:
+    return {
+        "Election Date": date,
+        "County Name": county,
+        "Voter Registration Number": voter,
+        "Election Type": type_,
+        "Party": party,
+        "Ballot Style": style,
+        "Absentee": absentee,
+        "Provisional": provisional,
+        "Supplemental": "N",
+    }
+
+
 HISTORY_ROWS: list[dict[str, str]] = [
-    # Avery: municipal/other, presidential primary (absentee), primary (early), general (poll).
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000001",
-        "Election Date": "11/07/2023",
-        "Election Type": "MUNICIPAL",
-        "Party": "",
-        "Ballot Style": "ELECTION DAY (BMD)",
-        "Absentee": "N",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000001",
-        "Election Date": "03/19/2024",
-        "Election Type": "GENERAL PRIMARY",
-        "Party": "DEMOCRAT",
-        "Ballot Style": "ABSENTEE BY MAIL",
-        "Absentee": "Y",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000001",
-        "Election Date": "05/21/2024",
-        "Election Type": "GENERAL PRIMARY",
-        "Party": "DEMOCRAT",
-        "Ballot Style": "EARLY IN-PERSON",
-        "Absentee": "Y",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000001",
-        "Election Date": "11/05/2024",
-        "Election Type": "GENERAL",
-        "Party": "",
-        "Ballot Style": "ELECTION DAY (BMD)",
-        "Absentee": "N",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    # Blake: zero-padded registration number must still join.
-    {
-        "County Name": "DEKALB",
-        "Voter Registration Number": "010000002",
-        "Election Date": "11/08/2022",
-        "Election Type": "GENERAL",
-        "Party": "",
-        "Ballot Style": "REGULAR",
-        "Absentee": "N",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    # Drew: two methods same election → poll_site wins; plus a runoff.
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000004",
-        "Election Date": "11/05/2024",
-        "Election Type": "GENERAL",
-        "Party": "",
-        "Ballot Style": "EARLY IN-PERSON",
-        "Absentee": "Y",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000004",
-        "Election Date": "11/05/2024",
-        "Election Type": "GENERAL",
-        "Party": "",
-        "Ballot Style": "ELECTION DAY (BMD)",
-        "Absentee": "N",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000004",
-        "Election Date": "12/03/2024",
-        "Election Type": "GENERAL ELECTION RUNOFF",
-        "Party": "",
-        "Ballot Style": "ELECTION DAY (BMD)",
-        "Absentee": "N",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    # Ellis: unmapped election type is dropped.
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000005",
-        "Election Date": "06/01/2024",
-        "Election Type": "SCHOOL BOARD WEIRD",
-        "Party": "",
-        "Ballot Style": "ELECTION DAY (BMD)",
-        "Absentee": "N",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
-    # Finn: special election.
-    {
-        "County Name": "FULTON",
-        "Voter Registration Number": "10000006",
-        "Election Date": "03/24/2026",
-        "Election Type": "SPECIAL ELECTION",
-        "Party": "",
-        "Ballot Style": "EARLY IN-PERSON",
-        "Absentee": "Y",
-        "Provisional": "N",
-        "Supplemental": "N",
-    },
+    # Avery: a full regular cycle — primary, primary runoff, general, general runoff.
+    _vote("10000001", "05/21/2024", "FULTON", "GENERAL PRIMARY", "DEMOCRAT", "ABSENTEE BY MAIL", "Y", ""),
+    _vote("10000001", "06/18/2024", "FULTON", "GENERAL PRIMARY RUNOFF", "DEMOCRAT", "EARLY IN-PERSON", "Y", ""),
+    _vote("10000001", "11/05/2024", "FULTON", "GENERAL", "", "ELECTION DAY (BMD)", "N", "N"),
+    _vote("10000001", "12/03/2024", "FULTON", "GENERAL ELECTION RUNOFF", "", "ELECTION DAY (BMD)", "N", "N"),
+    # Blake: an overseas ballot, then a primary after the voter list's last vote.
+    _vote("10000002", "11/05/2024", "DEKALB", "GENERAL", "", "ELECTRONIC BALLOT DELIVERY", "Y", ""),
+    _vote("10000002", "05/19/2026", "DEKALB", "GENERAL PRIMARY", "DEMOCRAT", "EARLY IN-PERSON", "Y", ""),
+    # Drew: two methods for one election (poll site wins), then a July special labelled GENERAL and its August runoff.
+    _vote("10000004", "11/05/2024", "FULTON", "GENERAL", "", "EARLY IN-PERSON", "Y", ""),
+    _vote("10000004", "11/05/2024", "FULTON", "GENERAL", "", "ELECTION DAY (BMD)", "N", "N"),
+    _vote("10000004", "07/28/2026", "FULTON", "GENERAL", "", "ABSENTEE BY MAIL", "Y", ""),
+    _vote("10000004", "08/25/2026", "FULTON", "GENERAL ELECTION RUNOFF", "", "ELECTION DAY (PROVISIONAL)", "N", "N"),
+    # Ellis: an older presidential preference primary, an unlisted label, and an unlisted ballot style.
+    _vote(
+        "10000005", "03/12/2024", "FULTON", "PRESIDENTIAL PREFERENCE PRIMARY", "REPUBLICAN", "EARLY IN-PERSON", "Y", ""
+    ),
+    _vote("10000005", "04/16/2024", "FULTON", "RECALL", "", "ELECTION DAY (BMD)", "N", "N"),
+    _vote("10000005", "11/05/2024", "FULTON", "GENERAL", "", "ELECTION DAY (PAPER)", "N", "N"),
+    # Finn: a special-election runoff, a row with no type, and an exact duplicate.
+    _vote("10000006", "06/09/2026", "FULTON", "SPECIAL ELECTION RUNOFF", "", "ABSENTEE BY MAIL", "Y", ""),
+    _vote("10000006", "11/03/2026", "FULTON", "", "", "EARLY IN-PERSON", "Y", ""),
+    _vote("10000006", "06/09/2026", "FULTON", "SPECIAL ELECTION RUNOFF", "", "ABSENTEE BY MAIL", "Y", ""),
+    # A voter elsewhere in the state: history files cover every county.
+    _vote("20000001", "11/05/2024", "LOWNDES", "GENERAL", "", "EARLY IN-PERSON", "Y", ""),
 ]
 
 
@@ -303,10 +243,9 @@ def write_csv(path: Path, people: list[dict[str, str]]) -> None:
 
 def write_history(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8", newline="") as out:
-        writer = csv.DictWriter(out, fieldnames=HISTORY_LAYOUT, quoting=csv.QUOTE_MINIMAL)
+        writer = csv.DictWriter(out, fieldnames=HISTORY_HEADER, quoting=csv.QUOTE_MINIMAL)
         writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field, "") for field in HISTORY_LAYOUT})
+        writer.writerows(rows)
 
 
 def main() -> None:

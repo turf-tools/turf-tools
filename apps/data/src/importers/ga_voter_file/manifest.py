@@ -55,8 +55,7 @@ GA_MANIFEST = Manifest(
                     _enum("unknown", "Unknown"),
                 ],
             ),
-            # Birth year only in the source; stored as YYYY-01-01.
-            FieldDef(column="date_of_birth", label="Age", filter_kind="age-range"),
+            FieldDef(column="year_of_birth", label="Age", filter_kind="age-range"),
         ],
         [
             FieldDef(
@@ -102,6 +101,7 @@ GA_MANIFEST = Manifest(
                     _enum("democratic", "Democrat"),
                     _enum("republican", "Republican"),
                     _enum("non_partisan", "Non-Partisan"),
+                    _enum("none", "None"),
                 ],
             ),
             FieldDef(

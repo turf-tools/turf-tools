@@ -1,21 +1,22 @@
-"""Georgia SOS voter-list + history → the `Person` schema plus filterable fields.
+"""Georgia SOS voter list + history → the `Person` schema plus filterable fields.
 
-Codes and labels come from recent SOS voter-list CSVs (county and statewide)
-and mvp.sos.ga.gov voter-history CSVs. Georgia does not register party;
-race/gender arrive spelled out; birth year is the only age signal (stored as
-YYYY-01-01 for age-range filters). Optional history joins on registration
-number and becomes the canonical `voting_history` STRUCT[].
+Codes and labels come from SOS voter-list CSVs and mvp.sos.ga.gov voter-history
+CSVs. Georgia does not register party; race and gender arrive spelled out; the
+birth year is the only age signal (`year_of_birth`). History joins on the
+8-digit registration number and becomes the canonical `voting_history` list.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.importers.history import VOTING_HISTORY_TYPE, one_vote_per_election_sql
+from src.importers.sql import case_from_map, county_local_sql, where_sql
+
 if TYPE_CHECKING:
     from src.importers.base import ImportFilter
 
-# County name as the file spells it (uppercase, no spaces) → (display, FIPS).
-# Lookup normalizes spaces away so "BEN HILL" and "BENHILL" both match.
+# County name as the state spells it (uppercase, no spaces) → (display, FIPS).
 GA_COUNTIES: dict[str, tuple[str, str]] = {
     "APPLING": ("Appling", "13001"),
     "ATKINSON": ("Atkinson", "13003"),
@@ -182,6 +183,7 @@ GA_REGISTRATION_STATUSES: dict[str, str] = {"ACTIVE": "active", "INACTIVE": "ina
 
 GA_RACES: dict[str, str] = {
     "AMERICAN INDIAN": "american_indian_alaskan_native",
+    "ALASKAN NATIVE": "american_indian_alaskan_native",
     "ASIAN/PACIFIC ISLANDER": "asian_pacific_islander",
     "BLACK": "black",
     "HISPANIC/LATINO": "hispanic",
@@ -190,12 +192,7 @@ GA_RACES: dict[str, str] = {
     "UNKNOWN": "unknown",
 }
 
-GA_GENDERS: dict[str, str] = {
-    "MALE": "M",
-    "FEMALE": "F",
-    "UNKNOWN": "U",
-    "X": "X",
-}
+GA_GENDERS: dict[str, str] = {"MALE": "M", "FEMALE": "F", "UNKNOWN": "U", "X": "X"}
 
 # Last party ballot the voter took in a primary — Georgia has no party registration.
 GA_LAST_PARTIES: dict[str, str] = {
@@ -204,159 +201,117 @@ GA_LAST_PARTIES: dict[str, str] = {
     "NON-PARTISAN": "non_partisan",
 }
 
-# mvp.sos.ga.gov Election Type strings → canonical type. Matched after
-# uppercasing and collapsing runs of spaces/hyphens to a single space.
+# History `Election Type` → canonical type, matched after uppercasing,
+# collapsing hyphens and runs of spaces, and reading `RUN OFF` as `RUNOFF`.
+# Unlisted labels are `other`.
 GA_ELECTION_TYPES: dict[str, str] = {
     "GENERAL": "general",
-    "GENERAL ELECTION": "general",
     "GENERAL PRIMARY": "primary",
-    "PRIMARY": "primary",
-    "GENERAL PRIMARY RUN OFF": "runoff",
-    "GENERAL PRIMARY RUNOFF": "runoff",
-    "GENERAL ELECTION RUN OFF": "runoff",
-    "GENERAL ELECTION RUNOFF": "runoff",
-    "GENERAL RUN OFF": "runoff",
-    "GENERAL RUNOFF": "runoff",
-    "SPECIAL ELECTION": "special",
-    "SPECIAL ELECTION RUN OFF": "runoff",
-    "SPECIAL ELECTION RUNOFF": "runoff",
-    "SPECIAL RUN OFF": "runoff",
-    "SPECIAL RUNOFF": "runoff",
-    "SPECIAL PRIMARY": "special",
-    "SPECIAL PRIMARY RUN OFF": "runoff",
-    "SPECIAL PRIMARY RUNOFF": "runoff",
-    "PPP": "presidential_primary",
+    "GENERAL PRIMARY RUNOFF": "primary_runoff",
+    "GENERAL ELECTION RUNOFF": "general_runoff",
     "PRESIDENTIAL PREFERENCE PRIMARY": "presidential_primary",
-    "PRESIDENTIAL PRIMARY": "presidential_primary",
-    "NON PARTISAN": "other",
-    "NONPARTISAN": "other",
-    "RECALL": "other",
-    "MUNICIPAL": "other",
+    "SPECIAL ELECTION": "special",
+    "SPECIAL ELECTION RUNOFF": "special",
+    "SPECIAL PRIMARY": "special",
+    "SPECIAL PRIMARY RUNOFF": "special",
 }
 
-# When one voter has several history rows for one election, keep the first.
-_METHOD_PRIORITY = ("poll_site", "early_voting", "absentee")
+# The label describes the contest on the voter's ballot, so a special election
+# for a seat elected at the general is labelled `GENERAL`. A general is in
+# November and its runoff in December or January; at any other time either is
+# a special election.
+_GENERAL_MONTHS: dict[str, tuple[int, ...]] = {"general": (11,), "general_runoff": (12, 1)}
 
-_FILTER_EXPRESSIONS: dict[str, str] = {
-    "residence_zipcode": "left(raw.residence_zipcode, 5)",
+# History `Ballot Style` → canonical voting method. Unlisted styles are `other`.
+GA_VOTING_METHODS: dict[str, str] = {
+    "ELECTION DAY (BMD)": "poll_site",
+    "ELECTION DAY (PROVISIONAL)": "poll_site",
+    "EARLY IN-PERSON": "early_voting",
+    "ABSENTEE BY MAIL": "absentee",
+    "ELECTRONIC BALLOT DELIVERY": "absentee",
 }
 
-VOTING_HISTORY_TYPE = "STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]"
-
-# Votes grouped into lists per pass — same budget as Florida.
-VOTES_PER_BATCH = 5_000_000
-
-
-def _case_from_map(col: str, mapping: dict[str, str], default: str | None = None) -> str:
-    branches = " ".join(f"WHEN {col} = '{raw}' THEN '{label}'" for raw, label in mapping.items())
-    else_clause = "NULL" if default is None else f"CASE WHEN {col} IS NULL THEN NULL ELSE '{default}' END"
-    return f"CASE {branches} ELSE {else_clause} END"
+# Filter columns whose raw text isn't compared as-is: a ZIP may be ZIP+4, so
+# it's matched on its first five digits.
+FILTER_EXPRESSIONS: dict[str, str] = {"residence_zipcode": "left(raw.residence_zipcode, 5)"}
 
 
 def _timestamp_date_sql(col: str) -> str:
     """SOS timestamps look like `2022-08-22 00:00:00.000`; keep YYYY-MM-DD."""
-    return f"try_strptime(left({col}, 10), '%Y-%m-%d')::DATE::VARCHAR"
+    return f"strftime(try_strptime(left({col}, 10), '%Y-%m-%d'), '%Y-%m-%d')"
 
 
-def _where_sql(filter: ImportFilter | None) -> str:
-    if not filter or not filter.values:
-        return ""
-    joined = ", ".join("'" + v.replace("'", "''") + "'" for v in filter.values)
-    expression = _FILTER_EXPRESSIONS.get(filter.column, f"raw.{filter.column}")
-    return f"WHERE {expression} IN ({joined})"
-
-
-def _voter_id_key(col: str) -> str:
-    """Normalize a registration number for joining (strip leading zeros)."""
-    return f"nullif(regexp_replace({col}, '^0+', ''), '')"
-
-
-def _election_type_sql(col: str) -> str:
-    """Map a free-text Election Type onto the canonical type labels."""
-    normalized = f"trim(regexp_replace(upper(replace({col}, '-', ' ')), '\\s+', ' ', 'g'))"
-    branches = " ".join(f"WHEN {normalized} = '{raw}' THEN '{label}'" for raw, label in GA_ELECTION_TYPES.items())
-    return f"CASE {branches} ELSE NULL END"
-
-
-def _voting_method_sql(ballot_style: str) -> str:
-    """Map Ballot Style onto poll_site / early_voting / absentee."""
-    style = f"upper(coalesce({ballot_style}, ''))"
-    return f"""
-CASE
-    WHEN {style} LIKE '%EARLY%' THEN 'early_voting'
-    WHEN {style} LIKE '%ABSENTEE%' OR {style} LIKE '%MAIL%'
-      OR {style} LIKE '%ELECTRONIC%' THEN 'absentee'
-    WHEN {style} LIKE '%ELECTION DAY%' OR {style} LIKE '%REGULAR%'
-      OR {style} LIKE '%PROVISIONAL%' OR {style} LIKE '%PAPER%'
-      OR {style} LIKE '%BMD%' THEN 'poll_site'
-    ELSE NULL
-END
-""".strip()
+def _label_type_sql(label: str) -> str:
+    """SQL mapping an `Election Type` label to its canonical type, before the
+    month check."""
+    normalized = (
+        f"replace(trim(regexp_replace(upper(replace({label}, '-', ' ')), '\\s+', ' ', 'g')), 'RUN OFF', 'RUNOFF')"
+    )
+    return f"coalesce({case_from_map(normalized, GA_ELECTION_TYPES)}, 'other')"
 
 
 def ga_votes_query(registration_table: str, history_table: str, filter: ImportFilter | None = None) -> str:
-    """SQL reducing raw history to one counted vote per voter per election.
-
-    Restricted to voters the registration filter keeps. Joined on registration
-    number alone (history county is where they lived at the time). Duplicate
-    rows collapse; several methods for one election keep poll_site first.
-    """
-    method_rank = " ".join(f"WHEN '{method}' THEN {i}" for i, method in enumerate(_METHOD_PRIORITY))
-    return f"""
-SELECT voter_id, election_date, type, arg_min(method, rank) AS method
-FROM (
-    SELECT
-        voter_id,
-        election_date,
-        type,
-        method,
-        CASE method {method_rank} END AS rank
+    """SQL reducing raw history to one counted vote per voter per election,
+    restricted to the voters the filter keeps. Joined on registration number
+    alone, since a history row's county is wherever the voter lived then."""
+    off_month = " ".join(
+        f"WHEN label_type = '{type_}' AND month(election_date) NOT IN ({', '.join(map(str, months))}) THEN 'special'"
+        for type_, months in _GENERAL_MONTHS.items()
+    )
+    votes = f"""
+    SELECT voter_id, election_date, CASE {off_month} ELSE label_type END AS type, method
     FROM (
         SELECT
-            {_voter_id_key("h.voter_registration_number")} AS voter_id,
+            h.voter_registration_number AS voter_id,
             try_strptime(h.election_date, '%m/%d/%Y')::DATE AS election_date,
-            {_election_type_sql("h.election_type")} AS type,
-            {_voting_method_sql("h.ballot_style")} AS method
+            {_label_type_sql("h.election_type")} AS label_type,
+            coalesce({case_from_map("upper(h.ballot_style)", GA_VOTING_METHODS)}, 'other') AS method
         FROM {history_table} AS h
-        WHERE {_voter_id_key("h.voter_registration_number")} IN (
-            SELECT {_voter_id_key("raw.voter_registration_number")}
+        WHERE h.voter_registration_number IN (
+            SELECT raw.voter_registration_number
             FROM {registration_table} AS raw
-            {_where_sql(filter)}
+            {where_sql(filter, FILTER_EXPRESSIONS)}
         )
     )
-)
-WHERE election_date IS NOT NULL AND type IS NOT NULL AND method IS NOT NULL
-GROUP BY ALL
 """
+    return one_vote_per_election_sql(votes)
 
 
-def ga_history_batch_query(votes_table: str, batches: int, batch: int) -> str:
-    """SQL grouping one batch of voters' votes into one `voting_history` list."""
+def ga_last_party_query(registration_table: str, history_table: str, filter: ImportFilter | None = None) -> str:
+    """SQL giving each voter's newest party ballot in history: its date and
+    party. Only primary ballots carry a party."""
     return f"""
 SELECT
     voter_id,
-    list_transform(
-        list_sort(list({{
-            'date': strftime(election_date, '%Y-%m-%d'),
-            'type': type,
-            'method': method
-        }})),
-        e -> {{'year': CAST(left(e.date, 4) AS INT), 'type': e.type, 'date': e.date, 'method': e.method}}
-    )::{VOTING_HISTORY_TYPE} AS voting_history
-FROM {votes_table}
-WHERE hash(voter_id) % {batches} = {batch}
-GROUP BY voter_id
+    CAST(split_part(newest, '|', 1) AS DATE) AS party_date,
+    split_part(newest, '|', 2) AS party
+FROM (
+    SELECT
+        h.voter_registration_number AS voter_id,
+        max(strftime(try_strptime(h.election_date, '%m/%d/%Y'), '%Y-%m-%d') || '|' || upper(h.party)) AS newest
+    FROM {history_table} AS h
+    WHERE h.party IS NOT NULL
+      AND try_strptime(h.election_date, '%m/%d/%Y') IS NOT NULL
+      AND h.voter_registration_number IN (
+          SELECT raw.voter_registration_number
+          FROM {registration_table} AS raw
+          {where_sql(filter, FILTER_EXPRESSIONS)}
+      )
+    GROUP BY 1
+)
 """
 
 
 def ga_transformation_query(
     registration_table: str,
     history_table: str,
+    party_table: str,
     filter: ImportFilter | None = None,
 ) -> str:
-    """SQL mapping the raw Georgia voter-list table, joined to grouped history,
-    to the Person schema."""
+    """SQL mapping the raw voter list, joined to the grouped history and each
+    voter's newest party ballot (`ga_last_party_query`), to the Person schema."""
     county_fips = {code: fips for code, (_, fips) in GA_COUNTIES.items()}
+    # The county as `GA_COUNTIES` spells it, whether or not the file spaces it.
     county_key = "replace(upper(raw.county), ' ', '')"
     return f"""
 SELECT
@@ -368,11 +323,11 @@ SELECT
     raw.suffix AS name_suffix,
     concat_ws(
         ' ',
-        nullif(raw.residence_street_number, ''),
-        nullif(raw.residence_pre_direction, ''),
-        nullif(raw.residence_street_name, ''),
-        nullif(raw.residence_street_type, ''),
-        nullif(raw.residence_post_direction, '')
+        raw.residence_street_number,
+        raw.residence_pre_direction,
+        raw.residence_street_name,
+        raw.residence_street_type,
+        raw.residence_post_direction
     ) AS address_line_1,
     raw.residence_apt_unit_number AS address_line_2,
     CAST(NULL AS VARCHAR) AS half_code,
@@ -380,31 +335,35 @@ SELECT
     'GA' AS state,
     left(regexp_replace(raw.residence_zipcode, '[^0-9]', '', 'g'), 5) AS zip5,
     CAST(NULL AS VARCHAR) AS zip4,
-    {_case_from_map("raw.gender", GA_GENDERS)} AS gender,
-    {_case_from_map("raw.race", GA_RACES)} AS race,
-    CASE
-        WHEN regexp_full_match(raw.birth_year, '[0-9]{{4}}')
-        THEN raw.birth_year || '-01-01'
-    END AS date_of_birth,
+    {case_from_map("raw.gender", GA_GENDERS)} AS gender,
+    {case_from_map("raw.race", GA_RACES)} AS race,
+    CASE WHEN regexp_full_match(raw.birth_year, '[0-9]{{4}}') THEN CAST(raw.birth_year AS INTEGER) END AS year_of_birth,
     {_timestamp_date_sql("raw.registration_date")} AS registration_date,
-    {_case_from_map("raw.status", GA_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
-    {_timestamp_date_sql("raw.last_vote_date")} AS last_voted_date,
-    {_case_from_map("raw.last_party_voted", GA_LAST_PARTIES)} AS last_party_voted,
-    raw.county AS county_code,
-    {_case_from_map(county_key, county_fips)} AS county_fips,
+    {case_from_map("raw.status", GA_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
+    -- The voter list and the history files are separate snapshots, so the
+    -- newest vote in history can be later than the list's own date.
+    greatest({_timestamp_date_sql("raw.last_vote_date")}, history.voting_history[-1].date) AS last_voted_date,
+    -- A party ballot in history after the voter list's last vote is newer than
+    -- the list's own Last Party Voted. No party ballot on record is `none`.
     CASE
-        WHEN raw.county_precinct IS NULL THEN NULL
-        ELSE raw.county || '-' || raw.county_precinct
-    END AS precinct,
+        WHEN party.party_date > try_strptime(left(raw.last_vote_date, 10), '%Y-%m-%d')::DATE
+          OR (party.party_date IS NOT NULL AND raw.last_vote_date IS NULL)
+        THEN {case_from_map("party.party", GA_LAST_PARTIES)}
+        WHEN raw.last_party_voted IS NULL THEN 'none'
+        ELSE {case_from_map("raw.last_party_voted", GA_LAST_PARTIES)}
+    END AS last_party_voted,
+    {county_key} AS county_code,
+    {case_from_map(county_key, county_fips)} AS county_fips,
+    {county_local_sql("raw.county_precinct", county_key)} AS precinct,
     raw.congressional_district AS congressional_district,
     raw.state_senate_district AS senate_district,
     raw.state_house_district AS house_district,
-    raw.county_commission_district AS county_commission_district,
+    {county_local_sql("raw.county_commission_district", county_key)} AS county_commission_district,
     raw.city_council_district AS city_council_district,
     raw.municipality AS municipality,
     coalesce(history.voting_history, CAST([] AS {VOTING_HISTORY_TYPE})) AS voting_history
 FROM {registration_table} AS raw
-LEFT JOIN {history_table} AS history
-  ON history.voter_id = {_voter_id_key("raw.voter_registration_number")}
-{_where_sql(filter)}
+LEFT JOIN {history_table} AS history ON history.voter_id = raw.voter_registration_number
+LEFT JOIN {party_table} AS party ON party.voter_id = raw.voter_registration_number
+{where_sql(filter, FILTER_EXPRESSIONS)}
 """
