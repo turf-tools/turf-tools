@@ -87,13 +87,13 @@ def drop_schema(conn: "duckdb.DuckDBPyConnection", schema: str) -> None:
     conn.execute(f"DROP SCHEMA IF EXISTS {schema_fqn(schema)} CASCADE")
 
 
-def retained_tables(manifest: Manifest) -> frozenset[str]:
+def retained_tables(manifest: Manifest, carried: frozenset[str] = frozenset()) -> frozenset[str]:
     """The tables a version keeps once imported: the queryable tables, one
     boundary table per key group (zone perimeters and boundary tiles read them),
-    and two small per-version records, the election registry and the geocoding
-    summary."""
+    two small per-version records, the election registry and the geocoding
+    summary, and the raw tables the next Update carries forward (`carried`)."""
     key_groups = {fd.key_group for section in manifest.fields for fd in section if fd.key_group is not None}
-    return QUERYABLE_TABLES | key_groups | {ELECTIONS_TABLE, "geocoding_summary"}
+    return QUERYABLE_TABLES | key_groups | {ELECTIONS_TABLE, "geocoding_summary"} | carried
 
 
 def drop_intermediates(conn: "duckdb.DuckDBPyConnection", schema: str, keep: frozenset[str]) -> list[str]:

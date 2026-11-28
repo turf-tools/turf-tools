@@ -69,6 +69,9 @@ export const datasetVersions = app.table(
     derivedMetadata: jsonb().$type<DerivedMetadata>(),
     // Path or URL per file the importer reads, keyed by its source keys.
     sources: jsonb().$type<Record<string, string>>(),
+    // The version this one built on: its sources that keep or add on update
+    // came from there. Null for a version built from its own sources alone.
+    baseVersionNumber: integer(),
     // Coarse import progress (step / total), shown as a % while `importing`.
     importStep: integer(),
     importTotalSteps: integer(),

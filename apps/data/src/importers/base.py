@@ -18,7 +18,7 @@ import re
 from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ FilterKind = Literal[
     "text",  # substring match — names
     "enum",  # multi-select over a scalar column; curated or data-derived values
     "text-multi",  # type-a-list of codes; scalar IN over open-valued codes
-    "age-range",  # numeric age range derived from a birthdate column
+    "age-range",  # numeric age range derived from `date_of_birth` or `year_of_birth`
     "date-range",  # date range
     "voting-history-count",  # count of matching elections in a recency window
     "voting-history-detail",  # membership in specific named elections (multi-select)
@@ -70,8 +70,9 @@ class FieldDef(_CamelModel):
 
     # The physical `persons_geocoded` column this filter reads (shredded for
     # Parquet pruning + Bloom filters). How it's read is the compiler clause's
-    # business — a scalar `age-range` computes age from its `date_of_birth`
-    # column; a `voting-history-*` kind array-scans its `voting_history` STRUCT[].
+    # business — a scalar `age-range` computes age from its `date_of_birth` or
+    # `year_of_birth` column; a `voting-history-*` kind array-scans its
+    # `voting_history` STRUCT[].
     # None for a column-less composite (`address` reads several columns directly).
     column: str | None = None
     # Unique field identifier — the filter `key` the editor and compiler match on.
@@ -140,6 +141,12 @@ class ImportFilter(_CamelModel):
     values: list[str]
 
 
+# What an Update does with a source: `replace` reads only what's supplied;
+# `keep` reuses the version it builds on when left blank; `add` adds what's
+# supplied to that version's.
+OnUpdate = Literal["replace", "keep", "add"]
+
+
 class SourceSpec(_CamelModel):
     """One file an importer reads. A dataset version's `sources` maps each
     `key` to a path or URL; the import form renders one input per spec."""
@@ -148,6 +155,16 @@ class SourceSpec(_CamelModel):
     label: str
     description: str
     required: bool = True
+    on_update: OnUpdate = "replace"
+    # The raw table the source fills, which a `keep` or `add` source carries
+    # from version to version.
+    table: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def _carried_sources_name_their_table(self) -> SourceSpec:
+        if self.on_update != "replace" and self.table is None:
+            raise ValueError(f"Source {self.key!r} must name its table to {self.on_update} on update")
+        return self
 
 
 class FilterSpec(_CamelModel):
@@ -257,6 +274,8 @@ class Importer(Protocol):
 
     def manifest(self) -> Manifest: ...
 
+    # `base_schema` is the version an Update builds on, which sources that keep
+    # or add on update read from (None on a first import).
     def load(
         self,
         sources: Mapping[str, str],
@@ -264,6 +283,7 @@ class Importer(Protocol):
         conn: duckdb.DuckDBPyConnection,
         progress: Progress,
         filter: ImportFilter | None = None,
+        base_schema: str | None = None,
     ) -> TableRef: ...
 
 
@@ -277,17 +297,29 @@ def importer_spec(importer: type[Importer]) -> ImporterSpec:
 
 
 def check_import_inputs(
-    importer: type[Importer] | Importer, sources: Mapping[str, str], filter: ImportFilter | None
+    importer: type[Importer] | Importer,
+    sources: Mapping[str, str],
+    filter: ImportFilter | None,
+    update: bool = False,
 ) -> None:
     """Reject sources and a filter the importer can't take, before anything is
-    read. `load` calls this first; the web runs the same checks from the spec."""
+    read. `update` is whether the import builds on an earlier version, which
+    `keep` and `add` sources may leave blank. `load` calls this first; the web
+    runs the same checks from the spec."""
     known = {s.key for s in importer.SOURCES}
     unknown = sorted(set(sources) - known)
     if unknown:
         raise InvalidImportSourcesError(f"This dataset type doesn't read {', '.join(map(repr, unknown))}.")
-    missing = [s.label for s in importer.SOURCES if s.required and not sources.get(s.key, "").strip()]
+    supplied = {key for key, value in sources.items() if value.strip()}
+    missing = [
+        s.label
+        for s in importer.SOURCES
+        if s.required and s.key not in supplied and not (update and s.on_update != "replace")
+    ]
     if missing:
         raise InvalidImportSourcesError(f"Missing {', '.join(missing)}.")
+    if not supplied:
+        raise InvalidImportSourcesError("Nothing to import: supply at least one file.")
     unreadable = [s.label for s in importer.SOURCES if not is_readable_source(sources.get(s.key, ""))]
     if unreadable:
         raise InvalidImportSourcesError(f"{', '.join(unreadable)} must be an http:// or https:// link.")
