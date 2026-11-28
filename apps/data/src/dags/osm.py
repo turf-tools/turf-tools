@@ -191,14 +191,15 @@ def osm_pbfs(
 # ---------------------------------------------------------------------------
 
 
-def _require_osmium() -> str:
-    """Locate osmium-tool on PATH or fail with an install hint."""
-    osmium = shutil.which("osmium")
+def _require_osmium(osmium_binary_path: str) -> str:
+    """Resolve osmium-tool to an absolute path or fail with an install hint."""
+    osmium = shutil.which(osmium_binary_path)
     if osmium is None:
         raise RuntimeError(
-            "osmium-tool not found on PATH. Install:\n"
+            f"osmium-tool not found at {osmium_binary_path!r}. Install:\n"
             "  macOS:  brew install osmium-tool\n"
-            "  Debian: apt install osmium-tool"
+            "  Debian: apt install osmium-tool\n"
+            "Or set OSMIUM_BINARY to the binary path."
         )
     return osmium
 
@@ -206,6 +207,7 @@ def _require_osmium() -> str:
 def osm_buildings_polygons(
     osm_pbfs: dict[str, Path],
     osm_states_built: dict[str, set[str]],
+    osmium_binary_path: str,
     conn: duckdb.DuckDBPyConnection,
 ) -> TableRef:
     """Building polygons with area-weighted centroids.
@@ -242,7 +244,7 @@ def osm_buildings_polygons(
         geojson_path = osm_pbf.with_name(f"{osm_pbf.stem}-buildings.geojsonseq")
         config_path = osm_pbf.with_name("osmium-export-buildings.json")
 
-        osmium = _require_osmium()
+        osmium = _require_osmium(osmium_binary_path)
 
         # osmium-export config (https://docs.osmcode.org/osmium/latest/osmium-export.html):
         #   - emit @id and @type as the only attributes

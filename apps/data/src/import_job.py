@@ -162,6 +162,7 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
             "tiger_data_dir": settings.tiger_data_dir,
             "osm_snapshot": settings.osm_snapshot,
             "osm_data_dir": settings.osm_data_dir,
+            "osmium_binary_path": settings.osmium_binary,
             "conn": conn,
         }
         input_keys = set(dag_inputs) | {"persons_validated"}

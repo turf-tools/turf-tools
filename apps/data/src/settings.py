@@ -107,6 +107,13 @@ class Settings(BaseSettings):
         default="./osm_cache",
         description="Local directory to cache downloaded OSM PBFs.",
     )
+    osmium_binary: str = Field(
+        default="osmium",
+        description=(
+            "Path to the osmium-tool CLI used for OSM building extraction "
+            "(env: OSMIUM_BINARY). Defaults to `osmium` on PATH."
+        ),
+    )
 
     quickwit_batch_size: int = Field(
         default=1_000_000,

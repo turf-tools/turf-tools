@@ -109,6 +109,7 @@ def nyc_pipeline(tiger_cache_dir, osm_cache_dir):
                 "tiger_data_dir": tiger_cache_dir,
                 "osm_snapshot": "260501",
                 "osm_data_dir": osm_cache_dir,
+                "osmium_binary_path": "osmium",
                 "conn": conn,
             },
         )
