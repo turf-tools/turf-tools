@@ -8,6 +8,8 @@ def _default_database_url() -> str:
     """Dev Postgres fallback — mirrors packages/db/src/index.ts."""
     if os.environ.get("NODE_ENV") == "production":
         raise ValueError("DATABASE_URL is required in production.")
+    if url := os.environ.get("DATABASE_URL"):
+        return url
     return "postgres://postgres:postgres@127.0.0.1:5432/postgres"
 
 
