@@ -31,7 +31,7 @@ import {
   ResponseTypePicker,
 } from "~/components/question-editor-parts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
-import { VanImportDialog } from "~/components/van-import-dialog";
+import { ResponseImportDialog } from "~/components/response-import-dialog";
 import {
   seedQuestionDetail,
   questionDetailQuery,
@@ -93,7 +93,7 @@ function QuestionsPage() {
       : (STATUS_OPTIONS.find((o) => o.value === filterValue)?.label ?? "Active");
 
   const [modal, setModal] = useState<ModalState>(null);
-  const [vanImportOpen, setVanImportOpen] = useState(false);
+  const [responseImportOpen, setResponseImportOpen] = useState(false);
 
   // The loader's detail prefetches have no observers here, so they go stale
   // and get garbage-collected while the page sits open. Fetching on click
@@ -120,8 +120,8 @@ function QuestionsPage() {
           allLabel="Active"
           onChange={onStatusChange}
         />
-        <Button variant="outline" onClick={() => setVanImportOpen(true)}>
-          Import VAN responses
+        <Button variant="outline" onClick={() => setResponseImportOpen(true)}>
+          Import responses
         </Button>
         <Button onClick={() => setModal({ kind: "new" })}>
           <Icon name="plus" />
@@ -140,7 +140,11 @@ function QuestionsPage() {
           onClose={() => setModal(null)}
         />
       ) : null}
-      <VanImportDialog orgSlug={orgSlug} open={vanImportOpen} onOpenChange={setVanImportOpen} />
+      <ResponseImportDialog
+        orgSlug={orgSlug}
+        open={responseImportOpen}
+        onOpenChange={setResponseImportOpen}
+      />
     </Page>
   );
 }
