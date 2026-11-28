@@ -12,6 +12,7 @@ const select = {
   name: questions.name,
   responseType: questions.responseType,
   text: questions.text,
+  vanId: questions.vanId,
   createdAt: questions.createdAt,
   archivedAt: questions.archivedAt,
 };
@@ -102,6 +103,7 @@ export const listWithOptions = pub.handler(async ({ context }) => {
       questionId: questions.questionId,
       name: questions.name,
       responseType: questions.responseType,
+      vanId: questions.vanId,
       archivedAt: questions.archivedAt,
     })
     .from(questions)
@@ -145,6 +147,7 @@ export const listWithOptions = pub.handler(async ({ context }) => {
     questionId: q.questionId,
     name: q.name,
     responseType: q.responseType,
+    vanId: q.vanId,
     archived: q.archivedAt !== null,
     options: byQuestion.get(q.questionId) ?? [],
   }));

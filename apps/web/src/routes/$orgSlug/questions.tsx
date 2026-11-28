@@ -31,6 +31,7 @@ import {
   ResponseTypePicker,
 } from "~/components/question-editor-parts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
+import { VanImportDialog } from "~/components/van-import-dialog";
 import {
   seedQuestionDetail,
   questionDetailQuery,
@@ -75,6 +76,7 @@ export const Route = createFileRoute("/$orgSlug/questions")({
 function QuestionsPage() {
   const queryClient = useQueryClient();
   const { status } = Route.useSearch();
+  const { orgSlug } = Route.useParams();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/questions");
 
@@ -91,6 +93,7 @@ function QuestionsPage() {
       : (STATUS_OPTIONS.find((o) => o.value === filterValue)?.label ?? "Active");
 
   const [modal, setModal] = useState<ModalState>(null);
+  const [vanImportOpen, setVanImportOpen] = useState(false);
 
   // The loader's detail prefetches have no observers here, so they go stale
   // and get garbage-collected while the page sits open. Fetching on click
@@ -117,6 +120,9 @@ function QuestionsPage() {
           allLabel="Active"
           onChange={onStatusChange}
         />
+        <Button variant="outline" onClick={() => setVanImportOpen(true)}>
+          Import VAN responses
+        </Button>
         <Button onClick={() => setModal({ kind: "new" })}>
           <Icon name="plus" />
           New question
@@ -134,6 +140,7 @@ function QuestionsPage() {
           onClose={() => setModal(null)}
         />
       ) : null}
+      <VanImportDialog orgSlug={orgSlug} open={vanImportOpen} onOpenChange={setVanImportOpen} />
     </Page>
   );
 }
