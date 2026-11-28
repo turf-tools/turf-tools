@@ -9,6 +9,7 @@ export * from "./campaigns";
 export * from "./datasets";
 export * from "./dataset-organizations";
 export * from "./questions";
+export * from "./imported-responses";
 export * from "./scripts";
 export * from "./segments";
 export * from "./turfs";
