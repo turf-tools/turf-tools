@@ -64,7 +64,7 @@ test("parses S2W phonebank wide answers", () => {
     s2wPhonebankResponseKey("call-1", "Canvass Result", "Talking to Correct Person"),
   );
   const volunteer = parsed.questions.find(
-    (q) => q.questionVanId === "Would you like to support the campaign by volunteering?",
+    (q) => q.questionExternalId === "Would you like to support the campaign by volunteering?",
   );
   expect(volunteer?.responses.map((r) => r.text)).toEqual(["Yes"]);
 });
@@ -76,14 +76,14 @@ test("parses S2W textbank Question > Option tags; skips disposition options", ()
   expect(parsed.rowsSkippedIncomplete).toBe(1);
   expect(parsed.answers).toHaveLength(2);
   expect(parsed.answers.every((a) => a.canvassedAt.toISOString() === at.toISOString())).toBe(true);
-  expect(parsed.questions.map((q) => q.questionVanId)).toEqual(["Campaign Support"]);
-  const support = parsed.questions.find((q) => q.questionVanId === "Campaign Support");
+  expect(parsed.questions.map((q) => q.questionExternalId)).toEqual(["Campaign Support"]);
+  const support = parsed.questions.find((q) => q.questionExternalId === "Campaign Support");
   expect(support?.responses.map((r) => r.text).sort()).toEqual([
     "1 - Strong Support",
     "3 - Undecided",
   ]);
   expect(parsed.answers.some((a) => a.responseName === "Wrong Number")).toBe(false);
-  expect(parsed.answers.some((a) => a.questionVanId === "Hostile")).toBe(false);
+  expect(parsed.answers.some((a) => a.questionExternalId === "Hostile")).toBe(false);
   expect(parsed.answers[0]!.sourceKey).toBe(
     s2wTextbankResponseKey("2678171", "Campaign Support", "1 - Strong Support"),
   );

@@ -28,13 +28,12 @@ import {
   parseS2wTextbankBytes,
   S2W_PHONEBANK_SOURCE_TYPE,
 } from "~/lib/s2w-import";
+import type { ResponseImportStats, SurveyImportParse } from "~/lib/survey-import";
 import {
   parseVanIdMapBytes,
   parseVanSurveyExportBytes,
   VAN_SOURCE_TYPE,
   type VanIdMapParse,
-  type VanImportStats,
-  type VanSurveyParse,
 } from "~/lib/van-import";
 import { cn } from "~/lib/utils";
 
@@ -59,16 +58,18 @@ function externalIdForSource(q: SelectableQuestion, sourceType: string): string 
 }
 
 function defaultChoicesFor(
-  parsed: VanSurveyParse,
+  parsed: SurveyImportParse,
   selectable: SelectableQuestion[],
   sourceType: string,
 ): Record<string, QuestionChoice> {
   const initial: Record<string, QuestionChoice> = {};
   const used = new Set<string>();
   for (const q of parsed.questions) {
-    const byExt = selectable.find((oq) => externalIdForSource(oq, sourceType) === q.questionVanId);
+    const byExt = selectable.find(
+      (oq) => externalIdForSource(oq, sourceType) === q.questionExternalId,
+    );
     if (byExt && !used.has(byExt.questionId)) {
-      initial[q.questionVanId] = { kind: "match", questionId: byExt.questionId };
+      initial[q.questionExternalId] = { kind: "match", questionId: byExt.questionId };
       used.add(byExt.questionId);
       continue;
     }
@@ -77,11 +78,11 @@ function defaultChoicesFor(
         !used.has(oq.questionId) && oq.name.trim().toLowerCase() === q.name.trim().toLowerCase(),
     );
     if (byName) {
-      initial[q.questionVanId] = { kind: "match", questionId: byName.questionId };
+      initial[q.questionExternalId] = { kind: "match", questionId: byName.questionId };
       used.add(byName.questionId);
       continue;
     }
-    initial[q.questionVanId] = { kind: "create" };
+    initial[q.questionExternalId] = { kind: "create" };
   }
   return initial;
 }
@@ -89,7 +90,7 @@ function defaultChoicesFor(
 function parseSurveyForSource(
   sourceId: ResponseImportSourceId,
   buffer: ArrayBuffer,
-): VanSurveyParse {
+): SurveyImportParse {
   if (sourceId === VAN_SOURCE_TYPE) return parseVanSurveyExportBytes(buffer);
   if (sourceId === S2W_PHONEBANK_SOURCE_TYPE) return parseS2wPhonebankBytes(buffer);
   return parseS2wTextbankBytes(buffer, new Date());
@@ -106,10 +107,10 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
   const [idMapFile, setIdMapFile] = useState<File | null>(null);
   const [surveyFile, setSurveyFile] = useState<File | null>(null);
   const [idMap, setIdMap] = useState<VanIdMapParse | null>(null);
-  const [survey, setSurvey] = useState<VanSurveyParse | null>(null);
+  const [survey, setSurvey] = useState<SurveyImportParse | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [choices, setChoices] = useState<Record<string, QuestionChoice>>({});
-  const [stats, setStats] = useState<VanImportStats | null>(null);
+  const [stats, setStats] = useState<ResponseImportStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoMatched, setAutoMatched] = useState(false);
 
@@ -137,12 +138,12 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
 
   const mappings = useMemo(() => {
     if (!survey) return [];
-    const out: { questionVanId: string; questionId: string | null }[] = [];
+    const out: { questionExternalId: string; questionId: string | null }[] = [];
     for (const q of survey.questions) {
-      const choice = choices[q.questionVanId];
+      const choice = choices[q.questionExternalId];
       if (!choice || choice.kind === "skip") continue;
       out.push({
-        questionVanId: q.questionVanId,
+        questionExternalId: q.questionExternalId,
         questionId: choice.kind === "match" ? choice.questionId : null,
       });
     }
@@ -231,7 +232,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
         body,
       });
       if (!res.ok) throw new Error(await res.text());
-      return (await res.json()) as VanImportStats;
+      return (await res.json()) as ResponseImportStats;
     },
     onSuccess: (res) => {
       if (res) {
@@ -257,7 +258,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
 
   const optionCoverage = (questionExtId: string, choice: QuestionChoice | undefined) => {
     if (!survey || !choice || choice.kind !== "match") return null;
-    const preview = survey.questions.find((q) => q.questionVanId === questionExtId);
+    const preview = survey.questions.find((q) => q.questionExternalId === questionExtId);
     const existing = selectableQuestions.find((q) => q.questionId === choice.questionId);
     if (!preview || !existing) return null;
     const texts = new Set(
@@ -426,7 +427,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                           onClick={() => {
                             const next: Record<string, QuestionChoice> = {};
                             for (const q of survey.questions) {
-                              next[q.questionVanId] = { kind: "create" };
+                              next[q.questionExternalId] = { kind: "create" };
                             }
                             setChoices(next);
                           }}
@@ -440,7 +441,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                           onClick={() => {
                             const next: Record<string, QuestionChoice> = {};
                             for (const q of survey.questions) {
-                              next[q.questionVanId] = { kind: "skip" };
+                              next[q.questionExternalId] = { kind: "skip" };
                             }
                             setChoices(next);
                           }}
@@ -450,19 +451,19 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                       </div>
                     </div>
                     {survey.questions.map((q) => {
-                      const choice = choices[q.questionVanId];
-                      const coverage = optionCoverage(q.questionVanId, choice);
+                      const choice = choices[q.questionExternalId];
+                      const coverage = optionCoverage(q.questionExternalId, choice);
                       return (
                         <div
-                          key={q.questionVanId}
+                          key={q.questionExternalId}
                           className="flex flex-col gap-1 rounded-md border border-border px-2 py-1.5"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium">{q.name}</div>
                               <div className="text-xs text-muted-foreground">
-                                Id {q.questionVanId} · {q.answerCount.toLocaleString()} answers ·{" "}
-                                {q.responses.length} options
+                                Id {q.questionExternalId} · {q.answerCount.toLocaleString()} answers
+                                · {q.responses.length} options
                                 {q.multiSelect ? " · multi" : ""}
                               </div>
                             </div>
@@ -477,7 +478,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                                   onClick={() =>
                                     setChoices((c) => ({
                                       ...c,
-                                      [q.questionVanId]: { kind: "skip" },
+                                      [q.questionExternalId]: { kind: "skip" },
                                     }))
                                   }
                                 >
@@ -487,7 +488,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                                   onClick={() =>
                                     setChoices((c) => ({
                                       ...c,
-                                      [q.questionVanId]: { kind: "create" },
+                                      [q.questionExternalId]: { kind: "create" },
                                     }))
                                   }
                                 >
@@ -508,7 +509,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                                       onClick={() =>
                                         setChoices((c) => ({
                                           ...c,
-                                          [q.questionVanId]: {
+                                          [q.questionExternalId]: {
                                             kind: "match",
                                             questionId: oq.questionId,
                                           },
@@ -516,7 +517,7 @@ export function ResponseImportDialog({ orgSlug, open, onOpenChange }: Props) {
                                       }
                                     >
                                       {oq.name}
-                                      {externalIdForSource(oq, sourceId) === q.questionVanId
+                                      {externalIdForSource(oq, sourceId) === q.questionExternalId
                                         ? " · linked"
                                         : ""}
                                     </DropdownMenuItem>

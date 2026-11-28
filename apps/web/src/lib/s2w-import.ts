@@ -1,8 +1,4 @@
-import {
-  type VanSurveyAnswer,
-  type VanSurveyParse,
-  type VanSurveyQuestionPreview,
-} from "./van-import";
+import type { SurveyImportAnswer, SurveyImportParse, SurveyQuestionPreview } from "./survey-import";
 
 /** `imported_responses.source_type` / external-id refs for phonebank exports. */
 export const S2W_PHONEBANK_SOURCE_TYPE = "s2w_phonebank";
@@ -93,7 +89,7 @@ function splitCsv(text: string): { columns: string[]; rows: string[][] } {
   return { columns, rows: table.slice(1) };
 }
 
-function buildPreviews(answers: VanSurveyAnswer[]): VanSurveyQuestionPreview[] {
+function buildPreviews(answers: SurveyImportAnswer[]): SurveyQuestionPreview[] {
   const qMeta = new Map<
     string,
     {
@@ -105,7 +101,7 @@ function buildPreviews(answers: VanSurveyAnswer[]): VanSurveyQuestionPreview[] {
   >();
 
   for (const a of answers) {
-    let meta = qMeta.get(a.questionVanId);
+    let meta = qMeta.get(a.questionExternalId);
     if (!meta) {
       meta = {
         name: a.questionName,
@@ -113,39 +109,39 @@ function buildPreviews(answers: VanSurveyAnswer[]): VanSurveyQuestionPreview[] {
         multiDays: new Set(),
         dayResponses: new Map(),
       };
-      qMeta.set(a.questionVanId, meta);
+      qMeta.set(a.questionExternalId, meta);
     }
     meta.name = a.questionName;
-    const existing = meta.responses.get(a.responseVanId);
+    const existing = meta.responses.get(a.responseExternalId);
     if (existing) {
       existing.count += 1;
       existing.text = a.responseName;
     } else {
-      meta.responses.set(a.responseVanId, {
+      meta.responses.set(a.responseExternalId, {
         text: a.responseName,
         count: 1,
         order: meta.responses.size,
       });
     }
-    const dayKey = `${a.vanId}|${a.canvassedAt.toISOString().slice(0, 10)}`;
+    const dayKey = `${a.personVanId}|${a.canvassedAt.toISOString().slice(0, 10)}`;
     let daySet = meta.dayResponses.get(dayKey);
     if (!daySet) {
       daySet = new Set();
       meta.dayResponses.set(dayKey, daySet);
     }
-    daySet.add(a.responseVanId);
+    daySet.add(a.responseExternalId);
     if (daySet.size > 1) meta.multiDays.add(dayKey);
   }
 
   return [...qMeta.entries()]
-    .map(([questionVanId, meta]) => ({
-      questionVanId,
+    .map(([questionExternalId, meta]) => ({
+      questionExternalId,
       name: meta.name,
       answerCount: [...meta.responses.values()].reduce((n, r) => n + r.count, 0),
       responses: [...meta.responses.entries()]
         .sort((a, b) => a[1].order - b[1].order)
-        .map(([responseVanId, r]) => ({
-          responseVanId,
+        .map(([responseExternalId, r]) => ({
+          responseExternalId,
           text: r.text,
           count: r.count,
         })),
@@ -171,7 +167,7 @@ function isTruthyCell(raw: string): boolean {
  * select that option when the cell is Yes/TRUE; plain columns use the cell
  * text as the option. `End` is free text and skipped.
  */
-export function parseS2wPhonebank(text: string): VanSurveyParse {
+export function parseS2wPhonebank(text: string): SurveyImportParse {
   const { columns, rows: raw } = splitCsv(text);
   const required = [PHONE_PERSON_COL, PHONE_DATE_COL, PHONE_CALL_ID_COL, PHONE_FIRST_ANSWER_COL];
   const missingColumns = required.filter((c) => !columns.includes(c));
@@ -222,10 +218,10 @@ export function parseS2wPhonebank(text: string): VanSurveyParse {
     }
   }
 
-  const answers: VanSurveyAnswer[] = [];
+  const answers: SurveyImportAnswer[] = [];
   let rowsSkippedIncomplete = 0;
   let rowsSkippedBadDate = 0;
-  const sampleSkipped: VanSurveyParse["sampleSkipped"] = [];
+  const sampleSkipped: SurveyImportParse["sampleSkipped"] = [];
 
   for (let ri = 0; ri < raw.length; ri++) {
     const cells = raw[ri]!;
@@ -239,9 +235,9 @@ export function parseS2wPhonebank(text: string): VanSurveyParse {
         sampleSkipped.push({
           line,
           reason: "incomplete",
-          vanId,
-          questionVanId: "",
-          responseVanId: "",
+          personVanId: vanId,
+          questionExternalId: "",
+          responseExternalId: "",
           dateRaw,
         });
       }
@@ -254,9 +250,9 @@ export function parseS2wPhonebank(text: string): VanSurveyParse {
         sampleSkipped.push({
           line,
           reason: "bad_date",
-          vanId,
-          questionVanId: "",
-          responseVanId: "",
+          personVanId: vanId,
+          questionExternalId: "",
+          responseExternalId: "",
           dateRaw,
         });
       }
@@ -276,16 +272,16 @@ export function parseS2wPhonebank(text: string): VanSurveyParse {
         responseName = cell;
       }
 
-      const questionVanId = col.questionId;
-      const responseVanId = responseName;
+      const questionExternalId = col.questionId;
+      const responseExternalId = responseName;
       answers.push({
-        vanId,
-        questionVanId,
-        responseVanId,
+        personVanId: vanId,
+        questionExternalId,
+        responseExternalId,
         questionName: col.questionName,
         responseName,
         canvassedAt,
-        sourceKey: s2wPhonebankResponseKey(callId, questionVanId, responseVanId),
+        sourceKey: s2wPhonebankResponseKey(callId, questionExternalId, responseExternalId),
       });
     }
   }
@@ -312,7 +308,7 @@ export function parseS2wPhonebank(text: string): VanSurveyParse {
   };
 }
 
-export function parseS2wPhonebankBytes(buffer: ArrayBuffer): VanSurveyParse {
+export function parseS2wPhonebankBytes(buffer: ArrayBuffer): SurveyImportParse {
   return parseS2wPhonebank(new TextDecoder("utf-8").decode(buffer));
 }
 
@@ -322,7 +318,7 @@ export function parseS2wPhonebankBytes(buffer: ArrayBuffer): VanSurveyParse {
  * hung off a question (`Tag: Campaign Support > Wrong Number`) are skipped.
  * No contact datetime in the export — caller stamps import time on answers.
  */
-export function parseS2wTextbank(text: string, respondedAt: Date): VanSurveyParse {
+export function parseS2wTextbank(text: string, respondedAt: Date): SurveyImportParse {
   const { columns, rows: raw } = splitCsv(text);
   const missingColumns = columns.includes(TEXT_PERSON_COL) ? [] : [TEXT_PERSON_COL];
   if (missingColumns.length > 0) {
@@ -359,9 +355,9 @@ export function parseS2wTextbank(text: string, respondedAt: Date): VanSurveyPars
     });
   }
 
-  const answers: VanSurveyAnswer[] = [];
+  const answers: SurveyImportAnswer[] = [];
   let rowsSkippedIncomplete = 0;
-  const sampleSkipped: VanSurveyParse["sampleSkipped"] = [];
+  const sampleSkipped: SurveyImportParse["sampleSkipped"] = [];
 
   for (let ri = 0; ri < raw.length; ri++) {
     const cells = raw[ri]!;
@@ -373,9 +369,9 @@ export function parseS2wTextbank(text: string, respondedAt: Date): VanSurveyPars
         sampleSkipped.push({
           line,
           reason: "incomplete",
-          vanId: "",
-          questionVanId: "",
-          responseVanId: "",
+          personVanId: "",
+          questionExternalId: "",
+          responseExternalId: "",
           dateRaw: "",
         });
       }
@@ -385,9 +381,9 @@ export function parseS2wTextbank(text: string, respondedAt: Date): VanSurveyPars
       const cell = (cells[col.index] ?? "").trim();
       if (!isTruthyCell(cell)) continue;
       answers.push({
-        vanId,
-        questionVanId: col.questionId,
-        responseVanId: col.option,
+        personVanId: vanId,
+        questionExternalId: col.questionId,
+        responseExternalId: col.option,
         questionName: col.questionName,
         responseName: col.option,
         canvassedAt: respondedAt,
@@ -415,7 +411,7 @@ export function parseS2wTextbank(text: string, respondedAt: Date): VanSurveyPars
   };
 }
 
-export function parseS2wTextbankBytes(buffer: ArrayBuffer, respondedAt: Date): VanSurveyParse {
+export function parseS2wTextbankBytes(buffer: ArrayBuffer, respondedAt: Date): SurveyImportParse {
   return parseS2wTextbank(new TextDecoder("utf-8").decode(buffer), respondedAt);
 }
 

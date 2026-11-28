@@ -86,19 +86,19 @@ test("parses survey results export", () => {
   const parsed = parseVanSurveyExportBytes(utf16Le(SURVEY));
   expect(parsed.ok).toBe(true);
   expect(parsed.rowCount).toBe(5);
-  expect(parsed.questions.map((q) => q.questionVanId).sort()).toEqual([
+  expect(parsed.questions.map((q) => q.questionExternalId).sort()).toEqual([
     "726976",
     "727137",
     "741536",
   ]);
-  const runoff = parsed.questions.find((q) => q.questionVanId === "727137")!;
+  const runoff = parsed.questions.find((q) => q.questionExternalId === "727137")!;
   expect(runoff.name).toBe("Runoff ID");
   expect(runoff.multiSelect).toBe(false);
   expect(runoff.responses).toEqual([
-    { responseVanId: "2916960", text: "2 - Lean Support", count: 1 },
-    { responseVanId: "2916959", text: "1 - Strong Support", count: 1 },
+    { responseExternalId: "2916960", text: "2 - Lean Support", count: 1 },
+    { responseExternalId: "2916959", text: "1 - Strong Support", count: 1 },
   ]);
-  const issues = parsed.questions.find((q) => q.questionVanId === "726976")!;
+  const issues = parsed.questions.find((q) => q.questionExternalId === "726976")!;
   expect(issues.multiSelect).toBe(true);
   expect(parsed.answers[0]!.canvassedAt.toISOString()).toBe("2026-05-30T12:00:00.000Z");
 });
@@ -140,17 +140,17 @@ test("tracks incomplete and bad-date survey rows", () => {
     {
       line: 7,
       reason: "bad_date",
-      vanId: "10426746",
-      questionVanId: "727137",
-      responseVanId: "2916960",
+      personVanId: "10426746",
+      questionExternalId: "727137",
+      responseExternalId: "2916960",
       dateRaw: "not-a-date",
     },
     {
       line: 8,
       reason: "incomplete",
-      vanId: "",
-      questionVanId: "727137",
-      responseVanId: "2916960",
+      personVanId: "",
+      questionExternalId: "727137",
+      responseExternalId: "2916960",
       dateRaw: "05/30/2026",
     },
   ]);

@@ -9,12 +9,9 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { db } from "@turf-tools/db";
-import {
-  runS2wPhonebankImport,
-  runS2wTextbankImport,
-  runVanResponseImport,
-  type SurveyQuestionMapping,
-} from "~/lib/server/van-import-run";
+import type { SurveyQuestionMapping } from "~/lib/server/response-import-run";
+import { runS2wPhonebankImport, runS2wTextbankImport } from "~/lib/server/s2w-import-run";
+import { runVanResponseImport } from "~/lib/server/van-import-run";
 import { S2W_PHONEBANK_SOURCE_TYPE, S2W_TEXTBANK_SOURCE_TYPE } from "~/lib/s2w-import";
 import { VAN_SOURCE_TYPE } from "~/lib/van-import";
 import { buildPermittedContext } from "~/rpc/context";
@@ -75,17 +72,17 @@ export const Route = createFileRoute("/api/web/$orgSlug/van-import")({
           const parsed = JSON.parse(mappingsRaw) as unknown;
           if (!Array.isArray(parsed)) throw new Error("bad");
           mappings = parsed.map((row) => {
-            const m = row as { questionVanId?: unknown; questionId?: unknown };
-            if (typeof m.questionVanId !== "string" || !m.questionVanId) {
-              throw new Error("bad questionVanId");
+            const m = row as { questionExternalId?: unknown; questionId?: unknown };
+            if (typeof m.questionExternalId !== "string" || !m.questionExternalId) {
+              throw new Error("bad questionExternalId");
             }
             if (m.questionId != null) {
               if (typeof m.questionId !== "string" || !UUID_RE.test(m.questionId)) {
                 throw new Error("bad questionId");
               }
-              return { questionVanId: m.questionVanId, questionId: m.questionId };
+              return { questionExternalId: m.questionExternalId, questionId: m.questionId };
             }
-            return { questionVanId: m.questionVanId, questionId: null };
+            return { questionExternalId: m.questionExternalId, questionId: null };
           });
         } catch {
           return new Response("Invalid mappings JSON.", { status: 400 });

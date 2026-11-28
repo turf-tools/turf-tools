@@ -1,3 +1,22 @@
+import type {
+  ResponseImportStats,
+  SurveyImportAnswer,
+  SurveyImportParse,
+  SurveyImportRowSkip,
+  SurveyQuestionPreview,
+} from "./survey-import";
+
+export type {
+  ResponseImportStats,
+  SurveyImportAnswer,
+  SurveyImportParse,
+  SurveyImportRowSkip,
+  SurveyQuestionPreview,
+};
+
+/** @deprecated Use ResponseImportStats. */
+export type VanImportStats = ResponseImportStats;
+
 // VAN export parsing for the two-file import:
 //   1. Standard Text ID map: StateFileID + Voter File VANID
 //   2. Survey results export (long format): one row per answer with
@@ -80,49 +99,6 @@ export function parseVanIdMapBytes(buffer: ArrayBuffer): VanIdMapParse {
   return parseVanIdMap(decodeVanExportBytes(buffer));
 }
 
-export type VanSurveyAnswer = {
-  vanId: string;
-  questionVanId: string;
-  responseVanId: string;
-  questionName: string;
-  responseName: string;
-  /** Parsed DateCanvassed (noon UTC on that calendar day). */
-  canvassedAt: Date;
-  /** Stable dedupe key for imported_responses.source_key. */
-  sourceKey: string;
-};
-
-export type VanSurveyQuestionPreview = {
-  questionVanId: string;
-  name: string;
-  answerCount: number;
-  /** Response options in first-seen order. */
-  responses: { responseVanId: string; text: string; count: number }[];
-  /** True when any person has >1 distinct response on the same day. */
-  multiSelect: boolean;
-};
-
-export type VanSurveyRowSkip = {
-  /** 1-based file line (header is line 1). */
-  line: number;
-  reason: "incomplete" | "bad_date";
-  vanId: string;
-  questionVanId: string;
-  responseVanId: string;
-  dateRaw: string;
-};
-
-export type VanSurveyParse = {
-  ok: boolean;
-  missingColumns: string[];
-  rowCount: number;
-  answers: VanSurveyAnswer[];
-  questions: VanSurveyQuestionPreview[];
-  rowsSkippedIncomplete: number;
-  rowsSkippedBadDate: number;
-  sampleSkipped: VanSurveyRowSkip[];
-};
-
 /** Source type stamped on question/option external-id refs and imported_responses. */
 export const VAN_SOURCE_TYPE = "van";
 
@@ -130,11 +106,11 @@ export const VAN_SOURCE_TYPE = "van";
 export function vanImportedResponseKey(
   vanId: string,
   contactedAt: Date,
-  questionVanId: string,
-  responseVanId: string,
+  questionExternalId: string,
+  responseExternalId: string,
 ): string {
   const day = contactedAt.toISOString().slice(0, 10);
-  return `${vanId}:${day}:${questionVanId}:${responseVanId}`;
+  return `${vanId}:${day}:${questionExternalId}:${responseExternalId}`;
 }
 
 /** Parse VAN `MM/DD/YYYY` (or `M/D/YYYY`) to noon UTC that day. */
@@ -155,7 +131,7 @@ export function parseVanDate(raw: string): Date | null {
 // plus multiSelect when any person has >1 distinct response on the same day.
 // Incomplete rows and unparseable DateCanvassed values are counted, sampled,
 // and console.warn'd rather than failing the whole parse.
-export function parseVanSurveyExport(text: string): VanSurveyParse {
+export function parseVanSurveyExport(text: string): SurveyImportParse {
   const { columns, rows: raw } = tsvTable(text);
   const missingColumns = VAN_SURVEY_REQUIRED_COLUMNS.filter((c) => !columns.includes(c));
   if (missingColumns.length > 0) {
@@ -178,10 +154,10 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
   const rNameIdx = columns.indexOf("SurveyResponseName");
   const dateIdx = columns.indexOf("DateCanvassed");
 
-  const answers: VanSurveyAnswer[] = [];
+  const answers: SurveyImportAnswer[] = [];
   let rowsSkippedIncomplete = 0;
   let rowsSkippedBadDate = 0;
-  const sampleSkipped: VanSurveyRowSkip[] = [];
+  const sampleSkipped: SurveyImportRowSkip[] = [];
   // Accumulate option catalogs + per person/day response sets while scanning.
   const qMeta = new Map<
     string,
@@ -197,21 +173,28 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
     const cells = raw[i]!;
     const line = i + 2; // 1-based; line 1 is the header
     const vanId = (cells[vanIdx] ?? "").trim();
-    const questionVanId = (cells[qIdIdx] ?? "").trim();
-    const responseVanId = (cells[rIdIdx] ?? "").trim();
+    const questionExternalId = (cells[qIdIdx] ?? "").trim();
+    const responseExternalId = (cells[rIdIdx] ?? "").trim();
     const questionName = (cells[qNameIdx] ?? "").trim();
     const responseName = (cells[rNameIdx] ?? "").trim();
     const dateRaw = (cells[dateIdx] ?? "").trim();
 
-    const noteSkip = (reason: VanSurveyRowSkip["reason"]) => {
+    const noteSkip = (reason: SurveyImportRowSkip["reason"]) => {
       if (reason === "incomplete") rowsSkippedIncomplete += 1;
       else rowsSkippedBadDate += 1;
       if (sampleSkipped.length < 20) {
-        sampleSkipped.push({ line, reason, vanId, questionVanId, responseVanId, dateRaw });
+        sampleSkipped.push({
+          line,
+          reason,
+          personVanId: vanId,
+          questionExternalId,
+          responseExternalId,
+          dateRaw,
+        });
       }
     };
 
-    if (!vanId || !questionVanId || !responseVanId || !responseName) {
+    if (!vanId || !questionExternalId || !responseExternalId || !responseName) {
       noteSkip("incomplete");
       continue;
     }
@@ -222,32 +205,32 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
     }
 
     answers.push({
-      vanId,
-      questionVanId,
-      responseVanId,
-      questionName: questionName || questionVanId,
+      personVanId: vanId,
+      questionExternalId,
+      responseExternalId,
+      questionName: questionName || questionExternalId,
       responseName,
       canvassedAt,
-      sourceKey: vanImportedResponseKey(vanId, canvassedAt, questionVanId, responseVanId),
+      sourceKey: vanImportedResponseKey(vanId, canvassedAt, questionExternalId, responseExternalId),
     });
 
-    let meta = qMeta.get(questionVanId);
+    let meta = qMeta.get(questionExternalId);
     if (!meta) {
       meta = {
-        name: questionName || questionVanId,
+        name: questionName || questionExternalId,
         responses: new Map(),
         multiDays: new Set(),
         dayResponses: new Map(),
       };
-      qMeta.set(questionVanId, meta);
+      qMeta.set(questionExternalId, meta);
     }
     if (questionName) meta.name = questionName;
-    const existing = meta.responses.get(responseVanId);
+    const existing = meta.responses.get(responseExternalId);
     if (existing) {
       existing.count += 1;
       if (responseName) existing.text = responseName;
     } else {
-      meta.responses.set(responseVanId, {
+      meta.responses.set(responseExternalId, {
         text: responseName,
         count: 1,
         order: meta.responses.size,
@@ -261,20 +244,20 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
       daySet = new Set();
       meta.dayResponses.set(dayKey, daySet);
     }
-    daySet.add(responseVanId);
+    daySet.add(responseExternalId);
     if (daySet.size > 1) meta.multiDays.add(dayKey);
   }
 
   // Heaviest questions first — nicer default order in the match dialog.
-  const questions: VanSurveyQuestionPreview[] = [...qMeta.entries()]
-    .map(([questionVanId, meta]) => ({
-      questionVanId,
+  const questions: SurveyQuestionPreview[] = [...qMeta.entries()]
+    .map(([questionExternalId, meta]) => ({
+      questionExternalId,
       name: meta.name,
       answerCount: [...meta.responses.values()].reduce((n, r) => n + r.count, 0),
       responses: [...meta.responses.entries()]
         .sort((a, b) => a[1].order - b[1].order)
-        .map(([responseVanId, r]) => ({
-          responseVanId,
+        .map(([responseExternalId, r]) => ({
+          responseExternalId,
           text: r.text,
           count: r.count,
         })),
@@ -303,22 +286,6 @@ export function parseVanSurveyExport(text: string): VanSurveyParse {
   };
 }
 
-export function parseVanSurveyExportBytes(buffer: ArrayBuffer): VanSurveyParse {
+export function parseVanSurveyExportBytes(buffer: ArrayBuffer): SurveyImportParse {
   return parseVanSurveyExport(decodeVanExportBytes(buffer));
 }
-
-export type VanImportStats = {
-  idMapRows: number;
-  surveyRows: number;
-  questionsCreated: number;
-  questionsUpdated: number;
-  questionsMatched: number;
-  optionsCreated: number;
-  peopleWritten: number;
-  peopleSkippedUnmapped: number;
-  peopleSkippedUnmatched: number;
-  responsesInserted: number;
-  responsesDeduped: number;
-  sampleUnmappedVanIds: string[];
-  sampleUnmatchedExternalIds: string[];
-};
