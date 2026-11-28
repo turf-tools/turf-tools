@@ -122,7 +122,10 @@ class Settings(BaseSettings):
     )
     quickwit_binary: str = Field(
         default="quickwit",
-        description="Path to the Quickwit CLI binary used for `tool local-ingest`.",
+        description=(
+            "Path to the Quickwit CLI binary used for `tool local-ingest` "
+            "(env: QUICKWIT_BINARY). Defaults to `quickwit` on PATH."
+        ),
     )
     quickwit_config_path: str = Field(
         default="quickwit/node.yaml",
