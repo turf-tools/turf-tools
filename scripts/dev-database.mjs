@@ -7,7 +7,8 @@
 // same credentials.
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -94,6 +95,14 @@ export function quickwitMetastoreUri(url = resolveDatabaseUrl()) {
   return parsed.toString();
 }
 
+/** Host Quickwit CLI path — `QUICKWIT_BINARY`, else `apps/data/.env`, else PATH name. */
+export function resolveQuickwitBinary() {
+  if (process.env.QUICKWIT_BINARY?.trim()) return process.env.QUICKWIT_BINARY.trim();
+  const fromFile = parseEnvFile(resolve(root, "apps/data/.env")).QUICKWIT_BINARY?.trim();
+  if (fromFile) return fromFile;
+  return "quickwit";
+}
+
 function run(command, args, { env = process.env, cwd = root } = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: "inherit", cwd, env, shell: false });
@@ -165,18 +174,60 @@ async function cmdClear() {
 }
 
 async function cmdQuickwit() {
+  // Spawn Quickwit directly (not via `sh | grep`) so SIGTERM from concurrently
+  // stops the searcher instead of leaving UDP :7280 held by an orphan.
+  const dataDir = resolve(root, "apps/data");
+  mkdirSync(resolve(dataDir, "qwdata"), { recursive: true });
   const env = {
     ...process.env,
-    QW_METASTORE_URI: process.env.QW_METASTORE_URI ?? quickwitMetastoreUri(),
+    QW_METASTORE_URI: process.env.QW_METASTORE_URI?.trim() || quickwitMetastoreUri(),
   };
-  await run(
-    "sh",
-    [
-      "-c",
-      "mkdir -p qwdata && quickwit run --config quickwit/node.yaml 2>&1 | grep --line-buffered -E '(REST server is ready|ERROR|FATAL|command failed)'",
-    ],
-    { cwd: resolve(root, "apps/data"), env },
-  );
+  const binary = resolveQuickwitBinary();
+  const interesting = /(REST server is ready|ERROR|FATAL|command failed)/;
+
+  await new Promise((resolvePromise, reject) => {
+    const child = spawn(binary, ["run", "--config", "quickwit/node.yaml"], {
+      cwd: dataDir,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stopping = false;
+    const stopChild = (signal = "SIGTERM") => {
+      if (stopping || child.killed || child.exitCode != null) return;
+      stopping = true;
+      child.kill(signal);
+      // Quickwit can ignore a soft stop briefly; escalate so :7280 is freed.
+      setTimeout(() => {
+        if (child.exitCode == null) child.kill("SIGKILL");
+      }, 2000).unref();
+    };
+    const onSignal = () => stopChild("SIGTERM");
+    process.on("SIGTERM", onSignal);
+    process.on("SIGINT", onSignal);
+
+    const forward = (stream) => {
+      createInterface({ input: stream }).on("line", (line) => {
+        if (interesting.test(line)) console.log(line);
+      });
+    };
+    forward(child.stdout);
+    forward(child.stderr);
+
+    child.on("error", (err) => {
+      process.off("SIGTERM", onSignal);
+      process.off("SIGINT", onSignal);
+      reject(err);
+    });
+    child.on("exit", (code, signal) => {
+      process.off("SIGTERM", onSignal);
+      process.off("SIGINT", onSignal);
+      if (signal && signal !== "SIGTERM" && signal !== "SIGINT" && signal !== "SIGKILL") {
+        reject(new Error(`${binary} exited via ${signal}`));
+      } else if (code) reject(new Error(`${binary} exited with code ${code}`));
+      else resolvePromise();
+    });
+  });
 }
 
 async function main() {
