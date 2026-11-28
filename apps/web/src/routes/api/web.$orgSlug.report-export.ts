@@ -19,7 +19,7 @@ export const Route = createFileRoute("/api/web/$orgSlug/report-export")({
 
         let context: Awaited<ReturnType<typeof buildPermittedContext>>;
         try {
-          context = await buildPermittedContext(db, request.headers, orgSlug, "reports.read");
+          context = await buildPermittedContext(db, request.headers, orgSlug, "reports.export");
         } catch {
           return new Response("Unauthorized", { status: 401 });
         }

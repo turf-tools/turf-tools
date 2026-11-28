@@ -3,11 +3,11 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
-// Soft-blocks click-outside dismiss when the dialog body contains a
-// <form>. Confirmation dialogs (delete, etc — no form) keep click-outside
-// as a fast dismiss; form dialogs treat outside-press as a near-miss so
-// in-progress edits (text inputs, dropdown picks) aren't lost. Esc,
-// Cancel, and programmatic close (mutation success) still close.
+// Soft-blocks click-outside dismiss once someone has interacted with a dialog
+// that holds a <form>: any press or key inside it (typing, a toggle, a
+// dropdown pick) protects it until it closes. Until then, and always for
+// confirmation dialogs (delete, etc — no form), click-outside is a fast
+// dismiss. Esc, Cancel, and programmatic close (mutation success) still close.
 const DialogProtectContext = createContext<{ setProtected: (next: boolean) => void } | null>(null);
 
 function Dialog({ open, onOpenChange, ...props }: DialogPrimitive.Root.Props) {
@@ -47,11 +47,11 @@ const FINAL_FOCUS_NONE = (): boolean => false;
 function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.Props) {
   const ctx = useContext(DialogProtectContext);
   const popupRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!ctx) return;
-    ctx.setProtected(popupRef.current?.querySelector("form") != null);
-  }, [ctx]);
+  // React events bubble through portals, so picks in a dropdown opened from
+  // the dialog count too.
+  const protectIfForm = () => {
+    if (popupRef.current?.querySelector("form")) ctx?.setProtected(true);
+  };
 
   return (
     <DialogPrimitive.Portal>
@@ -76,6 +76,8 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
           ) ?? popupRef.current
         }
         finalFocus={FINAL_FOCUS_NONE}
+        onPointerDownCapture={protectIfForm}
+        onKeyDownCapture={protectIfForm}
         // Default Enter clicks the first DialogClose (Cancel/Ok), so
         // confirm dialogs are still keyboard-dismissable. Skipped when
         // focus is in an input or tabbed-to button — those handle

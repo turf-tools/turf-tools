@@ -118,7 +118,7 @@ function ReportsIndex() {
   const { campaign: campaignParam, day: dayFilter, kind } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const shouldFade = useFadeOnce("/reports");
-  const { session } = Route.useRouteContext();
+  const { session, role } = Route.useRouteContext();
   const tz = session?.user.displayTimezone ?? DEFAULT_DISPLAY_TIMEZONE;
 
   const { data: campaigns } = useSuspenseQuery(campaignsListQuery());
@@ -233,20 +233,22 @@ function ReportsIndex() {
         >
           <Icon name="arrow-down-up" className="size-3.5" />
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="outline" />}>
-            <Icon name="download" className="size-3.5" />
-            Export
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => (window.location.href = downloadHref("csv"))}>
-              CSV
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => (window.location.href = downloadHref("parquet"))}>
-              Parquet
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {hasPermission(role, "reports.export") ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" />}>
+              <Icon name="download" className="size-3.5" />
+              Export
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => (window.location.href = downloadHref("csv"))}>
+                CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => (window.location.href = downloadHref("parquet"))}>
+                Parquet
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         <Filter
           icon={<Icon name="calendar" className="size-3.5" />}
           label={dayLabel}

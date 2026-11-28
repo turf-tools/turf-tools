@@ -898,7 +898,7 @@ function FieldDialog({
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Name</label>
+            <label className="text-sm text-muted-foreground">Name</label>
             <Input
               value={label}
               onChange={(e) => {
@@ -911,7 +911,7 @@ function FieldDialog({
 
           <div className="grid grid-cols-3 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Type</label>
+              <label className="text-sm text-muted-foreground">Type</label>
               {/* Static — retyping a field would invalidate already-typed
                   values; a different type needs a new field. */}
               <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm">
@@ -919,13 +919,13 @@ function FieldDialog({
               </span>
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Total</label>
+              <label className="text-sm text-muted-foreground">Total</label>
               <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm tabular-nums">
                 {field?.rowCount != null ? field.rowCount.toLocaleString() : "—"}
               </span>
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Matched</label>
+              <label className="text-sm text-muted-foreground">Matched</label>
               <span className="w-fit rounded-md bg-muted px-2.5 py-1 text-sm tabular-nums">
                 {field?.matchedCount != null ? field.matchedCount.toLocaleString() : "—"}
               </span>
@@ -933,7 +933,7 @@ function FieldDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Examples</label>
+            <label className="text-sm text-muted-foreground">Examples</label>
             {/* min-h reserves one chip row so late-arriving samples fade in
                 without shifting the layout below. */}
             <div className="flex min-h-7 flex-wrap items-center gap-1.5">
@@ -1374,7 +1374,7 @@ function AppendDialog({
             className="flex flex-col gap-4"
           >
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">File</label>
+              <label className="text-sm text-muted-foreground">File</label>
               <input
                 ref={fileRef}
                 type="file"
@@ -1425,13 +1425,13 @@ function AppendDialog({
             {fileInfo ? (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Source name</label>
+                  <label className="text-sm text-muted-foreground">Source name</label>
                   <span className="w-fit max-w-full truncate rounded-md bg-muted px-2.5 py-1 text-sm">
                     {fileInfo.valueHeader}
                   </span>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Field name</label>
+                  <label className="text-sm text-muted-foreground">Field name</label>
                   <ChoiceButtons
                     options={APPEND_MODE_OPTIONS}
                     value={mode}
@@ -1503,7 +1503,7 @@ function AppendDialog({
 
             {fileInfo && mode === "new" ? (
               <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium">Type</label>
+                <label className="text-sm text-muted-foreground">Type</label>
                 <ChoiceButtons
                   options={FIELD_TYPE_OPTIONS}
                   value={fieldType}

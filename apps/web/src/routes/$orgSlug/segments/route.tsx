@@ -1,7 +1,7 @@
 import { Icon } from "~/components/icon";
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { notify } from "~/lib/notify";
 import { Button } from "~/components/button";
 import { DialogError } from "~/components/callout";
@@ -12,18 +12,14 @@ import {
   DialogDescription,
   DialogTitle,
 } from "~/components/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "~/components/dropdown-menu";
 import { DeleteDialog, type DeleteBlocker } from "~/components/delete-dialog";
 import { EditorHeader } from "~/components/editor-header";
 import { EditorPage } from "~/components/editor-page";
+import { ExportDialog, type ExportChoice } from "~/components/export-dialog";
 import { Input } from "~/components/input";
 import { NoActiveDataset } from "~/components/no-active-dataset";
 import { Rail, useShowArchived } from "~/components/rail";
+import { exportColumns, type ExportRows } from "~/lib/export-columns";
 import type { Criteria } from "~/lib/filters";
 import { customFieldsQuery } from "~/lib/queries/custom-fields";
 import { electionsQuery } from "~/lib/queries/elections";
@@ -40,15 +36,6 @@ import { client } from "~/rpc/client";
 
 function sortByName<T extends { name: string }>(items: ReadonlyArray<T>): T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-const EXPORT_CONFIRM_THRESHOLD = 100_000;
-
-// Round to 2 significant figures for a friendlier display.
-function approxCount(n: number): string {
-  if (n < 1000) return n.toLocaleString();
-  const factor = 10 ** (Math.floor(Math.log10(n)) - 1);
-  return (Math.round(n / factor) * factor).toLocaleString();
 }
 
 export const Route = createFileRoute("/$orgSlug/segments")({
@@ -85,40 +72,45 @@ function SegmentsLayout() {
   const goToSegment = (id: string) =>
     navigate({ to: "/$orgSlug/segments/$segmentId", params: { orgSlug, segmentId: id } });
 
-  const downloadExport = (format: "csv" | "parquet") => {
-    if (!activeSegmentId) return;
-    // Content-Disposition on the /api route makes the browser download rather
-    // than navigate, so the SPA stays put.
-    window.location.href = `/api/web/${orgSlug}/segment-export?segmentId=${activeSegmentId}&format=${format}`;
-  };
+  const exportCols = useMemo(() => exportColumns(manifest?.manifest ?? null), [manifest]);
+  const [exportOpen, setExportOpen] = useState(false);
+  // Kept apart from the open flag so the count stays put during the close
+  // animation instead of flashing empty.
+  const [exportCounts, setExportCounts] = useState<Record<ExportRows, number> | null>(null);
 
-  // Split open-boolean from the value so the confirm body keeps its count
-  // during the close animation instead of flashing empty.
-  const [exportConfirm, setExportConfirm] = useState<{
-    format: "csv" | "parquet";
-    count: number;
-  } | null>(null);
-  const [exportConfirmOpen, setExportConfirmOpen] = useState(false);
+  const countQuery = (detail: { criteria: unknown } | null | undefined) =>
+    segmentCountsQuery((detail?.criteria ?? { steps: [] }) as Criteria, segments);
 
-  // Fetch the live person count (a cache hit while the editor is open) to gate
-  // large exports behind a confirm; small ones download straight away — the
-  // browser's own download UI is the only feedback needed.
-  const onExport = async (format: "csv" | "parquet") => {
+  // The dialog shows live person and door counts. The editor has usually just
+  // computed them, so cached counts show on open and the fetch only refreshes.
+  const openExport = async () => {
     if (!activeSegmentId) return;
+    const cachedDetail = queryClient.getQueryData(segmentDetailQuery(activeSegmentId).queryKey);
+    const cached = cachedDetail
+      ? queryClient.getQueryData(countQuery(cachedDetail).queryKey)
+      : undefined;
+    setExportCounts(cached ? { people: cached.personCount, households: cached.doorCount } : null);
+    setExportOpen(true);
     try {
       const detail = await queryClient.fetchQuery(segmentDetailQuery(activeSegmentId));
-      const { personCount } = await queryClient.fetchQuery(
-        segmentCountsQuery((detail?.criteria ?? { steps: [] }) as Criteria, segments),
-      );
-      if (personCount > EXPORT_CONFIRM_THRESHOLD) {
-        setExportConfirm({ format, count: personCount });
-        setExportConfirmOpen(true);
-      } else {
-        downloadExport(format);
-      }
+      const { personCount, doorCount } = await queryClient.fetchQuery(countQuery(detail));
+      setExportCounts({ people: personCount, households: doorCount });
     } catch (e) {
-      notify.error(e instanceof Error ? e.message : "Couldn't prepare the export.");
+      notify.error(e instanceof Error ? e.message : "Couldn't count this segment.");
     }
+  };
+
+  const downloadExport = ({ rows, format, columns }: ExportChoice) => {
+    if (!activeSegmentId) return;
+    const params = new URLSearchParams({
+      segmentId: activeSegmentId,
+      rows,
+      format,
+      columns: columns.join(","),
+    });
+    // Content-Disposition on the /api route makes the browser download rather
+    // than navigate, so the SPA stays put.
+    window.location.href = `/api/web/${orgSlug}/segment-export?${params.toString()}`;
   };
 
   const renameSegment = useDialogMutation({
@@ -376,17 +368,12 @@ function SegmentsLayout() {
 
         <EditorPage>
           <EditorHeader title="Segment Editor" subtitle={activeSegment?.name}>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="outline" disabled={!activeSegment} />}>
+            {hasPermission(role, "persons.export") ? (
+              <Button variant="outline" onClick={openExport} disabled={!activeSegment}>
                 <Icon name="download" />
                 Export
-                <Icon name="chevron-down" className="-mr-1 size-4 text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onExport("csv")}>CSV</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onExport("parquet")}>Parquet</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={renameSegment.open} disabled={!activeSegment}>
               <Icon name="pencil" />
               Rename
@@ -427,35 +414,13 @@ function SegmentsLayout() {
         </EditorPage>
       </div>
 
-      <Dialog
-        open={exportConfirmOpen}
-        onOpenChange={(next) => {
-          if (!next) setExportConfirmOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogTitle>Export a large segment?</DialogTitle>
-          <DialogDescription>
-            Please confirm your export of{" "}
-            <span className="font-bold text-foreground">
-              ~{exportConfirm ? approxCount(exportConfirm.count) : ""}
-            </span>{" "}
-            people. It will begin downloading a large file.
-          </DialogDescription>
-          <div className="mt-2 flex justify-end gap-2">
-            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-            <Button
-              onClick={() => {
-                if (exportConfirm) downloadExport(exportConfirm.format);
-                setExportConfirmOpen(false);
-              }}
-            >
-              <Icon name="download" />
-              Export
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        columns={exportCols}
+        counts={exportCounts}
+        onExport={downloadExport}
+      />
 
       <SaveAsDialog
         open={cloneSegment.isOpen}

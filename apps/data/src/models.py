@@ -143,10 +143,10 @@ class Person(BaseModel):
 # above as it survives assembly, plus the geocoded position. No half_code or
 # county_fips: assembly consumes half_code into canonical address_line_1
 # ("123 1/2 MAIN ST"), and county_fips is read only by the import's geo extent.
-# Required-contract columns are always selected, so genuine pipeline drift fails
-# loudly; the contract-optional four are included only when the version's table
-# has them. Dataset-specific columns are not exported. Shared by
-# /segments/export and the /reports/* exports.
+# The /reports/* exports select exactly these: required-contract columns always,
+# so genuine pipeline drift fails loudly, and the contract-optional four only
+# when the version's table has them. Segment exports start from these and can
+# add the dataset's own manifest fields (src/segment_export.py).
 EXPORT_COLUMNS = [
     "external_id",
     "external_id_type",

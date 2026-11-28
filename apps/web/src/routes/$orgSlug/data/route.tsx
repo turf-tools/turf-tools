@@ -338,7 +338,7 @@ function CreateDatasetDialog({
           className="flex flex-col gap-4"
         >
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Name</label>
+            <label className="text-sm text-muted-foreground">Name</label>
             <Input
               autoFocus
               value={name}
@@ -358,7 +358,7 @@ function CreateDatasetDialog({
             ) : null}
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Type</label>
+            <label className="text-sm text-muted-foreground">Type</label>
             <DropdownMenu {...typeDropdown.menu}>
               <DropdownMenuTrigger
                 disabled={pending}
@@ -394,7 +394,7 @@ function CreateDatasetDialog({
               />
               {importer.filters.length > 0 ? (
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium">Filter</label>
+                  <label className="text-sm text-muted-foreground">Filter</label>
                   <div className="flex flex-wrap gap-1.5">
                     {[{ column: null, label: "None" }, ...importer.filters].map((f) => {
                       const sel = filterColumn === f.column;
@@ -463,7 +463,7 @@ export function SourceInputs({
 }) {
   return importer.sources.map((source, i) => (
     <div key={source.key} className="flex flex-col gap-1.5">
-      <label className="text-sm font-medium">
+      <label className="text-sm text-muted-foreground">
         {source.label}
         {source.required ? null : <span className="text-muted-foreground"> (optional)</span>}
       </label>
