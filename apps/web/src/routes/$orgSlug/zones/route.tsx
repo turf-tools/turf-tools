@@ -502,12 +502,13 @@ function CreateZoneGroupDialog({
   const [name, setName] = useState("");
   const [keyGroup, setKeyGroup] = useState("");
 
+  // No unit is preselected: a group's unit can't change, so it's always an explicit pick.
   useEffect(() => {
     if (open) {
       setName("");
-      setKeyGroup(keyGroups[0]?.value ?? "");
+      setKeyGroup("");
     }
-  }, [open, keyGroups]);
+  }, [open]);
 
   const valid = name.trim().length > 0 && keyGroup.length > 0;
 

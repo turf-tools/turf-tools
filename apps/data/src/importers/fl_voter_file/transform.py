@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.importers.history import VOTING_HISTORY_TYPE, one_vote_per_election_sql
+from src.importers.sql import case_from_map, county_local_sql, where_sql
+
 if TYPE_CHECKING:
     from src.importers.base import ImportFilter
 
@@ -117,7 +120,7 @@ FL_REGISTRATION_STATUSES: dict[str, str] = {"ACT": "active", "INA": "inactive"}
 # type rather than passing as a special.
 FL_ELECTION_TYPES: dict[str, str] = {
     "PPP": "presidential_primary",
-    "RUN": "runoff",
+    "RUN": "primary_runoff",
     "OTH": "other",
 }
 
@@ -130,26 +133,9 @@ _REGULAR_ELECTION_MONTHS: dict[str, tuple[str, int]] = {"GEN": ("general", 11), 
 # ballots not counted and N is "did not vote", so they aren't votes.
 FL_VOTING_METHODS: dict[str, str] = {"Y": "poll_site", "E": "early_voting", "A": "absentee"}
 
-# When one voter has several counted codes for one election, keep the first.
-_METHOD_PRIORITY = ("Y", "E", "A")
-
 # Filter columns whose raw text isn't compared as-is: a ZIP may be ZIP+4 run
 # together, so it's matched on its first five digits.
-_FILTER_EXPRESSIONS: dict[str, str] = {"residence_zipcode": "left(raw.residence_zipcode, 5)"}
-
-VOTING_HISTORY_TYPE = "STRUCT(year INT, type VARCHAR, date VARCHAR, method VARCHAR)[]"
-
-# Votes grouped into lists per pass. Statewide (about 69M votes) groups in 14
-# passes within a 10GB memory limit; a county-sized import in one.
-VOTES_PER_BATCH = 5_000_000
-
-
-def _case_from_map(col: str, mapping: dict[str, str], default: str | None = None) -> str:
-    """SQL CASE mapping `col`'s values via `mapping`; unmatched non-NULL values
-    get `default` (None → NULL)."""
-    branches = " ".join(f"WHEN {col} = '{raw}' THEN '{label}'" for raw, label in mapping.items())
-    else_clause = "NULL" if default is None else f"CASE WHEN {col} IS NULL THEN NULL ELSE '{default}' END"
-    return f"CASE {branches} ELSE {else_clause} END"
+FILTER_EXPRESSIONS: dict[str, str] = {"residence_zipcode": "left(raw.residence_zipcode, 5)"}
 
 
 def _election_type_sql(code: str, date: str) -> str:
@@ -168,39 +154,19 @@ def _iso_date_sql(col: str) -> str:
     return f"strftime(try_strptime({col}, '%m/%d/%Y'), '%Y-%m-%d')"
 
 
-def _county_local_sql(col: str) -> str:
-    """A code that's only unique within its county, prefixed with the county:
-    precinct `135` in Miami-Dade → `DAD-135`."""
-    return f"CASE WHEN {col} IS NULL THEN NULL ELSE raw.county_code || '-' || {col} END"
-
-
-def _where_sql(filter: ImportFilter | None) -> str:
-    if not filter or not filter.values:
-        return ""
-    joined = ", ".join("'" + v.replace("'", "''") + "'" for v in filter.values)
-    expression = _FILTER_EXPRESSIONS.get(filter.column, f"raw.{filter.column}")
-    return f"WHERE {expression} IN ({joined})"
-
-
 def fl_votes_query(registration_table: str, history_table: str, filter: ImportFilter | None = None) -> str:
     """SQL reducing raw history to one counted vote per voter per election.
 
     Restricted to the voters the filter keeps, and joined on voter ID alone,
     since a history row's county is wherever the voter lived at the time.
-    Duplicate rows collapse, and a voter with several counted codes for one
-    election keeps the first in `_METHOD_PRIORITY`.
     """
-    method_rank = " ".join(f"WHEN '{code}' THEN {i}" for i, code in enumerate(_METHOD_PRIORITY))
     counted = ", ".join(f"'{code}'" for code in FL_VOTING_METHODS)
-    return f"""
-SELECT voter_id, election_date, type, arg_min(history_code, rank) AS history_code
-FROM (
+    votes = f"""
     SELECT
         voter_id,
         election_date,
         {_election_type_sql("election_type", "election_date")} AS type,
-        history_code,
-        CASE history_code {method_rank} END AS rank
+        {case_from_map("history_code", FL_VOTING_METHODS)} AS method
     FROM (
         SELECT
             h.voter_id,
@@ -209,39 +175,12 @@ FROM (
             h.history_code
         FROM {history_table} AS h
         WHERE h.history_code IN ({counted})
-          AND h.voter_id IN (SELECT raw.voter_id FROM {registration_table} AS raw {_where_sql(filter)})
+          AND h.voter_id IN (
+              SELECT raw.voter_id FROM {registration_table} AS raw {where_sql(filter, FILTER_EXPRESSIONS)}
+          )
     )
-)
-WHERE election_date IS NOT NULL AND type IS NOT NULL
-GROUP BY ALL
 """
-
-
-def fl_history_batch_query(votes_table: str, batches: int, batch: int) -> str:
-    """SQL grouping one batch of voters' votes (`fl_votes_query`'s output) into
-    one `voting_history` list per voter.
-
-    DuckDB can't spill `list()` state to disk, so statewide history is grouped a
-    hash-partition of voters at a time: batch `batch` of `batches`.
-    """
-    return f"""
-SELECT
-    voter_id,
-    -- `list_sort` orders by the first field, the date, so entries run
-    -- chronologically; `list()` with an ORDER BY would need every input in
-    -- memory before it could finish.
-    list_transform(
-        list_sort(list({{
-            'date': strftime(election_date, '%Y-%m-%d'),
-            'type': type,
-            'method': {_case_from_map("history_code", FL_VOTING_METHODS)}
-        }})),
-        e -> {{'year': CAST(left(e.date, 4) AS INT), 'type': e.type, 'date': e.date, 'method': e.method}}
-    )::{VOTING_HISTORY_TYPE} AS voting_history
-FROM {votes_table}
-WHERE hash(voter_id) % {batches} = {batch}
-GROUP BY voter_id
-"""
+    return one_vote_per_election_sql(votes)
 
 
 def fl_transformation_query(
@@ -255,7 +194,7 @@ def fl_transformation_query(
     Args:
         registration_table: fully-qualified raw registration table (`persons_raw`).
         history_table: fully-qualified grouped history table, one
-            `voting_history` per voter (`fl_history_batch_query`).
+            `voting_history` per voter (`group_votes`).
         filter: optional row filter on a raw registration column, the dataset's
             fixed import slice.
     """
@@ -267,7 +206,7 @@ WITH reg AS (
         regexp_replace(raw.residence_address_line_1, '\\s+', ' ', 'g') AS line_1,
         regexp_replace(raw.residence_zipcode, '[^0-9]', '', 'g') AS zip_digits
     FROM {registration_table} AS raw
-    {_where_sql(filter)}
+    {where_sql(filter, FILTER_EXPRESSIONS)}
 )
 SELECT
     raw.voter_id AS external_id,
@@ -286,15 +225,15 @@ SELECT
     'FL' AS state,
     left(raw.zip_digits, 5) AS zip5,
     CASE WHEN length(raw.zip_digits) = 9 THEN right(raw.zip_digits, 4) END AS zip4,
-    {_case_from_map("raw.party_affiliation", FL_ENROLLMENTS, default="other")} AS enrollment,
+    {case_from_map("raw.party_affiliation", FL_ENROLLMENTS, default="other")} AS enrollment,
     raw.gender AS gender,
-    {_case_from_map("raw.race", FL_RACES)} AS race,
+    {case_from_map("raw.race", FL_RACES)} AS race,
     {_iso_date_sql("raw.birth_date")} AS date_of_birth,
     {_iso_date_sql("raw.registration_date")} AS registration_date,
-    {_case_from_map("raw.voter_status", FL_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
+    {case_from_map("raw.voter_status", FL_REGISTRATION_STATUSES, default="unknown")} AS registration_status,
     raw.county_code AS county_code,
-    {_case_from_map("raw.county_code", county_fips)} AS county_fips,
-    {_county_local_sql("raw.precinct")} AS precinct,
+    {case_from_map("raw.county_code", county_fips)} AS county_fips,
+    {county_local_sql("raw.precinct", "raw.county_code")} AS precinct,
     raw.congressional_district AS congressional_district,
     raw.house_district AS house_district,
     raw.senate_district AS senate_district,

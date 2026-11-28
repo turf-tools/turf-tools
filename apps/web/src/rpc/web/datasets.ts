@@ -8,9 +8,10 @@ import {
   organizations,
 } from "@turf-tools/db/schema";
 import { z } from "zod";
+import { findImporter, updateBase } from "~/lib/importers";
 import type { Manifest } from "~/lib/manifest";
 import { webMut, webPub } from "../context";
-import { checkImportInputs } from "./importers";
+import { checkImportInputs, getImporters } from "./importers";
 
 const pub = webPub("datasets.read");
 const mut = webMut("datasets.manage");
@@ -51,6 +52,7 @@ export const list = pub.input(z.object({}).optional()).handler(async ({ context 
       status: datasetVersions.status,
       error: datasetVersions.error,
       sources: datasetVersions.sources,
+      baseVersionNumber: datasetVersions.baseVersionNumber,
       derivedMetadata: datasetVersions.derivedMetadata,
       importedAt: datasetVersions.createdAt,
       finishedAt: datasetVersions.finishedAt,
@@ -315,7 +317,8 @@ export const create = mut
     if (!base)
       throw new ORPCError("BAD_REQUEST", { message: "Name must contain letters or numbers." });
     const importFilter = input.importFilter ?? null;
-    const sources = await checkImportInputs(input.importer, input.sources, importFilter);
+    const importer = findImporter(await getImporters(), input.importer);
+    const sources = checkImportInputs(importer, input.sources, importFilter, false);
 
     // A duplicate name *within the org* almost certainly means "update the
     // existing dataset", so reject with that pointer. Name reuse across orgs
@@ -411,17 +414,25 @@ export const update = mut
         )
         .limit(1);
       if (!grant) throw new ORPCError("NOT_FOUND", { message: "Dataset not found." });
-      const sources = await checkImportInputs(grant.importer, input.sources, grant.importFilter);
 
       const versions = await tx
         .select({
           versionId: datasetVersions.datasetVersionId,
           versionNumber: datasetVersions.versionNumber,
           status: datasetVersions.status,
+          archivedAt: datasetVersions.archivedAt,
         })
         .from(datasetVersions)
         .where(eq(datasetVersions.datasetId, input.datasetId))
         .orderBy(desc(datasetVersions.versionNumber));
+
+      // The version this import builds on, for sources it keeps or adds to.
+      const importer = findImporter(await getImporters(), grant.importer);
+      const base = updateBase(
+        importer,
+        versions.map((v) => ({ ...v, isArchived: v.archivedAt != null })),
+      );
+      const sources = checkImportInputs(importer, input.sources, grant.importFilter, base != null);
       if (versions.some((v) => v.status === "importing"))
         throw new ORPCError("CONFLICT", {
           message: "An import is already in progress for this dataset. Wait for it to finish.",
@@ -443,6 +454,7 @@ export const update = mut
           .set({
             status: "importing",
             sources,
+            baseVersionNumber: base,
             error: null,
             finishedAt: null,
             importStep: null,
@@ -477,6 +489,7 @@ export const update = mut
                 versionNumber: (versions[0]?.versionNumber ?? 0) + 1,
                 status: "importing",
                 sources,
+                baseVersionNumber: base,
                 createdBy: context.user.id,
               })
               .returning({ datasetVersionId: datasetVersions.datasetVersionId })
@@ -489,6 +502,7 @@ export const update = mut
           organization_id: context.organizationId,
           // The dataset's fixed slice — every version imports the same one.
           filter: grant.importFilter,
+          base_version_number: base,
         },
       });
       return { versionId: version!.datasetVersionId };

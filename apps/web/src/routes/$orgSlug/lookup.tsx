@@ -61,6 +61,7 @@ const HEADER_COLUMNS = new Set([
   "zip5",
   "zip4",
   "date_of_birth",
+  "year_of_birth",
   "gender",
   "enrollment",
 ]);
@@ -396,9 +397,10 @@ function DetailPanel({ externalId }: { externalId: string | null }) {
     if (!person) return [];
     const out: DetailBlock[] = [];
 
-    // Identity — date of birth + id up top.
+    // Identity — date (or year) of birth + id up top.
     const identity: DetailRow[] = [
       { label: "Date of birth", value: formatDob(person.date_of_birth) },
+      { label: "Year of birth", value: toText(person.year_of_birth) },
       { label: "ID", value: toText(person.external_id) },
     ].filter((r) => r.value !== "" && r.value !== "—");
     if (identity.length > 0) out.push({ rows: identity });
@@ -525,7 +527,7 @@ function DetailHeader({
     .filter(Boolean)
     .join(", ");
 
-  const age = ageFromDob(person.date_of_birth);
+  const age = ageFromDob(person.date_of_birth) ?? ageFromBirthYear(person.year_of_birth);
   const gender = enumLabel(defByColumn.get("gender"), person.gender);
   const party = enumLabel(defByColumn.get("enrollment"), person.enrollment);
   const pills = [age != null ? `${age}` : null, gender, party].filter(Boolean) as string[];
@@ -558,7 +560,7 @@ function formatValue(fd: ManifestFieldDef, raw: unknown): string {
     case "date-range":
       return formatDate(text, TZ);
     case "age-range": {
-      const age = ageFromDob(raw);
+      const age = fd.column === "year_of_birth" ? ageFromBirthYear(raw) : ageFromDob(raw);
       return age != null ? String(age) : "—";
     }
     case "text":
@@ -598,6 +600,14 @@ function toText(raw: unknown): string {
   if (typeof raw === "string") return raw;
   if (typeof raw === "number" || typeof raw === "boolean") return String(raw);
   return "";
+}
+
+// From a birth year alone, the age reached this year.
+function ageFromBirthYear(raw: unknown): number | null {
+  const year = Number(toText(raw));
+  if (!Number.isInteger(year) || year <= 0) return null;
+  const age = new Date().getFullYear() - year;
+  return age >= 0 && age < 130 ? age : null;
 }
 
 function ageFromDob(raw: unknown): number | null {

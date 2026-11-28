@@ -130,7 +130,7 @@ def test_one_entry_per_election_and_only_counted_ballots(conn) -> None:
     # B, L, P, and N aren't votes.
     assert _history(conn, 3) == []
     # Exact duplicate rows collapse; a runoff keeps its type.
-    assert _history(conn, 4) == [("2024-11-05", "general", "poll_site"), ("2026-06-02", "runoff", "poll_site")]
+    assert _history(conn, 4) == [("2024-11-05", "general", "poll_site"), ("2026-06-02", "primary_runoff", "poll_site")]
 
 
 def test_gen_and_pri_off_the_regular_dates_are_specials(conn) -> None:
@@ -176,7 +176,7 @@ def test_a_non_zip_is_rejected(conn, tmp_path) -> None:
 def test_history_grouped_in_batches_matches_one_pass(conn, monkeypatch) -> None:
     _load(conn)
     one_pass = _people(conn)
-    monkeypatch.setattr("src.importers.fl_voter_file.importer.VOTES_PER_BATCH", 2)
+    monkeypatch.setattr("src.importers.history.VOTES_PER_BATCH", 2)
     _load(conn)
     assert _people(conn) == one_pass
 

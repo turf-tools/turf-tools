@@ -41,11 +41,13 @@ import { Switch } from "~/components/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "~/components/table";
 import { formatDateTime, formatDuration } from "~/lib/format";
 import {
+  builtOnLabel,
   cleanSources,
   findImporter,
   importerLabel,
   importFilterLabel,
   sourcesComplete,
+  updateBase,
 } from "~/lib/importers";
 import { useRememberSelection } from "~/lib/last-selected";
 import { GRAY, GREEN, RED, YELLOW } from "~/lib/palette";
@@ -337,6 +339,7 @@ function DatasetEditor({
         datasetName={dataset.name}
         importer={dataset.importer}
         importFilter={dataset.importFilter}
+        versions={dataset.versions}
         hasReadyVersion={readyVersionId != null}
         onUpdated={() => void queryClient.invalidateQueries({ queryKey: ["datasets"] })}
       />
@@ -611,6 +614,11 @@ function DetailsDialog({
   const { data: importers } = useSuspenseQuery(importersQuery());
   const importer = version ? findImporter(importers, version.importer) : null;
   const sources = Object.entries(version?.sources ?? {});
+  const builtOn = builtOnLabel(
+    importer,
+    version?.sources ?? {},
+    version?.baseVersionNumber ?? null,
+  );
   const started = formatDateTime(version?.importedAt, timezone);
   const elapsed =
     version?.finishedAt && version.importedAt
@@ -647,6 +655,7 @@ function DetailsDialog({
               .
             </p>
           ) : null}
+          {builtOn ? <p>{builtOn}</p> : null}
         </DialogDescription>
         {version?.status === "failed" ? (
           <Callout tone="error" className="whitespace-pre-line">
@@ -1020,6 +1029,7 @@ function UpdateDialog({
   datasetName,
   importer,
   importFilter,
+  versions,
   hasReadyVersion,
   onUpdated,
 }: {
@@ -1029,11 +1039,13 @@ function UpdateDialog({
   datasetName: string;
   importer: string;
   importFilter: VersionRow["importFilter"];
+  versions: ReadonlyArray<VersionRow>;
   hasReadyVersion: boolean;
   onUpdated: () => void;
 }) {
   const { data: importers } = useSuspenseQuery(importersQuery());
   const spec = findImporter(importers, importer);
+  const base = updateBase(spec, versions);
   const filterLabel = importFilterLabel(spec, importFilter);
   const [sources, setSources] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -1057,7 +1069,7 @@ function UpdateDialog({
   });
 
   const pending = update.isPending;
-  const valid = spec != null && sourcesComplete(spec, sources);
+  const valid = spec != null && sourcesComplete(spec, sources, base);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1076,7 +1088,7 @@ function UpdateDialog({
               available once the import finishes.
             </>
           )}{" "}
-          Type {spec?.label ?? importer}
+          Type: {spec?.label ?? importer}
           {filterLabel ? <>, filtered to {filterLabel}</> : null}.
         </DialogDescription>
         <form
@@ -1097,6 +1109,7 @@ function UpdateDialog({
               }}
               disabled={pending}
               autoFocus
+              base={base}
             />
           ) : (
             <Callout tone="error">This dataset type is no longer available.</Callout>

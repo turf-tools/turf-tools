@@ -224,6 +224,18 @@ const flPrecinct = (v: string) => {
   return m ? `${m[1]!.toUpperCase()}-${m[2]!.toUpperCase()}` : v;
 };
 
+// Georgia precincts, county commission districts, and city council districts
+// are stored code first, then the county or city spelled without spaces
+// (`02F1-FULTON`, `3-BENHILL`, `05-ATLANTA`). Accept any case, a place written
+// with spaces, and a space or hyphen between code and place.
+const gaPlaceLocal = (v: string) => {
+  const m = /^([a-z0-9]+)\s*[\s-]\s*([a-z][a-z ]*)$/i.exec(v);
+  return m ? `${m[1]!.toUpperCase()}-${m[2]!.replace(/ /g, "").toUpperCase()}` : v;
+};
+
+// Georgia districts are three digits with leading zeros (`058`).
+const gaDistrict = (v: string) => (/^\d{1,2}$/.test(v) ? v.padStart(3, "0") : v);
+
 // Per-(dataset type, field) normalizer for text-multi values. Run on each
 // token at commit time so the canonical form is what gets stored and
 // queried. Anything the normalizer doesn't recognize passes through
@@ -231,6 +243,14 @@ const flPrecinct = (v: string) => {
 const NORMALIZERS: Record<string, Record<string, (v: string) => string>> = {
   nys_voter_file: { precinct: nysPrecinct },
   fl_voter_file: { precinct: flPrecinct },
+  ga_voter_file: {
+    precinct: gaPlaceLocal,
+    county_commission_district: gaPlaceLocal,
+    city_council_district: gaPlaceLocal,
+    congressional_district: gaDistrict,
+    senate_district: gaDistrict,
+    house_district: gaDistrict,
+  },
 };
 
 function TextMultiFilterEditor({

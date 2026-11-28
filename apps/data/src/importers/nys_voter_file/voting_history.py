@@ -14,7 +14,7 @@ NYS_ELECTION_TYPES: dict[str, str] = {
     "PR": "primary",
     "PP": "presidential_primary",
     "SP": "special",
-    "RO": "runoff",
+    "RO": "primary_runoff",
 }
 
 # D (early voting by affidavit) and T (early voting by other method) are early
@@ -43,7 +43,7 @@ def _classify_description(desc: str) -> str | None:
     if "presidential primary" in d or "pres primary" in d:
         return "presidential_primary"
     if "runoff" in d or "run-off" in d:
-        return "runoff"
+        return "primary_runoff"
     if "special" in d:
         return "special"
     if "primary" in d:

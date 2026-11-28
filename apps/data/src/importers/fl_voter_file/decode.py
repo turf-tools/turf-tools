@@ -18,16 +18,14 @@ address to canvass.
 
 from __future__ import annotations
 
-import os
 import re
-import zipfile
 from typing import TYPE_CHECKING
 
-from src.importers.base import SourceUnreadableError, raw_column_name, redact_source
-from src.importers.streams import open_source, read_chunks, sql_str, stream_text_to_table
+from src.importers.base import raw_column_name
+from src.importers.streams import TRIM_CHARS, check_zip, sql_str, stream_text_to_table, zip_chunks
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
 
     import duckdb
 
@@ -86,42 +84,6 @@ HISTORY_COLUMNS = [raw_column_name(f) for f in HISTORY_LAYOUT]
 _REGISTRATION_MEMBER = re.compile(r"^[A-Z]{3}_\d{8}\.txt$")
 _HISTORY_MEMBER = re.compile(r"^[A-Z]{3}_H_\d{8}\.txt$")
 
-TRIM_CHARS = " \t\r\n"
-
-
-def _members(zf: zipfile.ZipFile, pattern: re.Pattern[str]) -> list[zipfile.ZipInfo]:
-    """The zip's county files, by base name, in name order."""
-    found = [i for i in zf.infolist() if not i.is_dir() and pattern.match(i.filename.rsplit("/", 1)[-1])]
-    return sorted(found, key=lambda i: i.filename)
-
-
-def _zip_chunks(source: str, pattern: re.Pattern[str]) -> Iterator[bytes]:
-    """Every matching member's bytes, back to back, each ending in a newline."""
-    with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
-        for info in _members(zf, pattern):
-            last = b"\n"
-            with zf.open(info) as member:
-                for chunk in read_chunks(member):
-                    last = chunk[-1:]
-                    yield chunk
-            if last != b"\n":
-                yield b"\r\n"
-
-
-def _check_zip(source: str, pattern: re.Pattern[str], expected: str) -> None:
-    """Fail with a readable message unless `source` is a zip holding county files."""
-    if "://" not in source and not os.path.exists(source):
-        raise SourceUnreadableError(f"Import source not found: {redact_source(source)!r}")
-    try:
-        with open_source(source) as raw, zipfile.ZipFile(raw) as zf:
-            found = bool(_members(zf, pattern))
-    except (OSError, zipfile.BadZipFile) as exc:
-        raise SourceUnreadableError(
-            f"Could not read {redact_source(source)!r} as a zip. Check that it exists and is reachable."
-        ) from exc
-    if not found:
-        raise SourceUnreadableError(f"{redact_source(source)!r} has no {expected} files in it.")
-
 
 def _select_sql(columns: list[str], where: str = "") -> Callable[[str], str]:
     """SQL reading the UTF-8 stream as `columns`, trimmed, blanks as NULL, then `where`."""
@@ -144,9 +106,9 @@ def _select_sql(columns: list[str], where: str = "") -> Callable[[str], str]:
 
 def read_registration(source: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
     """The registration zip's county files → `table_fqn`, exempt rows dropped."""
-    _check_zip(source, _REGISTRATION_MEMBER, "voter registration (CNT_YYYYMMDD.txt)")
+    check_zip(source, _REGISTRATION_MEMBER, "voter registration (CNT_YYYYMMDD.txt)")
     stream_text_to_table(
-        lambda: _zip_chunks(source, _REGISTRATION_MEMBER),
+        lambda: zip_chunks(source, _REGISTRATION_MEMBER),
         _select_sql(
             REGISTRATION_COLUMNS,
             "WHERE requested_public_records_exemption IS DISTINCT FROM 'Y'",
@@ -159,9 +121,9 @@ def read_registration(source: str, table_fqn: str, conn: duckdb.DuckDBPyConnecti
 
 def read_history(source: str, table_fqn: str, conn: duckdb.DuckDBPyConnection) -> None:
     """The history zip's county files → `table_fqn`."""
-    _check_zip(source, _HISTORY_MEMBER, "voting history (CNT_H_YYYYMMDD.txt)")
+    check_zip(source, _HISTORY_MEMBER, "voting history (CNT_H_YYYYMMDD.txt)")
     stream_text_to_table(
-        lambda: _zip_chunks(source, _HISTORY_MEMBER),
+        lambda: zip_chunks(source, _HISTORY_MEMBER),
         _select_sql(HISTORY_COLUMNS),
         table_fqn,
         conn,

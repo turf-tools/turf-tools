@@ -20,7 +20,13 @@ import {
 } from "~/components/dropdown-menu";
 import { Input } from "~/components/input";
 import { Rail, useShowArchived } from "~/components/rail";
-import { cleanSources, findImporter, sourcesComplete, type ImporterSpec } from "~/lib/importers";
+import {
+  cleanSources,
+  findImporter,
+  sourcesComplete,
+  updateHint,
+  type ImporterSpec,
+} from "~/lib/importers";
 import { datasetsListQuery } from "~/lib/queries/datasets";
 import { importersQuery } from "~/lib/queries/importers";
 import { useDeferredRadioDropdown } from "~/lib/use-deferred-radio-dropdown";
@@ -314,7 +320,7 @@ function CreateDatasetDialog({
   const valid =
     name.trim().length > 0 &&
     importer != null &&
-    sourcesComplete(importer, sources) &&
+    sourcesComplete(importer, sources, null) &&
     (filterField == null || importFilter != null);
 
   return (
@@ -448,24 +454,30 @@ function CreateDatasetDialog({
 
 // One input per file the importer reads. Shared by create and the dataset
 // page's update, where the importer is fixed.
+// `base` is the version an Update builds on (null on a first import), which
+// lets a source it keeps or adds to stay blank.
 export function SourceInputs({
   importer,
   sources,
   onChange,
   disabled,
   autoFocus,
+  base = null,
 }: {
   importer: ImporterSpec;
   sources: Record<string, string>;
   onChange: (sources: Record<string, string>) => void;
   disabled: boolean;
   autoFocus?: boolean;
+  base?: number | null;
 }) {
   return importer.sources.map((source, i) => (
     <div key={source.key} className="flex flex-col gap-1.5">
       <label className="text-sm text-muted-foreground">
         {source.label}
-        {source.required ? null : <span className="text-muted-foreground"> (optional)</span>}
+        {source.required && updateHint(source, base) == null ? null : (
+          <span className="text-muted-foreground"> (optional)</span>
+        )}
       </label>
       <Input
         autoFocus={autoFocus && i === 0}
@@ -474,7 +486,11 @@ export function SourceInputs({
         placeholder="https://..."
         disabled={disabled}
       />
-      <span className="text-sm text-muted-foreground italic">{source.description}</span>
+      <span className="text-sm text-muted-foreground italic">
+        {updateHint(source, base)
+          ? `${source.description}, ${updateHint(source, base)}.`
+          : source.description}
+      </span>
     </div>
   ));
 }

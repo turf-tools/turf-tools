@@ -35,6 +35,7 @@ from src.dsl.criteria import (
     build_field_catalog,
 )
 from src.importers.fl_voter_file.manifest import FL_MANIFEST
+from src.importers.ga_voter_file.manifest import GA_MANIFEST
 from src.importers.nys_voter_file.manifest import NYS_MANIFEST
 
 # The compiler is manifest-driven; exercise it against the real NYS field set.
@@ -51,6 +52,7 @@ ELECTION_BITS = {
     "2005-general": 64,
 }
 CATALOG = build_field_catalog(NYS_MANIFEST, election_bits=ELECTION_BITS)
+GA_CATALOG = build_field_catalog(GA_MANIFEST, election_bits=ELECTION_BITS)
 
 
 def _narrow(*filters) -> Criteria:
@@ -256,6 +258,29 @@ def test_age_range_matches_calendar_age_semantics() -> None:
         old_parts = ([f"{age} >= {lo}"] if lo is not None else []) + ([f"{age} <= {hi}"] if hi is not None else [])
         diff = conn.execute(
             f"SELECT count(*) FROM p {where.replace('WHERE', 'WHERE (')} ) != ({' AND '.join(old_parts)})",
+            params,
+        ).fetchone()
+        assert diff is not None and diff[0] == 0, f"bounds ({lo}, {hi}) diverge"
+
+
+def test_age_range_on_a_birth_year_is_the_age_reached_this_year() -> None:
+    """Over a birth year alone, the clause selects exactly the years whose age
+    this year (this year minus the birth year) is within the bounds."""
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE p AS SELECT y::INTEGER AS year_of_birth FROM range(1900, year(current_date) + 1) t(y)")
+    for lo, hi in [(18, 64), (18, None), (None, 64), (0, 0), (25, 25)]:
+        params: list = []
+        where = criteria_to_where(
+            GA_CATALOG,
+            _narrow(AgeRangeFilter(kind="age-range", key="year_of_birth", min=lo, max=hi)),
+            None,
+            params,
+        )
+        assert "year_of_birth" in where
+        age = "year(current_date) - year_of_birth"
+        expected = ([f"{age} >= {lo}"] if lo is not None else []) + ([f"{age} <= {hi}"] if hi is not None else [])
+        diff = conn.execute(
+            f"SELECT count(*) FROM p {where.replace('WHERE', 'WHERE (')} ) != ({' AND '.join(expected)})",
             params,
         ).fetchone()
         assert diff is not None and diff[0] == 0, f"bounds ({lo}, {hi}) diverge"

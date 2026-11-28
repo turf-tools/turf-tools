@@ -1,5 +1,6 @@
 """Unit tests for the voting-history parser and canonical-label maps."""
 
+from src.importers.history import ELECTION_TYPES
 from src.importers.nys_voter_file.transform import (
     NYS_ENROLLMENTS,
     NYS_REGISTRATION_STATUSES,
@@ -33,7 +34,7 @@ def test_parse_entry_modern_all_election_codes():
         ("20220628 PR(E)", "primary"),
         ("20200623 PP(A)", "presidential_primary"),
         ("20190226 SP(P)", "special"),
-        ("20131001 RO(P)", "runoff"),
+        ("20131001 RO(P)", "primary_runoff"),
     ]
     for entry, expected_type in cases:
         result = parse_entry(entry)
@@ -205,14 +206,8 @@ def test_parse_voting_history_drops_unparseable_silently():
 
 
 def test_election_type_label_values_are_canonical_set():
-    """Sanity-check the canonical labels don't drift from the documented enum."""
-    assert set(NYS_ELECTION_TYPES.values()) == {
-        "general",
-        "primary",
-        "presidential_primary",
-        "special",
-        "runoff",
-    }
+    """The canonical labels stay within the shared election types."""
+    assert set(NYS_ELECTION_TYPES.values()) <= set(ELECTION_TYPES)
 
 
 def test_voting_method_label_values_are_canonical_set():

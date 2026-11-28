@@ -16,7 +16,8 @@ import pytest
 
 from src.importers.base import SourceUnreadableError
 from src.importers.nys_voter_file import NysVoterFileImporter
-from src.importers.nys_voter_file.decode import COLUMNS, LAYOUT, REQUIRED_COLUMNS, csv_has_header, source_format
+from src.importers.nys_voter_file.decode import COLUMNS, LAYOUT, NYS_LAYOUT, REQUIRED_COLUMNS, source_format
+from src.importers.tabular import csv_has_header
 from src.importers.validate import validated_persons
 from src.tables import table_fqn
 
@@ -192,16 +193,16 @@ def test_latin1_csv_with_a_header_reads_like_utf8(conn, tmp_path) -> None:
 
 
 def test_csv_header_detection(tmp_path) -> None:
-    assert csv_has_header(str(SAMPLE_DATA / "file.csv"))  # BOM + the layout's own spelling
+    assert csv_has_header(str(SAMPLE_DATA / "file.csv"), NYS_LAYOUT)  # BOM + the layout's own spelling
 
     lowercase = tmp_path / "lowercase.csv"
     lowercase.write_text(",".join(field.lower() for field in LAYOUT) + "\n", encoding="utf-8")
-    assert csv_has_header(str(lowercase))
+    assert csv_has_header(str(lowercase), NYS_LAYOUT)
 
     # A voter whose surname happens to be a layout field name is still data.
     voter = tmp_path / "voter.csv"
     voter.write_bytes(SAMPLE.read_bytes().split(b"\r\n")[0].replace(b'"TESTER"', b'"WARD"', 1) + b"\r\n")
-    assert not csv_has_header(str(voter))
+    assert not csv_has_header(str(voter), NYS_LAYOUT)
 
 
 def test_source_format_reads_the_extension_off_the_url_path() -> None:

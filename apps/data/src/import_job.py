@@ -24,6 +24,7 @@ from src.derived import compute_derived_metadata
 from src.duckdb import OPERATIONAL_PG_ALIAS, attach_operational_postgres, get_connection
 from src.import_progress import ImportProgress, JobLog, ProgressNodeHook
 from src.importers.base import ImportFilter  # noqa: TC001 — pydantic resolves the payload annotation at runtime
+from src.importers.carry import carried_tables
 from src.importers.registry import get_importer
 from src.job_runner import IN_PROGRESS, INTERRUPTED_REASON, UNSTARTED, JobContext, job
 from src.quickwit import persons_index_id, recreate_index
@@ -41,7 +42,6 @@ from src.tables import (
 
 if TYPE_CHECKING:
     import duckdb
-    from src.importers.base import Manifest
     from src.settings import Settings
 
 logger = logging.getLogger("uvicorn")
@@ -56,6 +56,8 @@ class ImportDatasetVersionPayload(BaseModel):
     organization_id: str
     # The dataset's fixed row filter (see `ImportFilter`); None imports everything.
     filter: ImportFilter | None = None
+    # The version this import builds on, for sources that keep or add on update.
+    base_version_number: int | None = None
 
 
 async def _mark_version_failed(dataset_version_id: str, error: str) -> None:
@@ -183,7 +185,12 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
         progress.start(importer.PROGRESS_STEPS + dag_steps + len(key_group_sources) + 2)
 
         # Source → persons_validated (importer-specific), then the shared pipeline.
-        persons_validated = importer.load(payload.sources, schema, conn, progress, payload.filter)
+        base_schema = (
+            dataset_version_schema(slug, payload.base_version_number)
+            if payload.base_version_number is not None
+            else None
+        )
+        persons_validated = importer.load(payload.sources, schema, conn, progress, payload.filter, base_schema)
         decoded = conn.execute(f"SELECT count(*) FROM {persons_validated.fqn}").fetchone()
         log.write(f"Decoded {decoded[0]:,} people from source" if decoded else "Source decoded")
         if decoded is not None and decoded[0] == 0 and payload.filter is not None:
@@ -249,18 +256,18 @@ def _run(payload: ImportDatasetVersionPayload, job_id: str) -> dict[str, Any]:
             activate_for_organization_id=payload.organization_id,
         )
         if not settings.keep_import_intermediates:
-            _prune_intermediates(conn, schema, manifest, log)
+            _prune_intermediates(conn, schema, retained_tables(manifest, carried_tables(importer)), log)
         return {"row_count": derived["rowCount"], "schema": schema}
     finally:
         conn.close()
 
 
-def _prune_intermediates(conn: duckdb.DuckDBPyConnection, schema: str, manifest: Manifest, log: JobLog) -> None:
-    """Drop the version's pipeline tables and reclaim disk. The version is already
-    ready, so an error here only leaves extra tables behind: log it and keep the
-    import successful."""
+def _prune_intermediates(conn: duckdb.DuckDBPyConnection, schema: str, keep: frozenset[str], log: JobLog) -> None:
+    """Drop the version's pipeline tables outside `keep` and reclaim disk. The
+    version is already ready, so an error here only leaves extra tables behind:
+    log it and keep the import successful."""
     try:
-        dropped = drop_intermediates(conn, schema, retained_tables(manifest))
+        dropped = drop_intermediates(conn, schema, keep)
         reclaim_dropped_files(conn)
     except Exception:
         logger.exception("Pruning intermediates in %s failed", schema)
